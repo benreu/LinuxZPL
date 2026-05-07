@@ -1,0 +1,16 @@
+^XA
+^FO41,109
+^AFN,36,20
+^FDHello ZPL Viewer^FS
+^FO41,163
+^AFN,36,20
+^FDThis is a test label^FS
+^FO65,255
+^AFN,36,20
+^FDRendered Output^FS
+^FO56,241
+^GB200,150,2
+^FO76,305
+^BC,100
+^FD123456789^FS
+^XZ
