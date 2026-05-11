@@ -89,6 +89,9 @@ class DesignCanvas(Gtk.DrawingArea):
         'element-double-clicked': (GObject.SignalFlags.RUN_FIRST, None, (object,))
     }
     
+    HANDLE_SIZE = 8
+    HANDLE_HALF = HANDLE_SIZE // 2
+    
     def __init__(self, on_change_callback=None):
         super().__init__()
         self.set_size_request(600, 800)
@@ -99,6 +102,8 @@ class DesignCanvas(Gtk.DrawingArea):
         self.on_change_callback = on_change_callback
         self.last_click_time = 0
         self.last_click_element = None
+        self.active_handle: Optional[str] = None  # Track which handle is being dragged
+        
         
         # Set up event handlers
         self.connect("draw", self.on_draw)
@@ -164,6 +169,52 @@ class DesignCanvas(Gtk.DrawingArea):
         zpl += "^XZ"
         return zpl
     
+    def _get_handles(self, element: DesignElement) -> dict:
+        """Get the positions of resize handles for any element type."""
+        x, y = element.x, element.y
+        w, h = element.width, element.height
+        
+        return {
+            'tl': (x, y),                          # top-left
+            'tm': (x + w // 2, y),                # top-middle
+            'tr': (x + w, y),                      # top-right
+            'ml': (x, y + h // 2),                # middle-left
+            'mr': (x + w, y + h // 2),            # middle-right
+            'bl': (x, y + h),                      # bottom-left
+            'bm': (x + w // 2, y + h),            # bottom-middle
+            'br': (x + w, y + h),                 # bottom-right
+        }
+    
+    def _get_handle_at_point(self, x: int, y: int, element: DesignElement) -> Optional[str]:
+        """Check if a resize handle is at the given point."""
+        handles = self._get_handles(element)
+        for handle_name, (hx, hy) in handles.items():
+            if (abs(x - hx) <= self.HANDLE_SIZE and 
+                abs(y - hy) <= self.HANDLE_SIZE):
+                return handle_name
+        return None
+    
+    def _resize_element_by_handle(self, element: DesignElement, handle: str, 
+                                   dx: int, dy: int):
+        """Resize an element based on which handle is being dragged."""
+        if handle in ('tl', 'tm', 'tr'):  # Top handles - adjust y and height
+            element.y += dy
+            element.height -= dy
+        
+        if handle in ('bl', 'bm', 'br'):  # Bottom handles - adjust height
+            element.height += dy
+        
+        if handle in ('tl', 'ml', 'bl'):  # Left handles - adjust x and width
+            element.x += dx
+            element.width -= dx
+        
+        if handle in ('tr', 'mr', 'br'):  # Right handles - adjust width
+            element.width += dx
+        
+        # Ensure minimum size
+        element.width = max(20, element.width)
+        element.height = max(20, element.height)
+    
     def on_draw(self, widget, context):
         """Draw the canvas and elements."""
         # Draw white background
@@ -208,6 +259,23 @@ class DesignCanvas(Gtk.DrawingArea):
         context.set_font_size(12)
         context.move_to(element.x + 2, element.y + 15)
         context.show_text(element.text[:20])
+        
+        # Draw resize handles if selected
+        if selected:
+            handles = self._get_handles(element)
+            for handle_name, (hx, hy) in handles.items():
+                # Draw handle as a small square
+                context.set_source_rgb(0, 0.5, 1)
+                context.rectangle(hx - self.HANDLE_HALF, hy - self.HANDLE_HALF, 
+                                self.HANDLE_SIZE, self.HANDLE_SIZE)
+                context.fill()
+                
+                # Draw handle border
+                context.set_source_rgb(0, 0, 1)
+                context.set_line_width(1)
+                context.rectangle(hx - self.HANDLE_HALF, hy - self.HANDLE_HALF, 
+                                self.HANDLE_SIZE, self.HANDLE_SIZE)
+                context.stroke()
     
     def _draw_box_element(self, context, element, selected: bool):
         """Draw a box element."""
@@ -220,6 +288,23 @@ class DesignCanvas(Gtk.DrawingArea):
         
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
+        
+        # Draw resize handles if selected
+        if selected:
+            handles = self._get_handles(element)
+            for handle_name, (hx, hy) in handles.items():
+                # Draw handle as a small square
+                context.set_source_rgb(0, 0.5, 1)
+                context.rectangle(hx - self.HANDLE_HALF, hy - self.HANDLE_HALF, 
+                                self.HANDLE_SIZE, self.HANDLE_SIZE)
+                context.fill()
+                
+                # Draw handle border
+                context.set_source_rgb(0, 0, 1)
+                context.set_line_width(1)
+                context.rectangle(hx - self.HANDLE_HALF, hy - self.HANDLE_HALF, 
+                                self.HANDLE_SIZE, self.HANDLE_SIZE)
+                context.stroke()
     
     def _draw_barcode_element(self, context, element, selected: bool):
         """Draw a barcode element."""
@@ -242,11 +327,40 @@ class DesignCanvas(Gtk.DrawingArea):
         context.set_font_size(10)
         context.move_to(element.x + 5, element.y + 15)
         context.show_text("||||| CODE128")
+        
+        # Draw resize handles if selected
+        if selected:
+            handles = self._get_handles(element)
+            for handle_name, (hx, hy) in handles.items():
+                # Draw handle as a small square
+                context.set_source_rgb(0, 0.5, 1)
+                context.rectangle(hx - self.HANDLE_HALF, hy - self.HANDLE_HALF, 
+                                self.HANDLE_SIZE, self.HANDLE_SIZE)
+                context.fill()
+                
+                # Draw handle border
+                context.set_source_rgb(0, 0, 1)
+                context.set_line_width(1)
+                context.rectangle(hx - self.HANDLE_HALF, hy - self.HANDLE_HALF, 
+                                self.HANDLE_SIZE, self.HANDLE_SIZE)
+                context.stroke()
     
     def on_button_press(self, widget, event):
         """Handle mouse button press for element selection and double-click detection."""
         if event.button != 1:
             return
+        
+        # Reset active handle for new click
+        self.active_handle = None
+        
+        # Check if clicking on a resize handle of the selected element
+        if self.selected_element:
+            handle = self._get_handle_at_point(int(event.x), int(event.y), 
+                                              self.selected_element)
+            if handle:
+                self.active_handle = handle
+                self.drag_start = (int(event.x), int(event.y))
+                return
         
         # Find element at click position
         clicked_element = None
@@ -280,9 +394,10 @@ class DesignCanvas(Gtk.DrawingArea):
         """Handle mouse button release."""
         if event.button == 1:
             self.drag_start = None
+            self.active_handle = None
     
     def on_motion(self, widget, event):
-        """Handle mouse motion for dragging elements."""
+        """Handle mouse motion for dragging elements or resizing."""
         if not self.drag_start or not self.selected_element:
             return
         
@@ -290,15 +405,19 @@ class DesignCanvas(Gtk.DrawingArea):
         dx = int(event.x) - self.drag_start[0]
         dy = int(event.y) - self.drag_start[1]
         
-        # Update element position
-        self.selected_element.x += dx
-        self.selected_element.y += dy
+        # If a handle is active, resize instead of move
+        if self.active_handle:
+            self._resize_element_by_handle(self.selected_element, self.active_handle, dx, dy)
+        else:
+            # Update element position (regular drag)
+            self.selected_element.x += dx
+            self.selected_element.y += dy
+            
+            # Clamp to canvas bounds
+            self.selected_element.x = max(0, self.selected_element.x)
+            self.selected_element.y = max(0, self.selected_element.y)
         
-        # Clamp to canvas bounds
-        self.selected_element.x = max(0, self.selected_element.x)
-        self.selected_element.y = max(0, self.selected_element.y)
-        
-        # Update drag start for next movement
+        # Update drag start for next movement (always update)
         self.drag_start = (int(event.x), int(event.y))
         
         self.queue_draw()
