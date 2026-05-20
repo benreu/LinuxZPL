@@ -301,11 +301,19 @@ class DesignCanvas(Gtk.DrawingArea):
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
         
-        # Draw text
+        # Draw text with scaled font size based on element's font_height
         context.set_source_rgb(0, 0, 0)
         context.select_font_face("monospace")
-        context.set_font_size(12)
-        context.move_to(element.x + 2, element.y + 15)
+        # Scale font height based on canvas display size relative to label size
+        # Get the canvas allocation to calculate scale factor
+        allocation = self.get_allocation()
+        if allocation.width > 0 and self.label_width > 0:
+            scale_factor = allocation.width / self.label_width
+        else:
+            scale_factor = 1.0
+        scaled_font_size = max(8, int(element.font_height * scale_factor))
+        context.set_font_size(scaled_font_size)
+        context.move_to(element.x + 2, element.y + scaled_font_size + 2)
         context.show_text(element.text[:20])
         
         # Draw resize handles if selected
