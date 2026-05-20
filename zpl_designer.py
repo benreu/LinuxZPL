@@ -63,7 +63,7 @@ class BoxElement(DesignElement):
     
     def to_zpl(self) -> str:
         """Convert to ZPL commands."""
-        return f"^FO{self.x},{self.y}\n^GB{self.width},{self.height},{self.thickness}\n"
+        return f"^FO{self.x},{self.y}\n^GB{self.width},{self.height},{self.thickness}\n^FS\n"
 
 
 class BarcodeElement(DesignElement):
