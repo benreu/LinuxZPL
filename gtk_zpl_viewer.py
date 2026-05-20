@@ -145,7 +145,7 @@ class ZPLViewerWindow(Gtk.Window):
         scrolled_canvas.set_vexpand(True)
         left_box.pack_start(scrolled_canvas, True, True, 0)
         
-        self.design_canvas = DesignCanvas(on_change_callback=self.render_zpl, 
+        self.design_canvas = DesignCanvas(on_change_callback=self.on_canvas_changed, 
                                          label_width=self.label_width, 
                                          label_height=self.label_height)
         self.design_canvas.connect("draw", self.on_canvas_draw)
@@ -542,6 +542,11 @@ class ZPLViewerWindow(Gtk.Window):
         
         dialog.destroy()
     
+    def on_canvas_changed(self):
+        """Handle canvas changes (drag, resize, etc.) and mark as unsaved."""
+        self.unsaved_changes = True
+        self.render_zpl()
+    
     def render_zpl(self):
         """Render the ZPL content from the design canvas."""
         try:
@@ -581,26 +586,18 @@ class ZPLViewerWindow(Gtk.Window):
     def on_add_text_clicked(self, widget):
         """Handle add text element button click."""
         self.design_canvas.add_text_element("New Text")
-        self.unsaved_changes = True
-        self.render_zpl()
     
     def on_add_box_clicked(self, widget):
         """Handle add box element button click."""
         self.design_canvas.add_box_element()
-        self.unsaved_changes = True
-        self.render_zpl()
     
     def on_add_barcode_clicked(self, widget):
         """Handle add barcode element button click."""
         self.design_canvas.add_barcode_element()
-        self.unsaved_changes = True
-        self.render_zpl()
     
     def on_delete_clicked(self, widget):
         """Handle delete selected element button click."""
         self.design_canvas.remove_selected()
-        self.unsaved_changes = True
-        self.render_zpl()
     
     def on_canvas_draw(self, widget, context):
         """Canvas draw event handler - re-render when canvas changes."""
@@ -652,9 +649,8 @@ class ZPLViewerWindow(Gtk.Window):
                 element.font_width = int(width_spin.get_value())
                 element.width = len(element.text) * element.font_width
                 element.height = element.font_height
-                self.unsaved_changes = True
                 self.design_canvas.queue_draw()
-                self.render_zpl()
+                self.on_canvas_changed()
             
             dialog.destroy()
         
@@ -687,9 +683,8 @@ class ZPLViewerWindow(Gtk.Window):
             if response == Gtk.ResponseType.OK:
                 element.barcode_value = value_entry.get_text()
                 element.height = int(height_spin.get_value())
-                self.unsaved_changes = True
                 self.design_canvas.queue_draw()
-                self.render_zpl()
+                self.on_canvas_changed()
             
             dialog.destroy()
         
@@ -732,9 +727,8 @@ class ZPLViewerWindow(Gtk.Window):
                 element.width = int(width_spin.get_value())
                 element.height = int(height_spin.get_value())
                 element.thickness = int(thickness_spin.get_value())
-                self.unsaved_changes = True
                 self.design_canvas.queue_draw()
-                self.render_zpl()
+                self.on_canvas_changed()
             
             dialog.destroy()
     
