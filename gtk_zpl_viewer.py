@@ -18,7 +18,6 @@ import io
 
 class ZPLViewerWindow(Gtk.Window):
     """Main GTK window for the ZPL Viewer application."""
-    unsaved_changes = False
     
     def __init__(self):
         super().__init__(title="ZPL Viewer")
@@ -29,6 +28,7 @@ class ZPLViewerWindow(Gtk.Window):
         self.renderer = ZPLRenderer()
         self.current_zpl_content = ""
         self.current_filepath = None
+        self.unsaved_changes = False
         
         # Label size settings (default: 4x6 inch at 203 DPI = 812x1218 pixels)
         self.label_width = 812
@@ -222,8 +222,11 @@ class ZPLViewerWindow(Gtk.Window):
           self.save_zpl_file(self.current_filepath, self.design_canvas.to_zpl())
           return True
         elif response == Gtk.ResponseType.NO:
-          return True
-      return False
+          return False
+        else:
+          return False
+      else:
+        return True
     
     def on_load_file_clicked(self, widget):
         """Handle load file button click."""
