@@ -58,6 +58,11 @@ class ZPLViewerWindow(Gtk.Window):
         save_item.connect("activate", self.on_save_clicked)
         file_menu.append(save_item)
         
+        # Print menu item
+        print_item = Gtk.MenuItem(label="Print")
+        print_item.connect("activate", self.on_print_clicked)
+        file_menu.append(print_item)
+        
         # Separator
         separator = Gtk.SeparatorMenuItem()
         file_menu.append(separator)
@@ -354,6 +359,19 @@ class ZPLViewerWindow(Gtk.Window):
         except Exception as e:
             self.show_error_dialog(f"Failed to load file: {e}")
             self.update_status("Error loading file")
+
+    def on_print_clicked(self, widget):
+        """Handle print button click."""
+        import socket
+        printer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            printer_socket.connect(('192.168.50.21', 9100)) #connect to printer IP and port
+        except OSError as e:
+            self.show_error_dialog(str(e))
+            return
+        content = self.design_canvas.to_zpl()
+        printer_socket.send(bytes(content, 'utf-8')) #using bytes 
+        printer_socket.close () #closing connection
     
     def _parse_label_size_from_zpl(self, zpl_content: str):
         """Extract label size from ZPL commands if present."""
