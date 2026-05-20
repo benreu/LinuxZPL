@@ -92,7 +92,7 @@ class DesignCanvas(Gtk.DrawingArea):
     HANDLE_SIZE = 8
     HANDLE_HALF = HANDLE_SIZE // 2
     
-    def __init__(self, on_change_callback=None):
+    def __init__(self, on_change_callback=None, label_width: int = 812, label_height: int = 1218):
         super().__init__()
         self.set_size_request(600, 800)
         
@@ -103,6 +103,10 @@ class DesignCanvas(Gtk.DrawingArea):
         self.last_click_time = 0
         self.last_click_element = None
         self.active_handle: Optional[str] = None  # Track which handle is being dragged
+        
+        # Label size constraints (in pixels, default 4x6 inch at 203 DPI)
+        self.label_width = label_width
+        self.label_height = label_height
         
         
         # Set up event handlers
@@ -162,12 +166,37 @@ class DesignCanvas(Gtk.DrawingArea):
         self.queue_draw()
     
     def to_zpl(self) -> str:
-        """Generate ZPL code from canvas elements."""
+        """Generate ZPL code from canvas elements with label size settings."""
         zpl = "^XA\n"
+        # Add label size commands for printer
+        zpl += f"^PW{self.label_width}\n"  # Set print width
+        zpl += f"^LL{self.label_height}\n"  # Set label length
         for element in self.elements:
             zpl += element.to_zpl()
         zpl += "^XZ"
         return zpl
+    
+    def set_label_size(self, width: int, height: int):
+        """Set the label size and update constraints."""
+        self.label_width = width
+        self.label_height = height
+        # Clamp existing elements to new bounds
+        self._clamp_elements_to_bounds()
+        self.queue_draw()
+    
+    def get_label_size(self) -> tuple:
+        """Get current label size as (width, height)."""
+        return (self.label_width, self.label_height)
+    
+    def _clamp_elements_to_bounds(self):
+        """Ensure all elements stay within label bounds."""
+        for element in self.elements:
+            # Clamp position
+            element.x = max(0, min(element.x, self.label_width - 1))
+            element.y = max(0, min(element.y, self.label_height - 1))
+            # Clamp size
+            element.width = min(element.width, self.label_width - element.x)
+            element.height = min(element.height, self.label_height - element.y)
     
     def _get_handles(self, element: DesignElement) -> dict:
         """Get the positions of resize handles for any element type."""
@@ -214,12 +243,31 @@ class DesignCanvas(Gtk.DrawingArea):
         # Ensure minimum size
         element.width = max(20, element.width)
         element.height = max(20, element.height)
+        
+        # Clamp to label bounds
+        element.x = max(0, element.x)
+        element.y = max(0, element.y)
+        element.x = min(element.x, self.label_width - element.width)
+        element.y = min(element.y, self.label_height - element.height)
+        # Ensure element doesn't exceed label bounds
+        if element.x + element.width > self.label_width:
+            element.width = self.label_width - element.x
+        if element.y + element.height > self.label_height:
+            element.height = self.label_height - element.y
     
     def on_draw(self, widget, context):
         """Draw the canvas and elements."""
         # Draw white background
         context.set_source_rgb(1, 1, 1)
         context.paint()
+        
+        # Draw label boundary (light gray dashed line)
+        context.set_source_rgb(0.8, 0.8, 0.8)
+        context.set_line_width(1)
+        context.set_dash([5, 5], 0)
+        context.rectangle(0, 0, self.label_width, self.label_height)
+        context.stroke()
+        context.set_dash([], 0)  # Reset to solid line
         
         # Draw elements
         for element in self.elements:
@@ -413,9 +461,12 @@ class DesignCanvas(Gtk.DrawingArea):
             self.selected_element.x += dx
             self.selected_element.y += dy
             
-            # Clamp to canvas bounds
+            # Clamp to label bounds
             self.selected_element.x = max(0, self.selected_element.x)
             self.selected_element.y = max(0, self.selected_element.y)
+            # Ensure element stays within label boundaries
+            self.selected_element.x = min(self.selected_element.x, self.label_width - self.selected_element.width)
+            self.selected_element.y = min(self.selected_element.y, self.label_height - self.selected_element.height)
         
         # Update drag start for next movement (always update)
         self.drag_start = (int(event.x), int(event.y))

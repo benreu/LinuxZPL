@@ -127,6 +127,10 @@ class ZPLRenderer:
             if not line:
                 continue
             
+            # Skip comment lines
+            if line.startswith(';'):
+                continue
+            
             # Ensure line starts with ^ for proper parsing
             if not line.startswith('^'):
                 line = '^' + line
@@ -166,6 +170,18 @@ class ZPLRenderer:
         elif command == 'XZ':
             # End format
             pass
+        elif command == 'PW':
+            # Set print width: ^PWn (width in dots)
+            try:
+                self.width = int(params)
+            except ValueError:
+                pass
+        elif command == 'LL':
+            # Set label length: ^LLn (height in dots)
+            try:
+                self.height = int(params)
+            except ValueError:
+                pass
         elif command == 'FO':
             # Set field origin: ^FOx,y
             match = re.match(r'(\d+),(\d+)', params)

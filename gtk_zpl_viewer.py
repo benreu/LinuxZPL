@@ -30,6 +30,10 @@ class ZPLViewerWindow(Gtk.Window):
         self.current_zpl_content = ""
         self.current_filepath = None
         
+        # Label size settings (default: 4x6 inch at 203 DPI = 812x1218 pixels)
+        self.label_width = 812
+        self.label_height = 1218
+        
         # Create main layout
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.add(main_box)
@@ -77,6 +81,19 @@ class ZPLViewerWindow(Gtk.Window):
         renderer_menu.append(refresh_item)
 
         renderer_menu.show_all()
+        
+        # Settings menu
+        settings_menu = Gtk.Menu()
+        settings_menu_item = Gtk.MenuItem(label="Settings")
+        settings_menu_item.set_submenu(settings_menu)
+        menu_bar.append(settings_menu_item)
+        
+        # Label settings menu item
+        label_settings_item = Gtk.MenuItem(label="Label Size")
+        label_settings_item.connect("activate", self.on_label_settings_clicked)
+        settings_menu.append(label_settings_item)
+        
+        settings_menu.show_all()
         
         # Content box with padding
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -128,7 +145,9 @@ class ZPLViewerWindow(Gtk.Window):
         scrolled_canvas.set_vexpand(True)
         left_box.pack_start(scrolled_canvas, True, True, 0)
         
-        self.design_canvas = DesignCanvas(on_change_callback=self.render_zpl)
+        self.design_canvas = DesignCanvas(on_change_callback=self.render_zpl, 
+                                         label_width=self.label_width, 
+                                         label_height=self.label_height)
         self.design_canvas.connect("draw", self.on_canvas_draw)
         self.design_canvas.connect("element-double-clicked", self.on_element_double_clicked)
         
@@ -314,20 +333,44 @@ class ZPLViewerWindow(Gtk.Window):
             self.current_zpl_content = content
             self.current_filepath = filepath
             
+            # Parse label size from file if present
+            self._parse_label_size_from_zpl(content)
+            
             # Clear and load into designer canvas
             self.design_canvas.clear()
+            self.design_canvas.set_label_size(self.label_width, self.label_height)
+            
             # Parse ZPL and create elements (basic parsing)
             self._parse_zpl_to_canvas(content)
             
             # Update status bar
             filename = os.path.basename(filepath)
-            self.update_status("Loaded: {filename}")
+            self.update_status(f"Loaded: {filename}")
             
             # Render and display
             self.render_zpl()
         except Exception as e:
-            self.show_error_dialog("Failed to load file: {e}")
+            self.show_error_dialog(f"Failed to load file: {e}")
             self.update_status("Error loading file")
+    
+    def _parse_label_size_from_zpl(self, zpl_content: str):
+        """Extract label size from ZPL commands if present."""
+        import re
+        # Look for ^PW (print width) and ^LL (label length) commands
+        pw_match = re.search(r'\^PW(\d+)', zpl_content)
+        ll_match = re.search(r'\^LL(\d+)', zpl_content)
+        
+        if pw_match:
+            try:
+                self.label_width = int(pw_match.group(1))
+            except (ValueError, AttributeError):
+                pass
+        
+        if ll_match:
+            try:
+                self.label_height = int(ll_match.group(1))
+            except (ValueError, AttributeError):
+                pass
     
     def _parse_zpl_to_canvas(self, zpl_content: str):
         """Parse ZPL content and populate the designer canvas with elements."""
@@ -337,6 +380,11 @@ class ZPLViewerWindow(Gtk.Window):
         
         while i < len(lines):
             line = lines[i].strip()
+            
+            # Skip comments and empty lines
+            if line.startswith(';') or not line:
+                i += 1
+                continue
             
             if line.startswith('^FO'):
                 # Position command - start of an element
@@ -402,19 +450,112 @@ class ZPLViewerWindow(Gtk.Window):
         """Handle refresh button click."""
         self.render_zpl()
     
+    def on_label_settings_clicked(self, widget):
+        """Handle label settings menu item click."""
+        dialog = Gtk.Dialog(title="Label Settings", parent=self, flags=0)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                          Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        
+        content = dialog.get_content_area()
+        content.set_spacing(10)
+        
+        # Preset sizes
+        presets_label = Gtk.Label(label="Preset Sizes:")
+        presets_label.set_halign(Gtk.Align.START)
+        content.pack_start(presets_label, False, False, 0)
+        
+        presets_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        content.pack_start(presets_box, False, False, 0)
+        
+        # Common label sizes (width x height in pixels at 203 DPI)
+        preset_sizes = {
+            "4x6": (812, 1218),
+            "5x7": (1015, 1428),
+            "6x4": (1218, 812),
+            "3x5": (609, 1015),
+            "2x3": (406, 609)
+        }
+        
+        def on_preset_clicked(btn, w, h):
+            width_spin.set_value(w)
+            height_spin.set_value(h)
+        
+        for label_text, (w, h) in preset_sizes.items():
+            btn = Gtk.Button(label=label_text)
+            btn.connect("clicked", on_preset_clicked, w, h)
+            presets_box.pack_start(btn, False, False, 0)
+        
+        # Custom sizes
+        custom_label = Gtk.Label(label="Custom Size (pixels):")
+        custom_label.set_halign(Gtk.Align.START)
+        content.pack_start(custom_label, False, False, 0)
+        
+        # Width
+        width_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        content.pack_start(width_box, False, False, 0)
+        
+        width_label = Gtk.Label(label="Width:")
+        width_label.set_size_request(80, -1)
+        width_box.pack_start(width_label, False, False, 0)
+        
+        width_spin = Gtk.SpinButton()
+        width_adj = Gtk.Adjustment(value=self.label_width, lower=100, upper=5000, step_increment=10)
+        width_spin.set_adjustment(width_adj)
+        width_spin.set_numeric(True)
+        width_box.pack_start(width_spin, True, True, 0)
+        
+        # Height
+        height_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        content.pack_start(height_box, False, False, 0)
+        
+        height_label = Gtk.Label(label="Height:")
+        height_label.set_size_request(80, -1)
+        height_box.pack_start(height_label, False, False, 0)
+        
+        height_spin = Gtk.SpinButton()
+        height_adj = Gtk.Adjustment(value=self.label_height, lower=100, upper=5000, step_increment=10)
+        height_spin.set_adjustment(height_adj)
+        height_spin.set_numeric(True)
+        height_box.pack_start(height_spin, True, True, 0)
+        
+        # Info label
+        info_label = Gtk.Label(label="Note: Label size constrains the drawing area and is saved with the file.")
+        info_label.set_halign(Gtk.Align.START)
+        info_label.set_line_wrap(True)
+        content.pack_start(info_label, False, False, 0)
+        
+        content.show_all()
+        
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            new_width = int(width_spin.get_value())
+            new_height = int(height_spin.get_value())
+            self.label_width = new_width
+            self.label_height = new_height
+            self.design_canvas.set_label_size(new_width, new_height)
+            self.unsaved_changes = True
+            self.update_status(f"Label size set to {new_width}x{new_height}")
+            self.render_zpl()
+        
+        dialog.destroy()
+    
     def render_zpl(self):
         """Render the ZPL content from the design canvas."""
         try:
             # Get ZPL from designer
             content = self.design_canvas.to_zpl()
             
-            if not content.strip() or content == "^XA\n^XZ":
+            # Check if there are any actual elements (beyond just XA and XZ)
+            if not self.design_canvas.elements:
                 self.image_view.clear()
                 self.update_status("No elements to render")
                 return
             
+            # Create renderer with current label size
+            renderer = ZPLRenderer(width=self.label_width, height=self.label_height)
+            
             # Render ZPL
-            pil_image = self.renderer.render(content)
+            pil_image = renderer.render(content)
             
             # Convert PIL image to GdkPixbuf
             pixbuf = self.pil_to_pixbuf(pil_image)
