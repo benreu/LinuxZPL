@@ -201,8 +201,7 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.destroy()
         
         if response == Gtk.ResponseType.NO:
-          if self.save_file_or_ask_for_filename() == False:
-            return False
+          return False
       Gtk.main_quit()
           
     def check_unsaved_changes(self):
