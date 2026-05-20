@@ -1,5 +1,7 @@
 ^XA
 ^FO41,109
+^PW812
+^LL1218
 ^AFN,36,20
 ^FDHello ZPL Viewer^FS
 ^FO41,163
