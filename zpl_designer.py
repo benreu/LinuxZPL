@@ -255,6 +255,16 @@ class DesignCanvas(Gtk.DrawingArea):
         if element.y + element.height > self.label_height:
             element.height = self.label_height - element.y
     
+    def _get_scale_factor(self) -> float:
+        allocation = self.get_allocation()
+        if allocation.width > 0 and self.label_width > 0:
+            return allocation.width / self.label_width
+        return 1.0
+
+    def _screen_to_label(self, x: float, y: float) -> Tuple[int, int]:
+        s = self._get_scale_factor()
+        return int(x / s), int(y / s)
+
     def on_draw(self, widget, context):
         """Draw the canvas and elements."""
         # Draw white background
@@ -262,11 +272,7 @@ class DesignCanvas(Gtk.DrawingArea):
         context.paint()
 
         # Determine scale to map label coordinates -> display coordinates
-        allocation = self.get_allocation()
-        if allocation.width > 0 and self.label_width > 0:
-            scale_factor = allocation.width / self.label_width
-        else:
-            scale_factor = 1.0
+        scale_factor = self._get_scale_factor()
 
         # Apply uniform scaling so all drawing uses label-space coordinates
         context.save()
@@ -423,19 +429,20 @@ class DesignCanvas(Gtk.DrawingArea):
         # Reset active handle for new click
         self.active_handle = None
         
+        lx, ly = self._screen_to_label(event.x, event.y)
+
         # Check if clicking on a resize handle of the selected element
         if self.selected_element:
-            handle = self._get_handle_at_point(int(event.x), int(event.y), 
-                                              self.selected_element)
+            handle = self._get_handle_at_point(lx, ly, self.selected_element)
             if handle:
                 self.active_handle = handle
-                self.drag_start = (int(event.x), int(event.y))
+                self.drag_start = (lx, ly)
                 return
-        
+
         # Find element at click position
         clicked_element = None
         for element in reversed(self.elements):
-            if element.contains_point(int(event.x), int(event.y)):
+            if element.contains_point(lx, ly):
                 clicked_element = element
                 break
         
@@ -457,7 +464,7 @@ class DesignCanvas(Gtk.DrawingArea):
         # Single click selection
         self.selected_element = clicked_element
         if clicked_element:
-            self.drag_start = (int(event.x), int(event.y))
+            self.drag_start = (lx, ly)
         self.queue_draw()
     
     def on_button_release(self, widget, event):
@@ -471,9 +478,10 @@ class DesignCanvas(Gtk.DrawingArea):
         if not self.drag_start or not self.selected_element:
             return
         
-        # Calculate movement
-        dx = int(event.x) - self.drag_start[0]
-        dy = int(event.y) - self.drag_start[1]
+        # Calculate movement in label coordinates
+        lx, ly = self._screen_to_label(event.x, event.y)
+        dx = lx - self.drag_start[0]
+        dy = ly - self.drag_start[1]
         
         # If a handle is active, resize instead of move
         if self.active_handle:
@@ -491,7 +499,7 @@ class DesignCanvas(Gtk.DrawingArea):
             self.selected_element.y = min(self.selected_element.y, self.label_height - self.selected_element.height)
         
         # Update drag start for next movement (always update)
-        self.drag_start = (int(event.x), int(event.y))
+        self.drag_start = (lx, ly)
         
         self.queue_draw()
         if self.on_change_callback:
