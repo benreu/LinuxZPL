@@ -73,19 +73,6 @@ class ZPLViewerWindow(Gtk.Window):
         file_menu.append(quit_item)
         
         file_menu.show_all()
-
-        # Renderer menu
-        renderer_menu = Gtk.Menu()
-        renderer_menu_item = Gtk.MenuItem(label="Renderer")
-        renderer_menu_item.set_submenu(renderer_menu)
-        menu_bar.append(renderer_menu_item)
-        
-        # Refresh menu item
-        refresh_item = Gtk.MenuItem(label="Refresh")
-        refresh_item.connect("activate", self.on_refresh_clicked)
-        renderer_menu.append(refresh_item)
-
-        renderer_menu.show_all()
         
         # Settings menu
         settings_menu = Gtk.Menu()
@@ -108,13 +95,9 @@ class ZPLViewerWindow(Gtk.Window):
         content_box.set_margin_end(10)
         main_box.pack_start(content_box, True, True, 0)
         
-        # Create paned view with text editor and preview
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        content_box.pack_start(paned, True, True, 0)
-        
         # Left side: Designer canvas
         left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        paned.add1(left_box)
+        content_box.pack_start(left_box, True, True, 0)
         
         # Designer toolbar
         toolbar_label = Gtk.Label(label="Designer")
@@ -161,29 +144,9 @@ class ZPLViewerWindow(Gtk.Window):
         viewport.add(self.design_canvas)
         scrolled_canvas.add(viewport)
         
-        # Right side: Preview
-        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        paned.add2(right_box)
-        
-        right_label = Gtk.Label(label="Preview")
-        right_label.set_halign(Gtk.Align.START)
-        right_box.pack_start(right_label, False, False, 0)
-        
-        # Image view with scroll
-        scrolled_image = Gtk.ScrolledWindow()
-        scrolled_image.set_hexpand(True)
-        scrolled_image.set_vexpand(True)
-        right_box.pack_start(scrolled_image, True, True, 0)
-        
-        self.image_view = Gtk.Image()
-        scrolled_image.add(self.image_view)
-        
         # Status bar
         self.status_bar = Gtk.Statusbar()
         main_box.pack_end(self.status_bar, False, False, 0)
-        
-        # Set paned position
-        paned.set_position(400)
         
         self.show_all()
         self.update_status("Ready")
@@ -397,9 +360,7 @@ class ZPLViewerWindow(Gtk.Window):
             # Update status bar
             filename = os.path.basename(filepath)
             self.update_status(f"Loaded: {filename}")
-            
-            # Render and display
-            self.render_zpl()
+
         except Exception as e:
             self.show_error_dialog(f"Failed to load file: {e}")
             self.update_status("Error loading file")
@@ -515,10 +476,6 @@ class ZPLViewerWindow(Gtk.Window):
         
         self.design_canvas.queue_draw()
     
-    def on_refresh_clicked(self, widget):
-        """Handle refresh button click."""
-        self.render_zpl()
-    
     def on_label_settings_clicked(self, widget):
         """Handle label settings menu item click."""
         dialog = Gtk.Dialog(title="Label Settings", parent=self, flags=0)
@@ -604,14 +561,12 @@ class ZPLViewerWindow(Gtk.Window):
             self.design_canvas.set_label_size(new_width, new_height)
             self.unsaved_changes = True
             self.update_status(f"Label size set to {new_width}x{new_height}")
-            self.render_zpl()
         
         dialog.destroy()
     
     def on_canvas_changed(self):
         """Handle canvas changes (drag, resize, etc.) and mark as unsaved."""
         self.unsaved_changes = True
-        self.render_zpl()
     
     def render_zpl(self):
         """Render the ZPL content from the design canvas."""
