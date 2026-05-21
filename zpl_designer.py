@@ -12,6 +12,7 @@ from typing import List, Optional, Tuple
 import re
 import time
 from code128 import encode_b as _code128_modules
+from PIL import Image as PILImage
 
 
 @dataclass
@@ -83,6 +84,87 @@ class BarcodeElement(DesignElement):
         return f"^FO{self.x},{self.y}\n^BC,{self.height}\n^FD{self.barcode_value}^FS\n"
 
 
+class ImageElement(DesignElement):
+    """Image element for the designer, rendered from a JPG/PNG file."""
+
+    def __init__(self, x: int = 50, y: int = 50, width: int = 200, height: int = 200,
+                 image_path: str = "", _pil_image=None):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.image_path = image_path
+        self.element_type = 'image'
+        self._pil_image = _pil_image  # set when element is decoded from ZPL data
+        self._pixbuf: Optional[GdkPixbuf.Pixbuf] = None
+        self._load_pixbuf()
+
+    def _load_pixbuf(self):
+        if self.image_path:
+            try:
+                self._pixbuf = GdkPixbuf.Pixbuf.new_from_file(self.image_path)
+            except Exception:
+                self._pixbuf = None
+        elif self._pil_image is not None:
+            try:
+                import io
+                bio = io.BytesIO()
+                self._pil_image.convert('RGB').save(bio, format='PNG')
+                bio.seek(0)
+                loader = GdkPixbuf.PixbufLoader.new_with_type('png')
+                loader.write(bio.read())
+                loader.close()
+                self._pixbuf = loader.get_pixbuf()
+            except Exception:
+                self._pixbuf = None
+
+    def to_zpl(self) -> str:
+        if not self.image_path and self._pil_image is None:
+            return ""
+        import numpy as np, io as _io, base64
+
+        if self.image_path:
+            img = PILImage.open(self.image_path)
+            if img.mode not in ('RGB', 'L'):
+                img = img.convert('RGB')
+        else:
+            img = self._pil_image
+            if img.mode not in ('RGB', 'L'):
+                img = img.convert('RGB')
+
+        img_sized = img.resize((self.width, self.height), PILImage.LANCZOS)
+
+        # 1-bit encoding for the ZPL printer (^GF only supports 1-bit)
+        img_1bit = img_sized.convert('1')
+        bytes_per_row = (self.width + 7) // 8
+        total_bytes = bytes_per_row * self.height
+        arr = np.array(img_1bit, dtype=np.uint8)
+        padded_w = bytes_per_row * 8
+        if padded_w > self.width:
+            pad = np.full((self.height, padded_w - self.width), 255, dtype=np.uint8)
+            arr = np.concatenate([arr, pad], axis=1)
+        arr = arr.reshape(self.height, bytes_per_row, 8)
+        bits = (arr == 0).astype(np.uint8)
+        weights = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint8)
+        packed = (bits * weights).sum(axis=2).astype(np.uint8)
+        data = packed.tobytes().hex().upper()
+
+        # Embed full-colour JPEG preview in a ^FX comment so the designer can
+        # restore the original image quality when the ZPL file is reopened.
+        # Printers ignore ^FX fields entirely.
+        preview_bio = _io.BytesIO()
+        img_sized.convert('RGB').save(preview_bio, format='JPEG', quality=85, optimize=True)
+        b64_preview = base64.b64encode(preview_bio.getvalue()).decode('ascii')
+
+        zpl = f"^FO{self.x},{self.y}\n"
+        zpl += f"^FXDESIGNER_PREVIEW:{b64_preview}\n"
+        if self.image_path:
+            zpl += f"^FXDESIGNER_PATH:{self.image_path}\n"
+        zpl += f"^GFA,{total_bytes},{total_bytes},{bytes_per_row},{data}\n"
+        zpl += f"^FS\n"
+        return zpl
+
+
 class DesignCanvas(Gtk.DrawingArea):
     """Canvas widget for designing ZPL layouts with drag and drop."""
     
@@ -144,6 +226,17 @@ class DesignCanvas(Gtk.DrawingArea):
     def add_barcode_element(self):
         """Add a barcode element to the canvas."""
         element = BarcodeElement(50 + len(self.elements) * 20, 250 + len(self.elements) * 20)
+        self.elements.append(element)
+        self.selected_element = element
+        self.queue_draw()
+        if self.on_change_callback:
+            self.on_change_callback()
+        return element
+
+    def add_image_element(self, image_path: str):
+        """Add an image element loaded from a file."""
+        offset = len(self.elements) * 20
+        element = ImageElement(50 + offset, 50 + offset, 200, 200, image_path)
         self.elements.append(element)
         self.selected_element = element
         self.queue_draw()
@@ -350,6 +443,8 @@ class DesignCanvas(Gtk.DrawingArea):
             self._draw_frame_element(context, element, selected)
         elif element.element_type == 'barcode':
             self._draw_barcode_element(context, element, selected)
+        elif element.element_type == 'image':
+            self._draw_image_element(context, element, selected)
     
     def _draw_text_element(self, context, element, selected: bool):
         """Draw a text element."""
@@ -488,6 +583,46 @@ class DesignCanvas(Gtk.DrawingArea):
                                 self.HANDLE_SIZE, self.HANDLE_SIZE)
                 context.stroke()
     
+    def _draw_image_element(self, context, element, selected: bool):
+        """Draw an image element."""
+        if element._pixbuf:
+            scaled = element._pixbuf.scale_simple(
+                element.width, element.height, GdkPixbuf.InterpType.BILINEAR
+            )
+            Gdk.cairo_set_source_pixbuf(context, scaled, element.x, element.y)
+            context.paint()
+        else:
+            context.set_source_rgb(0.85, 0.85, 0.85)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.fill()
+            context.set_source_rgb(0.5, 0.5, 0.5)
+            context.select_font_face("sans")
+            context.set_font_size(14)
+            context.move_to(element.x + 5, element.y + element.height / 2)
+            context.show_text("[No Image]")
+
+        if selected:
+            context.set_source_rgb(0, 0, 1)
+            context.set_line_width(2)
+        else:
+            context.set_source_rgb(0.3, 0.3, 0.3)
+            context.set_line_width(1)
+        context.rectangle(element.x, element.y, element.width, element.height)
+        context.stroke()
+
+        if selected:
+            handles = self._get_handles(element)
+            for _, (hx, hy) in handles.items():
+                context.set_source_rgb(0, 0.5, 1)
+                context.rectangle(hx - self.HANDLE_HALF, hy - self.HANDLE_HALF,
+                                   self.HANDLE_SIZE, self.HANDLE_SIZE)
+                context.fill()
+                context.set_source_rgb(0, 0, 1)
+                context.set_line_width(1)
+                context.rectangle(hx - self.HANDLE_HALF, hy - self.HANDLE_HALF,
+                                   self.HANDLE_SIZE, self.HANDLE_SIZE)
+                context.stroke()
+
     def _show_context_menu(self, event, element):
         """Show right-click context menu for element reordering."""
         menu = Gtk.Menu()

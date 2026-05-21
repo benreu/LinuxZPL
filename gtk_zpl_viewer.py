@@ -9,9 +9,10 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GdkPixbuf, Gdk
 import os
+import base64
 from pathlib import Path
 from zpl_renderer import ZPLRenderer
-from zpl_designer import DesignCanvas, TextElement, FrameElement, BarcodeElement
+from zpl_designer import DesignCanvas, TextElement, FrameElement, BarcodeElement, ImageElement
 from PIL import Image
 import io
 
@@ -121,7 +122,12 @@ class ZPLViewerWindow(Gtk.Window):
         add_barcode_btn = Gtk.Button(label="+ Barcode")
         add_barcode_btn.connect("clicked", self.on_add_barcode_clicked)
         toolbar_box.pack_start(add_barcode_btn, False, False, 0)
-        
+
+        # Add image button
+        add_image_btn = Gtk.Button(label="+ Image")
+        add_image_btn.connect("clicked", self.on_add_image_clicked)
+        toolbar_box.pack_start(add_image_btn, False, False, 0)
+
         # Delete button
         delete_btn = Gtk.Button(label="Delete")
         delete_btn.connect("clicked", self.on_delete_clicked)
@@ -276,9 +282,13 @@ class ZPLViewerWindow(Gtk.Window):
         self.save_file_or_ask_for_filename()
 
     def save_file_or_ask_for_filename(self):
-        # Get ZPL from designer
-        content = self.design_canvas.to_zpl()
-        
+        # Get ZPL from designer (may raise if an image element fails to encode)
+        try:
+            content = self.design_canvas.to_zpl()
+        except Exception as e:
+            self.show_error_dialog(f"Failed to generate ZPL: {e}")
+            return
+
         if not content.strip() or content == "^XA\n^XZ":
             self.show_error_dialog("No content to save")
             return
@@ -420,9 +430,21 @@ class ZPLViewerWindow(Gtk.Window):
                     
                     # Look ahead for the element type
                     i += 1
+                    preview_b64 = None  # JPEG preview embedded by designer on save
+                    path_hint = None    # original file path embedded by designer on save
                     while i < len(lines):
                         next_line = lines[i].strip()
-                        
+
+                        # Designer metadata in ^FX comments — collect and keep looking
+                        if next_line.startswith('^FXDESIGNER_PREVIEW:'):
+                            preview_b64 = next_line[len('^FXDESIGNER_PREVIEW:'):]
+                            i += 1
+                            continue
+                        elif next_line.startswith('^FXDESIGNER_PATH:'):
+                            path_hint = next_line[len('^FXDESIGNER_PATH:'):]
+                            i += 1
+                            continue
+
                         if next_line.startswith('^AF'):
                             # Text element
                             match = re.match(r'\^AF[A-Z]?,(\d+),(\d+)', next_line)
@@ -430,7 +452,7 @@ class ZPLViewerWindow(Gtk.Window):
                             if match:
                                 font_h = int(match.group(1))
                                 font_w = int(match.group(2))
-                            
+
                             # Get FD (field data)
                             i += 1
                             if i < len(lines) and lines[i].strip().startswith('^FD'):
@@ -458,18 +480,67 @@ class ZPLViewerWindow(Gtk.Window):
                             match = re.match(r'\^BC[A-Z]?,(\d+)?', next_line)
                             h = int(match.group(1)) if match and match.group(1) else 100
                             barcode_value = "123456789"
-                            
+
                             # Get barcode value from next FD field
                             i += 1
                             if i < len(lines) and lines[i].strip().startswith('^FD'):
                                 barcode_value = lines[i].strip()[3:-3]  # Remove ^FD and ^FS
-                            
+
                             barcode = BarcodeElement(x, y, height=h, barcode_value=barcode_value)
                             self.design_canvas.elements.append(barcode)
                             break
+                        elif next_line.startswith('^GF'):
+                            # Image element — prefer embedded JPEG preview (same quality as
+                            # first import), fall back to decoding 1-bit ^GF data only when
+                            # no preview exists (e.g. ZPL from an external tool).
+                            gf_match = re.match(r'\^GFA,(\d+),(\d+),(\d+),(.*)', next_line)
+                            if gf_match:
+                                total_b = int(gf_match.group(1))
+                                bpr = int(gf_match.group(3))
+                                gf_h = total_b // bpr
+                                gf_w = bpr * 8
+                                img_el = None
+                                # 1. Original file still present — highest quality
+                                if path_hint and os.path.exists(path_hint):
+                                    try:
+                                        img_el = ImageElement(x, y, gf_w, gf_h,
+                                                              image_path=path_hint)
+                                    except Exception:
+                                        img_el = None
+                                # 2. Embedded JPEG preview — same quality as first import
+                                if img_el is None and preview_b64:
+                                    try:
+                                        jpeg_data = base64.b64decode(preview_b64)
+                                        pil_img = Image.open(
+                                            io.BytesIO(jpeg_data)).convert('RGB')
+                                        img_el = ImageElement(x, y, gf_w, gf_h,
+                                                              _pil_image=pil_img)
+                                    except Exception:
+                                        img_el = None
+                                # 3. Decode 1-bit ^GF data — last resort
+                                if img_el is None:
+                                    hex_data = gf_match.group(4).strip()
+                                    if total_b > 0 and bpr > 0 and hex_data:
+                                        try:
+                                            import numpy as np
+                                            raw = bytes.fromhex(hex_data)
+                                            arr = np.frombuffer(
+                                                raw, dtype=np.uint8).reshape(gf_h, bpr)
+                                            unpacked = np.unpackbits(arr, axis=1)[:, :gf_w]
+                                            pixel_data = (
+                                                (1 - unpacked) * 255).astype(np.uint8)
+                                            pil_img = Image.fromarray(
+                                                pixel_data, mode='L').convert('RGB')
+                                            img_el = ImageElement(x, y, gf_w, gf_h,
+                                                                  _pil_image=pil_img)
+                                        except Exception:
+                                            pass
+                                if img_el is not None:
+                                    self.design_canvas.elements.append(img_el)
+                            break
                         elif next_line.startswith('^FS'):
                             break
-                        
+
                         i += 1
             
             i += 1
@@ -616,6 +687,35 @@ class ZPLViewerWindow(Gtk.Window):
         """Handle add barcode element button click."""
         self.design_canvas.add_barcode_element()
     
+    def on_add_image_clicked(self, widget):
+        """Handle add image element button click."""
+        dialog = Gtk.FileChooserDialog(
+            title="Load Image",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+
+        filter_img = Gtk.FileFilter()
+        filter_img.set_name("Image files (*.jpg, *.jpeg, *.png)")
+        for pat in ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG"):
+            filter_img.add_pattern(pat)
+        dialog.add_filter(filter_img)
+
+        filter_all = Gtk.FileFilter()
+        filter_all.set_name("All files")
+        filter_all.add_pattern("*")
+        dialog.add_filter(filter_all)
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            filepath = dialog.get_filename()
+            dialog.destroy()
+            self.design_canvas.add_image_element(filepath)
+        else:
+            dialog.destroy()
+
     def on_delete_clicked(self, widget):
         """Handle delete selected element button click."""
         self.design_canvas.remove_selected()
@@ -628,8 +728,6 @@ class ZPLViewerWindow(Gtk.Window):
     
     def on_element_double_clicked(self, widget, element):
         """Handle double-click on canvas element for editing."""
-        from zpl_designer import TextElement, BarcodeElement, FrameElement
-        
         if isinstance(element, TextElement):
             # Show text edit dialog
             dialog = Gtk.Dialog(title="Edit Text", parent=self, flags=0)
@@ -710,6 +808,36 @@ class ZPLViewerWindow(Gtk.Window):
             
             dialog.destroy()
         
+        elif isinstance(element, ImageElement):
+            dialog = Gtk.FileChooserDialog(
+                title="Replace Image",
+                parent=self,
+                action=Gtk.FileChooserAction.OPEN
+            )
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                               Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+
+            filter_img = Gtk.FileFilter()
+            filter_img.set_name("Image files (*.jpg, *.jpeg, *.png)")
+            for pat in ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG"):
+                filter_img.add_pattern(pat)
+            dialog.add_filter(filter_img)
+
+            filter_all = Gtk.FileFilter()
+            filter_all.set_name("All files")
+            filter_all.add_pattern("*")
+            dialog.add_filter(filter_all)
+
+            response = dialog.run()
+            if response == Gtk.ResponseType.OK:
+                element.image_path = dialog.get_filename()
+                dialog.destroy()
+                element._load_pixbuf()
+                self.design_canvas.queue_draw()
+                self.on_canvas_changed()
+            else:
+                dialog.destroy()
+
         elif isinstance(element, FrameElement):
             # Show Frame edit dialog
             dialog = Gtk.Dialog(title="Edit Frame", parent=self, flags=0)
