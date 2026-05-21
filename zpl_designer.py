@@ -158,6 +158,48 @@ class DesignCanvas(Gtk.DrawingArea):
             self.queue_draw()
             if self.on_change_callback:
                 self.on_change_callback()
+
+    def bring_forward(self):
+        """Move selected element one step forward (toward top)."""
+        if not self.selected_element:
+            return
+        idx = self.elements.index(self.selected_element)
+        if idx < len(self.elements) - 1:
+            self.elements[idx], self.elements[idx + 1] = self.elements[idx + 1], self.elements[idx]
+            self.queue_draw()
+            if self.on_change_callback:
+                self.on_change_callback()
+
+    def send_backward(self):
+        """Move selected element one step backward (toward bottom)."""
+        if not self.selected_element:
+            return
+        idx = self.elements.index(self.selected_element)
+        if idx > 0:
+            self.elements[idx], self.elements[idx - 1] = self.elements[idx - 1], self.elements[idx]
+            self.queue_draw()
+            if self.on_change_callback:
+                self.on_change_callback()
+
+    def bring_to_front(self):
+        """Move selected element to the top."""
+        if not self.selected_element:
+            return
+        self.elements.remove(self.selected_element)
+        self.elements.append(self.selected_element)
+        self.queue_draw()
+        if self.on_change_callback:
+            self.on_change_callback()
+
+    def send_to_back(self):
+        """Move selected element to the bottom."""
+        if not self.selected_element:
+            return
+        self.elements.remove(self.selected_element)
+        self.elements.insert(0, self.selected_element)
+        self.queue_draw()
+        if self.on_change_callback:
+            self.on_change_callback()
     
     def clear(self):
         """Clear all elements from the canvas."""
@@ -243,7 +285,7 @@ class DesignCanvas(Gtk.DrawingArea):
         # Ensure minimum size
         element.width = max(20, element.width)
         element.height = max(20, element.height)
-        
+
         # Clamp to label bounds
         element.x = max(0, element.x)
         element.y = max(0, element.y)
@@ -254,6 +296,12 @@ class DesignCanvas(Gtk.DrawingArea):
             element.width = self.label_width - element.x
         if element.y + element.height > self.label_height:
             element.height = self.label_height - element.y
+
+        # Sync font dimensions for text elements
+        if element.element_type == 'text':
+            element.font_height = element.height
+            text_len = len(element.text) if element.text else 1
+            element.font_width = max(1, element.width // text_len)
     
     def _get_scale_factor(self) -> float:
         allocation = self.get_allocation()
@@ -421,15 +469,57 @@ class DesignCanvas(Gtk.DrawingArea):
                                 self.HANDLE_SIZE, self.HANDLE_SIZE)
                 context.stroke()
     
+    def _show_context_menu(self, event, element):
+        """Show right-click context menu for element reordering."""
+        menu = Gtk.Menu()
+
+        item_front = Gtk.MenuItem(label="Bring to Front")
+        item_front.connect("activate", lambda _: self.bring_to_front())
+        menu.append(item_front)
+
+        item_forward = Gtk.MenuItem(label="Bring Forward")
+        item_forward.connect("activate", lambda _: self.bring_forward())
+        menu.append(item_forward)
+
+        item_backward = Gtk.MenuItem(label="Send Backward")
+        item_backward.connect("activate", lambda _: self.send_backward())
+        menu.append(item_backward)
+
+        item_back = Gtk.MenuItem(label="Send to Back")
+        item_back.connect("activate", lambda _: self.send_to_back())
+        menu.append(item_back)
+
+        idx = self.elements.index(element)
+        item_front.set_sensitive(idx < len(self.elements) - 1)
+        item_forward.set_sensitive(idx < len(self.elements) - 1)
+        item_backward.set_sensitive(idx > 0)
+        item_back.set_sensitive(idx > 0)
+
+        menu.show_all()
+        menu.popup_at_pointer(event)
+
     def on_button_press(self, widget, event):
         """Handle mouse button press for element selection and double-click detection."""
+        lx, ly = self._screen_to_label(event.x, event.y)
+
+        if event.button == 3:
+            clicked_element = None
+            for element in reversed(self.elements):
+                if element.contains_point(lx, ly):
+                    clicked_element = element
+                    break
+            if clicked_element:
+                self.selected_element = clicked_element
+                self.queue_draw()
+                self._show_context_menu(event, clicked_element)
+            return
+
         if event.button != 1:
             return
-        
+
         # Reset active handle for new click
         self.active_handle = None
-        
-        lx, ly = self._screen_to_label(event.x, event.y)
+
 
         # Check if clicking on a resize handle of the selected element
         if self.selected_element:
