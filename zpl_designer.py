@@ -313,31 +313,19 @@ class DesignCanvas(Gtk.DrawingArea):
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
         
-        # Draw text with scaled font size based on element's font_height and font_width
+        # Draw text in label coordinates (context is already scaled by on_draw)
         context.set_source_rgb(0, 0, 0)
         context.select_font_face("monospace")
-        # Scale font height based on canvas display size relative to label size
-        allocation = self.get_allocation()
-        if allocation.width > 0 and self.label_width > 0:
-            scale_factor = allocation.width / self.label_width
-        else:
-            scale_factor = 1.0
-        scaled_font_size = max(8, int(element.font_height * scale_factor))
-        context.set_font_size(scaled_font_size)
+        context.set_font_size(element.font_height)
 
-        # Compute horizontal scale so rendered text width matches element.width
-        # Measure unscaled text width at the scaled font size, then scale horizontally
+        # Measure text width in label coordinates and scale horizontally to match element.width
         extents = context.text_extents(element.text[:20])
         measured_width = extents.width if extents.width > 0 else 1.0
-        # Desired display width: element.width is in label pixels; convert to display pixels
-        desired_display_width = element.width * scale_factor
-        horizontal_scale = desired_display_width / measured_width
-        # Clamp scale to reasonable bounds to avoid extreme distortion
+        horizontal_scale = element.width / measured_width
         horizontal_scale = max(0.2, min(horizontal_scale, 5.0))
 
         context.save()
-        # Translate to element origin (small padding)
-        context.translate(element.x + 2, element.y + element.font_height + 2)
+        context.translate(element.x + 2, element.y + element.font_height - 2)
         context.scale(horizontal_scale, 1.0)
         context.show_text(element.text[:20])
         context.restore()
