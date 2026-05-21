@@ -12,7 +12,8 @@ from typing import List, Optional, Tuple
 import re
 import time
 from code128 import encode_b as _code128_modules
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageDraw as PILImageDraw, ImageFont as PILImageFont
+import io as _io
 
 
 @dataclass
@@ -32,8 +33,8 @@ class DesignElement:
 
 class TextElement(DesignElement):
     """Text element for the designer."""
-    
-    def __init__(self, x: int = 50, y: int = 50, text: str = "Label", 
+
+    def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
                  font_height: int = 36, font_width: int = 20):
         self.x = x
         self.y = y
@@ -43,11 +44,18 @@ class TextElement(DesignElement):
         self.width = len(text) * font_width
         self.height = font_height
         self.element_type = 'text'
+        self.font_path: Optional[str] = None
+        self.font_family: Optional[str] = None
+        self.printer_font_name: Optional[str] = None
     
-    def to_zpl(self) -> str:
+    def to_zpl(self, printer_font_name: Optional[str] = None) -> str:
         """Convert to ZPL commands."""
+        effective_font = self.printer_font_name or printer_font_name
         zpl = f"^FO{self.x},{self.y}\n"
-        zpl += f"^AFN,{self.font_height},{self.font_width}\n"
+        if effective_font:
+            zpl += f"^A@N,{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
+        else:
+            zpl += f"^AFN,{self.font_height},{self.font_width}\n"
         zpl += f"^FD{self.text}^FS\n"
         return zpl
 
@@ -190,8 +198,11 @@ class DesignCanvas(Gtk.DrawingArea):
         # Label size constraints (in pixels, default 4x6 inch at 203 DPI)
         self.label_width = label_width
         self.label_height = label_height
-        
-        
+
+        self.font_path: Optional[str] = None
+        self.font_family: Optional[str] = None
+        self.printer_font_name: Optional[str] = None
+
         # Set up event handlers
         self.connect("draw", self.on_draw)
         self.connect("button-press-event", self.on_button_press)
@@ -301,14 +312,40 @@ class DesignCanvas(Gtk.DrawingArea):
         self.selected_element = None
         self.queue_draw()
     
+    def _register_font(self, font_path: str):
+        import ctypes
+        try:
+            fc = ctypes.CDLL("libfontconfig.so.1")
+            fc.FcConfigAppFontAddFile.restype = ctypes.c_int
+            fc.FcConfigAppFontAddFile.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            fc.FcConfigAppFontAddFile(None, font_path.encode())
+        except Exception:
+            pass
+
+    def set_font(self, font_path: str, font_family: str, printer_font_name: str):
+        self.font_path = font_path
+        self.font_family = font_family
+        self.printer_font_name = printer_font_name
+        self._register_font(font_path)
+        self.queue_draw()
+
+    def set_element_font(self, element: 'TextElement', font_path: str, font_family: str, printer_font_name: str):
+        element.font_path = font_path
+        element.font_family = font_family
+        element.printer_font_name = printer_font_name
+        self._register_font(font_path)
+        self.queue_draw()
+
     def to_zpl(self) -> str:
         """Generate ZPL code from canvas elements with label size settings."""
         zpl = "^XA\n"
-        # Add label size commands for printer
-        zpl += f"^PW{self.label_width}\n"  # Set print width
-        zpl += f"^LL{self.label_height}\n"  # Set label length
+        zpl += f"^PW{self.label_width}\n"
+        zpl += f"^LL{self.label_height}\n"
         for element in self.elements:
-            zpl += element.to_zpl()
+            if self.printer_font_name and element.element_type == 'text':
+                zpl += element.to_zpl(printer_font_name=self.printer_font_name)
+            else:
+                zpl += element.to_zpl()
         zpl += "^XZ"
         return zpl
     
@@ -446,6 +483,44 @@ class DesignCanvas(Gtk.DrawingArea):
         elif element.element_type == 'image':
             self._draw_image_element(context, element, selected)
     
+    def _render_text_pil(self, context, element, font_path: str) -> bool:
+        """Render element text using PIL and blit onto the Cairo context. Returns True on success."""
+        try:
+            pil_font = PILImageFont.truetype(font_path, element.font_height)
+        except Exception:
+            return False
+
+        text = element.text[:20] or " "
+        tmp = PILImage.new('RGBA', (1, 1))
+        bbox = PILImageDraw.Draw(tmp).textbbox((0, 0), text, font=pil_font)
+        text_w = max(1, bbox[2] - bbox[0])
+        text_h = max(1, bbox[3] - bbox[1])
+
+        img = PILImage.new('RGBA', (text_w + 4, text_h + 4), (0, 0, 0, 0))
+        PILImageDraw.Draw(img).text((2 - bbox[0], 2 - bbox[1]), text, fill=(0, 0, 0, 255), font=pil_font)
+
+        # Convert PIL → GdkPixbuf via PNG
+        buf = _io.BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        loader = GdkPixbuf.PixbufLoader.new_with_type('png')
+        loader.write(buf.read())
+        loader.close()
+        pixbuf = loader.get_pixbuf()
+        if not pixbuf:
+            return False
+
+        # Draw at label coords; apply horizontal scale so text spans element.width
+        h_scale = element.width / text_w if text_w > 0 else 1.0
+        h_scale = max(0.2, min(h_scale, 5.0))
+        context.save()
+        context.translate(element.x + 2, element.y)
+        context.scale(h_scale, 1.0)
+        Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+        context.paint()
+        context.restore()
+        return True
+
     def _draw_text_element(self, context, element, selected: bool):
         """Draw a text element."""
         # Draw text background
@@ -463,22 +538,25 @@ class DesignCanvas(Gtk.DrawingArea):
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
         
-        # Draw text in label coordinates (context is already scaled by on_draw)
+        # Draw text using PIL when a custom font is set, otherwise Cairo toy font
         context.set_source_rgb(0, 0, 0)
-        context.select_font_face("monospace")
-        context.set_font_size(element.font_height)
+        font_path = element.font_path or self.font_path
+        pil_rendered = False
+        if font_path:
+            pil_rendered = self._render_text_pil(context, element, font_path)
 
-        # Measure text width in label coordinates and scale horizontally to match element.width
-        extents = context.text_extents(element.text[:20])
-        measured_width = extents.width if extents.width > 0 else 1.0
-        horizontal_scale = element.width / measured_width
-        horizontal_scale = max(0.2, min(horizontal_scale, 5.0))
-
-        context.save()
-        context.translate(element.x + 2, element.y + element.font_height - 2)
-        context.scale(horizontal_scale, 1.0)
-        context.show_text(element.text[:20])
-        context.restore()
+        if not pil_rendered:
+            context.select_font_face(element.font_family or self.font_family or "monospace")
+            context.set_font_size(element.font_height)
+            extents = context.text_extents(element.text[:20])
+            measured_width = extents.width if extents.width > 0 else 1.0
+            horizontal_scale = element.width / measured_width
+            horizontal_scale = max(0.2, min(horizontal_scale, 5.0))
+            context.save()
+            context.translate(element.x + 2, element.y + element.font_height - 2)
+            context.scale(horizontal_scale, 1.0)
+            context.show_text(element.text[:20])
+            context.restore()
         
         # Draw resize handles if selected
         if selected:

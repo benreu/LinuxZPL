@@ -40,17 +40,28 @@ class ZPLRenderer:
         self.font_cache = {}
         self.barcode_height = 0
         self.is_barcode_mode = False
-    
+        self.custom_font_path: Optional[str] = None
+        self.current_field_font_path: Optional[str] = None
+        self.font_registry: dict = {}
+
+    def set_font(self, font_path: str):
+        self.custom_font_path = font_path
+        self.font_cache.clear()
+
+    def register_font(self, printer_font_name: str, font_path: str):
+        self.font_registry[printer_font_name.upper()] = font_path
+        self.font_cache.clear()
+
     def _get_font(self, size: int) -> ImageFont.FreeTypeFont:
         """Get or create a cached font."""
-        if size not in self.font_cache:
+        path = self.current_field_font_path or self.custom_font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        cache_key = (size, path)
+        if cache_key not in self.font_cache:
             try:
-                # Try to use a default system font
-                self.font_cache[size] = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
+                self.font_cache[cache_key] = ImageFont.truetype(path, size)
             except (IOError, OSError):
-                # Fallback to default font
-                self.font_cache[size] = ImageFont.load_default()
-        return self.font_cache[size]
+                self.font_cache[cache_key] = ImageFont.load_default()
+        return self.font_cache[cache_key]
     
     def _parse_position(self, x: str, y: str) -> Tuple[int, int]:
         """Convert ZPL position values to pixels."""
@@ -101,6 +112,7 @@ class ZPLRenderer:
         # Create a new image with white background
         self.image = Image.new('RGB', (self.width, self.height), color='white')
         self.draw = ImageDraw.Draw(self.image)
+        self.current_field_font_path = None
         
         # Parse and execute ZPL commands
         self._execute_zpl(zpl_content)
@@ -183,10 +195,17 @@ class ZPLRenderer:
             self.field_data = params
         elif command == 'AF':
             # Font selection: ^AFn,h,w (orientation, height, width)
-            # Format: ^AFN,36,20 means orientation=N, height=36, width=20
             match = re.match(r'([A-Z]?)(?:,(\d+))?(?:,(\d+))?', params)
             if match and match.group(2):
                 self.current_font_size = int(match.group(2))
+            self.current_field_font_path = None
+        elif command == 'A@':
+            # Downloaded font: ^A@o,h,w,device:name.TTF
+            match = re.match(r'([A-Z]?),(\d+),(\d+),([^:]+):(.+)', params)
+            if match:
+                self.current_font_size = int(match.group(2))
+                font_name = match.group(5).replace('.TTF', '').replace('.ttf', '').upper()
+                self.current_field_font_path = self.font_registry.get(font_name)
         elif command == 'GB':
             # Draw box: ^GBw,h,t,c
             match = re.match(r'(\d+),(\d+)(?:,(\d+))?(?:,(\d+))?', params)
