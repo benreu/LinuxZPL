@@ -11,7 +11,7 @@ from gi.repository import Gtk, GdkPixbuf, Gdk
 import os
 from pathlib import Path
 from zpl_renderer import ZPLRenderer
-from zpl_designer import DesignCanvas, TextElement, BoxElement, BarcodeElement
+from zpl_designer import DesignCanvas, TextElement, FrameElement, BarcodeElement
 from PIL import Image
 import io
 
@@ -129,10 +129,10 @@ class ZPLViewerWindow(Gtk.Window):
         add_text_btn.connect("clicked", self.on_add_text_clicked)
         toolbar_box.pack_start(add_text_btn, False, False, 0)
         
-        # Add box button
-        add_box_btn = Gtk.Button(label="+ Box")
-        add_box_btn.connect("clicked", self.on_add_box_clicked)
-        toolbar_box.pack_start(add_box_btn, False, False, 0)
+        # Add frame button
+        add_frame_btn = Gtk.Button(label="+ Frame")
+        add_frame_btn.connect("clicked", self.on_add_frame_clicked)
+        toolbar_box.pack_start(add_frame_btn, False, False, 0)
         
         # Add barcode button
         add_barcode_btn = Gtk.Button(label="+ Barcode")
@@ -256,6 +256,50 @@ class ZPLViewerWindow(Gtk.Window):
         filter_all.add_pattern("*")
         dialog.add_filter(filter_all)
         
+
+        # Preview widget for selected file
+        preview_image = Gtk.Image()
+        dialog.set_preview_widget(preview_image)
+        dialog.set_use_preview_label(False)
+
+        def _update_preview(widget):
+            try:
+                filename = widget.get_preview_filename()
+            except Exception:
+                filename = None
+
+            if not filename or not filename.lower().endswith('.zpl'):
+                dialog.set_preview_widget_active(False)
+                return
+
+            try:
+                renderer = ZPLRenderer(width=self.label_width, height=self.label_height)
+                img = renderer.render_from_file(filename)
+                bio = io.BytesIO()
+                img.save(bio, format='PNG')
+                loader = GdkPixbuf.PixbufLoader()
+                loader.write(bio.getvalue())
+                loader.close()
+                pixbuf = loader.get_pixbuf()
+                if pixbuf:
+                    # Scale preview to reasonable width while keeping aspect
+                    max_preview_w = 300
+                    if pixbuf.get_width() > 0 and pixbuf.get_width() > max_preview_w:
+                        scale = max_preview_w / pixbuf.get_width()
+                        new_w = int(pixbuf.get_width() * scale)
+                        new_h = int(pixbuf.get_height() * scale)
+                        pix = pixbuf.scale_simple(new_w, new_h, GdkPixbuf.InterpType.BILINEAR)
+                    else:
+                        pix = pixbuf
+                    preview_image.set_from_pixbuf(pix)
+                    dialog.set_preview_widget_active(True)
+                else:
+                    dialog.set_preview_widget_active(False)
+            except Exception:
+                dialog.set_preview_widget_active(False)
+
+        dialog.connect('update-preview', _update_preview)
+
         response = dialog.run()
         if response == Gtk.ResponseType.OK:
             filepath = dialog.get_filename()
@@ -431,16 +475,21 @@ class ZPLViewerWindow(Gtk.Window):
                             if i < len(lines) and lines[i].strip().startswith('^FD'):
                                 text = lines[i].strip()[3:-3]  # Remove ^FD and ^FS
                                 self.design_canvas.add_text_element(text)
-                                self.design_canvas.elements[-1].x = x
-                                self.design_canvas.elements[-1].y = y
+                                text_element = self.design_canvas.elements[-1]
+                                text_element.x = x
+                                text_element.y = y
+                                text_element.font_height = font_h
+                                text_element.font_width = font_w
+                                text_element.width = len(text) * font_w
+                                text_element.height = font_h
                             break
                         elif next_line.startswith('^GB'):
-                            # Box element
+                            # Frame element
                             match = re.match(r'\^GB(\d+),(\d+)(?:,(\d+))?', next_line)
                             if match:
                                 w, h = int(match.group(1)), int(match.group(2))
                                 t = int(match.group(3)) if match.group(3) else 2
-                                box = BoxElement(x, y, w, h, t)
+                                box = FrameElement(x, y, w, h, t)
                                 self.design_canvas.elements.append(box)
                             break
                         elif next_line.startswith('^BC'):
@@ -604,9 +653,9 @@ class ZPLViewerWindow(Gtk.Window):
         """Handle add text element button click."""
         self.design_canvas.add_text_element("New Text")
     
-    def on_add_box_clicked(self, widget):
-        """Handle add box element button click."""
-        self.design_canvas.add_box_element()
+    def on_add_frame_clicked(self, widget):
+        """Handle add frame element button click."""
+        self.design_canvas.add_frame_element()
     
     def on_add_barcode_clicked(self, widget):
         """Handle add barcode element button click."""
@@ -624,7 +673,7 @@ class ZPLViewerWindow(Gtk.Window):
     
     def on_element_double_clicked(self, widget, element):
         """Handle double-click on canvas element for editing."""
-        from zpl_designer import TextElement, BarcodeElement, BoxElement
+        from zpl_designer import TextElement, BarcodeElement, FrameElement
         
         if isinstance(element, TextElement):
             # Show text edit dialog
@@ -705,15 +754,15 @@ class ZPLViewerWindow(Gtk.Window):
             
             dialog.destroy()
         
-        elif isinstance(element, BoxElement):
-            # Show box edit dialog
-            dialog = Gtk.Dialog(title="Edit Box", parent=self, flags=0)
+        elif isinstance(element, FrameElement):
+            # Show Frame edit dialog
+            dialog = Gtk.Dialog(title="Edit Frame", parent=self, flags=0)
             dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                               Gtk.STOCK_OK, Gtk.ResponseType.OK)
             
             content = dialog.get_content_area()
             
-            # Box width
+            # Frame width
             width_label = Gtk.Label(label="Width:")
             content.pack_start(width_label, False, False, 0)
             width_spin = Gtk.SpinButton()
@@ -721,7 +770,7 @@ class ZPLViewerWindow(Gtk.Window):
             width_spin.set_adjustment(width_adj)
             content.pack_start(width_spin, False, False, 0)
             
-            # Box height
+            # Frame height
             height_label = Gtk.Label(label="Height:")
             content.pack_start(height_label, False, False, 0)
             height_spin = Gtk.SpinButton()
@@ -729,7 +778,7 @@ class ZPLViewerWindow(Gtk.Window):
             height_spin.set_adjustment(height_adj)
             content.pack_start(height_spin, False, False, 0)
             
-            # Box thickness
+            # Frame thickness
             thickness_label = Gtk.Label(label="Thickness:")
             content.pack_start(thickness_label, False, False, 0)
             thickness_spin = Gtk.SpinButton()

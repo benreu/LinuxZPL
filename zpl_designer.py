@@ -20,7 +20,7 @@ class DesignElement:
     y: int
     width: int
     height: int
-    element_type: str  # 'text', 'box', 'barcode'
+    element_type: str  # 'text', 'frame', 'barcode'
     
     def contains_point(self, x: int, y: int) -> bool:
         """Check if point is within element bounds."""
@@ -50,8 +50,8 @@ class TextElement(DesignElement):
         return zpl
 
 
-class BoxElement(DesignElement):
-    """Box/rectangle element for the designer."""
+class FrameElement(DesignElement):
+    """Frame element for the designer."""
     
     def __init__(self, x: int = 100, y: int = 100, width: int = 200, height: int = 150, thickness: int = 2):
         self.x = x
@@ -59,7 +59,7 @@ class BoxElement(DesignElement):
         self.width = width
         self.height = height
         self.thickness = thickness
-        self.element_type = 'box'
+        self.element_type = 'frame'
     
     def to_zpl(self) -> str:
         """Convert to ZPL commands."""
@@ -130,9 +130,9 @@ class DesignCanvas(Gtk.DrawingArea):
             self.on_change_callback()
         return element
     
-    def add_box_element(self):
-        """Add a box element to the canvas."""
-        element = BoxElement(100 + len(self.elements) * 20, 100 + len(self.elements) * 20)
+    def add_frame_element(self):
+        """Add a frame element to the canvas."""
+        element = FrameElement(100 + len(self.elements) * 20, 100 + len(self.elements) * 20)
         self.elements.append(element)
         self.selected_element = element
         self.queue_draw()
@@ -260,27 +260,39 @@ class DesignCanvas(Gtk.DrawingArea):
         # Draw white background
         context.set_source_rgb(1, 1, 1)
         context.paint()
-        
-        # Draw label boundary (light gray dashed line)
+
+        # Determine scale to map label coordinates -> display coordinates
+        allocation = self.get_allocation()
+        if allocation.width > 0 and self.label_width > 0:
+            scale_factor = allocation.width / self.label_width
+        else:
+            scale_factor = 1.0
+
+        # Apply uniform scaling so all drawing uses label-space coordinates
+        context.save()
+        context.scale(scale_factor, scale_factor)
+
+        # Draw label boundary (light gray dashed line) in label coordinates
         context.set_source_rgb(0.8, 0.8, 0.8)
-        context.set_line_width(1)
+        context.set_line_width(1.0 / max(1e-6, scale_factor))
         context.set_dash([5, 5], 0)
         context.rectangle(0, 0, self.label_width, self.label_height)
         context.stroke()
-        context.set_dash([], 0)  # Reset to solid line
-        
-        # Draw elements
+        context.set_dash([], 0)
+
+        # Draw elements in label coordinates (context is scaled)
         for element in self.elements:
             selected = element == self.selected_element
             self._draw_element(context, element, selected)
-    
+            
+        context.restore()
     
     def _draw_element(self, context, element: DesignElement, selected: bool):
         """Draw a single element."""
         if element.element_type == 'text':
             self._draw_text_element(context, element, selected)
-        elif element.element_type == 'box':
-            self._draw_box_element(context, element, selected)
+        elif element.element_type == 'frame':
+            self._draw_frame_element(context, element, selected)
         elif element.element_type == 'barcode':
             self._draw_barcode_element(context, element, selected)
     
@@ -301,11 +313,10 @@ class DesignCanvas(Gtk.DrawingArea):
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
         
-        # Draw text with scaled font size based on element's font_height
+        # Draw text with scaled font size based on element's font_height and font_width
         context.set_source_rgb(0, 0, 0)
         context.select_font_face("monospace")
         # Scale font height based on canvas display size relative to label size
-        # Get the canvas allocation to calculate scale factor
         allocation = self.get_allocation()
         if allocation.width > 0 and self.label_width > 0:
             scale_factor = allocation.width / self.label_width
@@ -313,8 +324,23 @@ class DesignCanvas(Gtk.DrawingArea):
             scale_factor = 1.0
         scaled_font_size = max(8, int(element.font_height * scale_factor))
         context.set_font_size(scaled_font_size)
-        context.move_to(element.x + 2, element.y + scaled_font_size + 2)
+
+        # Compute horizontal scale so rendered text width matches element.width
+        # Measure unscaled text width at the scaled font size, then scale horizontally
+        extents = context.text_extents(element.text[:20])
+        measured_width = extents.width if extents.width > 0 else 1.0
+        # Desired display width: element.width is in label pixels; convert to display pixels
+        desired_display_width = element.width * scale_factor
+        horizontal_scale = desired_display_width / measured_width
+        # Clamp scale to reasonable bounds to avoid extreme distortion
+        horizontal_scale = max(0.2, min(horizontal_scale, 5.0))
+
+        context.save()
+        # Translate to element origin (small padding)
+        context.translate(element.x + 2, element.y + element.font_height + 2)
+        context.scale(horizontal_scale, 1.0)
         context.show_text(element.text[:20])
+        context.restore()
         
         # Draw resize handles if selected
         if selected:
@@ -333,8 +359,8 @@ class DesignCanvas(Gtk.DrawingArea):
                                 self.HANDLE_SIZE, self.HANDLE_SIZE)
                 context.stroke()
     
-    def _draw_box_element(self, context, element, selected: bool):
-        """Draw a box element."""
+    def _draw_frame_element(self, context, element, selected: bool):
+        """Draw a frame element."""
         if selected:
             context.set_source_rgb(0, 1, 0)
             context.set_line_width(3)
