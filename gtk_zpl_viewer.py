@@ -59,6 +59,11 @@ class ZPLViewerWindow(Gtk.Window):
         save_item.connect("activate", self.on_save_clicked)
         file_menu.append(save_item)
         
+        # Save menu item
+        save_item = Gtk.MenuItem(label="Save as...")
+        save_item.connect("activate", self.on_save_as_clicked)
+        file_menu.append(save_item)
+        
         # Print menu item
         print_item = Gtk.MenuItem(label="Print")
         print_item.connect("activate", self.on_print_clicked)
@@ -299,6 +304,24 @@ class ZPLViewerWindow(Gtk.Window):
           return
         
         # Show save dialog
+        self.save_dialog() 
+    
+    def on_save_as_clicked(self, widget):
+        """Handle save as button click."""
+        self.save_dialog()
+
+    def save_dialog(self):
+        """Show save dialog and save content to file."""
+        try:
+            content = self.design_canvas.to_zpl()
+        except Exception as e:
+            self.show_error_dialog(f"Failed to generate ZPL: {e}")
+            return
+
+        if not content.strip() or content == "^XA\n^XZ":
+            self.show_error_dialog("No content to save")
+            return
+        
         dialog = Gtk.FileChooserDialog(
             title="Save ZPL File",
             parent=self,
@@ -332,7 +355,7 @@ class ZPLViewerWindow(Gtk.Window):
             return True
         else:
             dialog.destroy()
-            return False
+            return False       
   
     def save_zpl_file(self, filepath: str, content: str):
       """Save ZPL content to a file."""
