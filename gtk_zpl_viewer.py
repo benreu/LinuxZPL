@@ -475,8 +475,13 @@ class ZPLViewerWindow(Gtk.Window):
                             if i < len(lines) and lines[i].strip().startswith('^FD'):
                                 text = lines[i].strip()[3:-3]  # Remove ^FD and ^FS
                                 self.design_canvas.add_text_element(text)
-                                self.design_canvas.elements[-1].x = x
-                                self.design_canvas.elements[-1].y = y
+                                text_element = self.design_canvas.elements[-1]
+                                text_element.x = x
+                                text_element.y = y
+                                text_element.font_height = font_h
+                                text_element.font_width = font_w
+                                text_element.width = len(text) * font_w
+                                text_element.height = font_h
                             break
                         elif next_line.startswith('^GB'):
                             # Box element
