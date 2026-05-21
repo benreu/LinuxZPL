@@ -256,6 +256,50 @@ class ZPLViewerWindow(Gtk.Window):
         filter_all.add_pattern("*")
         dialog.add_filter(filter_all)
         
+
+        # Preview widget for selected file
+        preview_image = Gtk.Image()
+        dialog.set_preview_widget(preview_image)
+        dialog.set_use_preview_label(False)
+
+        def _update_preview(widget):
+            try:
+                filename = widget.get_preview_filename()
+            except Exception:
+                filename = None
+
+            if not filename or not filename.lower().endswith('.zpl'):
+                dialog.set_preview_widget_active(False)
+                return
+
+            try:
+                renderer = ZPLRenderer(width=self.label_width, height=self.label_height)
+                img = renderer.render_from_file(filename)
+                bio = io.BytesIO()
+                img.save(bio, format='PNG')
+                loader = GdkPixbuf.PixbufLoader()
+                loader.write(bio.getvalue())
+                loader.close()
+                pixbuf = loader.get_pixbuf()
+                if pixbuf:
+                    # Scale preview to reasonable width while keeping aspect
+                    max_preview_w = 300
+                    if pixbuf.get_width() > 0 and pixbuf.get_width() > max_preview_w:
+                        scale = max_preview_w / pixbuf.get_width()
+                        new_w = int(pixbuf.get_width() * scale)
+                        new_h = int(pixbuf.get_height() * scale)
+                        pix = pixbuf.scale_simple(new_w, new_h, GdkPixbuf.InterpType.BILINEAR)
+                    else:
+                        pix = pixbuf
+                    preview_image.set_from_pixbuf(pix)
+                    dialog.set_preview_widget_active(True)
+                else:
+                    dialog.set_preview_widget_active(False)
+            except Exception:
+                dialog.set_preview_widget_active(False)
+
+        dialog.connect('update-preview', _update_preview)
+
         response = dialog.run()
         if response == Gtk.ResponseType.OK:
             filepath = dialog.get_filename()
