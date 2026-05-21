@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import re
 import time
+from code128 import encode_b as _code128_modules
 
 
 @dataclass
@@ -73,8 +74,8 @@ class BarcodeElement(DesignElement):
         self.x = x
         self.y = y
         self.height = height
-        self.width = 100  # Placeholder
         self.barcode_value = barcode_value
+        self.width = (35 + len(barcode_value) * 11) * 2
         self.element_type = 'barcode'
     
     def to_zpl(self) -> str:
@@ -432,25 +433,43 @@ class DesignCanvas(Gtk.DrawingArea):
     
     def _draw_barcode_element(self, context, element, selected: bool):
         """Draw a barcode element."""
-        context.set_source_rgb(0.95, 1, 0.95)
+        # White background
+        context.set_source_rgb(1, 1, 1)
         context.rectangle(element.x, element.y, element.width, element.height)
         context.fill()
-        
+
+        # Draw Code 128B bars
+        mods = _code128_modules(element.barcode_value)
+        mod_w = element.width / sum(mods)
+        context.set_source_rgb(0, 0, 0)
+        cx = element.x
+        for i, m in enumerate(mods):
+            if i % 2 == 0:  # bars are at even indices
+                context.rectangle(cx, element.y, m * mod_w, element.height)
+                context.fill()
+            cx += m * mod_w
+
+        # Barcode value text below the bars
+        scale = self._get_scale_factor()
+        font_size = max(8, 14 / scale)
+        context.set_source_rgb(0, 0, 0)
+        context.select_font_face("sans-serif", 0, 0)
+        context.set_font_size(font_size)
+        text_y = element.y + element.height + font_size
+        extents = context.text_extents(element.barcode_value)
+        text_x = element.x + (element.width - extents.width) / 2
+        context.move_to(text_x, text_y)
+        context.show_text(element.barcode_value)
+
+        # Selection border
         if selected:
-            context.set_source_rgb(0, 1, 0)
-            context.set_line_width(2)
+            context.set_source_rgb(0, 0.7, 0)
+            context.set_line_width(2 / scale)
         else:
-            context.set_source_rgb(0.5, 1, 0.5)
-            context.set_line_width(1)
+            context.set_source_rgb(0.4, 0.4, 0.4)
+            context.set_line_width(1 / scale)
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
-        
-        # Draw barcode icon
-        context.set_source_rgb(0, 0, 0)
-        context.select_font_face("monospace")
-        context.set_font_size(10)
-        context.move_to(element.x + 5, element.y + 15)
-        context.show_text("||||| CODE128")
         
         # Draw resize handles if selected
         if selected:

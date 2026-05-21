@@ -703,6 +703,7 @@ class ZPLViewerWindow(Gtk.Window):
             response = dialog.run()
             if response == Gtk.ResponseType.OK:
                 element.barcode_value = value_entry.get_text()
+                element.width = (35 + len(element.barcode_value) * 11) * 2
                 element.height = int(height_spin.get_value())
                 self.design_canvas.queue_draw()
                 self.on_canvas_changed()

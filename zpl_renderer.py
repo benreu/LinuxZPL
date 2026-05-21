@@ -7,6 +7,7 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
+from code128 import encode_b as _code128_modules
 
 
 class ZPLRenderer:
@@ -58,30 +59,20 @@ class ZPLRenderer:
     
     def _render_barcode(self, barcode_value: str, x: int, y: int, height: int):
         """Render a barcode visual representation using bars."""
-        # Create a simple barcode-like representation with vertical bars
-        bar_width = 3
-        bar_spacing = 1
         value_length = len(barcode_value)
-        barcode_width = value_length * (bar_width + bar_spacing)
-        
-        # Generate pattern based on barcode value (simple hash-based pattern)
-        pattern = []
-        for char in barcode_value:
-            # Use ASCII value to determine bar pattern
-            val = ord(char) % 2
-            pattern.append(val)
-        
-        # Draw bars
-        current_x = x
-        for i, bar in enumerate(pattern):
-            if bar == 1:
-                # Draw black bar
-                self.draw.rectangle(
-                    [(current_x, y), (current_x + bar_width, y + height)],
-                    fill='black'
-                )
-            current_x += bar_width + bar_spacing
-        
+        # Code 128B width formula matches BarcodeElement: (start+data+check+stop) * 2 dots/module
+        barcode_width = (35 + value_length * 11) * 2
+
+        # Draw Code 128B bars
+        mods = _code128_modules(barcode_value)
+        mod_w = barcode_width / sum(mods)
+        cx = x
+        for i, m in enumerate(mods):
+            if i % 2 == 0:  # bars are at even indices
+                right = round(cx + m * mod_w)
+                self.draw.rectangle([(round(cx), y), (right, y + height)], fill='black')
+            cx += m * mod_w
+
         # Draw border around barcode
         self.draw.rectangle(
             [(x - 2, y - 2), (x + barcode_width + 2, y + height + 2)],
