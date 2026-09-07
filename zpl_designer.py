@@ -13,6 +13,7 @@ from typing import List, Optional, Tuple
 import re
 import time
 from code128 import encode_b as _code128_modules
+import zpl_fonts
 from PIL import Image as PILImage, ImageDraw as PILImageDraw, ImageFont as PILImageFont
 import io as _io
 
@@ -371,28 +372,18 @@ class DesignCanvas(Gtk.DrawingArea):
         self.selected_element = None
         self.queue_draw()
     
-    def _register_font(self, font_path: str):
-        import ctypes
-        try:
-            fc = ctypes.CDLL("libfontconfig.so.1")
-            fc.FcConfigAppFontAddFile.restype = ctypes.c_int
-            fc.FcConfigAppFontAddFile.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-            fc.FcConfigAppFontAddFile(None, font_path.encode())
-        except Exception:
-            pass
-
     def set_font(self, font_path: str, font_family: str, printer_font_name: str):
         self.font_path = font_path
         self.font_family = font_family
         self.printer_font_name = printer_font_name
-        self._register_font(font_path)
+        zpl_fonts.register_app_font(font_path)
         self.queue_draw()
 
     def set_element_font(self, element: 'TextElement', font_path: str, font_family: str, printer_font_name: str):
         element.font_path = font_path
         element.font_family = font_family
         element.printer_font_name = printer_font_name
-        self._register_font(font_path)
+        zpl_fonts.register_app_font(font_path)
         self.queue_draw()
 
     def to_zpl(self) -> str:

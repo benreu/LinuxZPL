@@ -14,6 +14,7 @@ import configparser
 import socket
 from pathlib import Path
 from zpl_renderer import ZPLRenderer
+import zpl_fonts
 from zpl_designer import DesignCanvas, TextElement, FrameElement, BarcodeElement, ImageElement
 from PIL import Image
 import io
@@ -45,8 +46,6 @@ class ZPLViewerWindow(Gtk.Window):
         # Label size settings (default: 4x6 inch at 203 DPI = 812x1218 pixels)
         self.label_width = 812
         self.label_height = 1218
-        self.printer_font_name = None
-        self.font_path = None
 
         # Printer connection settings (persisted in the config file)
         self.printer_address = DEFAULT_PRINTER_ADDRESS
@@ -114,10 +113,10 @@ class ZPLViewerWindow(Gtk.Window):
         printer_settings_item.connect("activate", self.on_printer_settings_clicked)
         settings_menu.append(printer_settings_item)
 
-        # Upload font menu item
-        upload_font_item = Gtk.MenuItem(label="Upload Font to Printer")
-        upload_font_item.connect("activate", self.on_upload_font_clicked)
-        settings_menu.append(upload_font_item)
+        # Printer fonts menu item
+        printer_fonts_item = Gtk.MenuItem(label="Printer Fonts\u2026")
+        printer_fonts_item.connect("activate", self.on_printer_fonts_clicked)
+        settings_menu.append(printer_fonts_item)
 
         settings_menu.show_all()
         
@@ -275,7 +274,7 @@ class ZPLViewerWindow(Gtk.Window):
                 return
 
             try:
-                renderer = ZPLRenderer(width=self.label_width, height=self.label_height)
+                renderer = self._new_renderer()
                 img = renderer.render_from_file(filename)
                 bio = io.BytesIO()
                 img.save(bio, format='PNG')
@@ -426,8 +425,65 @@ class ZPLViewerWindow(Gtk.Window):
             self.show_error_dialog(f"Failed to load file: {e}")
             self.update_status("Error loading file")
 
+    def _confirm_printer_fonts(self) -> bool:
+        """Check the label's fonts are on the printer. False cancels printing."""
+        sources = self._label_font_sources()
+        if not sources:
+            return True  # nothing but built-in fonts, nothing to check
+
+        installed = zpl_fonts.query_printer_fonts(self.printer_address, self.printer_port)
+        if installed is None:
+            return self._ask_font_problem(
+                "The printer could not be asked which fonts it has.",
+                "It may be unreachable, or may not support font queries.\n"
+                "Printing anyway may fall back to a substitute font.",
+                uploadable={})
+
+        missing = {n: path for n, path in sources.items() if n.upper() not in installed}
+        if not missing:
+            return True
+
+        uploadable = {n: p for n, p in missing.items() if p}
+        lines = [f"  {zpl_fonts.printer_font_path(n)}" +
+                 ("" if missing[n] else "   (source file unknown)")
+                 for n in sorted(missing)]
+        return self._ask_font_problem(
+            "Fonts used by this label are not on the printer.",
+            "\n".join(lines) + "\n\nMissing fonts print in a substitute typeface.",
+            uploadable=uploadable)
+
+    def _ask_font_problem(self, text: str, detail: str, uploadable: dict) -> bool:
+        """Ask what to do about missing fonts. True means go ahead and print."""
+        dialog = Gtk.MessageDialog(parent=self, flags=0,
+                                   message_type=Gtk.MessageType.WARNING,
+                                   buttons=Gtk.ButtonsType.NONE, text=text)
+        dialog.format_secondary_text(detail)
+        dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+        dialog.add_button("Print Anyway", Gtk.ResponseType.OK)
+        if uploadable:
+            dialog.add_button("Upload & Print", Gtk.ResponseType.APPLY)
+            dialog.set_default_response(Gtk.ResponseType.APPLY)
+        else:
+            dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        response = dialog.run()
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.APPLY:
+            for name, path in sorted(uploadable.items()):
+                self.update_status(f"Uploading {zpl_fonts.printer_font_path(name)}...")
+                try:
+                    zpl_fonts.upload_font(self.printer_address, self.printer_port, path, name)
+                except Exception as e:
+                    self.show_error_dialog(f"Upload of {name} failed: {e}")
+                    return False
+            return True
+        return response == Gtk.ResponseType.OK
+
     def on_print_clicked(self, widget):
         """Handle print button click."""
+        if not self._confirm_printer_fonts():
+            self.update_status("Printing cancelled")
+            return
         printer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         printer_socket.settimeout(10)
         try:
@@ -439,56 +495,138 @@ class ZPLViewerWindow(Gtk.Window):
         printer_socket.send(bytes(content, 'utf-8')) #using bytes 
         printer_socket.close () #closing connection
     
-    def on_upload_font_clicked(self, widget):
-        dialog = Gtk.FileChooserDialog(
-            title="Select Font File", parent=self,
-            action=Gtk.FileChooserAction.OPEN,
-            buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                     Gtk.STOCK_OPEN, Gtk.ResponseType.OK))
-        ffilter = Gtk.FileFilter()
-        ffilter.set_name("TrueType Fonts (*.ttf)")
-        ffilter.add_pattern("*.ttf")
-        ffilter.add_pattern("*.TTF")
-        dialog.add_filter(ffilter)
-        response = dialog.run()
-        font_path = dialog.get_filename() if response == Gtk.ResponseType.OK else None
+    def _new_renderer(self) -> ZPLRenderer:
+        """A renderer preloaded with the fonts this session knows about.
+
+        A bare ZPLRenderer has an empty font_registry, so every ^A@ would fall
+        back to the default face and custom fonts would never show in a preview.
+        """
+        renderer = ZPLRenderer(width=self.label_width, height=self.label_height)
+        for name, path in self.renderer.font_registry.items():
+            renderer.register_font(name, path)
+        for el in self.design_canvas.elements:
+            name = getattr(el, 'printer_font_name', None)
+            path = getattr(el, 'font_path', None)
+            if name and path:
+                renderer.register_font(name, path)
+        if self.renderer.custom_font_path:
+            renderer.set_font(self.renderer.custom_font_path)
+        return renderer
+
+    def on_printer_fonts_clicked(self, widget):
+        """Show the fonts stored on the printer, and add or remove them."""
+        dialog = Gtk.Dialog(title="Printer Fonts", parent=self, flags=0)
+        dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(360, 280)
+
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        status = Gtk.Label(halign=Gtk.Align.START)
+        status.set_line_wrap(True)
+        content.pack_start(status, False, False, 0)
+
+        store = Gtk.ListStore(str)
+        view = Gtk.TreeView(model=store)
+        view.append_column(Gtk.TreeViewColumn("Font", Gtk.CellRendererText(), text=0))
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        scroller.add(view)
+        content.pack_start(scroller, True, True, 0)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        upload_btn = Gtk.Button(label="Upload\u2026")
+        delete_btn = Gtk.Button(label="Delete")
+        refresh_btn = Gtk.Button(label="Refresh")
+        for b in (upload_btn, delete_btn, refresh_btn):
+            buttons.pack_start(b, False, False, 0)
+        content.pack_start(buttons, False, False, 0)
+
+        def refresh(*_a):
+            store.clear()
+            fonts = zpl_fonts.query_printer_fonts(self.printer_address, self.printer_port)
+            if fonts is None:
+                status.set_text(f"Could not reach the printer at "
+                                f"{self.printer_address}:{self.printer_port}.")
+                delete_btn.set_sensitive(False)
+                return
+            for name in sorted(fonts):
+                store.append([zpl_fonts.printer_font_path(name)])
+            delete_btn.set_sensitive(bool(fonts))
+            status.set_text(f"{len(fonts)} font(s) on {self.printer_address}"
+                            if fonts else "No fonts stored on the printer.")
+
+        def on_upload(_b):
+            families = zpl_fonts.list_ttf_families()
+            if not families:
+                self.show_error_dialog("No TrueType fonts were found on this system.")
+                return
+            chooser = Gtk.FontChooserDialog(title="Upload Font to Printer", parent=dialog)
+            chooser.set_level(Gtk.FontChooserLevel.FAMILY)
+            chooser.set_filter_func(lambda family, face: family.get_name() in families)
+            resp = chooser.run()
+            desc = chooser.get_font_desc() if resp in (Gtk.ResponseType.OK, Gtk.ResponseType.APPLY) else None
+            chooser.destroy()
+            family = desc.get_family() if desc else None
+            path = zpl_fonts.file_for_family(family) if family else None
+            if not path:
+                return
+            name = zpl_fonts.printer_font_name(path)
+            status.set_text(f"Uploading {zpl_fonts.printer_font_path(name)}...")
+            try:
+                zpl_fonts.upload_font(self.printer_address, self.printer_port, path, name)
+            except Exception as e:
+                self.show_error_dialog(f"Font upload failed: {e}")
+                return
+            self.renderer.register_font(name, path)
+            refresh()
+
+        def on_delete(_b):
+            model, treeiter = view.get_selection().get_selected()
+            if treeiter is None:
+                return
+            shown = model[treeiter][0]
+            name = Path(shown).stem.split(':')[-1]
+            try:
+                zpl_fonts.delete_printer_font(self.printer_address, self.printer_port, name)
+            except Exception as e:
+                self.show_error_dialog(f"Could not delete {shown}: {e}")
+                return
+            refresh()
+
+        upload_btn.connect("clicked", on_upload)
+        delete_btn.connect("clicked", on_delete)
+        refresh_btn.connect("clicked", refresh)
+
+        content.show_all()
+        refresh()
+        dialog.run()
         dialog.destroy()
-        if not font_path:
-            return
-        self._apply_font(font_path)
 
-    def _apply_font(self, font_path: str):
-        from PIL import ImageFont
-        from pathlib import Path
-        try:
-            pil_font = ImageFont.truetype(font_path, 12)
-            font_family = pil_font.getname()[0]
-        except Exception as e:
-            self.show_error_dialog(f"Could not read font: {e}")
-            return
-        printer_font_name = Path(font_path).stem[:8].upper()
-        try:
-            self._upload_font_to_printer(font_path, printer_font_name)
-        except Exception as e:
-            self.show_error_dialog(f"Font upload failed: {e}")
-            return
-        self.font_path = font_path
-        self.printer_font_name = printer_font_name
-        self.design_canvas.set_font(font_path, font_family, printer_font_name)
-        self.renderer.set_font(font_path)
-        self.update_status(f"Font '{font_family}' uploaded as E:{printer_font_name}.TTF")
+    def _printer_font_names(self, exclude=None):
+        """Printer font names already used by the label's text elements."""
+        return {el.printer_font_name for el in self.design_canvas.elements
+                if el is not exclude and getattr(el, 'printer_font_name', None)}
 
-    def _upload_font_to_printer(self, font_path: str, font_name: str):
-        with open(font_path, 'rb') as f:
-            font_data = f.read()
-        data_len = len(font_data)
-        header = f"~DYE:{font_name},A,TT,{data_len},{data_len},".encode('ascii')
-        payload = header + font_data
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(10)
-        sock.connect((self.printer_address, self.printer_port))
-        sock.sendall(payload)
-        sock.close()
+    def _label_font_sources(self):
+        """Printer font name -> local .ttf path, for fonts this label uses.
+
+        A font loaded from a .zpl has no local file, so its value is None and it
+        cannot be uploaded - only reported as missing.
+        """
+        sources = {}
+        for el in self.design_canvas.elements:
+            name = getattr(el, 'printer_font_name', None)
+            if name:
+                sources.setdefault(name, getattr(el, 'font_path', None))
+        canvas = self.design_canvas
+        if canvas.printer_font_name:
+            sources.setdefault(canvas.printer_font_name, canvas.font_path)
+        return sources
 
     def _parse_label_size_from_zpl(self, zpl_content: str):
         """Extract label size from ZPL commands if present."""
@@ -547,9 +685,17 @@ class ZPLViewerWindow(Gtk.Window):
                             i += 1
                             continue
 
-                        if next_line.startswith('^AF'):
-                            # Text element
-                            match = re.match(r'\^AF[A-Z]?,(\d+),(\d+)', next_line)
+                        if next_line.startswith('^AF') or next_line.startswith('^A@'):
+                            # Text element. ^A@ names a font downloaded to the
+                            # printer, e.g. ^A@N,53,19,E:DEJAVUSA.TTF
+                            font_name = None
+                            if next_line.startswith('^A@'):
+                                match = re.match(
+                                    r'\^A@[A-Z]?,(\d+),(\d+),[^:]*:([^.,]+)', next_line)
+                                if match:
+                                    font_name = match.group(3).upper()
+                            else:
+                                match = re.match(r'\^AF[A-Z]?,(\d+),(\d+)', next_line)
                             font_h, font_w = 36, 20
                             if match:
                                 font_h = int(match.group(1))
@@ -567,6 +713,10 @@ class ZPLViewerWindow(Gtk.Window):
                                 text_element.font_width = font_w
                                 text_element.width = len(text) * font_w
                                 text_element.height = font_h
+                                # The local .ttf cannot be recovered from ZPL, so
+                                # font_path/font_family stay unset: the font is
+                                # known by printer name only.
+                                text_element.printer_font_name = font_name
                             break
                         elif next_line.startswith('^GB'):
                             # Frame element
@@ -865,7 +1015,7 @@ class ZPLViewerWindow(Gtk.Window):
                 return
             
             # Create renderer with current label size
-            renderer = ZPLRenderer(width=self.label_width, height=self.label_height)
+            renderer = self._new_renderer()
             
             # Render ZPL
             pil_image = renderer.render(content)
@@ -980,8 +1130,8 @@ class ZPLViewerWindow(Gtk.Window):
             width_spin.set_adjustment(width_adj)
             make_row("Font Width:", width_spin)
 
-            # Font file picker
-            selected_font_path = [element.font_path]
+            # Font chooser (installed families only)
+            selected_font = [element.font_path, element.font_family]
 
             font_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             font_lbl = Gtk.Label(label="Font:")
@@ -989,51 +1139,57 @@ class ZPLViewerWindow(Gtk.Window):
             font_lbl.set_halign(Gtk.Align.END)
             font_row.pack_start(font_lbl, False, False, 0)
 
-            def _font_display(path):
-                if path:
-                    from pathlib import Path as _Path
-                    return _Path(path).name
+            def _font_display():
+                if selected_font[1]:
+                    return selected_font[1]
                 canvas_family = self.design_canvas.font_family
                 return f"Default ({canvas_family})" if canvas_family else "Default"
 
-            font_name_lbl = Gtk.Label(label=_font_display(element.font_path))
+            font_name_lbl = Gtk.Label(label=_font_display())
             font_name_lbl.set_halign(Gtk.Align.START)
             font_name_lbl.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
             font_row.pack_start(font_name_lbl, True, True, 0)
 
-            font_browse_btn = Gtk.Button(label="Browse…")
-            font_row.pack_start(font_browse_btn, False, False, 0)
+            choose_font_btn = Gtk.Button(label="Choose\u2026")
+            font_row.pack_start(choose_font_btn, False, False, 0)
 
             clear_font_btn = Gtk.Button(label="Clear")
             font_row.pack_start(clear_font_btn, False, False, 0)
 
             content.pack_start(font_row, False, False, 0)
 
-            def on_font_browse(btn):
-                fdialog = Gtk.FileChooserDialog(
-                    title="Select Font File", parent=dialog,
-                    action=Gtk.FileChooserAction.OPEN,
-                    buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                             Gtk.STOCK_OPEN, Gtk.ResponseType.OK))
-                ff = Gtk.FileFilter()
-                ff.set_name("TrueType Fonts (*.ttf)")
-                ff.add_pattern("*.ttf")
-                ff.add_pattern("*.TTF")
-                fdialog.add_filter(ff)
-                if selected_font_path[0]:
-                    fdialog.set_filename(selected_font_path[0])
+            def on_choose_font(btn):
+                families = zpl_fonts.list_ttf_families()
+                if not families:
+                    self.show_error_dialog("No TrueType fonts were found on this system.")
+                    return
+                fdialog = Gtk.FontChooserDialog(title="Choose Font", parent=dialog)
+                # Size and style come from the Font Height/Width fields, and only
+                # TrueType can be uploaded to the printer, so offer families only.
+                fdialog.set_level(Gtk.FontChooserLevel.FAMILY)
+                fdialog.set_filter_func(lambda family, face: family.get_name() in families)
+                if selected_font[1]:
+                    fdialog.set_font(selected_font[1])
                 resp = fdialog.run()
-                path = fdialog.get_filename() if resp == Gtk.ResponseType.OK else None
+                family = None
+                if resp in (Gtk.ResponseType.OK, Gtk.ResponseType.APPLY):
+                    desc = fdialog.get_font_desc()
+                    family = desc.get_family() if desc else None
                 fdialog.destroy()
-                if path:
-                    selected_font_path[0] = path
-                    font_name_lbl.set_text(_font_display(path))
+                if not family:
+                    return
+                path = zpl_fonts.file_for_family(family)
+                if not path:
+                    self.show_error_dialog(f"No TrueType file found for '{family}'.")
+                    return
+                selected_font[0], selected_font[1] = path, family
+                font_name_lbl.set_text(_font_display())
 
             def on_font_clear(btn):
-                selected_font_path[0] = None
-                font_name_lbl.set_text(_font_display(None))
+                selected_font[0], selected_font[1] = None, None
+                font_name_lbl.set_text(_font_display())
 
-            font_browse_btn.connect("clicked", on_font_browse)
+            choose_font_btn.connect("clicked", on_choose_font)
             clear_font_btn.connect("clicked", on_font_clear)
 
             content.show_all()
@@ -1046,22 +1202,15 @@ class ZPLViewerWindow(Gtk.Window):
                 element.width = len(element.text) * element.font_width
                 element.height = element.font_height
 
-                new_path = selected_font_path[0]
+                new_path, new_family = selected_font
                 if new_path != element.font_path:
                     if new_path:
-                        from PIL import ImageFont as _IF
-                        from pathlib import Path as _Path
-                        try:
-                            family = _IF.truetype(new_path, 12).getname()[0]
-                            printer_name = _Path(new_path).stem[:8].upper()
-                            try:
-                                self._upload_font_to_printer(new_path, printer_name)
-                            except Exception as e:
-                                self.show_error_dialog(f"Font upload failed: {e}")
-                            self.design_canvas.set_element_font(element, new_path, family, printer_name)
-                            self.renderer.register_font(printer_name, new_path)
-                        except Exception as e:
-                            self.show_error_dialog(f"Could not load font: {e}")
+                        # The font is only recorded here; it is uploaded at print
+                        # time, so choosing a font never blocks on the network.
+                        printer_name = zpl_fonts.printer_font_name(
+                            new_path, taken=self._printer_font_names(exclude=element))
+                        self.design_canvas.set_element_font(element, new_path, new_family, printer_name)
+                        self.renderer.register_font(printer_name, new_path)
                     else:
                         element.font_path = None
                         element.font_family = None
