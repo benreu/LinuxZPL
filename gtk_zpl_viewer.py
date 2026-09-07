@@ -7,14 +7,25 @@ A simple GTK3 application for viewing rendered ZPL (Zebra Programming Language) 
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GdkPixbuf, Gdk
+from gi.repository import Gtk, GdkPixbuf, Gdk, GLib
 import os
 import base64
+import configparser
+import socket
 from pathlib import Path
 from zpl_renderer import ZPLRenderer
 from zpl_designer import DesignCanvas, TextElement, FrameElement, BarcodeElement, ImageElement
 from PIL import Image
 import io
+
+
+DEFAULT_PRINTER_ADDRESS = '192.168.50.21'
+DEFAULT_PRINTER_PORT = 9100
+
+
+def _config_path() -> Path:
+    """Path to the persisted settings file."""
+    return Path(GLib.get_user_config_dir()) / 'linuxzpl' / 'settings.ini'
 
 
 class ZPLViewerWindow(Gtk.Window):
@@ -36,7 +47,12 @@ class ZPLViewerWindow(Gtk.Window):
         self.label_height = 1218
         self.printer_font_name = None
         self.font_path = None
-        
+
+        # Printer connection settings (persisted in the config file)
+        self.printer_address = DEFAULT_PRINTER_ADDRESS
+        self.printer_port = DEFAULT_PRINTER_PORT
+        self._load_settings()
+
         # Create main layout
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.add(main_box)
@@ -92,6 +108,11 @@ class ZPLViewerWindow(Gtk.Window):
         label_settings_item = Gtk.MenuItem(label="Label Size")
         label_settings_item.connect("activate", self.on_label_settings_clicked)
         settings_menu.append(label_settings_item)
+
+        # Printer settings menu item
+        printer_settings_item = Gtk.MenuItem(label="Printer Settings")
+        printer_settings_item.connect("activate", self.on_printer_settings_clicked)
+        settings_menu.append(printer_settings_item)
 
         # Upload font menu item
         upload_font_item = Gtk.MenuItem(label="Upload Font to Printer")
@@ -407,10 +428,10 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_print_clicked(self, widget):
         """Handle print button click."""
-        import socket
         printer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        printer_socket.settimeout(10)
         try:
-            printer_socket.connect(('192.168.50.21', 9100)) #connect to printer IP and port
+            printer_socket.connect((self.printer_address, self.printer_port))
         except OSError as e:
             self.show_error_dialog(str(e))
             return
@@ -458,7 +479,6 @@ class ZPLViewerWindow(Gtk.Window):
         self.update_status(f"Font '{font_family}' uploaded as E:{printer_font_name}.TTF")
 
     def _upload_font_to_printer(self, font_path: str, font_name: str):
-        import socket
         with open(font_path, 'rb') as f:
             font_data = f.read()
         data_len = len(font_data)
@@ -466,7 +486,7 @@ class ZPLViewerWindow(Gtk.Window):
         payload = header + font_data
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(10)
-        sock.connect(('192.168.50.21', 9100))
+        sock.connect((self.printer_address, self.printer_port))
         sock.sendall(payload)
         sock.close()
 
@@ -629,6 +649,117 @@ class ZPLViewerWindow(Gtk.Window):
         
         self.design_canvas.queue_draw()
     
+    def _load_settings(self):
+        """Load persisted settings from the config file."""
+        parser = configparser.ConfigParser()
+        try:
+            parser.read(_config_path())
+            self.printer_address = parser.get(
+                'printer', 'address', fallback=self.printer_address)
+            self.printer_port = parser.getint(
+                'printer', 'port', fallback=self.printer_port)
+        except (configparser.Error, OSError, ValueError):
+            # A missing or corrupt config must never block startup
+            pass
+
+    def _save_settings(self):
+        """Write the current settings to the config file."""
+        path = _config_path()
+        parser = configparser.ConfigParser()
+        try:
+            # Read first so unrelated sections are preserved
+            parser.read(path)
+            if not parser.has_section('printer'):
+                parser.add_section('printer')
+            parser.set('printer', 'address', self.printer_address)
+            parser.set('printer', 'port', str(self.printer_port))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, 'w') as f:
+                parser.write(f)
+        except (configparser.Error, OSError) as e:
+            self.show_error_dialog(f"Could not save settings: {e}")
+
+    def on_printer_settings_clicked(self, widget):
+        """Handle printer settings menu item click."""
+        dialog = Gtk.Dialog(title="Printer Settings", parent=self, flags=0)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+        content = dialog.get_content_area()
+        content.set_spacing(4)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        def make_row(lbl_text, widget):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            lbl = Gtk.Label(label=lbl_text)
+            lbl.set_size_request(90, -1)
+            lbl.set_halign(Gtk.Align.END)
+            row.pack_start(lbl, False, False, 0)
+            row.pack_start(widget, True, True, 0)
+            content.pack_start(row, False, False, 0)
+
+        # Printer address
+        address_entry = Gtk.Entry()
+        address_entry.set_text(self.printer_address)
+        make_row("Address:", address_entry)
+
+        # Printer port
+        port_spin = Gtk.SpinButton()
+        port_adj = Gtk.Adjustment(value=self.printer_port, lower=1,
+                                  upper=65535, step_increment=1)
+        port_spin.set_adjustment(port_adj)
+        port_spin.set_numeric(True)
+        make_row("Port:", port_spin)
+
+        # Connection test
+        result_label = Gtk.Label()
+        result_label.set_halign(Gtk.Align.START)
+        result_label.set_line_wrap(True)
+
+        def on_test_clicked(btn):
+            addr = address_entry.get_text().strip()
+            port = int(port_spin.get_value())
+            if not addr:
+                result_label.set_markup(
+                    "<span foreground='red'>Address is required</span>")
+                return
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            try:
+                sock.connect((addr, port))
+            except OSError as e:
+                msg = GLib.markup_escape_text(str(e))
+                result_label.set_markup(f"<span foreground='red'>✗ {msg}</span>")
+            else:
+                result_label.set_markup(
+                    f"<span foreground='green'>✓ Connected to {addr}:{port}</span>")
+            finally:
+                sock.close()
+
+        test_btn = Gtk.Button(label="Test Connection")
+        test_btn.connect("clicked", on_test_clicked)
+        content.pack_start(test_btn, False, False, 0)
+        content.pack_start(result_label, False, False, 0)
+
+        content.show_all()
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            new_address = address_entry.get_text().strip()
+            new_port = int(port_spin.get_value())
+            if not new_address:
+                dialog.destroy()
+                self.show_error_dialog("Printer address cannot be empty.")
+                return
+            self.printer_address = new_address
+            self.printer_port = new_port
+            self._save_settings()
+            self.update_status(f"Printer set to {new_address}:{new_port}")
+        dialog.destroy()
+
     def on_label_settings_clicked(self, widget):
         """Handle label settings menu item click."""
         dialog = Gtk.Dialog(title="Label Settings", parent=self, flags=0)
