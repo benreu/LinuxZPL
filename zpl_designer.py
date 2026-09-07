@@ -230,6 +230,13 @@ class DesignCanvas(Gtk.DrawingArea):
     
     HANDLE_SIZE = 8
     HANDLE_HALF = HANDLE_SIZE // 2
+
+    # Cursor shown while hovering each resize handle
+    HANDLE_CURSORS = {
+        'tl': 'nw-resize', 'tm': 'n-resize', 'tr': 'ne-resize',
+        'ml': 'w-resize',                    'mr': 'e-resize',
+        'bl': 'sw-resize', 'bm': 's-resize', 'br': 'se-resize',
+    }
     
     def __init__(self, on_change_callback=None, label_width: int = 812, label_height: int = 1218):
         super().__init__()
@@ -242,6 +249,8 @@ class DesignCanvas(Gtk.DrawingArea):
         self.last_click_time = 0
         self.last_click_element = None
         self.active_handle: Optional[str] = None  # Track which handle is being dragged
+        self._cursor_name: Optional[str] = None   # cursor currently set on the window
+        self._cursor_cache = {}
         
         # Label size constraints (in pixels, default 4x6 inch at 203 DPI)
         self.label_width = label_width
@@ -256,11 +265,13 @@ class DesignCanvas(Gtk.DrawingArea):
         self.connect("button-press-event", self.on_button_press)
         self.connect("button-release-event", self.on_button_release)
         self.connect("motion-notify-event", self.on_motion)
+        self.connect("leave-notify-event", self.on_leave)
         
         # Enable mouse events
         self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK | 
                        Gdk.EventMask.BUTTON_RELEASE_MASK | 
-                       Gdk.EventMask.POINTER_MOTION_MASK)
+                       Gdk.EventMask.POINTER_MOTION_MASK |
+                       Gdk.EventMask.LEAVE_NOTIFY_MASK)
     
     def add_text_element(self, text: str = "New Text"):
         """Add a text element to the canvas."""
@@ -858,8 +869,40 @@ class DesignCanvas(Gtk.DrawingArea):
             self.drag_start = None
             self.active_handle = None
     
+    def _set_cursor(self, name: Optional[str]):
+        """Set the window cursor by CSS name, or None for the default."""
+        if name == self._cursor_name:
+            return
+        self._cursor_name = name
+        window = self.get_window()
+        if window is None:
+            return
+        if name is not None and name not in self._cursor_cache:
+            self._cursor_cache[name] = Gdk.Cursor.new_from_name(self.get_display(), name)
+        window.set_cursor(self._cursor_cache.get(name) if name else None)
+
+    def _update_cursor(self, event):
+        """Show a directional resize cursor over the selected element's handles."""
+        if self.active_handle:
+            self._set_cursor(self.HANDLE_CURSORS.get(self.active_handle))
+            return
+        name = None
+        if self.selected_element:
+            lx, ly = self._screen_to_label(event.x, event.y)
+            handle = self._get_handle_at_point(lx, ly, self.selected_element)
+            if handle:
+                name = self.HANDLE_CURSORS.get(handle)
+        self._set_cursor(name)
+
+    def on_leave(self, widget, event):
+        """Restore the default cursor when the pointer leaves the canvas."""
+        if not self.active_handle:
+            self._set_cursor(None)
+
     def on_motion(self, widget, event):
         """Handle mouse motion for dragging elements or resizing."""
+        self._update_cursor(event)
+
         if not self.drag_start or not self.selected_element:
             return
         
