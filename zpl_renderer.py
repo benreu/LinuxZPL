@@ -99,6 +99,32 @@ class ZPLRenderer:
         except:
             self.draw.text((x, text_y), barcode_value, fill='black')
     
+    def _render_graphic(self, params: str):
+        """Render a ^GF graphic field: ^GFa,total,total,bytes_per_row,<hex>."""
+        parts = params.split(',', 4)
+        if len(parts) < 5:
+            return
+        fmt = parts[0].strip().upper()
+        if fmt and fmt != 'A':
+            return  # only ASCII hex (^GFA) is produced by the designer
+        try:
+            bytes_per_row = int(parts[3])
+            raw = bytes.fromhex(parts[4].strip())
+        except ValueError:
+            return
+        if bytes_per_row <= 0:
+            return
+        rows = len(raw) // bytes_per_row
+        if rows <= 0:
+            return
+
+        # ZPL sets a bit for a black dot, while PIL mode '1' reads a set bit as
+        # white, so the bytes are inverted before decoding. Row width is always
+        # a whole number of bytes, which is exactly what mode '1' expects.
+        inverted = bytes(b ^ 0xFF for b in raw[:rows * bytes_per_row])
+        bitmap = Image.frombytes('1', (bytes_per_row * 8, rows), inverted)
+        self.image.paste(bitmap.convert('RGB'), (self.current_x, self.current_y))
+
     def render(self, zpl_content: str) -> Image.Image:
         """
         Render ZPL content to an image.
@@ -245,6 +271,9 @@ class ZPLRenderer:
                             fill='black'
                         )
                 self.field_data = None
+        elif command == 'GF':
+            # Graphic field: ^GFa,total,total,bytes_per_row,<data>
+            self._render_graphic(params)
         elif command == 'CF':
             # Change font
             pass
