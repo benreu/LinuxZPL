@@ -7,6 +7,7 @@ Provides a canvas-based drag-and-drop designer for creating ZPL labels.
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GObject
+import cairo
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import re
@@ -104,46 +105,93 @@ class ImageElement(DesignElement):
         self.image_path = image_path
         self.element_type = 'image'
         self._pil_image = _pil_image  # set when element is decoded from ZPL data
-        self._pixbuf: Optional[GdkPixbuf.Pixbuf] = None
-        self._load_pixbuf()
+        self._source_image = None     # cached decode of the original
+        self._sized_cache = None      # ((w, h), resized image)
+        self._pixbuf_cache = None     # ((w, h), 1-bit GdkPixbuf)
 
-    def _load_pixbuf(self):
-        if self.image_path:
+    def reload(self):
+        """Drop the cached renderings after the source image changes."""
+        self._source_image = None
+        self._sized_cache = None
+        self._pixbuf_cache = None
+
+    def _get_source_image(self):
+        """Decoded source image, cached so redraws do not re-read the file."""
+        if self._source_image is None:
             try:
-                self._pixbuf = GdkPixbuf.Pixbuf.new_from_file(self.image_path)
+                if self.image_path:
+                    img = PILImage.open(self.image_path)
+                    img.load()
+                elif self._pil_image is not None:
+                    img = self._pil_image
+                else:
+                    return None
+                if img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
             except Exception:
-                self._pixbuf = None
-        elif self._pil_image is not None:
-            try:
-                import io
-                bio = io.BytesIO()
-                self._pil_image.convert('RGB').save(bio, format='PNG')
-                bio.seek(0)
-                loader = GdkPixbuf.PixbufLoader.new_with_type('png')
-                loader.write(bio.read())
-                loader.close()
-                self._pixbuf = loader.get_pixbuf()
-            except Exception:
-                self._pixbuf = None
+                return None
+            self._source_image = img
+        return self._source_image
+
+    def _get_sized_image(self):
+        """Source resized to the element size - the resolution the printer gets."""
+        key = (self.width, self.height)
+        if self._sized_cache is not None and self._sized_cache[0] == key:
+            return self._sized_cache[1]
+        src = self._get_source_image()
+        if src is None:
+            return None
+        sized = src.resize((max(1, self.width), max(1, self.height)), PILImage.LANCZOS)
+        self._sized_cache = (key, sized)
+        return sized
+
+    def get_print_bitmap(self):
+        """The exact 1-bit bitmap the printer receives (Floyd-Steinberg dithered)."""
+        sized = self._get_sized_image()
+        if sized is None:
+            return None
+        return sized.convert('1')
+
+    def get_print_pixbuf(self) -> Optional[GdkPixbuf.Pixbuf]:
+        """get_print_bitmap() as a GdkPixbuf, so the canvas shows what prints."""
+        key = (self.width, self.height)
+        if self._pixbuf_cache is not None and self._pixbuf_cache[0] == key:
+            return self._pixbuf_cache[1]
+        bitmap = self.get_print_bitmap()
+        if bitmap is None:
+            return None
+        try:
+            buf = _io.BytesIO()
+            bitmap.convert('RGB').save(buf, format='PNG')
+            buf.seek(0)
+            loader = GdkPixbuf.PixbufLoader.new_with_type('png')
+            loader.write(buf.read())
+            loader.close()
+            pixbuf = loader.get_pixbuf()
+        except Exception:
+            return None
+        self._pixbuf_cache = (key, pixbuf)
+        return pixbuf
+
+    def peek_print_pixbuf(self) -> Optional[GdkPixbuf.Pixbuf]:
+        """Last computed pixbuf, whatever size it was, without recomputing.
+
+        Used to keep resize drags responsive on large sources; it may be stale,
+        so the caller must scale it into the element's current bounds.
+        """
+        return self._pixbuf_cache[1] if self._pixbuf_cache is not None else None
 
     def to_zpl(self) -> str:
         if not self.image_path and self._pil_image is None:
             return ""
-        import numpy as np, io as _io, base64
+        import numpy as np, base64
 
-        if self.image_path:
-            img = PILImage.open(self.image_path)
-            if img.mode not in ('RGB', 'L'):
-                img = img.convert('RGB')
-        else:
-            img = self._pil_image
-            if img.mode not in ('RGB', 'L'):
-                img = img.convert('RGB')
-
-        img_sized = img.resize((self.width, self.height), PILImage.LANCZOS)
+        img_sized = self._get_sized_image()
+        if img_sized is None:
+            return ""
 
         # 1-bit encoding for the ZPL printer (^GF only supports 1-bit)
-        img_1bit = img_sized.convert('1')
+        img_1bit = self.get_print_bitmap()
         bytes_per_row = (self.width + 7) // 8
         total_bytes = bytes_per_row * self.height
         arr = np.array(img_1bit, dtype=np.uint8)
@@ -662,13 +710,28 @@ class DesignCanvas(Gtk.DrawingArea):
                 context.stroke()
     
     def _draw_image_element(self, context, element, selected: bool):
-        """Draw an image element."""
-        if element._pixbuf:
-            scaled = element._pixbuf.scale_simple(
-                element.width, element.height, GdkPixbuf.InterpType.BILINEAR
-            )
-            Gdk.cairo_set_source_pixbuf(context, scaled, element.x, element.y)
+        """Draw an image element exactly as it will print (1-bit, dithered)."""
+        # Re-dithering a large photo costs ~100ms, so while a resize handle is
+        # being dragged reuse the last bitmap stretched to the new bounds; the
+        # exact one is regenerated on release.
+        pixbuf = None
+        if self.active_handle is not None and element is self.selected_element:
+            pixbuf = element.peek_print_pixbuf()
+        if pixbuf is None:
+            pixbuf = element.get_print_pixbuf()
+        if pixbuf:
+            # The pixbuf is at label resolution, the same coordinate space this
+            # context is scaled into, so normally this scale is 1:1. GOOD
+            # filtering averages the dither dots down to the canvas the way the
+            # eye does looking at a real printed label.
+            context.save()
+            context.translate(element.x, element.y)
+            context.scale(element.width / pixbuf.get_width(),
+                          element.height / pixbuf.get_height())
+            Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+            context.get_source().set_filter(cairo.Filter.GOOD)
             context.paint()
+            context.restore()
         else:
             context.set_source_rgb(0.85, 0.85, 0.85)
             context.rectangle(element.x, element.y, element.width, element.height)

@@ -1131,7 +1131,7 @@ class ZPLViewerWindow(Gtk.Window):
             if response == Gtk.ResponseType.OK:
                 element.image_path = dialog.get_filename()
                 dialog.destroy()
-                element._load_pixbuf()
+                element.reload()
                 self.design_canvas.queue_draw()
                 self.on_canvas_changed()
             else:
