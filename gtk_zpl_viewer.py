@@ -711,12 +711,23 @@ class ZPLViewerWindow(Gtk.Window):
                                 text_element.y = y
                                 text_element.font_height = font_h
                                 text_element.font_width = font_w
-                                text_element.width = len(text) * font_w
                                 text_element.height = font_h
-                                # The local .ttf cannot be recovered from ZPL, so
-                                # font_path/font_family stay unset: the font is
-                                # known by printer name only.
                                 text_element.printer_font_name = font_name
+                                # A .zpl records only the printer name, but that
+                                # name is derived from the font file, so the
+                                # installed .ttf can usually be found again -
+                                # without it the label would reopen in a
+                                # substitute face and at the wrong width.
+                                local = zpl_fonts.file_for_printer_name(font_name)
+                                if local:
+                                    text_element.font_path = local
+                                    try:
+                                        text_element.font_family = zpl_fonts.family_for_file(local)
+                                    except Exception:
+                                        text_element.font_family = None
+                                    zpl_fonts.register_app_font(local)
+                                    self.renderer.register_font(font_name, local)
+                                self.design_canvas.sync_text_width(text_element)
                             break
                         elif next_line.startswith('^GB'):
                             # Frame element
@@ -1199,8 +1210,8 @@ class ZPLViewerWindow(Gtk.Window):
                 element.text = text_entry.get_text()
                 element.font_height = int(height_spin.get_value())
                 element.font_width = int(width_spin.get_value())
-                element.width = len(element.text) * element.font_width
                 element.height = element.font_height
+                self.design_canvas.sync_text_width(element)
 
                 new_path, new_family = selected_font
                 if new_path != element.font_path:

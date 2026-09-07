@@ -26,6 +26,7 @@ _UNSAFE_CHARS = re.compile(r'[^A-Z0-9_-]')
 _OBJECT_NAME = re.compile(r'([A-Za-z0-9_\-]{1,8})\.TTF', re.IGNORECASE)
 
 _families_cache: Optional[Dict[str, str]] = None
+_paths_cache: Optional[list] = None
 
 
 # --- installed system fonts -------------------------------------------------
@@ -78,6 +79,45 @@ def file_for_family(family: str) -> Optional[str]:
     is not installed.
     """
     return list_ttf_families().get(family)
+
+
+def _all_ttf_paths() -> list:
+    """Every installed .ttf file, not just one per family."""
+    global _paths_cache
+    if _paths_cache is not None:
+        return _paths_cache
+    import subprocess
+    try:
+        out = subprocess.run(['fc-list', '-f', '%{file}\n'],
+                             capture_output=True, text=True, timeout=15,
+                             check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        out = ''
+    _paths_cache = sorted({line.strip() for line in out.splitlines()
+                           if line.strip().lower().endswith('.ttf')})
+    return _paths_cache
+
+
+def file_for_printer_name(name: str) -> Optional[str]:
+    """The installed .ttf whose printer object name is `name`, if any.
+
+    A saved .zpl only records the printer name (E:ANI.TTF), but that name is
+    derived from the file, so it can be mapped back - which is what lets a
+    reopened label render in its real font instead of a substitute.
+    """
+    if not name:
+        return None
+    wanted = name.upper()
+    matches = [p for p in _all_ttf_paths() if printer_font_name(p) == wanted]
+    if not matches:
+        return None
+    # Truncating to 8 characters is lossy, so several faces can share a name
+    # (DejaVuSans and DejaVuSans-Bold both give DEJAVUSA). Prefer a face the
+    # family listing already picked as canonical, then the least-suffixed
+    # filename, so the base face wins over Bold/Italic variants.
+    preferred = set(list_ttf_families().values())
+    matches.sort(key=lambda p: (p not in preferred, len(Path(p).stem), p))
+    return matches[0]
 
 
 def family_for_file(font_path: str) -> str:

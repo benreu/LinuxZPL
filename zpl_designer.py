@@ -50,6 +50,41 @@ class TextElement(DesignElement):
         self.font_family: Optional[str] = None
         self.printer_font_name: Optional[str] = None
     
+    def _measure(self, font_path: str) -> float:
+        """Advance width of the text at em = font_height, or 0 if unmeasurable."""
+        try:
+            font = PILImageFont.truetype(font_path, max(1, self.font_height))
+            draw = PILImageDraw.Draw(PILImage.new('RGBA', (1, 1)))
+            return draw.textlength(self.text or " ", font=font)
+        except Exception:
+            return 0.0
+
+    def printed_width(self, default_font_path: Optional[str] = None) -> int:
+        """Width in dots this text will actually occupy on the printer.
+
+        ^AF selects Zebra's built-in font A, which is fixed width, so
+        len(text) * font_width holds. ^A@ selects a downloaded TrueType, which
+        is proportional - every glyph has its own advance - so the string has
+        to be measured. Assuming fixed width there is what made "IIII" print
+        far narrower and "WWWW" far wider than the designer showed.
+        """
+        font_path = self.font_path or default_font_path
+        natural = self._measure(font_path) if font_path else 0.0
+        if natural <= 0:
+            return max(1, len(self.text) * self.font_width)
+        # The printer scales the em square to font_width x font_height, so an
+        # advance measured at font_height scales by font_width / font_height.
+        return max(1, round(natural * self.font_width / max(1, self.font_height)))
+
+    def font_width_for(self, target_width: int,
+                       default_font_path: Optional[str] = None) -> int:
+        """The font_width that makes this text print target_width dots wide."""
+        font_path = self.font_path or default_font_path
+        natural = self._measure(font_path) if font_path else 0.0
+        if natural <= 0:
+            return max(1, round(target_width / max(1, len(self.text))))
+        return max(1, round(target_width * max(1, self.font_height) / natural))
+
     def to_zpl(self, printer_font_name: Optional[str] = None) -> str:
         """Convert to ZPL commands."""
         effective_font = self.printer_font_name or printer_font_name
@@ -372,11 +407,19 @@ class DesignCanvas(Gtk.DrawingArea):
         self.selected_element = None
         self.queue_draw()
     
+    def sync_text_width(self, element) -> None:
+        """Resize a text element's box to the width it will print at."""
+        if getattr(element, 'element_type', None) == 'text':
+            element.width = element.printed_width(self.font_path)
+            element.height = element.font_height
+
     def set_font(self, font_path: str, font_family: str, printer_font_name: str):
         self.font_path = font_path
         self.font_family = font_family
         self.printer_font_name = printer_font_name
         zpl_fonts.register_app_font(font_path)
+        for el in self.elements:
+            self.sync_text_width(el)
         self.queue_draw()
 
     def set_element_font(self, element: 'TextElement', font_path: str, font_family: str, printer_font_name: str):
@@ -384,6 +427,7 @@ class DesignCanvas(Gtk.DrawingArea):
         element.font_family = font_family
         element.printer_font_name = printer_font_name
         zpl_fonts.register_app_font(font_path)
+        self.sync_text_width(element)
         self.queue_draw()
 
     def to_zpl(self) -> str:
@@ -481,8 +525,10 @@ class DesignCanvas(Gtk.DrawingArea):
         # Sync font dimensions for text elements
         if element.element_type == 'text':
             element.font_height = element.height
-            text_len = len(element.text) if element.text else 1
-            element.font_width = max(1, element.width // text_len)
+            element.font_width = element.font_width_for(element.width, self.font_path)
+            # Snap the box to what will actually print, so the outline the user
+            # drags is the outline that comes out of the printer.
+            element.width = element.printed_width(self.font_path)
     
     def _get_scale_factor(self) -> float:
         allocation = self.get_allocation()
@@ -560,9 +606,10 @@ class DesignCanvas(Gtk.DrawingArea):
         if not pixbuf:
             return False
 
-        # Draw at label coords; apply horizontal scale so text spans element.width
-        h_scale = element.width / text_w if text_w > 0 else 1.0
-        h_scale = max(0.2, min(h_scale, 5.0))
+        # The printer scales the em square to font_width x font_height. Stretching
+        # to fill element.width instead would make the text always look like it
+        # fits, hiding any difference from what actually prints.
+        h_scale = element.font_width / max(1, element.font_height)
         context.save()
         context.translate(element.x + 2, element.y)
         context.scale(h_scale, 1.0)
@@ -599,9 +646,15 @@ class DesignCanvas(Gtk.DrawingArea):
             context.select_font_face(element.font_family or self.font_family or "monospace")
             context.set_font_size(element.font_height)
             extents = context.text_extents(element.text[:20])
-            measured_width = extents.width if extents.width > 0 else 1.0
-            horizontal_scale = element.width / measured_width
-            horizontal_scale = max(0.2, min(horizontal_scale, 5.0))
+            if font_path:
+                horizontal_scale = element.font_width / max(1, element.font_height)
+            else:
+                # No downloaded font means ^AF, i.e. Zebra's built-in font A,
+                # which is fixed width: every character occupies font_width dots
+                # so the text spans the whole box. Stretch the proportional
+                # screen face to match rather than leaving a gap.
+                measured = extents.width if extents.width > 0 else 1.0
+                horizontal_scale = element.width / measured
             context.save()
             context.translate(element.x + 2, element.y + element.font_height - 2)
             context.scale(horizontal_scale, 1.0)
