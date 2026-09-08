@@ -20,6 +20,11 @@ FONT_DEVICE = 'E:'
 FONT_EXTENSION = '.TTF'
 MAX_NAME_LEN = 8
 
+# ~HI reports head resolution in dots per mm
+DOTS_PER_MM_TO_DPI = {6: 152, 8: 203, 12: 300, 24: 600}
+SUPPORTED_DPI = (203, 300, 600)
+DEFAULT_DPI = 203
+
 # Styles preferred when a family ships several faces
 _PREFERRED_STYLES = ('regular', 'book', 'roman', 'normal')
 _UNSAFE_CHARS = re.compile(r'[^A-Z0-9_-]')
@@ -217,6 +222,29 @@ def query_printer_fonts(address: str, port: int,
         return None
     text = reply.decode('ascii', 'replace')
     return {m.group(1).upper() for m in _OBJECT_NAME.finditer(text)}
+
+
+def query_printer_dpi(address: str, port: int,
+                      timeout: float = 5) -> Optional[int]:
+    """The printer's resolution in dpi, or None if it could not be asked.
+
+    ~HI answers with model, firmware and the head resolution in dots per mm,
+    which is the field of interest: 6 -> 152, 8 -> 203, 12 -> 300, 24 -> 600.
+    Returns None rather than a guess so the manual setting stays authoritative
+    when the printer is unreachable or answers in an unexpected shape.
+    """
+    try:
+        reply = _send(address, port, b'~HI', timeout, read_reply=True)
+    except OSError:
+        return None
+    if not reply:
+        return None
+    text = reply.decode('ascii', 'replace')
+    for dots_per_mm, dpi in sorted(DOTS_PER_MM_TO_DPI.items()):
+        # the resolution appears as its own comma-separated field
+        if re.search(rf'(?:^|,)\s*{dots_per_mm}\s*(?:,|$)', text, re.M):
+            return dpi
+    return None
 
 
 def delete_printer_font(address: str, port: int, name: str,

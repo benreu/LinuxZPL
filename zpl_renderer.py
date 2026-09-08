@@ -16,20 +16,17 @@ class ZPLRenderer:
     # Standard label size: 4x6 inches at 203 DPI = 812x1218 pixels
     DEFAULT_WIDTH = 812
     DEFAULT_HEIGHT = 1218
-    DEFAULT_DPI = 203
     
-    def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT, dpi: int = DEFAULT_DPI):
+    def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT):
         """
         Initialize the ZPL renderer.
         
         Args:
             width: Image width in pixels
             height: Image height in pixels
-            dpi: Dots per inch for font sizing
         """
         self.width = width
         self.height = height
-        self.dpi = dpi
         self.image = None
         self.draw = None
         self.current_x = 0

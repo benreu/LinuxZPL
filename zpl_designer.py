@@ -121,17 +121,29 @@ class FrameElement(DesignElement):
 class BarcodeElement(DesignElement):
     """Barcode element for the designer."""
     
-    def __init__(self, x: int = 50, y: int = 200, height: int = 100, barcode_value: str = "123456789"):
+    def __init__(self, x: int = 50, y: int = 200, height: int = 100,
+                 barcode_value: str = "123456789", module_width: int = 2):
         self.x = x
         self.y = y
         self.height = height
         self.barcode_value = barcode_value
-        self.width = (35 + len(barcode_value) * 11) * 2
+        self.module_width = module_width
         self.element_type = 'barcode'
-    
+        self.width = self.printed_width()
+
+    def printed_width(self) -> int:
+        """Width in dots: Code 128B is start + data + check + stop modules."""
+        return (35 + len(self.barcode_value) * 11) * max(1, self.module_width)
+
     def to_zpl(self) -> str:
         """Convert to ZPL commands."""
-        return f"^FO{self.x},{self.y}\n^BC,{self.height}\n^FD{self.barcode_value}^FS\n"
+        # ^BY sets the module width. Without it the printer uses its own default
+        # of 2 dots, which pins the barcode's physical size to the head
+        # resolution and makes it the one element that cannot be rescaled.
+        return (f"^FO{self.x},{self.y}\n"
+                f"^BY{max(1, self.module_width)}\n"
+                f"^BC,{self.height}\n"
+                f"^FD{self.barcode_value}^FS\n")
 
 
 class ImageElement(DesignElement):
@@ -302,6 +314,7 @@ class DesignCanvas(Gtk.DrawingArea):
         # Label size constraints (in pixels, default 4x6 inch at 203 DPI)
         self.label_width = label_width
         self.label_height = label_height
+        self.dpi = zpl_fonts.DEFAULT_DPI
 
         self.font_path: Optional[str] = None
         self.font_family: Optional[str] = None
@@ -418,6 +431,43 @@ class DesignCanvas(Gtk.DrawingArea):
         self.selected_element = None
         self.queue_draw()
     
+    def rescale(self, factor: float) -> None:
+        """Scale the whole design by `factor`, keeping its physical size.
+
+        Used when a label drawn for one head resolution is opened for another:
+        ZPL is in dots, so 812 dots is 4in at 203dpi but 2.7in at 300dpi.
+        """
+        if factor <= 0 or factor == 1.0:
+            return
+
+        def s(v):
+            return max(1, int(round(v * factor)))
+
+        self.label_width = s(self.label_width)
+        self.label_height = s(self.label_height)
+
+        for el in self.elements:
+            el.x = int(round(el.x * factor))
+            el.y = int(round(el.y * factor))
+            el.width = s(el.width)
+            el.height = s(el.height)
+            if el.element_type == 'text':
+                el.font_height = s(el.font_height)
+                el.font_width = s(el.font_width)
+            elif el.element_type == 'frame':
+                el.thickness = s(el.thickness)
+            elif el.element_type == 'barcode':
+                el.module_width = s(el.module_width)
+                el.width = el.printed_width()
+            elif el.element_type == 'image':
+                # the bitmap re-dithers from the source at the new size
+                el.reload()
+
+        # text width is derived from font metrics, not scaled directly
+        for el in self.elements:
+            self.sync_text_width(el)
+        self.queue_draw()
+
     def sync_text_width(self, element) -> None:
         """Resize a text element's box to the width it will print at."""
         if getattr(element, 'element_type', None) == 'text':
@@ -446,6 +496,9 @@ class DesignCanvas(Gtk.DrawingArea):
         zpl = "^XA\n"
         zpl += f"^PW{self.label_width}\n"
         zpl += f"^LL{self.label_height}\n"
+        # ZPL carries no resolution, so record what the dots were drawn for.
+        # Printers ignore ^FX, and the value has no caret to end the comment early.
+        zpl += f"^FXDESIGNER_DPI:{self.dpi}\n"
         for element in self.elements:
             if self.printer_font_name and element.element_type == 'text':
                 body = element.to_zpl(printer_font_name=self.printer_font_name)

@@ -50,7 +50,9 @@ class ZPLViewerWindow(Gtk.Window):
         # Printer connection settings (persisted in the config file)
         self.printer_address = DEFAULT_PRINTER_ADDRESS
         self.printer_port = DEFAULT_PRINTER_PORT
+        self.printer_dpi = zpl_fonts.DEFAULT_DPI
         self._load_settings()
+        self.label_width, self.label_height = self.inches_to_dots(4, 6)
 
         # Create main layout
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -175,6 +177,7 @@ class ZPLViewerWindow(Gtk.Window):
         self.design_canvas = DesignCanvas(on_change_callback=self.on_canvas_changed, 
                                          label_width=self.label_width, 
                                          label_height=self.label_height)
+        self.design_canvas.dpi = self.printer_dpi
         self.design_canvas.connect("draw", self.on_canvas_draw)
         self.design_canvas.connect("element-double-clicked", self.on_element_double_clicked)
         
@@ -608,6 +611,46 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
+    def _offer_dpi_rescale(self):
+        """If the file was drawn for another resolution, offer to rescale it."""
+        old = getattr(self, '_loaded_dpi', None)
+        if not old or old == self.printer_dpi or not self.design_canvas.elements:
+            self.design_canvas.dpi = self.printer_dpi
+            return
+
+        factor = self.printer_dpi / old
+        w_in, h_in = self.dots_to_inches(self.label_width, self.label_height)
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"This label was designed for {old} dpi.")
+        dialog.format_secondary_text(
+            f"The printer is set to {self.printer_dpi} dpi. Rescaling by "
+            f"{factor:.2f} keeps its physical size; keeping the dots as they "
+            f"are makes it print {w_in:.1f} x {h_in:.1f} inches.")
+        dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+        dialog.add_button("Keep Dots", Gtk.ResponseType.NO)
+        dialog.add_button("Rescale", Gtk.ResponseType.YES)
+        dialog.set_default_response(Gtk.ResponseType.YES)
+        response = dialog.run()
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.YES:
+            self.design_canvas.rescale(factor)
+            self.label_width = self.design_canvas.label_width
+            self.label_height = self.design_canvas.label_height
+            self.update_status(f"Rescaled from {old} to {self.printer_dpi} dpi")
+        self.design_canvas.dpi = self.printer_dpi
+
+    def inches_to_dots(self, w_in: float, h_in: float):
+        """Physical size -> dots at the current printer resolution."""
+        return (max(1, int(round(w_in * self.printer_dpi))),
+                max(1, int(round(h_in * self.printer_dpi))))
+
+    def dots_to_inches(self, w_dots: int, h_dots: int):
+        """Dots -> physical size at the current printer resolution."""
+        return (w_dots / self.printer_dpi, h_dots / self.printer_dpi)
+
     def _printer_font_names(self, exclude=None):
         """Printer font names already used by the label's text elements."""
         return {el.printer_font_name for el in self.design_canvas.elements
@@ -669,12 +712,21 @@ class ZPLViewerWindow(Gtk.Window):
 
         i = 0
         pending_no_print = False
+        self._loaded_dpi = None
 
         while i < len(lines):
             line = lines[i].strip()
             
             # Skip comments and empty lines
             if line.startswith(';') or not line:
+                i += 1
+                continue
+
+            if line.startswith('^FXDESIGNER_DPI:'):
+                try:
+                    self._loaded_dpi = int(line[len('^FXDESIGNER_DPI:'):])
+                except ValueError:
+                    pass
                 i += 1
                 continue
 
@@ -693,6 +745,7 @@ class ZPLViewerWindow(Gtk.Window):
                     
                     # Look ahead for the element type
                     i += 1
+                    module_width = 2    # ^BY, if the field carries one
                     preview_b64 = None  # JPEG preview embedded by designer on save
                     path_hint = None    # original file path embedded by designer on save
                     while i < len(lines):
@@ -705,6 +758,13 @@ class ZPLViewerWindow(Gtk.Window):
                             continue
                         elif next_line.startswith('^FXDESIGNER_PATH:'):
                             path_hint = next_line[len('^FXDESIGNER_PATH:'):]
+                            i += 1
+                            continue
+
+                        if next_line.startswith('^BY'):
+                            by_match = re.match(r'\^BY(\d+)', next_line)
+                            if by_match:
+                                module_width = int(by_match.group(1))
                             i += 1
                             continue
 
@@ -772,7 +832,8 @@ class ZPLViewerWindow(Gtk.Window):
                             if i < len(lines) and lines[i].strip().startswith('^FD'):
                                 barcode_value = lines[i].strip()[3:-3]  # Remove ^FD and ^FS
 
-                            barcode = BarcodeElement(x, y, height=h, barcode_value=barcode_value)
+                            barcode = BarcodeElement(x, y, height=h, barcode_value=barcode_value,
+                                                     module_width=module_width)
                             self.design_canvas.elements.append(barcode)
                             break
                         elif next_line.startswith('^GF'):
@@ -838,6 +899,7 @@ class ZPLViewerWindow(Gtk.Window):
             
             i += 1
         
+        self._offer_dpi_rescale()
         self.design_canvas.queue_draw()
     
     def _load_settings(self):
@@ -849,6 +911,9 @@ class ZPLViewerWindow(Gtk.Window):
                 'printer', 'address', fallback=self.printer_address)
             self.printer_port = parser.getint(
                 'printer', 'port', fallback=self.printer_port)
+            dpi = parser.getint('printer', 'dpi', fallback=self.printer_dpi)
+            if dpi > 0:
+                self.printer_dpi = dpi
         except (configparser.Error, OSError, ValueError):
             # A missing or corrupt config must never block startup
             pass
@@ -864,6 +929,7 @@ class ZPLViewerWindow(Gtk.Window):
                 parser.add_section('printer')
             parser.set('printer', 'address', self.printer_address)
             parser.set('printer', 'port', str(self.printer_port))
+            parser.set('printer', 'dpi', str(self.printer_dpi))
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, 'w') as f:
                 parser.write(f)
@@ -905,6 +971,21 @@ class ZPLViewerWindow(Gtk.Window):
         port_spin.set_numeric(True)
         make_row("Port:", port_spin)
 
+        # Printer resolution
+        dpi_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        dpi_combo = Gtk.ComboBoxText()
+        for d in zpl_fonts.SUPPORTED_DPI:
+            dpi_combo.append_text(str(d))
+        try:
+            dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(self.printer_dpi))
+        except ValueError:
+            dpi_combo.append_text(str(self.printer_dpi))
+            dpi_combo.set_active(len(zpl_fonts.SUPPORTED_DPI))
+        dpi_box.pack_start(dpi_combo, True, True, 0)
+        detect_btn = Gtk.Button(label="Detect")
+        dpi_box.pack_start(detect_btn, False, False, 0)
+        make_row("DPI:", dpi_box)
+
         # Connection test
         result_label = Gtk.Label()
         result_label.set_halign(Gtk.Align.START)
@@ -930,6 +1011,26 @@ class ZPLViewerWindow(Gtk.Window):
             finally:
                 sock.close()
 
+        def on_detect_clicked(btn):
+            addr = address_entry.get_text().strip()
+            port = int(port_spin.get_value())
+            if not addr:
+                result_label.set_markup(
+                    "<span foreground='red'>Address is required</span>")
+                return
+            dpi = zpl_fonts.query_printer_dpi(addr, port)
+            if dpi is None:
+                result_label.set_markup(
+                    "<span foreground='red'>\u2717 The printer did not report its "
+                    "resolution; set it manually.</span>")
+                return
+            if dpi in zpl_fonts.SUPPORTED_DPI:
+                dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(dpi))
+            result_label.set_markup(
+                f"<span foreground='green'>\u2713 detected {dpi} dpi</span>")
+
+        detect_btn.connect("clicked", on_detect_clicked)
+
         test_btn = Gtk.Button(label="Test Connection")
         test_btn.connect("clicked", on_test_clicked)
         content.pack_start(test_btn, False, False, 0)
@@ -947,6 +1048,10 @@ class ZPLViewerWindow(Gtk.Window):
                 return
             self.printer_address = new_address
             self.printer_port = new_port
+            chosen = dpi_combo.get_active_text()
+            if chosen and chosen.isdigit():
+                self.printer_dpi = int(chosen)
+                self.design_canvas.dpi = self.printer_dpi
             self._save_settings()
             self.update_status(f"Printer set to {new_address}:{new_port}")
         dialog.destroy()
@@ -968,26 +1073,26 @@ class ZPLViewerWindow(Gtk.Window):
         presets_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         content.pack_start(presets_box, False, False, 0)
         
-        # Common label sizes (width x height in pixels at 203 DPI)
+        # Physical sizes; dots depend on the printer's resolution
         preset_sizes = {
-            "4x6": (812, 1218),
-            "5x7": (1015, 1428),
-            "6x4": (1218, 812),
-            "3x5": (609, 1015),
-            "2x3": (406, 609)
+            "4x6": (4, 6),
+            "5x7": (5, 7),
+            "6x4": (6, 4),
+            "3x5": (3, 5),
+            "2x3": (2, 3),
         }
-        
-        def on_preset_clicked(btn, w, h):
-            width_spin.set_value(w)
-            height_spin.set_value(h)
-        
-        for label_text, (w, h) in preset_sizes.items():
+
+        def on_preset_clicked(btn, w_in, h_in):
+            width_spin.set_value(w_in)
+            height_spin.set_value(h_in)
+
+        for label_text, (w_in, h_in) in preset_sizes.items():
             btn = Gtk.Button(label=label_text)
-            btn.connect("clicked", on_preset_clicked, w, h)
+            btn.connect("clicked", on_preset_clicked, w_in, h_in)
             presets_box.pack_start(btn, False, False, 0)
         
         # Custom sizes
-        custom_label = Gtk.Label(label="Custom Size (pixels):")
+        custom_label = Gtk.Label(label="Custom Size (inches):")
         custom_label.set_halign(Gtk.Align.START)
         content.pack_start(custom_label, False, False, 0)
         
@@ -1000,9 +1105,11 @@ class ZPLViewerWindow(Gtk.Window):
         width_box.pack_start(width_label, False, False, 0)
         
         width_spin = Gtk.SpinButton()
-        width_adj = Gtk.Adjustment(value=self.label_width, lower=100, upper=5000, step_increment=10)
+        width_adj = Gtk.Adjustment(value=self.label_width / self.printer_dpi, lower=0.5, upper=25,
+                                   step_increment=0.1)
         width_spin.set_adjustment(width_adj)
         width_spin.set_numeric(True)
+        width_spin.set_digits(1)
         width_box.pack_start(width_spin, True, True, 0)
         
         # Height
@@ -1014,13 +1121,25 @@ class ZPLViewerWindow(Gtk.Window):
         height_box.pack_start(height_label, False, False, 0)
         
         height_spin = Gtk.SpinButton()
-        height_adj = Gtk.Adjustment(value=self.label_height, lower=100, upper=5000, step_increment=10)
+        height_adj = Gtk.Adjustment(value=self.label_height / self.printer_dpi, lower=0.5, upper=25,
+                                    step_increment=0.1)
         height_spin.set_adjustment(height_adj)
         height_spin.set_numeric(True)
+        height_spin.set_digits(1)
         height_box.pack_start(height_spin, True, True, 0)
         
         # Info label
-        info_label = Gtk.Label(label="Note: Label size constrains the drawing area and is saved with the file.")
+        info_label = Gtk.Label()
+
+        def update_hint(*_a):
+            w, h = self.inches_to_dots(width_spin.get_value(), height_spin.get_value())
+            info_label.set_text(
+                f"{w} x {h} dots at {self.printer_dpi} dpi "
+                f"(^PW{w} / ^LL{h}), saved with the file.")
+
+        width_spin.connect("value-changed", update_hint)
+        height_spin.connect("value-changed", update_hint)
+        update_hint()
         info_label.set_halign(Gtk.Align.START)
         info_label.set_line_wrap(True)
         content.pack_start(info_label, False, False, 0)
@@ -1029,8 +1148,8 @@ class ZPLViewerWindow(Gtk.Window):
         
         response = dialog.run()
         if response == Gtk.ResponseType.OK:
-            new_width = int(width_spin.get_value())
-            new_height = int(height_spin.get_value())
+            new_width, new_height = self.inches_to_dots(
+                width_spin.get_value(), height_spin.get_value())
             self.label_width = new_width
             self.label_height = new_height
             self.design_canvas.set_label_size(new_width, new_height)
