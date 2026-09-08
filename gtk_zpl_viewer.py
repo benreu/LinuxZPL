@@ -66,6 +66,15 @@ class ZPLViewerWindow(Gtk.Window):
 
         menu_bar = Gtk.MenuBar()
         header.pack_start(menu_bar)
+
+        # Keyboard shortcuts, shown in the menu and live window-wide
+        accel_group = Gtk.AccelGroup()
+        self.add_accel_group(accel_group)
+
+        def add_accel(item, accel):
+            key, mods = Gtk.accelerator_parse(accel)
+            item.add_accelerator("activate", accel_group, key, mods,
+                                 Gtk.AccelFlags.VISIBLE)
         
         # File menu
         file_menu = Gtk.Menu()
@@ -76,21 +85,25 @@ class ZPLViewerWindow(Gtk.Window):
         # Load menu item
         load_item = Gtk.MenuItem(label="Load ZPL File")
         load_item.connect("activate", self.on_load_file_clicked)
+        add_accel(load_item, "<Control>o")
         file_menu.append(load_item)
         
         # Save menu item
         save_item = Gtk.MenuItem(label="Save")
         save_item.connect("activate", self.on_save_clicked)
+        add_accel(save_item, "<Control>s")
         file_menu.append(save_item)
         
         # Save menu item
         save_item = Gtk.MenuItem(label="Save as...")
         save_item.connect("activate", self.on_save_as_clicked)
+        add_accel(save_item, "<Control><Shift>s")
         file_menu.append(save_item)
         
         # Print menu item
         print_item = Gtk.MenuItem(label="Print")
         print_item.connect("activate", self.on_print_clicked)
+        add_accel(print_item, "<Control>p")
         file_menu.append(print_item)
         
         # Separator
@@ -100,6 +113,7 @@ class ZPLViewerWindow(Gtk.Window):
         # Quit menu item
         quit_item = Gtk.MenuItem(label="Quit")
         quit_item.connect("activate", self.close_app)
+        add_accel(quit_item, "<Control>q")
         file_menu.append(quit_item)
         
         file_menu.show_all()
