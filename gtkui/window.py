@@ -7,7 +7,7 @@ A simple GTK3 application for viewing rendered ZPL (Zebra Programming Language) 
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GdkPixbuf, GLib
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 import os
 import base64
 import configparser
@@ -39,7 +39,7 @@ class ZPLViewerWindow(Gtk.Window):
     
     def __init__(self):
         super().__init__(title="ZPL Viewer")
-        self.set_default_size(900, 1000)
+        self._size_to_screen()
         self.set_border_width(10)
         self.connect("delete-event", self.main_window_closed)
         
@@ -304,6 +304,43 @@ class ZPLViewerWindow(Gtk.Window):
         
         self.show_all()
         self.update_status("Ready")
+
+    # Opening size, before the screen is taken into account
+    PREFERRED_SIZE = (900, 1000)
+
+    def _size_to_screen(self):
+        """Open at a size that fits the screen, centred on it.
+
+        A window taller than the work area is placed wherever the window
+        manager can put it, which on a stacked multi-monitor desktop can be
+        almost entirely below the bottom edge - indistinguishable from the
+        application never opening at all.
+        """
+        want_w, want_h = self.PREFERRED_SIZE
+        monitor = self._monitor_under_pointer()
+        if monitor is not None:
+            area = monitor.get_workarea()
+            want_w = min(want_w, max(480, area.width - 80))
+            want_h = min(want_h, max(360, area.height - 80))
+        self.set_default_size(want_w, want_h)
+        # On the monitor being worked on, not whichever one is primary: with
+        # two screens the window can otherwise open on the other one.
+        self.set_position(Gtk.WindowPosition.MOUSE)
+
+    @staticmethod
+    def _monitor_under_pointer():
+        """The monitor the pointer is on, falling back to the primary one."""
+        display = Gdk.Display.get_default()
+        if display is None:
+            return None
+        try:
+            _screen, px, py = display.get_default_seat().get_pointer().get_position()
+            monitor = display.get_monitor_at_point(px, py)
+            if monitor is not None:
+                return monitor
+        except Exception:
+            pass
+        return display.get_primary_monitor() or display.get_monitor(0)
 
     def main_window_closed(self, widget, event):
       if not self.close_app(widget):
@@ -1415,6 +1452,9 @@ class ZPLViewerWindow(Gtk.Window):
 def main():
     """Main entry point for the application."""
     app = ZPLViewerWindow()
+    # Ask for the front. Started from an editor running full screen, a new
+    # window can otherwise map behind it and look as though nothing happened.
+    app.present()
     Gtk.main()
 
 

@@ -85,7 +85,6 @@
       "request": "launch",
       "program": "${file}",
       "cwd": "${workspaceFolder}",
-      "env": { "QT_QPA_PLATFORM": "offscreen" },
       "console": "integratedTerminal",
       "justMyCode": true
     }
