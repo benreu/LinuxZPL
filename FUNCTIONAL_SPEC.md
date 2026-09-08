@@ -1,0 +1,611 @@
+# LinuxZPL — Functional Specification
+
+What the application does, described so it can be rebuilt on a different GUI
+toolkit or in a different language. It covers behaviour, data and wire formats;
+it does not describe the current Python/GTK implementation except where an
+observable behaviour depends on it.
+
+---
+
+## 1. Purpose
+
+A visual designer for Zebra thermal labels. The user places text, frames,
+barcodes and images on a label-sized canvas, saves the result as a `.zpl` file,
+and prints it over the network to a Zebra printer. The canvas is meant to be a
+proof of what the printer will produce, not an approximation of it.
+
+---
+
+## 2. Concepts that must survive the port
+
+These four ideas drive most of the behaviour below. A port that drops them will
+look right and print wrong.
+
+**Everything is measured in printer dots.** Element positions and sizes, font
+heights, frame thickness, bar widths — all integers, all dots. No pixels, no
+points, no millimetres are stored anywhere.
+
+**ZPL files record no resolution.** A label of 812 × 1218 dots is 4 × 6 inches
+on a 203 dpi printer and 2.7 × 4.1 inches on a 300 dpi one. The same file is
+physically a different size on different hardware. The application therefore
+tracks the resolution a label was drawn for separately (§11).
+
+**A thermal printer only adds black; it cannot erase.** Overlapping fields
+combine — an image placed over text does *not* hide the text, which prints
+through the image's white areas. Anything a port draws as opaque on screen
+misrepresents the output.
+
+**The canvas shows the printed result, not the source material.** Images are
+displayed as the 1-bit dithered bitmap the printer receives; text is displayed
+at the width it will actually print. Where a designer affordance must be drawn
+(element outlines, backgrounds), it is translucent so it cannot conceal
+something that will still print.
+
+---
+
+## 3. The document
+
+### 3.1 Label
+
+| Property | Meaning |
+|---|---|
+| `label_width`, `label_height` | Label size in dots. Written as `^PW` / `^LL`. |
+| `dpi` | Resolution the label is drawn for. Written as designer metadata. |
+| elements | Ordered list. Index 0 is the bottom of the z-order, the last element is the top. |
+
+At startup the label is 4 × 6 inches at the configured printer resolution
+(812 × 1218 dots at 203 dpi, 1200 × 1800 at 300).
+
+### 3.2 Properties common to every element
+
+`x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`, and
+`print_enabled` (default true — see §6.5).
+
+### 3.3 Element types
+
+#### Text
+
+| Property | Default |
+|---|---|
+| `text` | `"New Text"` |
+| `font_height` | 36 dots |
+| `font_width` | 20 dots |
+| `font_path`, `font_family`, `printer_font_name` | none (uses the document font, or the printer's built-in font) |
+
+`height` always equals `font_height`. **`width` is derived, never set
+directly**, and must be recomputed whenever the text, the font or either font
+dimension changes:
+
+- **With a TrueType font selected**: measure the advance width of the whole
+  string with that font at em size = `font_height`, then multiply by
+  `font_width / font_height` (the printer scales the em square to
+  `font_width × font_height`). Round to an integer, minimum 1.
+- **Without one** (Zebra's built-in font A, which is fixed-width):
+  `len(text) × font_width`.
+
+Getting this wrong is the single most visible defect a port can have: assuming
+fixed width for a proportional font makes `IIII` print far narrower and `WWWW`
+far wider than the canvas showed.
+
+#### Frame
+
+| Property | Default |
+|---|---|
+| `width`, `height` | 200 × 150 dots |
+| `thickness` | 2 dots |
+
+Thickness is a border drawn inward from the element bounds. Its useful maximum
+is `min(width, height) / 2`, at which point the border meets in the middle and
+the frame is a solid filled rectangle. Clamp to that maximum, minimum 1.
+
+#### Barcode
+
+Code 128, subset B only.
+
+| Property | Default |
+|---|---|
+| `barcode_value` | `"123456789"` |
+| `height` | 100 dots |
+| `module_width` | 2 dots |
+
+**`width` is derived**: `(35 + len(value) × 11) × module_width`. The constant 35
+is the start, check and stop modules; each data character is 11 modules.
+
+#### Image
+
+| Property | Default |
+|---|---|
+| `image_path` | the file the user chose |
+| `width`, `height` | 200 × 200 dots |
+
+Loaded from JPEG or PNG. The image is resized to the element's dot dimensions
+(high-quality/Lanczos resampling) and then converted to 1-bit with
+Floyd–Steinberg dithering. That dithered bitmap is what is displayed, what is
+saved, and what is printed. Resizing the element re-dithers from the original
+source at the new size — never from the previous bitmap.
+
+---
+
+## 4. Main window
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ File  Edit  Settings              Title        ↶  ↷   ✕ │  header bar
+├─────────────────────────────────────────────────────────┤
+│ [+ Text] [+ Frame] [+ Barcode] [+ Image]       [Delete] │  toolbar
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│                    design canvas                        │  scrollable
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│ Ready                                                   │  status bar
+└─────────────────────────────────────────────────────────┘
+```
+
+The menu bar sits in the header bar; undo and redo are icon buttons at the
+opposite end, disabled when their history stack is empty. The canvas is
+scrollable. Default window size 900 × 1000; the canvas requests at least
+600 × 800.
+
+---
+
+## 5. Canvas behaviour
+
+### Display
+
+- The canvas draws in label coordinates, uniformly scaled so the label width
+  fills the available width. All hit-testing converts pointer position back to
+  label coordinates before comparing against element geometry.
+- White background; the label boundary is a light grey dashed rectangle.
+- Elements are drawn in list order, bottom first.
+- An element with `print_enabled` false is drawn at 35% opacity — visible and
+  fully editable, but marked as not printing.
+- Text and frame elements are drawn with a translucent background and a thin
+  outline (blue when selected, lighter otherwise) so nothing beneath them is
+  hidden.
+- Images are drawn as the dithered bitmap with **white treated as
+  transparent**, so elements underneath remain visible, exactly as they will
+  still print.
+
+### Selection and manipulation
+
+- **Left click** selects the topmost element containing the point, or clears the
+  selection.
+- **Drag** moves the selected element. Position is clamped so the element stays
+  inside the label: `0 ≤ x ≤ label_width − width`, likewise for y.
+- **Eight resize handles** on the selected element — four corners, four edge
+  midpoints — drawn as small filled squares. A handle is hit if the pointer is
+  within 8 dots of its centre. While hovering one, the pointer changes to the
+  matching directional resize cursor (`nw-resize`, `n-resize`, `ne-resize`,
+  `w-resize`, `e-resize`, `sw-resize`, `s-resize`, `se-resize`).
+- Resizing enforces a **minimum of 20 × 20 dots**, clamps the element to the
+  label bounds, and then applies per-type rules:
+  - frame: thickness clamped to `min(width, height) / 2`
+  - text: `font_height` is set to the new height, `font_width` is solved so the
+    text prints at the new width, and the box is then snapped to that printed
+    width — the outline the user drags is the outline that prints
+- **Double click** (same element, within 500 ms) opens that element's edit
+  dialog.
+- **Right click** selects the element under the pointer and opens a context menu
+  (§6.5).
+
+---
+
+## 6. Commands
+
+### 6.1 File
+
+| Command | Behaviour |
+|---|---|
+| **Load ZPL File** | Prompts about unsaved changes (§6.6), then a file chooser filtered to `*.zpl`. The chooser previews the selected `.zpl` by rendering it to an image, scaled to at most 300 px wide. Loading replaces the whole document and resets the undo history. |
+| **Save** | Writes to the current path, or behaves as Save As if there is none. |
+| **Save as…** | File chooser, default name `untitled.zpl`. Adopts the chosen path as the current file. |
+| **Print** | §9. |
+| **Quit** | Prompts about unsaved changes (§6.6). |
+
+Saving refuses an empty document ("No content to save" — a document whose ZPL
+is empty or just `^XA` / `^XZ`). Save clears the modified flag; a failed save
+must report the real error and leave the flag set.
+
+### 6.2 Edit
+
+Undo, Redo, Delete, then Bring to Front / Bring Forward / Send Backward / Send
+to Back. Delete and the four z-order items are disabled when nothing is
+selected; the raise pair is disabled when the selection is already on top and
+the lower pair when it is already at the bottom. Sensitivity is re-evaluated
+each time the menu opens.
+
+### 6.3 Settings
+
+| Command | Behaviour |
+|---|---|
+| **Label Size** | §7 |
+| **Printer Settings** | §7 |
+| **Printer Fonts…** | §10.4 |
+
+### 6.4 Toolbar
+
+`+ Text`, `+ Frame`, `+ Barcode` add an element with the defaults from §3.3.
+`+ Image` opens a file chooser (JPEG/PNG) first. Each new element is placed at a
+staggered offset so successive additions do not stack exactly, and becomes the
+selection. `Delete` removes the selected element.
+
+### 6.5 Element context menu (right click)
+
+- **Print This Element** — a checkbox, default on. Unticking keeps the element
+  in the design and in the saved file but leaves it off the printed label. This
+  is how a user suppresses an element that would otherwise print through an
+  image covering it.
+- **Bring to Front / Bring Forward / Send Backward / Send to Back**, disabled at
+  the ends of the z-order.
+
+### 6.6 The unsaved-changes prompt
+
+Shown when loading a file or quitting with unsaved changes. Three choices:
+
+| Choice | Result |
+|---|---|
+| Save (default) | Save, then continue **only if a file was actually written** — a cancelled or failed save aborts the operation |
+| Discard Changes | Continue, losing the changes |
+| Cancel (also Escape / closing the dialog) | Abort; the document is untouched |
+
+Loading a file must clear the modified flag, including any flag set as a side
+effect of building elements while parsing.
+
+---
+
+## 7. Dialogs
+
+| Dialog | Fields | Range / notes |
+|---|---|---|
+| **Edit Text** | Text; Font Height; Font Width; Font (Choose… / Clear) | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". |
+| **Edit Frame** | Width; Height; Thickness | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change |
+| **Edit Barcode** | Value; Height | Height 20–300 dots. Width is recomputed from the value (§3.3). |
+| **Edit Image** | file chooser | Replaces the source file, keeping position and size |
+| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches** | 0.5–25 inches, one decimal. A live hint shows the resulting dots at the current resolution and the `^PW` / `^LL` values. Shrinking clamps elements to the new bounds. |
+| **Printer Settings** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). |
+
+---
+
+## 8. File format
+
+### 8.1 What is written
+
+```
+^XA
+^PW<label_width>
+^LL<label_height>
+^FXDESIGNER_DPI:<dpi>
+  ... one block per element, in z-order ...
+^XZ
+```
+
+| Element | Block |
+|---|---|
+| Text, built-in font | `^FO<x>,<y>` / `^AFN,<font_height>,<font_width>` / `^FD<text>^FS` |
+| Text, downloaded font | `^FO<x>,<y>` / `^A@N,<font_height>,<font_width>,E:<NAME>.TTF` / `^FD<text>^FS` |
+| Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>` / `^FS` |
+| Barcode | `^FO<x>,<y>` / `^BY<module_width>` / `^BC,<height>` / `^FD<value>^FS` |
+| Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
+
+Each command is on its own line. `^BY` must be emitted: without it the printer
+uses its own default module width of 2, which pins the barcode's physical size
+to the head resolution and makes it the one element that cannot be rescaled.
+
+**Graphic encoding** (`^GFA`): one bit per dot, rows padded to whole bytes,
+`bytes_per_row = ceil(width / 8)`, data as uppercase hex. **A set bit is
+black** — the inverse of the usual 1-bit image convention, where 0 is black.
+Padding bits at the end of a row are white (0).
+
+### 8.2 Designer metadata
+
+Four `^FX` comment keys, which printers ignore:
+
+| Key | Payload | Purpose |
+|---|---|---|
+| `^FXDESIGNER_DPI:` | integer | The resolution the label was drawn for (§11) |
+| `^FXDESIGNER_PREVIEW:` | base64 JPEG | The image at original quality, so a reopened file need not be rebuilt from the 1-bit data |
+| `^FXDESIGNER_PATH:` | plain filesystem path | Where the image came from |
+| `^FXDESIGNER_NOPRINT:` | base64 of a whole element block | An element kept in the design but not printed |
+
+**`^FX` comments end at the next caret, not at the end of the line.** Any
+payload that could contain a caret must therefore be base64 encoded — otherwise
+a "hidden" element's own `^FO` / `^FD` would resume executing and print anyway.
+This applies to the preview and no-print payloads. The DPI value and the image
+path are caret-free and are stored as-is.
+
+### 8.3 What is read
+
+`^PW`, `^LL`, `^FO`, `^AF`, `^A@`, `^GB`, `^BC`, `^BY`, `^GFA`, and the four
+metadata keys. Lines beginning with `;` and blank lines are skipped. A `^FO`
+starts an element; the following lines are scanned to determine its type, and
+field data is read from a `^FD…^FS` line.
+
+Parsing is deliberately tolerant: an unrecognised command is skipped rather
+than treated as an error, and missing parameters fall back to the defaults in
+§3.3.
+
+Before parsing, `^FXDESIGNER_NOPRINT` payloads are decoded and expanded back
+into the line stream in place, preceded by a marker, so hidden elements keep
+their z-order position.
+
+**Restoring an image**, in order of preference:
+
+1. the original file, if `^FXDESIGNER_PATH` still exists on disk
+2. the embedded JPEG preview
+3. decoding the 1-bit `^GFA` data (the only option for ZPL from other tools)
+
+---
+
+## 9. Printing
+
+**File → Print**:
+
+1. Check the label's fonts against the printer (§10.3). If the user cancels,
+   stop and report "Printing cancelled".
+2. Open a TCP connection to the configured address and port (10 s timeout). On
+   failure, show the error and stop.
+3. Send the document's ZPL as UTF-8 bytes and close the connection.
+
+Elements with `print_enabled` false are sent as `^FXDESIGNER_NOPRINT` comments
+rather than as fields, so the printer ignores them.
+
+### Printer wire formats
+
+| Purpose | Payload | Reply |
+|---|---|---|
+| Print | the ZPL document | none |
+| List fonts | `^XA^HWE:*.TTF^XZ` | object names, parsed as `<name>.TTF` (up to 8 chars of `A-Z 0-9 _ -`) |
+| Upload font | `~DYE:<NAME>,A,TT,<size>,<size>,` followed by the raw font file bytes | none |
+| Delete font | `^XA^ID E:<NAME>.TTF^FS^XZ` (no space) | none |
+| Query resolution | `~HI` | model, firmware and head resolution in dots per mm |
+
+Reads use a 5 s timeout to first data, then a short 0.5 s timeout between
+chunks, since a printer that has started answering sends the rest promptly.
+
+**A printer that does not answer must be distinguishable from a printer that
+answers "nothing".** An empty font list means the printer has no fonts; no
+reply at all means it could not be asked, and the two lead to different
+prompts. The same applies to the resolution query, where no answer must leave
+the user's manual setting alone rather than substituting a guess.
+
+---
+
+## 10. Fonts
+
+### 10.1 Which fonts can be used
+
+Only installed **TrueType** (`.ttf`) families. OpenType, Type 1 and TrueType
+collections are excluded deliberately: they cannot be uploaded to the printer,
+and offering them would produce labels that print in a substitute face. Where a
+family ships several faces, prefer the one styled regular / book / roman /
+normal.
+
+Font lookup by family name must be exact. Do not fall back to the platform's
+"closest match" service, which always returns something and would silently
+substitute a different font for a name that is not installed.
+
+### 10.2 Printer object names
+
+A font stored on the printer is `E:<NAME>.TTF` where `<NAME>` is derived from
+the font's filename: uppercased, non-ASCII dropped, every character outside
+`[A-Z0-9_-]` removed, truncated to **8 characters**. Empty results become
+`FONT`. Any character outside that set would corrupt the `~DY` header and every
+`^A@` reference — a space in a family like "Catrina Demo" is the common case.
+
+Truncation makes collisions easy (`DejaVuSans` and `DejaVuSans-Bold` both give
+`DEJAVUSA`), so a name already in use within the same label gets a numeric
+suffix instead of overwriting.
+
+A saved `.zpl` records only the object name, never the font file. On load, the
+name is mapped back to an installed `.ttf` by deriving each candidate's object
+name and comparing. Because truncation is lossy, several faces can match;
+prefer the family's canonical face, then the shortest filename, so the base
+face wins over Bold/Italic. A label saved with a bold face may therefore reopen
+in the regular face of the same family — what prints is unaffected, since the
+printer only has the one object.
+
+### 10.3 The pre-print check
+
+Fonts are recorded when chosen and uploaded only at print time, so picking a
+font never blocks on the network.
+
+Before printing, collect the object names the label uses. If none (built-in
+fonts only), print. Otherwise ask the printer what it has and compare:
+
+| Situation | Prompt | Buttons |
+|---|---|---|
+| Printer did not answer | "The printer could not be asked which fonts it has." | Cancel (default), Print Anyway |
+| Fonts missing, source files known | Lists the missing `E:NAME.TTF` objects | Cancel, Print Anyway, **Upload & Print** (default) |
+| Fonts missing, source unknown (loaded from a `.zpl`) | Same, each marked "(source file unknown)" | Cancel, Print Anyway |
+| Nothing missing | — | prints |
+
+"Upload & Print" uploads each font it can, then prints; a failed upload aborts.
+
+### 10.4 Printer font manager
+
+Lists the font objects on the printer, with Upload… (choose an installed
+family), Delete (the selected object) and Refresh. When the printer is
+unreachable it says so and disables Delete rather than showing an empty list as
+if the printer had no fonts.
+
+---
+
+## 11. Print resolution
+
+The printer's resolution is a persisted setting (203, 300 or 600 dpi, default
+203), and can be detected: the Test Connection button opens the socket and then
+asks the printer, mapping the reported dots per mm (6, 8, 12, 24) to dpi (152,
+203, 300, 600) and filling the field in. A printer that does not answer, or
+reports a resolution the application does not support, leaves the manual
+setting untouched.
+
+Label size is entered in **inches** and converted to dots with the current
+resolution.
+
+When a file is opened whose recorded `^FXDESIGNER_DPI` differs from the
+printer's setting, offer three choices:
+
+| Choice | Result |
+|---|---|
+| Rescale (default) | Multiply the whole design by `printer_dpi / file_dpi`, preserving physical size |
+| Keep Dots | Leave the dots alone; the label prints at a different physical size, which the prompt states in inches |
+| Cancel | Leave the dots alone |
+
+Rescaling multiplies positions, sizes, label dimensions, font height and width,
+frame thickness and barcode module width, rounding to whole dots; text widths
+are then recomputed from font metrics rather than scaled, and images re-dither
+from their source at the new size.
+
+**A file with no recorded resolution is assumed to be 203 dpi**, not the
+printer's current setting. Adopting the printer's setting would stamp a guess
+into the file on the next save — permanently mislabelling a 203 dpi label as
+whatever printer happened to open it. When the assumption differs from the
+printer, the prompt must say the resolution was assumed rather than read.
+
+**Barcodes cannot rescale exactly.** Module width is a whole number of dots, so
+a module of 2 becomes 3 rather than 2.96 going from 203 to 300 dpi — a width
+error of up to half a dot per module. Positions and heights scale exactly.
+
+---
+
+## 12. Undo and redo
+
+A single linear history of document snapshots. A snapshot holds the label size,
+every element with all its properties, and which element is selected.
+
+- **One entry per user action.** A drag or a resize is one entry, recorded when
+  the mouse is released — not one per motion event.
+- Every document change is undoable: adding, deleting, moving, resizing,
+  reordering, editing an element through its dialog, toggling Print This
+  Element, and changing the label size (including the element clamping that a
+  smaller label causes).
+- Performing a new action after undoing discards the redo branch.
+- History is capped at 50 entries, oldest discarded.
+- Loading a file clears the history — undo never crosses a file boundary.
+- Undo and redo both mark the document modified.
+- Undo and redo controls are disabled when their stack is empty.
+
+Changes that are *not* part of the document — printer address, port, resolution
+— are not undoable.
+
+---
+
+## 13. Persisted settings
+
+An INI file at the platform's user config directory, `linuxzpl/settings.ini`:
+
+```ini
+[printer]
+address = 192.168.50.21
+port = 9100
+dpi = 203
+```
+
+A missing or corrupt file must never block startup; fall back to the defaults
+above.
+
+---
+
+## 14. Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+O | Load |
+| Ctrl+S | Save |
+| Ctrl+Shift+S | Save As |
+| Ctrl+P | Print |
+| Ctrl+Q | Quit |
+| Ctrl+Z | Undo |
+| Ctrl+Shift+Z, Ctrl+Y | Redo |
+| Delete | Delete selected element |
+| Ctrl+] | Bring Forward |
+| Ctrl+Shift+] | Bring to Front |
+| Ctrl+[ | Send Backward |
+| Ctrl+Shift+[ | Send to Back |
+
+Three notes for a port:
+
+- Shortcuts are global to the window, not only active while a menu is open —
+  which is why Page Up / Home were avoided for the z-order actions: they would
+  be taken away from scrolling the canvas.
+- A shortcut is subject to the same enable/disable rules as its menu item. Ctrl+Y
+  does nothing when there is nothing to redo, and Delete does nothing with no
+  selection; neither is an error.
+- On toolkits that report the *shifted* key symbol, `Ctrl+Shift+]` arrives as
+  `}` and will not match a binding declared on `]`; both forms may need
+  registering.
+
+---
+
+## 15. Status and errors
+
+A status bar reports the last significant action: `Ready`, `Loaded: <file>`,
+`Saved: <file>`, `Save failed`, `Error loading file`, `Undo`, `Redo`,
+`Printing cancelled`, `Rescaled from <old> to <new> dpi`,
+`Label size set to <w>x<h>`, `Printer set to <address>:<port>`, and progress
+while uploading a font.
+
+Failures are reported in a modal error dialog with the actual underlying
+message — never a swallowed exception or a placeholder.
+
+---
+
+## 16. Reference: defaults and limits
+
+| | Value |
+|---|---|
+| Default label | 4 × 6 inches at the configured dpi |
+| Default printer | `192.168.50.21:9100`, 203 dpi |
+| Supported resolutions | 203, 300, 600 dpi |
+| Text | 36 dot height, 20 dot width, `"New Text"` |
+| Text dialog limits | font height and width 8–500 dots |
+| Frame | 200 × 150 dots, 2 dot thickness |
+| Frame dialog limits | width 10–800, height 10–1200, thickness 1 to `min(w,h)/2` |
+| Barcode | Code 128B, `"123456789"`, 100 dot height, module width 2 |
+| Barcode dialog limits | height 20–300 dots |
+| Image | 200 × 200 dots, JPEG/PNG source |
+| Minimum element size when resizing | 20 × 20 dots |
+| Resize handle hit radius | 8 dots |
+| Double-click interval | 500 ms |
+| Undo depth | 50 |
+| Printer font object name | 8 characters, `[A-Z0-9_-]`, stored on `E:` |
+| Print timeout | 10 s |
+| Query timeout | 5 s, then 0.5 s between chunks |
+| Font upload timeout | 30 s |
+
+---
+
+## 17. Platform services a port must supply
+
+| Service | Used for | Notes |
+|---|---|---|
+| Font enumeration | Listing installed TrueType families with their file paths | Must give exact family → file mapping, not fuzzy matching |
+| Font metrics | Measuring string advance width at a given em size | Required for correct text width; a port without it cannot honour §3.3 |
+| Font rasterising | Drawing text on the canvas in the chosen face | |
+| Image decoding and resampling | JPEG/PNG loading, high-quality resize | |
+| Dithering | Floyd–Steinberg to 1-bit | Must match what is sent to the printer, or the canvas stops being a proof |
+| JPEG encoding | The embedded preview | |
+| Vector drawing | Canvas rendering with a uniform scale transform, translucency and alpha compositing | |
+| TCP sockets | All printer communication | Plain sockets; no printing subsystem is involved |
+| Registering a font at runtime | So a chosen font can be drawn before it is installed anywhere | Optional; without it the canvas may fall back to a default face |
+
+---
+
+## 18. Known deviations
+
+Behaviours in the current implementation that a port should treat as decisions
+rather than requirements:
+
+- **Canvas text is truncated to the first 20 characters for display**, while
+  the element box and the printed output use the whole string. A longer text
+  element therefore shows less on screen than it prints.
+- **The Edit Barcode dialog recomputes width with a hardcoded module width of
+  2**, rather than the element's own `module_width`. After a rescale to 300
+  dpi (module 3), editing a barcode's value shrinks its canvas box below what
+  prints. §3.3 gives the correct rule.
+- **The canvas scales to fit width only.** A label taller than the viewport
+  scrolls; there is no zoom control and no fit-to-window.
+- **Barcodes are Code 128 subset B only.** No other symbology is offered, and
+  the value is not validated against the subset.
+- **There is no "New" command.** A blank document exists only at startup.
