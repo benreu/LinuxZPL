@@ -1,0 +1,585 @@
+"""
+The ZPL document: label, elements, and the ZPL they serialise to.
+
+Nothing here imports a GUI toolkit. The rules that decide whether a label
+prints the way the canvas showed it - derived text width, derived barcode
+width, the 1-bit bit order, the base64 wrapping of hidden elements - all live
+in this module, so they can be exercised without a display.
+"""
+
+import base64 as _b64
+import copy
+import io as _io
+from typing import List, Optional
+
+from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
+                 ImageFont as PILImageFont)
+
+from . import fonts as zpl_fonts
+
+
+class DesignElement:
+    """Base class for design elements.
+
+    Every measurement on an element is in printer dots. No pixels, no points,
+    no millimetres are stored anywhere: ZPL is dots, and a dot is only a
+    physical size once a head resolution is chosen.
+    """
+
+    x: int
+    y: int
+    width: int
+    height: int
+    element_type: str  # 'text', 'frame', 'barcode', 'image'
+
+    # Class attribute, so every element inherits the default without each
+    # __init__ having to set it.
+    print_enabled = True
+
+    def contains_point(self, x: int, y: int) -> bool:
+        """Check if point is within element bounds."""
+        return (self.x <= x <= self.x + self.width and
+                self.y <= y <= self.y + self.height)
+
+
+class TextElement(DesignElement):
+    """Text element for the designer."""
+
+    def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
+                 font_height: int = 36, font_width: int = 20):
+        self.x = x
+        self.y = y
+        self.text = text
+        self.font_height = font_height
+        self.font_width = font_width
+        self.width = len(text) * font_width
+        self.height = font_height
+        self.element_type = 'text'
+        self.font_path: Optional[str] = None
+        self.font_family: Optional[str] = None
+        self.printer_font_name: Optional[str] = None
+
+    def _measure(self, font_path: str) -> float:
+        """Advance width of the text at em = font_height, or 0 if unmeasurable."""
+        try:
+            font = PILImageFont.truetype(font_path, max(1, self.font_height))
+            draw = PILImageDraw.Draw(PILImage.new('RGBA', (1, 1)))
+            return draw.textlength(self.text or " ", font=font)
+        except Exception:
+            return 0.0
+
+    def printed_width(self, default_font_path: Optional[str] = None) -> int:
+        """Width in dots this text will actually occupy on the printer.
+
+        ^AF selects Zebra's built-in font A, which is fixed width, so
+        len(text) * font_width holds. ^A@ selects a downloaded TrueType, which
+        is proportional - every glyph has its own advance - so the string has
+        to be measured. Assuming fixed width there is what made "IIII" print
+        far narrower and "WWWW" far wider than the designer showed.
+        """
+        font_path = self.font_path or default_font_path
+        natural = self._measure(font_path) if font_path else 0.0
+        if natural <= 0:
+            return max(1, len(self.text) * self.font_width)
+        # The printer scales the em square to font_width x font_height, so an
+        # advance measured at font_height scales by font_width / font_height.
+        return max(1, round(natural * self.font_width / max(1, self.font_height)))
+
+    def font_width_for(self, target_width: int,
+                       default_font_path: Optional[str] = None) -> int:
+        """The font_width that makes this text print target_width dots wide."""
+        font_path = self.font_path or default_font_path
+        natural = self._measure(font_path) if font_path else 0.0
+        if natural <= 0:
+            return max(1, round(target_width / max(1, len(self.text))))
+        return max(1, round(target_width * max(1, self.font_height) / natural))
+
+    def to_zpl(self, printer_font_name: Optional[str] = None) -> str:
+        """Convert to ZPL commands."""
+        effective_font = self.printer_font_name or printer_font_name
+        zpl = f"^FO{self.x},{self.y}\n"
+        if effective_font:
+            zpl += f"^A@N,{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
+        else:
+            zpl += f"^AFN,{self.font_height},{self.font_width}\n"
+        zpl += f"^FD{self.text}^FS\n"
+        return zpl
+
+
+class FrameElement(DesignElement):
+    """Frame element for the designer."""
+
+    def __init__(self, x: int = 100, y: int = 100, width: int = 200,
+                 height: int = 150, thickness: int = 2):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.thickness = thickness
+        self.element_type = 'frame'
+
+    def max_thickness(self) -> int:
+        """Thickest useful border: at half the smaller side it fills solid."""
+        return max(1, min(self.width, self.height) // 2)
+
+    def to_zpl(self) -> str:
+        """Convert to ZPL commands."""
+        return f"^FO{self.x},{self.y}\n^GB{self.width},{self.height},{self.thickness}\n^FS\n"
+
+
+class BarcodeElement(DesignElement):
+    """Barcode element for the designer. Code 128, subset B only."""
+
+    def __init__(self, x: int = 50, y: int = 200, height: int = 100,
+                 barcode_value: str = "123456789", module_width: int = 2):
+        self.x = x
+        self.y = y
+        self.height = height
+        self.barcode_value = barcode_value
+        self.module_width = module_width
+        self.element_type = 'barcode'
+        self.width = self.printed_width()
+
+    def printed_width(self) -> int:
+        """Width in dots: Code 128B is start + data + check + stop modules."""
+        return (35 + len(self.barcode_value) * 11) * max(1, self.module_width)
+
+    def to_zpl(self) -> str:
+        """Convert to ZPL commands."""
+        # ^BY sets the module width. Without it the printer uses its own default
+        # of 2 dots, which pins the barcode's physical size to the head
+        # resolution and makes it the one element that cannot be rescaled.
+        return (f"^FO{self.x},{self.y}\n"
+                f"^BY{max(1, self.module_width)}\n"
+                f"^BC,{self.height}\n"
+                f"^FD{self.barcode_value}^FS\n")
+
+
+class ImageElement(DesignElement):
+    """Image element for the designer, rendered from a JPG/PNG file."""
+
+    def __init__(self, x: int = 50, y: int = 50, width: int = 200, height: int = 200,
+                 image_path: str = "", _pil_image=None):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.image_path = image_path
+        self.element_type = 'image'
+        self._pil_image = _pil_image  # set when element is decoded from ZPL data
+        self._source_image = None     # cached decode of the original
+        self._sized_cache = None      # ((w, h), resized image)
+        self._render_cache = None     # ((w, h), frontend image)
+
+    def reload(self):
+        """Drop the cached renderings after the source image changes."""
+        self._source_image = None
+        self._sized_cache = None
+        self._render_cache = None
+
+    def _get_source_image(self):
+        """Decoded source image, cached so redraws do not re-read the file."""
+        if self._source_image is None:
+            try:
+                if self.image_path:
+                    img = PILImage.open(self.image_path)
+                    img.load()
+                elif self._pil_image is not None:
+                    img = self._pil_image
+                else:
+                    return None
+                if img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+            except Exception:
+                return None
+            self._source_image = img
+        return self._source_image
+
+    def _get_sized_image(self):
+        """Source resized to the element size - the resolution the printer gets.
+
+        Always from the original source, never from the previous rendering: a
+        re-dither of an already dithered bitmap compounds its error.
+        """
+        key = (self.width, self.height)
+        if self._sized_cache is not None and self._sized_cache[0] == key:
+            return self._sized_cache[1]
+        src = self._get_source_image()
+        if src is None:
+            return None
+        sized = src.resize((max(1, self.width), max(1, self.height)), PILImage.LANCZOS)
+        self._sized_cache = (key, sized)
+        return sized
+
+    def get_print_bitmap(self):
+        """The exact 1-bit bitmap the printer receives (Floyd-Steinberg dithered)."""
+        sized = self._get_sized_image()
+        if sized is None:
+            return None
+        return sized.convert('1')
+
+    def print_rgba(self):
+        """The printed bitmap as RGBA, with white transparent.
+
+        White becomes transparent so only black dots are painted, the way the
+        printer composites. An opaque image would hide elements underneath on
+        screen that still print on paper. Returned as PIL so each frontend can
+        wrap it in its own toolkit's image type.
+        """
+        bitmap = self.get_print_bitmap()
+        if bitmap is None:
+            return None
+        grey = bitmap.convert('L')
+        rgba = grey.convert('RGBA')
+        rgba.putalpha(grey.point(lambda v: 0 if v else 255))
+        return rgba
+
+    def get_print_render(self, convert):
+        """print_rgba() passed through a frontend's `convert`, cached by size.
+
+        The conversion belongs to the frontend - GdkPixbuf for GTK, QImage for
+        Qt - but the cache belongs here, keyed by the size the bitmap was
+        dithered at, because that is what makes it stale.
+        """
+        key = (self.width, self.height)
+        if self._render_cache is not None and self._render_cache[0] == key:
+            return self._render_cache[1]
+        rgba = self.print_rgba()
+        if rgba is None:
+            return None
+        try:
+            rendered = convert(rgba)
+        except Exception:
+            return None
+        self._render_cache = (key, rendered)
+        return rendered
+
+    def peek_print_render(self):
+        """Last converted image, whatever size it was, without recomputing.
+
+        Used to keep resize drags responsive on large sources; it may be stale,
+        so the caller must scale it into the element's current bounds.
+        """
+        return self._render_cache[1] if self._render_cache is not None else None
+
+    def to_zpl(self) -> str:
+        if not self.image_path and self._pil_image is None:
+            return ""
+        import numpy as np
+
+        img_sized = self._get_sized_image()
+        if img_sized is None:
+            return ""
+
+        # 1-bit encoding for the ZPL printer (^GF only supports 1-bit)
+        img_1bit = self.get_print_bitmap()
+        bytes_per_row = (self.width + 7) // 8
+        total_bytes = bytes_per_row * self.height
+        arr = np.array(img_1bit, dtype=np.uint8)
+        padded_w = bytes_per_row * 8
+        if padded_w > self.width:
+            # Padding is white, i.e. an unset bit, so it prints nothing.
+            pad = np.full((self.height, padded_w - self.width), 255, dtype=np.uint8)
+            arr = np.concatenate([arr, pad], axis=1)
+        arr = arr.reshape(self.height, bytes_per_row, 8)
+        # A SET bit is black - the inverse of the usual 1-bit convention, which
+        # is why this compares against 0 rather than casting the array.
+        bits = (arr == 0).astype(np.uint8)
+        weights = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint8)
+        packed = (bits * weights).sum(axis=2).astype(np.uint8)
+        data = packed.tobytes().hex().upper()
+
+        # Embed full-colour JPEG preview in a ^FX comment so the designer can
+        # restore the original image quality when the ZPL file is reopened.
+        # Printers ignore ^FX fields entirely.
+        preview_bio = _io.BytesIO()
+        img_sized.convert('RGB').save(preview_bio, format='JPEG', quality=85, optimize=True)
+        b64_preview = _b64.b64encode(preview_bio.getvalue()).decode('ascii')
+
+        zpl = f"^FO{self.x},{self.y}\n"
+        zpl += f"^FXDESIGNER_PREVIEW:{b64_preview}\n"
+        if self.image_path:
+            zpl += f"^FXDESIGNER_PATH:{self.image_path}\n"
+        zpl += f"^GFA,{total_bytes},{total_bytes},{bytes_per_row},{data}\n"
+        zpl += f"^FS\n"
+        return zpl
+
+
+class Document:
+    """The label being designed: its size, its elements, and its z-order.
+
+    Element list order is z-order: index 0 is the bottom, the last element is
+    the top. Holds no widget, so a document can be parsed, edited and
+    serialised with no display attached.
+    """
+
+    def __init__(self, label_width: int = 812, label_height: int = 1218,
+                 dpi: int = zpl_fonts.DEFAULT_DPI):
+        self.elements: List[DesignElement] = []
+        self.selected_element: Optional[DesignElement] = None
+        self.label_width = label_width
+        self.label_height = label_height
+        self.dpi = dpi
+
+        # Document-wide font, used by any text element that has none of its own
+        self.font_path: Optional[str] = None
+        self.font_family: Optional[str] = None
+        self.printer_font_name: Optional[str] = None
+
+    # --- adding and removing -------------------------------------------------
+
+    def _stagger(self, step: int) -> int:
+        """Offset for a new element, so successive additions do not stack."""
+        return len(self.elements) * step
+
+    def add_text_element(self, text: str = "New Text") -> TextElement:
+        offset = self._stagger(10)
+        element = TextElement(50 + offset, 50 + offset, text)
+        self.sync_text_width(element)
+        return self._append(element)
+
+    def add_frame_element(self) -> FrameElement:
+        offset = self._stagger(20)
+        return self._append(FrameElement(100 + offset, 100 + offset))
+
+    def add_barcode_element(self) -> BarcodeElement:
+        offset = self._stagger(20)
+        return self._append(BarcodeElement(50 + offset, 250 + offset))
+
+    def add_image_element(self, image_path: str) -> ImageElement:
+        offset = self._stagger(20)
+        return self._append(ImageElement(50 + offset, 50 + offset, 200, 200, image_path))
+
+    def _append(self, element: DesignElement) -> DesignElement:
+        self.elements.append(element)
+        self.selected_element = element
+        return element
+
+    def remove_selected(self) -> bool:
+        if self.selected_element and self.selected_element in self.elements:
+            self.elements.remove(self.selected_element)
+            self.selected_element = None
+            return True
+        return False
+
+    def clear(self):
+        """Clear all elements."""
+        self.elements.clear()
+        self.selected_element = None
+
+    # --- z-order -------------------------------------------------------------
+
+    def can_raise(self) -> bool:
+        return (self.selected_element is not None
+                and self.elements
+                and self.elements[-1] is not self.selected_element)
+
+    def can_lower(self) -> bool:
+        return (self.selected_element is not None
+                and self.elements
+                and self.elements[0] is not self.selected_element)
+
+    def bring_forward(self) -> bool:
+        if not self.can_raise():
+            return False
+        i = self.elements.index(self.selected_element)
+        self.elements[i], self.elements[i + 1] = self.elements[i + 1], self.elements[i]
+        return True
+
+    def send_backward(self) -> bool:
+        if not self.can_lower():
+            return False
+        i = self.elements.index(self.selected_element)
+        self.elements[i], self.elements[i - 1] = self.elements[i - 1], self.elements[i]
+        return True
+
+    def bring_to_front(self) -> bool:
+        if not self.can_raise():
+            return False
+        self.elements.remove(self.selected_element)
+        self.elements.append(self.selected_element)
+        return True
+
+    def send_to_back(self) -> bool:
+        if not self.can_lower():
+            return False
+        self.elements.remove(self.selected_element)
+        self.elements.insert(0, self.selected_element)
+        return True
+
+    def element_at(self, x: int, y: int) -> Optional[DesignElement]:
+        """The topmost element containing the point, or None."""
+        for element in reversed(self.elements):
+            if element.contains_point(x, y):
+                return element
+        return None
+
+    # --- history -------------------------------------------------------------
+
+    def snapshot(self):
+        """A restorable record of the whole design.
+
+        A shallow copy per element is enough to be independent: everything an
+        edit touches is a scalar field. ImageElement's heavy attributes are
+        either immutable (the decoded source) or caches keyed by (width,
+        height) and replaced wholesale, so sharing them between snapshots is
+        safe and saves deep-copying decoded images and rendered bitmaps.
+        """
+        selected = None
+        if self.selected_element in self.elements:
+            selected = self.elements.index(self.selected_element)
+        return (self.label_width, self.label_height,
+                [copy.copy(el) for el in self.elements], selected)
+
+    def restore(self, snap):
+        """Put the design back to a snapshot taken earlier."""
+        label_width, label_height, elements, selected = snap
+        # assigned directly rather than through set_label_size, which would
+        # clamp elements that were already valid at this size
+        self.label_width = label_width
+        self.label_height = label_height
+        # copied again on the way out, or the next edit would rewrite the
+        # snapshot still sitting on the undo stack
+        self.elements = [copy.copy(el) for el in elements]
+        self.selected_element = (self.elements[selected]
+                                 if selected is not None else None)
+
+    # --- geometry ------------------------------------------------------------
+
+    def set_label_size(self, width: int, height: int):
+        """Set the label size and clamp elements to the new bounds."""
+        self.label_width = width
+        self.label_height = height
+        self._clamp_elements_to_bounds()
+
+    def _clamp_elements_to_bounds(self):
+        """Ensure all elements stay within label bounds."""
+        for element in self.elements:
+            element.x = max(0, min(element.x, self.label_width - 1))
+            element.y = max(0, min(element.y, self.label_height - 1))
+            element.width = min(element.width, self.label_width - element.x)
+            element.height = min(element.height, self.label_height - element.y)
+
+    def rescale(self, factor: float) -> None:
+        """Scale the whole design by `factor`, keeping its physical size.
+
+        Used when a label drawn for one head resolution is opened for another:
+        ZPL is in dots, so 812 dots is 4in at 203dpi but 2.7in at 300dpi.
+        """
+        if factor <= 0 or factor == 1.0:
+            return
+
+        def s(v):
+            return max(1, int(round(v * factor)))
+
+        self.label_width = s(self.label_width)
+        self.label_height = s(self.label_height)
+
+        for el in self.elements:
+            el.x = int(round(el.x * factor))
+            el.y = int(round(el.y * factor))
+            el.width = s(el.width)
+            el.height = s(el.height)
+            if el.element_type == 'text':
+                el.font_height = s(el.font_height)
+                el.font_width = s(el.font_width)
+            elif el.element_type == 'frame':
+                el.thickness = s(el.thickness)
+            elif el.element_type == 'barcode':
+                # A module is a whole number of dots, so 2 becomes 3 rather
+                # than 2.96 going 203 -> 300 dpi. Positions and heights scale
+                # exactly; a barcode's width cannot.
+                el.module_width = s(el.module_width)
+                el.width = el.printed_width()
+            elif el.element_type == 'image':
+                # the bitmap re-dithers from the source at the new size
+                el.reload()
+
+        # text width is derived from font metrics, not scaled directly
+        for el in self.elements:
+            self.sync_text_width(el)
+
+    # --- fonts ---------------------------------------------------------------
+
+    def sync_text_width(self, element) -> None:
+        """Resize a text element's box to the width it will print at."""
+        if getattr(element, 'element_type', None) == 'text':
+            element.width = element.printed_width(self.font_path)
+            element.height = element.font_height
+
+    def set_font(self, font_path: str, font_family: str, printer_font_name: str):
+        """Set the document-wide font."""
+        self.font_path = font_path
+        self.font_family = font_family
+        self.printer_font_name = printer_font_name
+        zpl_fonts.register_app_font(font_path)
+        for el in self.elements:
+            self.sync_text_width(el)
+
+    def set_element_font(self, element: TextElement, font_path: str,
+                         font_family: str, printer_font_name: str):
+        """Set one text element's own font."""
+        element.font_path = font_path
+        element.font_family = font_family
+        element.printer_font_name = printer_font_name
+        zpl_fonts.register_app_font(font_path)
+        self.sync_text_width(element)
+
+    def printer_font_names(self, exclude=None) -> set:
+        """Printer font names already used by the label's text elements."""
+        return {el.printer_font_name for el in self.elements
+                if el is not exclude and getattr(el, 'printer_font_name', None)}
+
+    def font_sources(self) -> dict:
+        """Printer font name -> local .ttf path, for fonts this label uses.
+
+        A font loaded from a .zpl has no local file, so its value is None and it
+        cannot be uploaded - only reported as missing.
+        """
+        sources = {}
+        for el in self.elements:
+            name = getattr(el, 'printer_font_name', None)
+            if name:
+                sources.setdefault(name, getattr(el, 'font_path', None))
+        if self.printer_font_name:
+            sources.setdefault(self.printer_font_name, self.font_path)
+        return sources
+
+    # --- serialisation -------------------------------------------------------
+
+    def to_zpl(self) -> str:
+        """Generate ZPL code from the elements, with the label size settings."""
+        zpl = "^XA\n"
+        zpl += f"^PW{self.label_width}\n"
+        zpl += f"^LL{self.label_height}\n"
+        # ZPL carries no resolution, so record what the dots were drawn for.
+        # Printers ignore ^FX, and the value has no caret to end the comment early.
+        zpl += f"^FXDESIGNER_DPI:{self.dpi}\n"
+        for element in self.elements:
+            if self.printer_font_name and element.element_type == 'text':
+                body = element.to_zpl(printer_font_name=self.printer_font_name)
+            else:
+                body = element.to_zpl()
+            if element.print_enabled:
+                zpl += body
+            elif body:
+                # ^FX comments only until the NEXT CARET, so the body has to be
+                # base64'd - inlining it raw would leave its ^FO/^FD to execute
+                # and print anyway, which is the whole point of hiding it.
+                blob = _b64.b64encode(body.encode('utf-8')).decode('ascii')
+                zpl += f"^FXDESIGNER_NOPRINT:{blob}\n"
+        zpl += "^XZ"
+        return zpl
+
+    def is_empty(self) -> bool:
+        """True when the ZPL carries no fields, only the format wrapper.
+
+        Tested on the emitted ZPL rather than on len(self.elements), so an
+        element that serialises to nothing - an image whose source has gone
+        away - counts as no content too.
+        """
+        body = self.to_zpl()
+        for header in ('^XA', '^XZ', f'^PW{self.label_width}',
+                       f'^LL{self.label_height}', f'^FXDESIGNER_DPI:{self.dpi}'):
+            body = body.replace(header, '')
+        return not body.strip()
