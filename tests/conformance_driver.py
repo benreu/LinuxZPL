@@ -93,6 +93,11 @@ class GtkDriver:
         self.window.load_zpl_file(str(path))
         self.canvas = self.window.design_canvas
 
+    def change_printer_dpi(self, dpi, answer):
+        from zplcore import workflow
+        self.window.printer_dpi = dpi
+        workflow.reconcile_dpi(self.canvas.document, dpi, lambda *a: answer)
+
     def to_zpl(self):
         return self.canvas.to_zpl()
 
@@ -163,6 +168,11 @@ class QtDriver:
     def load(self, path):
         self.window.unsaved_changes = False
         self.window.load_zpl_file(str(path))
+
+    def change_printer_dpi(self, dpi, answer):
+        from zplcore import workflow
+        self.window.printer_dpi = dpi
+        workflow.reconcile_dpi(self.document, dpi, lambda *a: answer)
 
     def to_zpl(self):
         return self.document.to_zpl()
@@ -240,6 +250,13 @@ def sequence(driver, record):
 
     driver.load(FIXTURE_300)
     record('load a 300dpi file at 203dpi, rescaled')
+
+    # The shared decisions: switching the printer's resolution under an open
+    # design must offer the same choice in both frontends, not re-stamp it.
+    driver.change_printer_dpi(300, answer='rescale')
+    record('printer switched to 300dpi, rescaled')
+    driver.change_printer_dpi(203, answer='keep')
+    record('printer switched to 203dpi, dots kept')
 
 
 def main():

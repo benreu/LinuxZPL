@@ -21,6 +21,7 @@ from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QLabel,
 
 from zplcore import fonts as zpl_fonts
 from zplcore import parser as zpl_parser
+from zplcore import workflow
 from zplcore.model import (BarcodeElement, Document, FrameElement, ImageElement,
                            TextElement)
 from zplcore.renderer import ZPLRenderer
@@ -363,37 +364,11 @@ class ZPLDesignerWindow(QMainWindow):
         self._save_settings()
         self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
         if dpi != old_dpi:
-            self._reconcile_document_dpi()
-
-    def _reconcile_document_dpi(self):
-        """Settle an open design against a printer resolution that just changed.
-
-        Dots only mean a physical size once a resolution is fixed, so pointing
-        the designer at a printer with a different head silently changes what
-        the open label measures - 1200 dots is 4in at 300 dpi and 5.9in at 203.
-        Re-stamping the document with the new resolution and saying nothing
-        would leave the elements at the old scale, and the label would print
-        oversized and run off the media. So the same choice a mismatched file
-        gets on open is offered here.
-        """
-        document = self.document
-        if document.dpi == self.printer_dpi or not document.elements:
-            document.dpi = self.printer_dpi
-            return
-
-        old = document.dpi
-        w_in, h_in = self._dots_to_inches(document.label_width, document.label_height)
-        answer = qt_dialogs.ask_dpi_rescale(self, old, self.printer_dpi,
-                                            False, w_in, h_in)
-        if answer == 'rescale':
-            document.rescale(self.printer_dpi / old)
-            document.dpi = self.printer_dpi
-            self.canvas._sync_size()
-            # The design changed, so this is one undoable action.
-            self.canvas.commit()
-            self.update_status(f"Rescaled from {old} to {self.printer_dpi} dpi")
-            return
-        document.dpi = self.printer_dpi
+            note = self._offer_dpi_rescale()
+            if note:
+                self.canvas._sync_size()
+                self.canvas.commit()
+                self.update_status(note[0].upper() + note[1:])
 
     def on_printer_fonts(self):
         def on_uploaded(name, path):
@@ -407,16 +382,10 @@ class ZPLDesignerWindow(QMainWindow):
 
     def check_unsaved_changes(self) -> bool:
         """Ask what to do with unsaved work. True means it is safe to continue."""
-        if not self.unsaved_changes:
-            return True
-        answer = qt_dialogs.ask_unsaved_changes(self)
-        if answer == 'discard':
-            return True
-        if answer == 'save':
-            # only continue if a file was actually written; a cancelled or
-            # failed save must not carry on and lose the work
-            return self.save_file_or_ask_for_filename()
-        return False
+        return workflow.unsaved_changes_gate(
+            self.unsaved_changes,
+            lambda: qt_dialogs.ask_unsaved_changes(self),
+            self.save_file_or_ask_for_filename)
 
     def on_new(self):
         if not self.check_unsaved_changes():
@@ -551,32 +520,21 @@ class ZPLDesignerWindow(QMainWindow):
             self.show_error(f"Failed to load file: {e}")
             self.update_status("Error loading file")
 
-    def _offer_dpi_rescale(self, loaded_dpi):
-        """If the file was drawn for another resolution, offer to rescale it.
+    def _offer_dpi_rescale(self, loaded_dpi=workflow._FROM_DOCUMENT):
+        """Settle the design against the printer's resolution.
 
-        Returns a note for the status bar when it rescaled, else None.
+        Called both when a file records a different resolution and when the
+        printer's own resolution changes underneath an open design; the rule is
+        the same either way and lives in the core.
         """
-        document = self.document
-        # A file with no ^FXDESIGNER_DPI is assumed to be 203, the resolution of
-        # most ZPL in the wild. Taking the printer's resolution instead would
-        # stamp that guess into the file the next time it is saved,
-        # mislabelling a 203 dpi label as whatever printer happened to open it.
-        assumed = not loaded_dpi or loaded_dpi <= 0
-        old = zpl_fonts.DEFAULT_DPI if assumed else loaded_dpi
+        def ask(old, printer_dpi, assumed, w_in, h_in):
+            return qt_dialogs.ask_dpi_rescale(self, old, printer_dpi, assumed,
+                                              w_in, h_in)
 
-        if old == self.printer_dpi or not document.elements:
-            document.dpi = self.printer_dpi
-            return None
-
-        w_in, h_in = self._dots_to_inches(document.label_width, document.label_height)
-        answer = qt_dialogs.ask_dpi_rescale(self, old, self.printer_dpi, assumed,
-                                            w_in, h_in)
-        note = None
-        if answer == 'rescale':
-            document.rescale(self.printer_dpi / old)
+        note = workflow.reconcile_dpi(self.document, self.printer_dpi, ask,
+                                      file_dpi=loaded_dpi)
+        if note:
             self.canvas._sync_size()
-            note = f"rescaled from {old} to {self.printer_dpi} dpi"
-        document.dpi = self.printer_dpi
         return note
 
     # --- printing ------------------------------------------------------------
@@ -602,46 +560,18 @@ class ZPLDesignerWindow(QMainWindow):
 
     def _confirm_printer_fonts(self) -> bool:
         """Check the label's fonts are on the printer. False cancels printing."""
-        sources = self.document.font_sources()
-        if not sources:
-            return True  # nothing but built-in fonts, nothing to check
+        def ask(text, detail, uploadable):
+            return qt_dialogs.ask_font_problem(self, text, detail, uploadable)
 
-        installed = zpl_fonts.query_printer_fonts(self.printer_address, self.printer_port)
-        if installed is None:
-            # Not the same as "the printer has no fonts": it could not be asked.
-            return self._ask_font_problem(
-                "The printer could not be asked which fonts it has.",
-                "It may be unreachable, or may not support font queries.\n"
-                "Printing anyway may fall back to a substitute font.",
-                uploadable={})
+        def progress(message):
+            self.update_status(message)
+            QApplication.processEvents()
 
-        missing = {n: p for n, p in sources.items() if n.upper() not in installed}
-        if not missing:
-            return True
-
-        uploadable = {n: p for n, p in missing.items() if p}
-        lines = [f"  {zpl_fonts.printer_font_path(n)}" +
-                 ("" if missing[n] else "   (source file unknown)")
-                 for n in sorted(missing)]
-        return self._ask_font_problem(
-            "Fonts used by this label are not on the printer.",
-            "\n".join(lines) + "\n\nMissing fonts print in a substitute typeface.",
-            uploadable=uploadable)
-
-    def _ask_font_problem(self, text: str, detail: str, uploadable: dict) -> bool:
-        answer = qt_dialogs.ask_font_problem(self, text, detail, uploadable)
-        if answer == 'upload':
-            for name, path in sorted(uploadable.items()):
-                self.update_status(f"Uploading {zpl_fonts.printer_font_path(name)}...")
-                QApplication.processEvents()
-                try:
-                    zpl_fonts.upload_font(self.printer_address, self.printer_port,
-                                          path, name)
-                except Exception as e:
-                    self.show_error(f"Upload of {name} failed: {e}")
-                    return False
-            return True
-        return answer == 'print'
+        proceed, error = workflow.confirm_printer_fonts(
+            self.document, self.printer_address, self.printer_port, ask, progress)
+        if error:
+            self.show_error(error)
+        return proceed
 
     def on_print(self):
         if not self._confirm_printer_fonts():

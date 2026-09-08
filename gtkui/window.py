@@ -16,8 +16,8 @@ from pathlib import Path
 from zplcore import fonts as zpl_fonts
 from zplcore import parser as zpl_parser
 from zplcore import workflow
-from zplcore.model import (BarcodeElement, FrameElement, ImageElement,
-                           TextElement)
+from zplcore.model import (BarcodeElement, Document, FrameElement,
+                           ImageElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from .canvas import DesignCanvas
@@ -87,6 +87,12 @@ class ZPLViewerWindow(Gtk.Window):
         file_menu_item.set_submenu(file_menu)
         menu_bar.append(file_menu_item)
         
+        # New menu item
+        new_item = Gtk.MenuItem(label="New")
+        new_item.connect("activate", self.on_new_clicked)
+        add_accel(new_item, "<Control>n")
+        file_menu.append(new_item)
+
         # Load menu item
         load_item = Gtk.MenuItem(label="Load ZPL File")
         load_item.connect("activate", self.on_load_file_clicked)
@@ -311,34 +317,40 @@ class ZPLViewerWindow(Gtk.Window):
 
     def check_unsaved_changes(self):
       """Ask what to do with unsaved work. True means it is safe to continue."""
-      if not self.unsaved_changes:
-        return True
+      def ask():
+        dialog = Gtk.MessageDialog(
+          parent=self, flags=0, message_type=Gtk.MessageType.QUESTION,
+          buttons=Gtk.ButtonsType.NONE, text="You have unsaved changes.")
+        dialog.format_secondary_text(
+          "Your changes will be lost if you do not save them.")
+        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
+                           "Discard Changes", Gtk.ResponseType.REJECT,
+                           "Save", Gtk.ResponseType.ACCEPT)
+        dialog.set_default_response(Gtk.ResponseType.ACCEPT)
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.REJECT:
+          return 'discard'
+        return 'save' if response == Gtk.ResponseType.ACCEPT else 'cancel'
 
-      dialog = Gtk.MessageDialog(
-        parent=self,
-        flags=0,
-        message_type=Gtk.MessageType.QUESTION,
-        buttons=Gtk.ButtonsType.NONE,
-        text="You have unsaved changes."
-      )
-      dialog.format_secondary_text(
-        "Your changes will be lost if you do not save them.")
-      dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
-                         "Discard Changes", Gtk.ResponseType.REJECT,
-                         "Save", Gtk.ResponseType.ACCEPT)
-      dialog.set_default_response(Gtk.ResponseType.ACCEPT)
-      response = dialog.run()
-      dialog.destroy()
+      return workflow.unsaved_changes_gate(
+        self.unsaved_changes, ask, self.save_file_or_ask_for_filename)
 
-      if response == Gtk.ResponseType.REJECT:
-        return True
-      if response == Gtk.ResponseType.ACCEPT:
-        # only continue if a file was actually written; a cancelled or failed
-        # save must not carry on and lose the work
-        return self.save_file_or_ask_for_filename()
-      # Cancel, Escape, or the dialog being closed
-      return False
-    
+    def on_new_clicked(self, widget=None):
+        """Start a blank label, after asking about unsaved work."""
+        if not self.check_unsaved_changes():
+            return
+        document = Document(*self.inches_to_dots(4, 6))
+        document.dpi = self.printer_dpi
+        self.design_canvas.set_document(document)
+        self.label_width = document.label_width
+        self.label_height = document.label_height
+        self.current_filepath = None
+        self.current_zpl_content = None
+        self.unsaved_changes = False
+        self._reset_history()
+        self.update_status("Ready")
+
     def on_load_file_clicked(self, widget):
         """Handle load file button click."""
         if not self.check_unsaved_changes():
@@ -536,57 +548,35 @@ class ZPLViewerWindow(Gtk.Window):
 
     def _confirm_printer_fonts(self) -> bool:
         """Check the label's fonts are on the printer. False cancels printing."""
-        sources = self._label_font_sources()
-        if not sources:
-            return True  # nothing but built-in fonts, nothing to check
+        def ask(text, detail, uploadable):
+            dialog = Gtk.MessageDialog(parent=self, flags=0,
+                                       message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.NONE, text=text)
+            dialog.format_secondary_text(detail)
+            dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+            dialog.add_button("Print Anyway", Gtk.ResponseType.OK)
+            if uploadable:
+                dialog.add_button("Upload & Print", Gtk.ResponseType.APPLY)
+                dialog.set_default_response(Gtk.ResponseType.APPLY)
+            else:
+                dialog.set_default_response(Gtk.ResponseType.CANCEL)
+            response = dialog.run()
+            dialog.destroy()
+            if response == Gtk.ResponseType.APPLY:
+                return 'upload'
+            return 'print' if response == Gtk.ResponseType.OK else 'cancel'
 
-        installed = zpl_fonts.query_printer_fonts(self.printer_address, self.printer_port)
-        if installed is None:
-            return self._ask_font_problem(
-                "The printer could not be asked which fonts it has.",
-                "It may be unreachable, or may not support font queries.\n"
-                "Printing anyway may fall back to a substitute font.",
-                uploadable={})
+        def progress(message):
+            self.update_status(message)
+            while Gtk.events_pending():
+                Gtk.main_iteration()
 
-        missing = {n: path for n, path in sources.items() if n.upper() not in installed}
-        if not missing:
-            return True
-
-        uploadable = {n: p for n, p in missing.items() if p}
-        lines = [f"  {zpl_fonts.printer_font_path(n)}" +
-                 ("" if missing[n] else "   (source file unknown)")
-                 for n in sorted(missing)]
-        return self._ask_font_problem(
-            "Fonts used by this label are not on the printer.",
-            "\n".join(lines) + "\n\nMissing fonts print in a substitute typeface.",
-            uploadable=uploadable)
-
-    def _ask_font_problem(self, text: str, detail: str, uploadable: dict) -> bool:
-        """Ask what to do about missing fonts. True means go ahead and print."""
-        dialog = Gtk.MessageDialog(parent=self, flags=0,
-                                   message_type=Gtk.MessageType.WARNING,
-                                   buttons=Gtk.ButtonsType.NONE, text=text)
-        dialog.format_secondary_text(detail)
-        dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
-        dialog.add_button("Print Anyway", Gtk.ResponseType.OK)
-        if uploadable:
-            dialog.add_button("Upload & Print", Gtk.ResponseType.APPLY)
-            dialog.set_default_response(Gtk.ResponseType.APPLY)
-        else:
-            dialog.set_default_response(Gtk.ResponseType.CANCEL)
-        response = dialog.run()
-        dialog.destroy()
-
-        if response == Gtk.ResponseType.APPLY:
-            for name, path in sorted(uploadable.items()):
-                self.update_status(f"Uploading {zpl_fonts.printer_font_path(name)}...")
-                try:
-                    zpl_fonts.upload_font(self.printer_address, self.printer_port, path, name)
-                except Exception as e:
-                    self.show_error_dialog(f"Upload of {name} failed: {e}")
-                    return False
-            return True
-        return response == Gtk.ResponseType.OK
+        proceed, error = workflow.confirm_printer_fonts(
+            self.design_canvas.document, self.printer_address,
+            self.printer_port, ask, progress)
+        if error:
+            self.show_error_dialog(error)
+        return proceed
 
     def on_print_clicked(self, widget):
         """Handle print button click."""
@@ -601,8 +591,16 @@ class ZPLViewerWindow(Gtk.Window):
             self.show_error_dialog(str(e))
             return
         content = self.design_canvas.to_zpl()
-        printer_socket.send(bytes(content, 'utf-8')) #using bytes 
-        printer_socket.close () #closing connection
+        try:
+            # sendall, not send: a label with an image runs to tens of
+            # kilobytes, and send() may write only part of it.
+            printer_socket.sendall(content.encode('utf-8'))
+        except OSError as e:
+            self.show_error_dialog(str(e))
+            return
+        finally:
+            printer_socket.close()
+        self.update_status(f"Sent to {self.printer_address}:{self.printer_port}")
     
     def _new_renderer(self) -> ZPLRenderer:
         """A renderer preloaded with the fonts this session knows about.
@@ -756,24 +754,7 @@ class ZPLViewerWindow(Gtk.Window):
 
     def _printer_font_names(self, exclude=None):
         """Printer font names already used by the label's text elements."""
-        return {el.printer_font_name for el in self.design_canvas.elements
-                if el is not exclude and getattr(el, 'printer_font_name', None)}
-
-    def _label_font_sources(self):
-        """Printer font name -> local .ttf path, for fonts this label uses.
-
-        A font loaded from a .zpl has no local file, so its value is None and it
-        cannot be uploaded - only reported as missing.
-        """
-        sources = {}
-        for el in self.design_canvas.elements:
-            name = getattr(el, 'printer_font_name', None)
-            if name:
-                sources.setdefault(name, getattr(el, 'font_path', None))
-        canvas = self.design_canvas
-        if canvas.printer_font_name:
-            sources.setdefault(canvas.printer_font_name, canvas.font_path)
-        return sources
+        return self.design_canvas.document.printer_font_names(exclude=exclude)
 
     def _load_settings(self):
         """Load persisted settings from the config file."""
@@ -916,11 +897,23 @@ class ZPLViewerWindow(Gtk.Window):
             self.printer_address = new_address
             self.printer_port = new_port
             chosen = dpi_combo.get_active_text()
+            old_dpi = self.printer_dpi
             if chosen and chosen.isdigit():
                 self.printer_dpi = int(chosen)
-                self.design_canvas.dpi = self.printer_dpi
             self._save_settings()
             self.update_status(f"Printer set to {new_address}:{new_port}")
+            if self.printer_dpi != old_dpi:
+                # Pointing at a printer with a different head changes what the
+                # open label measures - 1200 dots is 4in at 300 dpi and 5.9in
+                # at 203. Re-stamping it and saying nothing would leave the
+                # elements at the old scale and print the label oversized.
+                dialog.destroy()
+                note = self._offer_dpi_rescale()
+                self.design_canvas.queue_draw()
+                if note:
+                    self.on_canvas_changed()
+                    self.update_status(note[0].upper() + note[1:])
+                return
         dialog.destroy()
 
     def on_label_settings_clicked(self, widget):
@@ -1302,7 +1295,10 @@ class ZPLViewerWindow(Gtk.Window):
             response = dialog.run()
             if response == Gtk.ResponseType.OK:
                 element.barcode_value = value_entry.get_text()
-                element.width = (35 + len(element.barcode_value) * 11) * 2
+                # Recomputed from the element's own module width. Assuming 2
+                # here would shrink the box below what prints on any label
+                # rescaled to 300 dpi, where a module is 3 dots.
+                element.width = element.printed_width()
                 element.height = int(height_spin.get_value())
                 self.design_canvas.queue_draw()
                 self.on_canvas_changed()
