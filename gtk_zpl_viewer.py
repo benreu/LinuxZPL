@@ -756,7 +756,7 @@ class ZPLViewerWindow(Gtk.Window):
                             match = re.match(r'\^GB(\d+),(\d+)(?:,(\d+))?', next_line)
                             if match:
                                 w, h = int(match.group(1)), int(match.group(2))
-                                t = int(match.group(3)) if match.group(3) else 2
+                                t = int(match.group(3)) if match.group(3) else 1
                                 box = FrameElement(x, y, w, h, t)
                                 self.design_canvas.elements.append(box)
                             break
@@ -1314,13 +1314,28 @@ class ZPLViewerWindow(Gtk.Window):
             height_spin.set_adjustment(height_adj)
             content.pack_start(height_spin, False, False, 0)
             
-            # Frame thickness
+            # Frame thickness. ^GB has no fixed limit; the useful maximum is
+            # half the smaller side, where the border meets and fills solid.
+            def max_thickness():
+                return max(1, min(int(width_spin.get_value()),
+                                  int(height_spin.get_value())) // 2)
+
             thickness_label = Gtk.Label(label="Thickness:")
             content.pack_start(thickness_label, False, False, 0)
             thickness_spin = Gtk.SpinButton()
-            thickness_adj = Gtk.Adjustment(value=element.thickness, lower=1, upper=10, step_increment=1)
+            thickness_adj = Gtk.Adjustment(
+                value=min(element.thickness, max_thickness()),
+                lower=1, upper=max_thickness(), step_increment=1)
             thickness_spin.set_adjustment(thickness_adj)
+            thickness_spin.set_numeric(True)
             content.pack_start(thickness_spin, False, False, 0)
+
+            def on_size_changed(_spin):
+                # Shrinking the frame must not leave an illegal thickness selectable
+                thickness_adj.set_upper(max_thickness())
+
+            width_spin.connect("value-changed", on_size_changed)
+            height_spin.connect("value-changed", on_size_changed)
             
             content.show_all()
             

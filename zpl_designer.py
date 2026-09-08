@@ -538,6 +538,10 @@ class DesignCanvas(Gtk.DrawingArea):
             element.height = self.label_height - element.y
 
         # Sync font dimensions for text elements
+        if element.element_type == 'frame':
+            element.thickness = max(1, min(element.thickness,
+                                           min(element.width, element.height) // 2))
+
         if element.element_type == 'text':
             element.font_height = element.height
             element.font_width = element.font_width_for(element.width, self.font_path)
@@ -704,15 +708,34 @@ class DesignCanvas(Gtk.DrawingArea):
     
     def _draw_frame_element(self, context, element, selected: bool):
         """Draw a frame element."""
+        # Always draw at the real thickness. Using the frame's own stroke as the
+        # selection highlight would hide the thickness setting exactly when it
+        # is being changed, since editing leaves the element selected.
+        t = max(1, element.thickness)
+
+        # Selection outline first, on the element bounds where the resize handles
+        # are: offsetting it by the stroke width would leave a gap from the
+        # handles, and drawing it last would eat into the frame's own edge.
         if selected:
-            context.set_source_rgb(0, 1, 0)
-            context.set_line_width(3)
+            context.set_source_rgb(0, 0, 1)
+            context.set_line_width(2)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.stroke()
+
+        context.set_source_rgb(0, 0, 0)
+        if 2 * t >= min(element.width, element.height):
+            # ^GB fills solid once the border meets in the middle
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.fill()
         else:
-            context.set_source_rgb(0, 0, 0)
-            context.set_line_width(element.thickness)
-        
-        context.rectangle(element.x, element.y, element.width, element.height)
-        context.stroke()
+            # ^GB draws its border inside the w x h box, while cairo centres a
+            # stroke on its path, so inset by half the thickness to put the
+            # outer edge on the element bounds.
+            context.set_line_width(t)
+            context.rectangle(element.x + t / 2, element.y + t / 2,
+                              element.width - t, element.height - t)
+            context.stroke()
+
         
         # Draw resize handles if selected
         if selected:
