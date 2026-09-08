@@ -40,6 +40,13 @@ A feature is finished when:
 `test_conformance.py` drives both frontends and needs one: it uses `$DISPLAY`
 if set, otherwise `xvfb-run` (`apt install xvfb`).
 
+Each suite is also a VS Code launch configuration, so it can be run under the
+debugger with F5. Note that `test_conformance.py` runs each frontend in its own
+process, so breakpoints in frontend code will not be hit from there - debug
+`conformance_driver.py` against a single frontend instead, which is what the
+**Conformance driver: GTK** and **Conformance driver: Qt** configurations are
+for.
+
 The conformance suite is the reason two frontends are maintainable. It runs the
 same scripted editing session against both and diffs the ZPL after every step.
 Duplicated behaviour does not fail loudly when it diverges - it prints a label

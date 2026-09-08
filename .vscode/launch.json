@@ -29,6 +29,65 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": true
+    },
+    {
+      "name": "Tests: core",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tests/test_core.py",
+      "cwd": "${workspaceFolder}",
+      "env": { "QT_QPA_PLATFORM": "offscreen" },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Tests: deviations",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tests/test_deviations.py",
+      "cwd": "${workspaceFolder}",
+      "env": { "QT_QPA_PLATFORM": "offscreen" },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Tests: conformance (GTK vs Qt)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tests/test_conformance.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Conformance driver: GTK",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tests/conformance_driver.py",
+      "args": ["--frontend", "gtk"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Conformance driver: Qt",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/tests/conformance_driver.py",
+      "args": ["--frontend", "qt"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Current file",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "cwd": "${workspaceFolder}",
+      "env": { "QT_QPA_PLATFORM": "offscreen" },
+      "console": "integratedTerminal",
+      "justMyCode": true
     }
   ]
 }
