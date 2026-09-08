@@ -306,19 +306,3 @@ class ZPLRenderer:
         except Exception as e:
             raise IOError(f"Failed to read ZPL file: {e}")
 
-
-def render_zpl(zpl_content: str, width: int = ZPLRenderer.DEFAULT_WIDTH,
-               height: int = ZPLRenderer.DEFAULT_HEIGHT) -> Image.Image:
-    """
-    Convenience function to render ZPL content.
-    
-    Args:
-        zpl_content: ZPL command string
-        width: Image width in pixels
-        height: Image height in pixels
-        
-    Returns:
-        PIL Image object
-    """
-    renderer = ZPLRenderer(width=width, height=height)
-    return renderer.render(zpl_content)

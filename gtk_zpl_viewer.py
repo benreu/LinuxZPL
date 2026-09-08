@@ -7,7 +7,7 @@ A simple GTK3 application for viewing rendered ZPL (Zebra Programming Language) 
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GdkPixbuf, Gdk, GLib
+from gi.repository import Gtk, GdkPixbuf, GLib
 import os
 import base64
 import configparser
@@ -1042,42 +1042,6 @@ class ZPLViewerWindow(Gtk.Window):
         """Handle canvas changes (drag, resize, etc.) and mark as unsaved."""
         self.unsaved_changes = True
     
-    def render_zpl(self):
-        """Render the ZPL content from the design canvas."""
-        try:
-            # Get ZPL from designer
-            content = self.design_canvas.to_zpl()
-            
-            # Check if there are any actual elements (beyond just XA and XZ)
-            if not self.design_canvas.elements:
-                self.image_view.clear()
-                self.update_status("No elements to render")
-                return
-            
-            # Create renderer with current label size
-            renderer = self._new_renderer()
-            
-            # Render ZPL
-            pil_image = renderer.render(content)
-            
-            # Convert PIL image to GdkPixbuf
-            pixbuf = self.pil_to_pixbuf(pil_image)
-            
-            # Scale to fit display (max 600px width)
-            if pixbuf.get_width() > 600:
-                scale = 600 / pixbuf.get_width()
-                new_width = int(pixbuf.get_width() * scale)
-                new_height = int(pixbuf.get_height() * scale)
-                pixbuf = pixbuf.scale_simple(new_width, new_height, GdkPixbuf.InterpType.BILINEAR)
-            
-            # Display image
-            self.image_view.set_from_pixbuf(pixbuf)
-            self.update_status("Rendered successfully")
-            
-        except Exception as e:
-            self.show_error_dialog("Failed to render ZPL: {e}")
-            self.update_status("Render failed")
-    
     def on_add_text_clicked(self, widget):
         """Handle add text element button click."""
         self.design_canvas.add_text_element("New Text")
@@ -1369,20 +1333,6 @@ class ZPLViewerWindow(Gtk.Window):
                 self.on_canvas_changed()
             
             dialog.destroy()
-    
-    @staticmethod
-    def pil_to_pixbuf(pil_image: Image.Image) -> GdkPixbuf.Pixbuf:
-        """Convert PIL Image to GdkPixbuf."""
-        # Convert PIL image to PNG bytes
-        png_data = io.BytesIO()
-        pil_image.save(png_data, format='PNG')
-        png_data.seek(0)
-        
-        # Load into GdkPixbuf
-        loader = GdkPixbuf.PixbufLoader.new_with_type('png')
-        loader.write(png_data.read())
-        loader.close()
-        return loader.get_pixbuf()
     
     def update_status(self, message: str):
         """Update status bar message."""

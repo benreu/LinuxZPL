@@ -470,10 +470,6 @@ class DesignCanvas(Gtk.DrawingArea):
         self._clamp_elements_to_bounds()
         self.queue_draw()
     
-    def get_label_size(self) -> tuple:
-        """Get current label size as (width, height)."""
-        return (self.label_width, self.label_height)
-    
     def _clamp_elements_to_bounds(self):
         """Ensure all elements stay within label bounds."""
         for element in self.elements:
