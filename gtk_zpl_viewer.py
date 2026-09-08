@@ -117,7 +117,70 @@ class ZPLViewerWindow(Gtk.Window):
         file_menu.append(quit_item)
         
         file_menu.show_all()
-        
+
+        # Edit menu
+        edit_menu = Gtk.Menu()
+        edit_menu_item = Gtk.MenuItem(label="Edit")
+        edit_menu_item.set_submenu(edit_menu)
+        menu_bar.append(edit_menu_item)
+
+        self.undo_item = Gtk.MenuItem(label="Undo")
+        self.undo_item.connect("activate", self.on_undo)
+        add_accel(self.undo_item, "<Control>z")
+        edit_menu.append(self.undo_item)
+
+        self.redo_item = Gtk.MenuItem(label="Redo")
+        self.redo_item.connect("activate", self.on_redo)
+        add_accel(self.redo_item, "<Control><Shift>z")
+        # a second binding, unshown so the menu keeps one accelerator per item
+        key, mods = Gtk.accelerator_parse("<Control>y")
+        self.redo_item.add_accelerator("activate", accel_group, key, mods, 0)
+        edit_menu.append(self.redo_item)
+
+        edit_menu.append(Gtk.SeparatorMenuItem())
+
+        self.delete_item = Gtk.MenuItem(label="Delete")
+        self.delete_item.connect("activate", self.on_delete_clicked)
+        add_accel(self.delete_item, "Delete")
+        edit_menu.append(self.delete_item)
+
+        edit_menu.append(Gtk.SeparatorMenuItem())
+
+        # Same actions as the canvas right-click menu
+        self.zorder_items = []
+        for label, action in (
+                ("Bring to Front", lambda _: self.design_canvas.bring_to_front()),
+                ("Bring Forward", lambda _: self.design_canvas.bring_forward()),
+                ("Send Backward", lambda _: self.design_canvas.send_backward()),
+                ("Send to Back", lambda _: self.design_canvas.send_to_back())):
+            item = Gtk.MenuItem(label=label)
+            item.connect("activate", action)
+            edit_menu.append(item)
+            self.zorder_items.append(item)
+
+        edit_menu.show_all()
+        self._edit_menu = edit_menu
+
+        # Undo/redo buttons at the far end of the header bar. pack_end fills
+        # right to left, so redo goes in first to read undo then redo.
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        button_box.get_style_context().add_class("linked")
+        header.pack_end(button_box)
+
+        self.undo_button = Gtk.Button()
+        self.undo_button.set_image(Gtk.Image.new_from_icon_name(
+            "edit-undo-symbolic", Gtk.IconSize.BUTTON))
+        self.undo_button.set_tooltip_text("Undo (Ctrl+Z)")
+        self.undo_button.connect("clicked", self.on_undo)
+        button_box.pack_start(self.undo_button, False, False, 0)
+
+        self.redo_button = Gtk.Button()
+        self.redo_button.set_image(Gtk.Image.new_from_icon_name(
+            "edit-redo-symbolic", Gtk.IconSize.BUTTON))
+        self.redo_button.set_tooltip_text("Redo (Ctrl+Shift+Z)")
+        self.redo_button.connect("clicked", self.on_redo)
+        button_box.pack_start(self.redo_button, False, False, 0)
+
         # Settings menu
         settings_menu = Gtk.Menu()
         settings_menu_item = Gtk.MenuItem(label="Settings")
@@ -194,6 +257,17 @@ class ZPLViewerWindow(Gtk.Window):
         self.design_canvas.dpi = self.printer_dpi
         self.design_canvas.connect("draw", self.on_canvas_draw)
         self.design_canvas.connect("element-double-clicked", self.on_element_double_clicked)
+
+        # what is selected changes while the menu is closed. Connected here
+        # rather than at build time: show_all() emits "show", and the handler
+        # needs the canvas.
+        self._edit_menu.connect("show", self._update_edit_menu)
+
+        # Edit history: snapshots older than the current state, and newer ones
+        self._undo_stack = []
+        self._redo_stack = []
+        self._current_snapshot = self.design_canvas.snapshot()
+        self._update_undo_actions()
         
         # Create a viewport for the canvas
         viewport = Gtk.Viewport()
@@ -436,6 +510,7 @@ class ZPLViewerWindow(Gtk.Window):
             self.update_status(f"Loaded: {filename}")
             # parsing adds elements, which marks the canvas dirty
             self.unsaved_changes = False
+            self._reset_history()
 
         except Exception as e:
             self.show_error_dialog(f"Failed to load file: {e}")
@@ -1168,14 +1243,76 @@ class ZPLViewerWindow(Gtk.Window):
             self.label_width = new_width
             self.label_height = new_height
             self.design_canvas.set_label_size(new_width, new_height)
-            self.unsaved_changes = True
+            self.on_canvas_changed()
             self.update_status(f"Label size set to {new_width}x{new_height}")
         
         dialog.destroy()
     
+    UNDO_LIMIT = 50
+
     def on_canvas_changed(self):
         """Handle canvas changes (drag, resize, etc.) and mark as unsaved."""
         self.unsaved_changes = True
+        # the snapshot standing before this change is what undo goes back to
+        self._undo_stack.append(self._current_snapshot)
+        del self._undo_stack[:-self.UNDO_LIMIT]
+        self._redo_stack.clear()
+        self._current_snapshot = self.design_canvas.snapshot()
+        self._update_undo_actions()
+
+    def on_undo(self, widget=None):
+        """Step back to the state before the last change."""
+        if not self._undo_stack:
+            return
+        self._redo_stack.append(self._current_snapshot)
+        self._current_snapshot = self._undo_stack.pop()
+        self._apply_snapshot(self._current_snapshot)
+        self.update_status("Undo")
+
+    def on_redo(self, widget=None):
+        """Step forward again after an undo."""
+        if not self._redo_stack:
+            return
+        self._undo_stack.append(self._current_snapshot)
+        self._current_snapshot = self._redo_stack.pop()
+        self._apply_snapshot(self._current_snapshot)
+        self.update_status("Redo")
+
+    def _apply_snapshot(self, snapshot):
+        """Put the canvas back to `snapshot` and follow it with the label size."""
+        self.design_canvas.restore(snapshot)
+        self.label_width = self.design_canvas.label_width
+        self.label_height = self.design_canvas.label_height
+        self.unsaved_changes = True
+        self._update_undo_actions()
+
+    def _reset_history(self):
+        """Start a fresh history, so it never spans a file load."""
+        self._undo_stack = []
+        self._redo_stack = []
+        self._current_snapshot = self.design_canvas.snapshot()
+        self._update_undo_actions()
+
+    def _update_undo_actions(self):
+        """Enable the undo and redo controls only when they would do something."""
+        can_undo = bool(self._undo_stack)
+        can_redo = bool(self._redo_stack)
+        for widget in (self.undo_item, self.undo_button):
+            widget.set_sensitive(can_undo)
+        for widget in (self.redo_item, self.redo_button):
+            widget.set_sensitive(can_redo)
+
+    def _update_edit_menu(self, menu):
+        """Grey out the actions that need a selected element."""
+        element = self.design_canvas.selected_element
+        self.delete_item.set_sensitive(element is not None)
+        elements = self.design_canvas.elements
+        idx = elements.index(element) if element in elements else None
+        front, forward, backward, back = self.zorder_items
+        for item in (front, forward):
+            item.set_sensitive(idx is not None and idx < len(elements) - 1)
+        for item in (backward, back):
+            item.set_sensitive(idx is not None and idx > 0)
     
     def on_add_text_clicked(self, widget):
         """Handle add text element button click."""

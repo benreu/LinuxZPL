@@ -8,6 +8,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GObject
 import cairo
+import copy
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import re
@@ -304,6 +305,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self.elements: List[DesignElement] = []
         self.selected_element: Optional[DesignElement] = None
         self.drag_start: Optional[Tuple[int, int]] = None
+        self._drag_changed = False                # a drag moved something
         self.on_change_callback = on_change_callback
         self.last_click_time = 0
         self.last_click_element = None
@@ -425,6 +427,35 @@ class DesignCanvas(Gtk.DrawingArea):
         if self.on_change_callback:
             self.on_change_callback()
     
+    def snapshot(self):
+        """A restorable record of the whole design.
+
+        A shallow copy per element is enough to be independent: everything an
+        edit touches is a scalar field. ImageElement's heavy attributes are
+        either immutable (the decoded source) or caches keyed by (width,
+        height) and replaced wholesale, so sharing them between snapshots is
+        safe and saves deep-copying decoded images and pixbufs.
+        """
+        selected = None
+        if self.selected_element in self.elements:
+            selected = self.elements.index(self.selected_element)
+        return (self.label_width, self.label_height,
+                [copy.copy(el) for el in self.elements], selected)
+
+    def restore(self, snap):
+        """Put the design back to a snapshot taken earlier."""
+        label_width, label_height, elements, selected = snap
+        # assigned directly rather than through set_label_size, which would
+        # clamp elements that were already valid at this size
+        self.label_width = label_width
+        self.label_height = label_height
+        # copied again on the way out, or the next edit would rewrite the
+        # snapshot still sitting on the undo stack
+        self.elements = [copy.copy(el) for el in elements]
+        self.selected_element = (self.elements[selected]
+                                 if selected is not None else None)
+        self.queue_draw()
+
     def clear(self):
         """Clear all elements from the canvas."""
         self.elements.clear()
@@ -1025,6 +1056,12 @@ class DesignCanvas(Gtk.DrawingArea):
         if event.button == 1:
             self.drag_start = None
             self.active_handle = None
+            # a drag is one change, reported once it finishes, so that it is
+            # one undo step rather than one per motion event
+            if self._drag_changed:
+                self._drag_changed = False
+                if self.on_change_callback:
+                    self.on_change_callback()
     
     def _set_cursor(self, name: Optional[str]):
         """Set the window cursor by CSS name, or None for the default."""
@@ -1086,6 +1123,5 @@ class DesignCanvas(Gtk.DrawingArea):
         # Update drag start for next movement (always update)
         self.drag_start = (lx, ly)
         
+        self._drag_changed = True
         self.queue_draw()
-        if self.on_change_callback:
-            self.on_change_callback()
