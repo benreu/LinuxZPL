@@ -71,10 +71,10 @@ class ZPLViewerWindow(Gtk.Window):
         accel_group = Gtk.AccelGroup()
         self.add_accel_group(accel_group)
 
-        def add_accel(item, accel):
+        def add_accel(item, accel, visible=True):
             key, mods = Gtk.accelerator_parse(accel)
             item.add_accelerator("activate", accel_group, key, mods,
-                                 Gtk.AccelFlags.VISIBLE)
+                                 Gtk.AccelFlags.VISIBLE if visible else 0)
         
         # File menu
         file_menu = Gtk.Menu()
@@ -133,8 +133,7 @@ class ZPLViewerWindow(Gtk.Window):
         self.redo_item.connect("activate", self.on_redo)
         add_accel(self.redo_item, "<Control><Shift>z")
         # a second binding, unshown so the menu keeps one accelerator per item
-        key, mods = Gtk.accelerator_parse("<Control>y")
-        self.redo_item.add_accelerator("activate", accel_group, key, mods, 0)
+        add_accel(self.redo_item, "<Control>y", visible=False)
         edit_menu.append(self.redo_item)
 
         edit_menu.append(Gtk.SeparatorMenuItem())
@@ -146,15 +145,29 @@ class ZPLViewerWindow(Gtk.Window):
 
         edit_menu.append(Gtk.SeparatorMenuItem())
 
-        # Same actions as the canvas right-click menu
+        # Same actions as the canvas right-click menu, on the bracket
+        # shortcuts drawing programs use. Page Up and Home would collide with
+        # scrolling the canvas, since accelerators are matched before the
+        # focused widget sees the key.
+        #
+        # Shift+] arrives as braceright on a US layout and would not match an
+        # accelerator declared as bracketright, so the shifted keyval goes on
+        # as an unshown alias.
         self.zorder_items = []
-        for label, action in (
-                ("Bring to Front", lambda _: self.design_canvas.bring_to_front()),
-                ("Bring Forward", lambda _: self.design_canvas.bring_forward()),
-                ("Send Backward", lambda _: self.design_canvas.send_backward()),
-                ("Send to Back", lambda _: self.design_canvas.send_to_back())):
+        for label, action, accel, alias in (
+                ("Bring to Front", lambda _: self.design_canvas.bring_to_front(),
+                 "<Control><Shift>bracketright", "<Control><Shift>braceright"),
+                ("Bring Forward", lambda _: self.design_canvas.bring_forward(),
+                 "<Control>bracketright", None),
+                ("Send Backward", lambda _: self.design_canvas.send_backward(),
+                 "<Control>bracketleft", None),
+                ("Send to Back", lambda _: self.design_canvas.send_to_back(),
+                 "<Control><Shift>bracketleft", "<Control><Shift>braceleft")):
             item = Gtk.MenuItem(label=label)
             item.connect("activate", action)
+            add_accel(item, accel)
+            if alias:
+                add_accel(item, alias, visible=False)
             edit_menu.append(item)
             self.zorder_items.append(item)
 
