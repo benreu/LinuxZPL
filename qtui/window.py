@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from PySide2.QtCore import QSize, Qt
-from PySide2.QtGui import QCursor, QImage, QKeySequence, QPixmap
+from PySide2.QtGui import QImage, QKeySequence, QPixmap
 from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QLabel,
                                QMainWindow, QScrollArea, QSizePolicy,
                                QToolBar, QWidget)
@@ -48,7 +48,7 @@ class ZPLDesignerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self._size_to_screen()
+        self.resize(900, 1000)
 
         self.printer_address = DEFAULT_ADDRESS
         self.printer_port = DEFAULT_PORT
@@ -87,31 +87,6 @@ class ZPLDesignerWindow(QMainWindow):
         self._redo_stack = []
         self._current_snapshot = self.document.snapshot()
         self._update_undo_actions()
-
-    # Opening size, before the screen is taken into account
-    PREFERRED_SIZE = (900, 1000)
-
-    def _size_to_screen(self):
-        """Open at a size that fits the screen, centred on it.
-
-        A window taller than the available area is placed wherever the window
-        manager can put it, which on a stacked multi-monitor desktop can be
-        almost entirely below the bottom edge - indistinguishable from the
-        application never opening at all.
-        """
-        want_w, want_h = self.PREFERRED_SIZE
-        # The screen being worked on, not whichever one is primary: with two
-        # screens the window can otherwise open on the other one.
-        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
-        if screen is not None:
-            area = screen.availableGeometry()
-            want_w = min(want_w, max(480, area.width() - 80))
-            want_h = min(want_h, max(360, area.height() - 80))
-            self.resize(want_w, want_h)
-            self.move(area.center().x() - want_w // 2,
-                      area.center().y() - want_h // 2)
-        else:
-            self.resize(want_w, want_h)
 
     # --- convenience ---------------------------------------------------------
 
@@ -668,10 +643,6 @@ def main():
     app.setApplicationName(APP_NAME)
     window = ZPLDesignerWindow()
     window.show()
-    # Ask for the front. Started from an editor running full screen, a new
-    # window can otherwise map behind it and look as though nothing happened.
-    window.raise_()
-    window.activateWindow()
     return app.exec_()
 
 
