@@ -13,6 +13,8 @@ visually and printing them straight to a networked Zebra printer.
 - **Network Printing**: Print over TCP to a Zebra, with a check that the label's fonts
   are on the printer first
 - **Per-element Print Toggle**: Keep an element in the design but leave it off the label
+- **203 and 300 dpi**: Label size is set in inches, and a label drawn for one head
+  resolution can be rescaled for the other
 
 ## Requirements
 
@@ -59,7 +61,8 @@ chmod +x gtk_zpl_viewer.py
 3. Double-click an element to edit it - text, font, barcode value, image file
 4. Right-click an element for **Print This Element** and the z-order actions
    (Bring to Front / Forward, Send Backward / to Back)
-5. Set the printer address under **Settings -> Printer Settings**
+5. Set the printer address and resolution under **Settings -> Printer Settings**
+   (**Detect** asks the printer what dpi it is)
 6. **File -> Print** to send the label
 
 Use **Settings -> Label Size** to change the label dimensions, and
@@ -79,7 +82,7 @@ Read when loading a file and written when saving:
 - `^AF` - Built-in font selection
 - `^A@` - Downloaded TrueType font, e.g. `^A@N,36,20,E:DEJAVUSA.TTF`
 - `^GB` - Draw box
-- `^BC` - Code 128 barcode
+- `^BC` / `^BY` - Code 128 barcode and its module width
 - `^GF` - Graphic field (images, 1-bit)
 - `^PW` / `^LL` - Print width / label length
 - `^FX` - Comment, used for the designer's own metadata
@@ -89,6 +92,7 @@ Sent to the printer but not rendered:
 - `~DY` - Download a font to the printer
 - `^HW` - List the objects stored on the printer
 - `^ID` - Delete an object from the printer
+- `~HI` - Ask the printer its model and head resolution
 
 ## Application Structure
 
@@ -109,7 +113,7 @@ Sent to the printer but not rendered:
 - ✓ Per-element TrueType fonts from the installed system fonts
 - ✓ Printer font management (upload / list / delete) and a pre-print font check
 - ✓ Network printing over TCP
-- ✓ Configurable label size
+- ✓ Configurable label size in inches, for 203, 300 or 600 dpi printers
 - ✓ Load and save ZPL files
 
 ### Not Included
@@ -119,8 +123,19 @@ Sent to the printer but not rendered:
 
 ## Notes
 
-The renderer uses PIL (Pillow) to create images from ZPL commands. Default label size is
-4x6 inches at 203 DPI (812x1218 pixels), which is the standard for shipping labels.
+The renderer uses PIL (Pillow) to create images from ZPL commands. The default label is
+4x6 inches, the standard for shipping labels - 812x1218 dots on a 203 dpi printer,
+1200x1800 on a 300 dpi one.
+
+**ZPL has no notion of resolution.** Every coordinate is in printer dots, so the same
+file is 4x6 inches at 203 dpi and only 2.7x4.1 inches at 300. The designer records what
+it was drawn for in a `^FXDESIGNER_DPI` comment and offers to rescale when that does not
+match the printer, which keeps the physical size. Set the printer's resolution under
+**Settings -> Printer Settings**.
+
+Barcodes are the one thing that cannot rescale exactly: `^BY` takes the bar module width
+in whole dots, so a module of 2 becomes 3 rather than 2.96 going from 203 to 300 dpi.
+Positions and heights scale exactly; bar width is granular to half a dot per module.
 
 **Images print as 1-bit dithered bitmaps.** A Zebra prints single black dots, so colour
 and greyscale are reduced to a Floyd-Steinberg dither. The canvas shows the same dithered
@@ -133,9 +148,10 @@ image's white areas. To leave an element off the label, right-click it and untic
 
 **Designer metadata lives in `^FX` comments**, which printers ignore:
 `^FXDESIGNER_PREVIEW` (a JPEG of the original image so quality survives a reload),
-`^FXDESIGNER_PATH` (the source image path) and `^FXDESIGNER_NOPRINT` (an element that is
-kept in the design but not printed). Their payloads are base64 because `^FX` only comments
-up to the next `^`.
+`^FXDESIGNER_PATH` (the source image path), `^FXDESIGNER_DPI` (the resolution the label
+was drawn for) and `^FXDESIGNER_NOPRINT` (an element that is kept in the design but not
+printed). `^FX` only comments up to the next `^`, so any payload that would otherwise
+contain one - the image preview and the hidden elements - is base64 encoded.
 
 A saved `.zpl` records only the printer font *name* (`E:DEJAVUSA.TTF`), not the font file.
 On reload the matching installed `.ttf` is looked up again by that name. Since the name is
