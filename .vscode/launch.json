@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "LinuxZPL (auto)",
+      "name": "LinuxZPL (GTK, else Qt)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/linuxzpl.py",

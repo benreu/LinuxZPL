@@ -4,7 +4,8 @@ LinuxZPL - a visual designer for Zebra thermal labels.
 
 Two frontends sit on one core: GTK3 and PySide2/Qt5. They answer to the same
 FUNCTIONAL_SPEC.md and produce the same ZPL; which one opens is only a question
-of which toolkit is installed, or which you prefer.
+of which toolkit is installed, or which you prefer. With no flag, GTK is used
+when it is available and Qt when it is not.
 """
 
 import argparse
@@ -51,11 +52,13 @@ def main() -> int:
             return 1
         return run(wanted)
 
-    # Nothing asked for, so use what is here - preferring Qt when both are.
-    if _have('PySide2'):
-        return run('qt')
+    # Nothing asked for, so use what is here. GTK is the default because it is
+    # the frontend this project shipped first; Qt takes over only when GTK is
+    # not installed.
     if _have('gi'):
         return run('gtk')
+    if _have('PySide2'):
+        return run('qt')
     print("No supported GUI toolkit found. Install one of:\n"
           f"  Qt:  {QT_INSTALL}\n"
           f"  GTK: {GTK_INSTALL}", file=sys.stderr)

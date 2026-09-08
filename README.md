@@ -41,7 +41,7 @@ pip install -r requirements-qt.txt     # or -gtk.txt, if not using system packag
 ## Usage
 
 ```bash
-./linuxzpl.py           # whichever toolkit is installed, preferring Qt
+./linuxzpl.py           # GTK if it is installed, otherwise Qt
 ./linuxzpl.py --gtk     # force the GTK frontend
 ./linuxzpl.py --qt      # force the Qt frontend
 ```
