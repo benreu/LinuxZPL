@@ -612,7 +612,14 @@ class ZPLViewerWindow(Gtk.Window):
     def _offer_dpi_rescale(self):
         """If the file was drawn for another resolution, offer to rescale it."""
         old = getattr(self, '_loaded_dpi', None)
-        if not old or old == self.printer_dpi or not self.design_canvas.elements:
+        # A file with no ^FXDESIGNER_DPI is assumed to be 203, the resolution
+        # of most ZPL in the wild. Taking the printer's resolution instead
+        # would stamp that guess into the file the next time it is saved,
+        # mislabelling a 203 dpi label as whatever printer happened to open it.
+        assumed = not old or old <= 0
+        if assumed:
+            old = zpl_fonts.DEFAULT_DPI
+        if old == self.printer_dpi or not self.design_canvas.elements:
             self.design_canvas.dpi = self.printer_dpi
             return
 
@@ -621,7 +628,9 @@ class ZPLViewerWindow(Gtk.Window):
         dialog = Gtk.MessageDialog(
             parent=self, flags=0, message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.NONE,
-            text=f"This label was designed for {old} dpi.")
+            text=(f"This label does not say what resolution it was drawn "
+                  f"for, so {old} dpi is assumed." if assumed
+                  else f"This label was designed for {old} dpi."))
         dialog.format_secondary_text(
             f"The printer is set to {self.printer_dpi} dpi. Rescaling by "
             f"{factor:.2f} keeps its physical size; keeping the dots as they "
