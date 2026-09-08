@@ -36,22 +36,19 @@ class GtkDriver:
     def __init__(self):
         import gi
         gi.require_version('Gtk', '3.0')
-        import gtk_zpl_viewer
-        self.window = gtk_zpl_viewer.ZPLViewerWindow()
+        from gtkui import window as gtk_window
+        from zplcore import geometry, workflow
+        self.geometry = geometry
+        self.window = gtk_window.ZPLViewerWindow()
         self.window._save_settings = lambda *a: None
         self.window.printer_dpi = 203
         self.canvas = self.window.design_canvas
         self.canvas.dpi = 203
         # Take the Rescale branch without a dialog, matching what the Qt side
         # is told to do.
-        def rescale_silently():
-            old = getattr(self.window, '_loaded_dpi', None) or 203
-            if old != self.window.printer_dpi and self.canvas.elements:
-                self.canvas.rescale(self.window.printer_dpi / old)
-                self.window.label_width = self.canvas.label_width
-                self.window.label_height = self.canvas.label_height
-            self.canvas.dpi = self.window.printer_dpi
-        self.window._offer_dpi_rescale = rescale_silently
+        self.window._offer_dpi_rescale = lambda loaded_dpi=None: workflow.reconcile_dpi(
+            self.canvas.document, self.window.printer_dpi,
+            lambda *a: 'rescale', file_dpi=loaded_dpi)
 
     # -- document ---------------------------------------------------------
     @property
@@ -75,15 +72,13 @@ class GtkDriver:
         self.canvas.sync_text_width(element)
 
     def resize(self, element, handle, dx, dy):
-        self.canvas._resize_element_by_handle(element, handle, dx, dy)
+        self.geometry.resize_by_handle(self.canvas.document, element, handle, dx, dy)
 
     def move(self, element, dx, dy):
-        # The GTK drag is inline in on_motion; this is the same arithmetic.
-        element.x = max(0, min(element.x + dx, self.canvas.label_width - element.width))
-        element.y = max(0, min(element.y + dy, self.canvas.label_height - element.height))
+        self.geometry.move_element(self.canvas.document, element, dx, dy)
 
     def handles(self, element):
-        return self.canvas._get_handles(element)
+        return self.geometry.handles(element)
 
     def bring_forward(self):
         self.canvas.bring_forward()

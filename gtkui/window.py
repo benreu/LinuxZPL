@@ -13,9 +13,14 @@ import base64
 import configparser
 import socket
 from pathlib import Path
-from zpl_renderer import ZPLRenderer
-import zpl_fonts
-from zpl_designer import DesignCanvas, TextElement, FrameElement, BarcodeElement, ImageElement
+from zplcore import fonts as zpl_fonts
+from zplcore import parser as zpl_parser
+from zplcore import workflow
+from zplcore.model import (BarcodeElement, FrameElement, ImageElement,
+                           TextElement)
+from zplcore.renderer import ZPLRenderer
+
+from .canvas import DesignCanvas
 from PIL import Image
 import io
 
@@ -504,24 +509,24 @@ class ZPLViewerWindow(Gtk.Window):
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
-            
+
+            document, loaded_dpi = zpl_parser.parse_zpl(content, self.renderer)
+            self.design_canvas.set_document(document)
             self.current_zpl_content = content
             self.current_filepath = filepath
-            
-            # Parse label size from file if present
-            self._parse_label_size_from_zpl(content)
-            
-            # Clear and load into designer canvas
-            self.design_canvas.clear()
-            self.design_canvas.set_label_size(self.label_width, self.label_height)
-            
-            # Parse ZPL and create elements (basic parsing)
-            self._parse_zpl_to_canvas(content)
-            
-            # Update status bar
-            filename = os.path.basename(filepath)
-            self.update_status(f"Loaded: {filename}")
-            # parsing adds elements, which marks the canvas dirty
+            self.label_width = document.label_width
+            self.label_height = document.label_height
+
+            rescaled = self._offer_dpi_rescale(loaded_dpi)
+            self.label_width = self.design_canvas.label_width
+            self.label_height = self.design_canvas.label_height
+            self.design_canvas.queue_draw()
+
+            # Both facts are worth reporting, and the load message would
+            # otherwise overwrite the rescale one the instant it appeared.
+            loaded = f"Loaded: {os.path.basename(filepath)}"
+            self.update_status(f"{loaded} - {rescaled}" if rescaled else loaded)
+            # Building elements while parsing does not count as an edit.
             self.unsaved_changes = False
             self._reset_history()
 
@@ -711,45 +716,34 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
-    def _offer_dpi_rescale(self):
-        """If the file was drawn for another resolution, offer to rescale it."""
-        old = getattr(self, '_loaded_dpi', None)
-        # A file with no ^FXDESIGNER_DPI is assumed to be 203, the resolution
-        # of most ZPL in the wild. Taking the printer's resolution instead
-        # would stamp that guess into the file the next time it is saved,
-        # mislabelling a 203 dpi label as whatever printer happened to open it.
-        assumed = not old or old <= 0
-        if assumed:
-            old = zpl_fonts.DEFAULT_DPI
-        if old == self.printer_dpi or not self.design_canvas.elements:
-            self.design_canvas.dpi = self.printer_dpi
-            return
+    def _offer_dpi_rescale(self, loaded_dpi=None):
+        """If the file was drawn for another resolution, offer to rescale it.
 
-        factor = self.printer_dpi / old
-        w_in, h_in = self.dots_to_inches(self.label_width, self.label_height)
-        dialog = Gtk.MessageDialog(
-            parent=self, flags=0, message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.NONE,
-            text=(f"This label does not say what resolution it was drawn "
-                  f"for, so {old} dpi is assumed." if assumed
-                  else f"This label was designed for {old} dpi."))
-        dialog.format_secondary_text(
-            f"The printer is set to {self.printer_dpi} dpi. Rescaling by "
-            f"{factor:.2f} keeps its physical size; keeping the dots as they "
-            f"are makes it print {w_in:.1f} x {h_in:.1f} inches.")
-        dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
-        dialog.add_button("Keep Dots", Gtk.ResponseType.NO)
-        dialog.add_button("Rescale", Gtk.ResponseType.YES)
-        dialog.set_default_response(Gtk.ResponseType.YES)
-        response = dialog.run()
-        dialog.destroy()
+        Returns a note for the status bar when it rescaled, else None.
+        """
+        def ask(old, printer_dpi, assumed, w_in, h_in):
+            dialog = Gtk.MessageDialog(
+                parent=self, flags=0, message_type=Gtk.MessageType.QUESTION,
+                buttons=Gtk.ButtonsType.NONE,
+                text=(f"This label does not say what resolution it was drawn "
+                      f"for, so {old} dpi is assumed." if assumed
+                      else f"This label was designed for {old} dpi."))
+            dialog.format_secondary_text(
+                f"The printer is set to {printer_dpi} dpi. Rescaling by "
+                f"{printer_dpi / old:.2f} keeps its physical size; keeping the "
+                f"dots as they are makes it print {w_in:.1f} x {h_in:.1f} inches.")
+            dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+            dialog.add_button("Keep Dots", Gtk.ResponseType.NO)
+            dialog.add_button("Rescale", Gtk.ResponseType.YES)
+            dialog.set_default_response(Gtk.ResponseType.YES)
+            response = dialog.run()
+            dialog.destroy()
+            if response == Gtk.ResponseType.YES:
+                return 'rescale'
+            return 'keep' if response == Gtk.ResponseType.NO else 'cancel'
 
-        if response == Gtk.ResponseType.YES:
-            self.design_canvas.rescale(factor)
-            self.label_width = self.design_canvas.label_width
-            self.label_height = self.design_canvas.label_height
-            self.update_status(f"Rescaled from {old} to {self.printer_dpi} dpi")
-        self.design_canvas.dpi = self.printer_dpi
+        return workflow.reconcile_dpi(self.design_canvas.document,
+                                      self.printer_dpi, ask, file_dpi=loaded_dpi)
 
     def inches_to_dots(self, w_in: float, h_in: float):
         """Physical size -> dots at the current printer resolution."""
@@ -781,236 +775,6 @@ class ZPLViewerWindow(Gtk.Window):
             sources.setdefault(canvas.printer_font_name, canvas.font_path)
         return sources
 
-    def _parse_label_size_from_zpl(self, zpl_content: str):
-        """Extract label size from ZPL commands if present."""
-        import re
-        # Look for ^PW (print width) and ^LL (label length) commands
-        pw_match = re.search(r'\^PW(\d+)', zpl_content)
-        ll_match = re.search(r'\^LL(\d+)', zpl_content)
-        
-        if pw_match:
-            try:
-                self.label_width = int(pw_match.group(1))
-            except (ValueError, AttributeError):
-                pass
-        
-        if ll_match:
-            try:
-                self.label_height = int(ll_match.group(1))
-            except (ValueError, AttributeError):
-                pass
-    
-    def _parse_zpl_to_canvas(self, zpl_content: str):
-        """Parse ZPL content and populate the designer canvas with elements."""
-        # Very basic ZPL parsing - this is a simplified version
-        # Expand hidden elements back into real lines, preceded by a marker.
-        # Doing it in place keeps z-order, since list position is z-order.
-        lines = []
-        for raw in zpl_content.split('\n'):
-            stripped = raw.strip()
-            if stripped.startswith('^FXDESIGNER_NOPRINT:'):
-                blob = stripped[len('^FXDESIGNER_NOPRINT:'):]
-                try:
-                    body = base64.b64decode(blob).decode('utf-8')
-                except Exception:
-                    continue
-                lines.append('^FXDESIGNER_NOPRINT')
-                lines.extend(body.split('\n'))
-            else:
-                lines.append(raw)
-
-        i = 0
-        pending_no_print = False
-        self._loaded_dpi = None
-
-        while i < len(lines):
-            line = lines[i].strip()
-            
-            # Skip comments and empty lines
-            if line.startswith(';') or not line:
-                i += 1
-                continue
-
-            if line.startswith('^FXDESIGNER_DPI:'):
-                try:
-                    self._loaded_dpi = int(line[len('^FXDESIGNER_DPI:'):])
-                except ValueError:
-                    pass
-                i += 1
-                continue
-
-            if line == '^FXDESIGNER_NOPRINT':
-                pending_no_print = True
-                i += 1
-                continue
-            
-            if line.startswith('^FO'):
-                # Position command - start of an element
-                import re
-                match = re.match(r'\^FO(\d+),(\d+)', line)
-                if match:
-                    x, y = int(match.group(1)), int(match.group(2))
-                    before = len(self.design_canvas.elements)
-                    
-                    # Look ahead for the element type
-                    i += 1
-                    module_width = 2    # ^BY, if the field carries one
-                    preview_b64 = None  # JPEG preview embedded by designer on save
-                    path_hint = None    # original file path embedded by designer on save
-                    while i < len(lines):
-                        next_line = lines[i].strip()
-
-                        # Designer metadata in ^FX comments — collect and keep looking
-                        if next_line.startswith('^FXDESIGNER_PREVIEW:'):
-                            preview_b64 = next_line[len('^FXDESIGNER_PREVIEW:'):]
-                            i += 1
-                            continue
-                        elif next_line.startswith('^FXDESIGNER_PATH:'):
-                            path_hint = next_line[len('^FXDESIGNER_PATH:'):]
-                            i += 1
-                            continue
-
-                        if next_line.startswith('^BY'):
-                            by_match = re.match(r'\^BY(\d+)', next_line)
-                            if by_match:
-                                module_width = int(by_match.group(1))
-                            i += 1
-                            continue
-
-                        if next_line.startswith('^AF') or next_line.startswith('^A@'):
-                            # Text element. ^A@ names a font downloaded to the
-                            # printer, e.g. ^A@N,53,19,E:DEJAVUSA.TTF
-                            font_name = None
-                            if next_line.startswith('^A@'):
-                                match = re.match(
-                                    r'\^A@[A-Z]?,(\d+),(\d+),[^:]*:([^.,]+)', next_line)
-                                if match:
-                                    font_name = match.group(3).upper()
-                            else:
-                                match = re.match(r'\^AF[A-Z]?,(\d+),(\d+)', next_line)
-                            font_h, font_w = 36, 20
-                            if match:
-                                font_h = int(match.group(1))
-                                font_w = int(match.group(2))
-
-                            # Get FD (field data)
-                            i += 1
-                            if i < len(lines) and lines[i].strip().startswith('^FD'):
-                                text = lines[i].strip()[3:-3]  # Remove ^FD and ^FS
-                                self.design_canvas.add_text_element(text)
-                                text_element = self.design_canvas.elements[-1]
-                                text_element.x = x
-                                text_element.y = y
-                                text_element.font_height = font_h
-                                text_element.font_width = font_w
-                                text_element.height = font_h
-                                text_element.printer_font_name = font_name
-                                # A .zpl records only the printer name, but that
-                                # name is derived from the font file, so the
-                                # installed .ttf can usually be found again -
-                                # without it the label would reopen in a
-                                # substitute face and at the wrong width.
-                                local = zpl_fonts.file_for_printer_name(font_name)
-                                if local:
-                                    text_element.font_path = local
-                                    try:
-                                        text_element.font_family = zpl_fonts.family_for_file(local)
-                                    except Exception:
-                                        text_element.font_family = None
-                                    zpl_fonts.register_app_font(local)
-                                    self.renderer.register_font(font_name, local)
-                                self.design_canvas.sync_text_width(text_element)
-                            break
-                        elif next_line.startswith('^GB'):
-                            # Frame element
-                            match = re.match(r'\^GB(\d+),(\d+)(?:,(\d+))?', next_line)
-                            if match:
-                                w, h = int(match.group(1)), int(match.group(2))
-                                t = int(match.group(3)) if match.group(3) else 1
-                                box = FrameElement(x, y, w, h, t)
-                                self.design_canvas.elements.append(box)
-                            break
-                        elif next_line.startswith('^BC'):
-                            # Barcode element
-                            match = re.match(r'\^BC[A-Z]?,(\d+)?', next_line)
-                            h = int(match.group(1)) if match and match.group(1) else 100
-                            barcode_value = "123456789"
-
-                            # Get barcode value from next FD field
-                            i += 1
-                            if i < len(lines) and lines[i].strip().startswith('^FD'):
-                                barcode_value = lines[i].strip()[3:-3]  # Remove ^FD and ^FS
-
-                            barcode = BarcodeElement(x, y, height=h, barcode_value=barcode_value,
-                                                     module_width=module_width)
-                            self.design_canvas.elements.append(barcode)
-                            break
-                        elif next_line.startswith('^GF'):
-                            # Image element — prefer embedded JPEG preview (same quality as
-                            # first import), fall back to decoding 1-bit ^GF data only when
-                            # no preview exists (e.g. ZPL from an external tool).
-                            gf_match = re.match(r'\^GFA,(\d+),(\d+),(\d+),(.*)', next_line)
-                            if gf_match:
-                                total_b = int(gf_match.group(1))
-                                bpr = int(gf_match.group(3))
-                                gf_h = total_b // bpr
-                                gf_w = bpr * 8
-                                img_el = None
-                                # 1. Original file still present — highest quality
-                                if path_hint and os.path.exists(path_hint):
-                                    try:
-                                        img_el = ImageElement(x, y, gf_w, gf_h,
-                                                              image_path=path_hint)
-                                    except Exception:
-                                        img_el = None
-                                # 2. Embedded JPEG preview — same quality as first import
-                                if img_el is None and preview_b64:
-                                    try:
-                                        jpeg_data = base64.b64decode(preview_b64)
-                                        pil_img = Image.open(
-                                            io.BytesIO(jpeg_data)).convert('RGB')
-                                        img_el = ImageElement(x, y, gf_w, gf_h,
-                                                              _pil_image=pil_img)
-                                    except Exception:
-                                        img_el = None
-                                # 3. Decode 1-bit ^GF data — last resort
-                                if img_el is None:
-                                    hex_data = gf_match.group(4).strip()
-                                    if total_b > 0 and bpr > 0 and hex_data:
-                                        try:
-                                            import numpy as np
-                                            raw = bytes.fromhex(hex_data)
-                                            arr = np.frombuffer(
-                                                raw, dtype=np.uint8).reshape(gf_h, bpr)
-                                            unpacked = np.unpackbits(arr, axis=1)[:, :gf_w]
-                                            pixel_data = (
-                                                (1 - unpacked) * 255).astype(np.uint8)
-                                            pil_img = Image.fromarray(
-                                                pixel_data, mode='L').convert('RGB')
-                                            img_el = ImageElement(x, y, gf_w, gf_h,
-                                                                  _pil_image=pil_img)
-                                        except Exception:
-                                            pass
-                                if img_el is not None:
-                                    self.design_canvas.elements.append(img_el)
-                            break
-                        elif next_line.startswith('^FS'):
-                            break
-
-                        i += 1
-
-                    if pending_no_print:
-                        # Mark whatever this block appended, wherever it was
-                        # appended from, rather than touching each branch.
-                        for el in self.design_canvas.elements[before:]:
-                            el.print_enabled = False
-                        pending_no_print = False
-            
-            i += 1
-        
-        self._offer_dpi_rescale()
-        self.design_canvas.queue_draw()
-    
     def _load_settings(self):
         """Load persisted settings from the config file."""
         parser = configparser.ConfigParser()

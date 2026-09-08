@@ -1,0 +1,123 @@
+"""
+The decisions that determine whether a label prints correctly.
+
+Each one takes an `ask` callback, so the prompt itself stays native to its
+toolkit while the rule about when to ask and what to do with the answer is
+shared. These are exactly the places where two frontends drifting apart would
+not raise an error - it would print the wrong label - so they live here rather
+than being written twice.
+"""
+
+from . import fonts
+
+# Distinguishes "the printer's resolution changed under an open document" from
+# "a file was opened that recorded no resolution", which are answered
+# differently: the first knows the document's dpi, the second has to assume.
+_FROM_DOCUMENT = object()
+
+
+def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):
+    """Settle a design against a printer resolution it was not drawn for.
+
+    Dots only mean a physical size once a resolution is fixed: 1200 dots is 4in
+    at 300 dpi and 5.9in at 203. So whenever the two disagree the user has to
+    choose, and both entry points - opening a file, and changing the printer -
+    ask the same question.
+
+    `ask(old_dpi, printer_dpi, assumed, w_in, h_in)` returns 'rescale', 'keep'
+    or 'cancel'. Returns a note for the status bar when it rescaled, else None.
+    """
+    if file_dpi is _FROM_DOCUMENT:
+        old, assumed = document.dpi, False
+    else:
+        # A file with no recorded resolution is assumed to be 203, the
+        # resolution of most ZPL in the wild. Adopting the printer's setting
+        # instead would stamp that guess into the file on the next save,
+        # mislabelling a 203 dpi label as whatever printer happened to open it.
+        assumed = not file_dpi or file_dpi <= 0
+        old = fonts.DEFAULT_DPI if assumed else file_dpi
+
+    if old == printer_dpi or not document.elements:
+        document.dpi = printer_dpi
+        return None
+
+    # What keeping the dots would physically measure on this printer
+    w_in = document.label_width / printer_dpi
+    h_in = document.label_height / printer_dpi
+
+    answer = ask(old, printer_dpi, assumed, w_in, h_in)
+    if answer == 'rescale':
+        document.rescale(printer_dpi / old)
+        document.dpi = printer_dpi
+        return f"rescaled from {old} to {printer_dpi} dpi"
+
+    # Keep Dots and Cancel both leave the dots alone; the document still
+    # belongs to this printer now, so it is stamped either way.
+    document.dpi = printer_dpi
+    return None
+
+
+def confirm_printer_fonts(document, address, port, ask, on_progress=None):
+    """Check the label's fonts are on the printer. False cancels printing.
+
+    `ask(text, detail, uploadable)` returns 'upload', 'print' or 'cancel'.
+    `on_progress(message)` reports each upload, if given.
+    """
+    sources = document.font_sources()
+    if not sources:
+        return True, None  # nothing but built-in fonts, nothing to check
+
+    installed = fonts.query_printer_fonts(address, port)
+    if installed is None:
+        # Not the same as "the printer has no fonts": it could not be asked,
+        # and the two lead to different prompts.
+        answer = ask("The printer could not be asked which fonts it has.",
+                     "It may be unreachable, or may not support font queries.\n"
+                     "Printing anyway may fall back to a substitute font.",
+                     {})
+        return _act_on_font_answer(answer, {}, address, port, on_progress)
+
+    missing = {n: p for n, p in sources.items() if n.upper() not in installed}
+    if not missing:
+        return True, None
+
+    uploadable = {n: p for n, p in missing.items() if p}
+    lines = [f"  {fonts.printer_font_path(n)}" +
+             ("" if missing[n] else "   (source file unknown)")
+             for n in sorted(missing)]
+    answer = ask("Fonts used by this label are not on the printer.",
+                 "\n".join(lines) + "\n\nMissing fonts print in a substitute typeface.",
+                 uploadable)
+    return _act_on_font_answer(answer, uploadable, address, port, on_progress)
+
+
+def _act_on_font_answer(answer, uploadable, address, port, on_progress):
+    """Carry out the choice. Returns (proceed, error message or None)."""
+    if answer == 'upload':
+        for name, path in sorted(uploadable.items()):
+            if on_progress:
+                on_progress(f"Uploading {fonts.printer_font_path(name)}...")
+            try:
+                fonts.upload_font(address, port, path, name)
+            except Exception as e:
+                # A failed upload aborts: printing now would use a substitute.
+                return False, f"Upload of {name} failed: {e}"
+        return True, None
+    return answer == 'print', None
+
+
+def unsaved_changes_gate(is_dirty, ask, save):
+    """Ask what to do with unsaved work. True means it is safe to continue.
+
+    `ask()` returns 'save', 'discard' or 'cancel'; `save()` returns whether a
+    file was actually written. A cancelled or failed save must abort the
+    operation rather than carry on and lose the work.
+    """
+    if not is_dirty:
+        return True
+    answer = ask()
+    if answer == 'discard':
+        return True
+    if answer == 'save':
+        return bool(save())
+    return False

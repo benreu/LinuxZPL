@@ -2,10 +2,30 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "ZPL Viewer",
+      "name": "LinuxZPL (auto)",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/gtk_zpl_viewer.py",
+      "program": "${workspaceFolder}/linuxzpl.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "LinuxZPL (Qt)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/linuxzpl.py",
+      "args": ["--qt"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "LinuxZPL (GTK)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/linuxzpl.py",
+      "args": ["--gtk"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": true
