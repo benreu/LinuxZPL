@@ -16,6 +16,7 @@ from code128 import encode_b as _code128_modules
 import zpl_fonts
 from PIL import Image as PILImage, ImageDraw as PILImageDraw, ImageFont as PILImageFont
 import io as _io
+import base64 as _b64
 
 
 @dataclass
@@ -26,6 +27,10 @@ class DesignElement:
     width: int
     height: int
     element_type: str  # 'text', 'frame', 'barcode'
+
+    # Unannotated on purpose: keeps it out of the dataclass fields, so every
+    # element class inherits the default without touching their __init__.
+    print_enabled = True
     
     def contains_point(self, x: int, y: int) -> bool:
         """Check if point is within element bounds."""
@@ -198,7 +203,13 @@ class ImageElement(DesignElement):
             return None
         try:
             buf = _io.BytesIO()
-            bitmap.convert('RGB').save(buf, format='PNG')
+            # White becomes transparent so only black dots are painted, the way
+            # the printer composites. An opaque image would hide elements
+            # underneath on screen that still print on paper.
+            rgba = bitmap.convert('L').convert('RGBA')
+            alpha = bitmap.convert('L').point(lambda v: 0 if v else 255)
+            rgba.putalpha(alpha)
+            rgba.save(buf, format='PNG')
             buf.seek(0)
             loader = GdkPixbuf.PixbufLoader.new_with_type('png')
             loader.write(buf.read())
@@ -437,9 +448,17 @@ class DesignCanvas(Gtk.DrawingArea):
         zpl += f"^LL{self.label_height}\n"
         for element in self.elements:
             if self.printer_font_name and element.element_type == 'text':
-                zpl += element.to_zpl(printer_font_name=self.printer_font_name)
+                body = element.to_zpl(printer_font_name=self.printer_font_name)
             else:
-                zpl += element.to_zpl()
+                body = element.to_zpl()
+            if element.print_enabled:
+                zpl += body
+            elif body:
+                # ^FX comments only until the NEXT CARET, so the body has to be
+                # base64'd - inlining it raw would leave its ^FO/^FD to execute
+                # and print anyway, which is the whole bug being fixed here.
+                blob = _b64.b64encode(body.encode('utf-8')).decode('ascii')
+                zpl += f"^FXDESIGNER_NOPRINT:{blob}\n"
         zpl += "^XZ"
         return zpl
     
@@ -564,7 +583,15 @@ class DesignCanvas(Gtk.DrawingArea):
         # Draw elements in label coordinates (context is scaled)
         for element in self.elements:
             selected = element == self.selected_element
-            self._draw_element(context, element, selected)
+            if element.print_enabled:
+                self._draw_element(context, element, selected)
+            else:
+                # Dim it so the canvas shows what the file contains, while
+                # keeping the element selectable and draggable.
+                context.push_group()
+                self._draw_element(context, element, selected)
+                context.pop_group_to_source()
+                context.paint_with_alpha(0.35)
             
         context.restore()
     
@@ -620,8 +647,9 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def _draw_text_element(self, context, element, selected: bool):
         """Draw a text element."""
-        # Draw text background
-        context.set_source_rgb(0.95, 0.95, 1)
+        # Draw text background (translucent: it is a designer affordance, and
+        # must not hide anything underneath that will still print)
+        context.set_source_rgba(0.95, 0.95, 1, 0.35)
         context.rectangle(element.x, element.y, element.width, element.height)
         context.fill()
         
@@ -822,6 +850,19 @@ class DesignCanvas(Gtk.DrawingArea):
     def _show_context_menu(self, event, element):
         """Show right-click context menu for element reordering."""
         menu = Gtk.Menu()
+
+        item_print = Gtk.CheckMenuItem(label="Print This Element")
+        item_print.set_active(element.print_enabled)
+
+        def on_toggle_print(item):
+            element.print_enabled = item.get_active()
+            self.queue_draw()
+            if self.on_change_callback:
+                self.on_change_callback()
+
+        item_print.connect("toggled", on_toggle_print)
+        menu.append(item_print)
+        menu.append(Gtk.SeparatorMenuItem())
 
         item_front = Gtk.MenuItem(label="Bring to Front")
         item_front.connect("activate", lambda _: self.bring_to_front())

@@ -650,14 +650,35 @@ class ZPLViewerWindow(Gtk.Window):
     def _parse_zpl_to_canvas(self, zpl_content: str):
         """Parse ZPL content and populate the designer canvas with elements."""
         # Very basic ZPL parsing - this is a simplified version
-        lines = zpl_content.split('\n')
+        # Expand hidden elements back into real lines, preceded by a marker.
+        # Doing it in place keeps z-order, since list position is z-order.
+        lines = []
+        for raw in zpl_content.split('\n'):
+            stripped = raw.strip()
+            if stripped.startswith('^FXDESIGNER_NOPRINT:'):
+                blob = stripped[len('^FXDESIGNER_NOPRINT:'):]
+                try:
+                    body = base64.b64decode(blob).decode('utf-8')
+                except Exception:
+                    continue
+                lines.append('^FXDESIGNER_NOPRINT')
+                lines.extend(body.split('\n'))
+            else:
+                lines.append(raw)
+
         i = 0
-        
+        pending_no_print = False
+
         while i < len(lines):
             line = lines[i].strip()
             
             # Skip comments and empty lines
             if line.startswith(';') or not line:
+                i += 1
+                continue
+
+            if line == '^FXDESIGNER_NOPRINT':
+                pending_no_print = True
                 i += 1
                 continue
             
@@ -667,6 +688,7 @@ class ZPLViewerWindow(Gtk.Window):
                 match = re.match(r'\^FO(\d+),(\d+)', line)
                 if match:
                     x, y = int(match.group(1)), int(match.group(2))
+                    before = len(self.design_canvas.elements)
                     
                     # Look ahead for the element type
                     i += 1
@@ -805,6 +827,13 @@ class ZPLViewerWindow(Gtk.Window):
                             break
 
                         i += 1
+
+                    if pending_no_print:
+                        # Mark whatever this block appended, wherever it was
+                        # appended from, rather than touching each branch.
+                        for el in self.design_canvas.elements[before:]:
+                            el.print_enabled = False
+                        pending_no_print = False
             
             i += 1
         
