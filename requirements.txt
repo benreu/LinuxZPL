@@ -1,3 +1,4 @@
+# The core. Neither GUI toolkit is required to import zplcore or run the
+# core tests; install one of the extras below to run the app.
 Pillow>=9.0.0
-PyGObject>=3.40.0
 numpy>=1.20.0
