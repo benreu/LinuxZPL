@@ -62,7 +62,7 @@ chmod +x gtk_zpl_viewer.py
 4. Right-click an element for **Print This Element** and the z-order actions
    (Bring to Front / Forward, Send Backward / to Back)
 5. Set the printer address and resolution under **Settings -> Printer Settings**
-   (**Detect** asks the printer what dpi it is)
+   (**Test Connection** also asks the printer what dpi it is, and fills it in)
 6. **File -> Print** to send the label
 
 Use **Settings -> Label Size** to change the label dimensions, and

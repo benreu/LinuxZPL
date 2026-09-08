@@ -972,7 +972,6 @@ class ZPLViewerWindow(Gtk.Window):
         make_row("Port:", port_spin)
 
         # Printer resolution
-        dpi_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         dpi_combo = Gtk.ComboBoxText()
         for d in zpl_fonts.SUPPORTED_DPI:
             dpi_combo.append_text(str(d))
@@ -981,55 +980,50 @@ class ZPLViewerWindow(Gtk.Window):
         except ValueError:
             dpi_combo.append_text(str(self.printer_dpi))
             dpi_combo.set_active(len(zpl_fonts.SUPPORTED_DPI))
-        dpi_box.pack_start(dpi_combo, True, True, 0)
-        detect_btn = Gtk.Button(label="Detect")
-        dpi_box.pack_start(detect_btn, False, False, 0)
-        make_row("DPI:", dpi_box)
+        make_row("DPI:", dpi_combo)
 
-        # Connection test
+        # Connection test, which also asks the printer its resolution
         result_label = Gtk.Label()
         result_label.set_halign(Gtk.Align.START)
         result_label.set_line_wrap(True)
+
+        def set_result(colour, text):
+            result_label.set_markup(
+                f"<span foreground='{colour}'>"
+                f"{GLib.markup_escape_text(text)}</span>")
+            # both steps block, so let the label paint before the next one
+            while Gtk.events_pending():
+                Gtk.main_iteration()
 
         def on_test_clicked(btn):
             addr = address_entry.get_text().strip()
             port = int(port_spin.get_value())
             if not addr:
-                result_label.set_markup(
-                    "<span foreground='red'>Address is required</span>")
+                set_result("red", "Address is required")
                 return
+            set_result("gray", f"Connecting to {addr}:{port}\u2026")
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5)
             try:
                 sock.connect((addr, port))
             except OSError as e:
-                msg = GLib.markup_escape_text(str(e))
-                result_label.set_markup(f"<span foreground='red'>✗ {msg}</span>")
-            else:
-                result_label.set_markup(
-                    f"<span foreground='green'>✓ Connected to {addr}:{port}</span>")
+                set_result("red", f"\u2717 {e}")
+                return
             finally:
                 sock.close()
 
-        def on_detect_clicked(btn):
-            addr = address_entry.get_text().strip()
-            port = int(port_spin.get_value())
-            if not addr:
-                result_label.set_markup(
-                    "<span foreground='red'>Address is required</span>")
-                return
+            connected = f"\u2713 Connected to {addr}:{port}"
+            set_result("gray", f"{connected} \u2014 asking its resolution\u2026")
             dpi = zpl_fonts.query_printer_dpi(addr, port)
             if dpi is None:
-                result_label.set_markup(
-                    "<span foreground='red'>\u2717 The printer did not report its "
-                    "resolution; set it manually.</span>")
-                return
-            if dpi in zpl_fonts.SUPPORTED_DPI:
+                set_result("orange", f"{connected}, but it did not report its "
+                                     f"resolution; set the DPI manually.")
+            elif dpi in zpl_fonts.SUPPORTED_DPI:
                 dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(dpi))
-            result_label.set_markup(
-                f"<span foreground='green'>\u2713 detected {dpi} dpi</span>")
-
-        detect_btn.connect("clicked", on_detect_clicked)
+                set_result("green", f"{connected} \u2014 {dpi} dpi")
+            else:
+                set_result("orange", f"{connected} \u2014 reports {dpi} dpi, which "
+                                     f"the designer does not support.")
 
         test_btn = Gtk.Button(label="Test Connection")
         test_btn.connect("clicked", on_test_clicked)
