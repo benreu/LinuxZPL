@@ -199,43 +199,39 @@ class ZPLViewerWindow(Gtk.Window):
 
     def close_app(self, widget):
       """Handle quit app from Menu or Window close button."""
-      if(self.unsaved_changes):
-        dialog = Gtk.MessageDialog(
-          parent=self,
-          flags=0,
-          message_type=Gtk.MessageType.QUESTION,
-          buttons=Gtk.ButtonsType.YES_NO,
-          text="You have unsaved changes.\nDo you want to quit without saving?"
-        )
-        response = dialog.run()
-        dialog.destroy()
-        
-        if response == Gtk.ResponseType.NO:
-          return False
+      if not self.check_unsaved_changes():
+        return False
       Gtk.main_quit()
-          
+
     def check_unsaved_changes(self):
-      """Check for unsaved changes and prompt the user."""
-      if self.unsaved_changes:
-        dialog = Gtk.MessageDialog(
-          parent=self,
-          flags=0,
-          message_type=Gtk.MessageType.QUESTION,
-          buttons=Gtk.ButtonsType.YES_NO,
-          text="You have unsaved changes.\nDo you want to save?"
-        )
-        response = dialog.run()
-        dialog.destroy()
-        
-        if response == Gtk.ResponseType.YES:
-          self.save_zpl_file(self.current_filepath, self.design_canvas.to_zpl())
-          return True
-        elif response == Gtk.ResponseType.NO:
-          return False
-        else:
-          return False
-      else:
+      """Ask what to do with unsaved work. True means it is safe to continue."""
+      if not self.unsaved_changes:
         return True
+
+      dialog = Gtk.MessageDialog(
+        parent=self,
+        flags=0,
+        message_type=Gtk.MessageType.QUESTION,
+        buttons=Gtk.ButtonsType.NONE,
+        text="You have unsaved changes."
+      )
+      dialog.format_secondary_text(
+        "Your changes will be lost if you do not save them.")
+      dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
+                         "Discard Changes", Gtk.ResponseType.REJECT,
+                         "Save", Gtk.ResponseType.ACCEPT)
+      dialog.set_default_response(Gtk.ResponseType.ACCEPT)
+      response = dialog.run()
+      dialog.destroy()
+
+      if response == Gtk.ResponseType.REJECT:
+        return True
+      if response == Gtk.ResponseType.ACCEPT:
+        # only continue if a file was actually written; a cancelled or failed
+        # save must not carry on and lose the work
+        return self.save_file_or_ask_for_filename()
+      # Cancel, Escape, or the dialog being closed
+      return False
     
     def on_load_file_clicked(self, widget):
         """Handle load file button click."""
@@ -323,19 +319,18 @@ class ZPLViewerWindow(Gtk.Window):
             content = self.design_canvas.to_zpl()
         except Exception as e:
             self.show_error_dialog(f"Failed to generate ZPL: {e}")
-            return
+            return False
 
         if not content.strip() or content == "^XA\n^XZ":
             self.show_error_dialog("No content to save")
-            return
+            return False
         
         # If we have a current file path, save directly
         if self.current_filepath:
-          self.save_zpl_file(self.current_filepath, content)
-          return
+          return self.save_zpl_file(self.current_filepath, content)
         
         # Show save dialog
-        self.save_dialog() 
+        return self.save_dialog()
     
     def on_save_as_clicked(self, widget):
         """Handle save as button click."""
@@ -382,8 +377,7 @@ class ZPLViewerWindow(Gtk.Window):
         if response == Gtk.ResponseType.OK:
             filepath = dialog.get_filename()
             dialog.destroy()
-            self.save_zpl_file(filepath, content)
-            return True
+            return self.save_zpl_file(filepath, content)
         else:
             dialog.destroy()
             return False       
@@ -398,9 +392,11 @@ class ZPLViewerWindow(Gtk.Window):
         filename = os.path.basename(filepath)
         self.update_status(f"Saved: {filename}")
         self.unsaved_changes = False
+        return True
       except Exception as e:
-        self.show_error_dialog("Failed to save file: {e}")
+        self.show_error_dialog(f"Failed to save file: {e}")
         self.update_status("Save failed")
+        return False
     
     def load_zpl_file(self, filepath: str):
         """Load a ZPL file and update the views."""
@@ -424,6 +420,8 @@ class ZPLViewerWindow(Gtk.Window):
             # Update status bar
             filename = os.path.basename(filepath)
             self.update_status(f"Loaded: {filename}")
+            # parsing adds elements, which marks the canvas dirty
+            self.unsaved_changes = False
 
         except Exception as e:
             self.show_error_dialog(f"Failed to load file: {e}")
