@@ -55,10 +55,15 @@ class ZPLViewerWindow(Gtk.Window):
         # Create main layout
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.add(main_box)
-        
-        # Create menu bar
+
+        # Menu lives in the header bar rather than a separate row below it
+        header = Gtk.HeaderBar()
+        header.set_show_close_button(True)
+        header.set_title("ZPL Viewer")
+        self.set_titlebar(header)
+
         menu_bar = Gtk.MenuBar()
-        main_box.pack_start(menu_bar, False, False, 0)
+        header.pack_start(menu_bar)
         
         # File menu
         file_menu = Gtk.Menu()
@@ -133,10 +138,6 @@ class ZPLViewerWindow(Gtk.Window):
         content_box.pack_start(left_box, True, True, 0)
         
         # Designer toolbar
-        toolbar_label = Gtk.Label(label="Designer")
-        toolbar_label.set_halign(Gtk.Align.START)
-        left_box.pack_start(toolbar_label, False, False, 0)
-        
         toolbar_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         left_box.pack_start(toolbar_box, False, False, 0)
         
