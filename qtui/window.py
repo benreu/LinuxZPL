@@ -14,13 +14,14 @@ import sys
 from pathlib import Path
 
 from PySide2.QtCore import QSize, Qt
-from PySide2.QtGui import QImage, QKeySequence, QPixmap
+from PySide2.QtGui import QCursor, QImage, QKeySequence, QPixmap
 from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QLabel,
                                QMainWindow, QScrollArea, QSizePolicy,
                                QToolBar, QWidget)
 
 from zplcore import fonts as zpl_fonts
 from zplcore import parser as zpl_parser
+from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore.model import (BarcodeElement, Document, FrameElement, ImageElement,
                            TextElement)
@@ -48,12 +49,13 @@ class ZPLDesignerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.resize(900, 1000)
 
         self.printer_address = DEFAULT_ADDRESS
         self.printer_port = DEFAULT_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        self.saved_geometry = None
         self._load_settings()
+        self._place_on_screen()
         # Fonts registered before the application existed could not be handed to
         # Qt then; now there is one, so flush them.
         zpl_fonts.register_app_fonts_with_qt()
@@ -69,24 +71,108 @@ class ZPLDesignerWindow(QMainWindow):
         self.canvas.documentChanged.connect(self.on_canvas_changed)
         self.canvas.elementDoubleClicked.connect(self.on_element_double_clicked)
 
+        self.canvas.scaleChanged.connect(self._update_zoom_readout)
+        self.canvas.zoomAt.connect(self._zoom_at)
+
         self.scroller = QScrollArea()
         self.scroller.setWidget(self.canvas)
-        self.scroller.setWidgetResizable(True)
-        self.scroller.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-        # Always on, so the canvas width - and with it the scale - does not
-        # change when the scrollbar appears, which would set off a resize loop.
+        # The canvas sizes itself to the label at the current scale, so the
+        # scroll area must not stretch it; it centres it instead, which is what
+        # keeps the label drawn from the canvas's own origin and every
+        # hit-test free of a pan offset.
+        self.scroller.setWidgetResizable(False)
+        self.scroller.setAlignment(Qt.AlignCenter)
+        # Always on, so the width a fit is measured against does not change
+        # when the scrollbar appears, which would set off a resize loop.
         self.scroller.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.scroller.viewport().installEventFilter(self)
         self.setCentralWidget(self.scroller)
 
         self._build_actions()
         self._build_menus()
         self._build_toolbar()
+
+        # Its own widget, so a status message does not wipe the zoom away.
+        self.zoom_label = QLabel()
+        self.statusBar().addPermanentWidget(self.zoom_label)
         self.statusBar().showMessage("Ready")
+        self._sync_view_size()
 
         self._undo_stack = []
         self._redo_stack = []
         self._current_snapshot = self.document.snapshot()
         self._update_undo_actions()
+
+    # --- the view ------------------------------------------------------------
+
+    def _place_on_screen(self):
+        """Open at a size that fits the monitor, or where it was left.
+
+        The screen being worked on, not whichever one is primary: with two
+        monitors the window can otherwise open on the other one, and a window
+        taller than the work area lands wherever the window manager can put it
+        - which on a stacked desktop can be almost entirely off the bottom
+        edge, indistinguishable from the application never starting.
+        """
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        if screen is None:
+            width, height = zpl_view.PREFERRED_SIZE
+            self.resize(width, height)
+            return
+        area = screen.availableGeometry()
+        x, y, width, height = zpl_view.place_window(
+            (area.x(), area.y(), area.width(), area.height()),
+            self.saved_geometry)
+        self.resize(width, height)
+        self.move(x, y)
+
+    def eventFilter(self, watched, event):
+        if watched is self.scroller.viewport() and event.type() == event.Resize:
+            self._sync_view_size()
+        return super().eventFilter(watched, event)
+
+    def _sync_view_size(self):
+        """Tell the canvas how much room it has, so a fit can follow it."""
+        viewport = self.scroller.viewport()
+        self.canvas.set_view_size(viewport.width(), viewport.height())
+        self._update_zoom_readout()
+
+    def _update_zoom_readout(self):
+        fitted = "" if self.canvas.zoom is not None else " (fit)"
+        self.zoom_label.setText(
+            f"{zpl_view.percent(self.canvas._scale())}%{fitted}")
+
+    def _zoom_at(self, pointer, zoom_in):
+        """Step the zoom, keeping the dot that was under the pointer under it.
+
+        The pointer's position in the visible area is measured first: the zoom
+        resizes the canvas and can re-centre it, so measuring afterwards would
+        be measuring the wrong thing.
+        """
+        in_view = self.canvas.mapTo(self.scroller.viewport(), pointer)
+        old_scale = self.canvas._scale()
+        self.canvas.zoom_in() if zoom_in else self.canvas.zoom_out()
+        new_scale = self.canvas._scale()
+        for bar, along, across in (
+                (self.scroller.horizontalScrollBar(), pointer.x(), in_view.x()),
+                (self.scroller.verticalScrollBar(), pointer.y(), in_view.y())):
+            bar.setValue(int(round(zpl_view.zoom_anchor(
+                along, across, old_scale, new_scale))))
+
+    def on_zoom_in(self):
+        self.canvas.zoom_in()
+
+    def on_zoom_out(self):
+        self.canvas.zoom_out()
+
+    def on_fit_label(self):
+        self.canvas.set_fit(zpl_view.FIT_LABEL)
+
+    def on_fit_width(self):
+        self.canvas.set_fit(zpl_view.FIT_WIDTH)
+
+    def on_actual_size(self):
+        self.canvas.set_zoom(1.0)
 
     # --- convenience ---------------------------------------------------------
 
@@ -152,6 +238,19 @@ class ZPLDesignerWindow(QMainWindow):
         for a in (self._alt_front, self._alt_back):
             a.setVisible(False)
 
+        self.zoom_in_action = self._action("Zoom &In", self.on_zoom_in,
+                                           QKeySequence.ZoomIn)
+        # Ctrl++ needs Shift on most layouts, so the unshifted key is bound too;
+        # a QAction carries one shortcut, so the alias gets its own action.
+        self.zoom_in_alt_action = self._action("Zoom In", self.on_zoom_in, "Ctrl+=")
+        self.zoom_in_alt_action.setVisible(False)
+        self.zoom_out_action = self._action("Zoom &Out", self.on_zoom_out,
+                                            QKeySequence.ZoomOut)
+        self.fit_label_action = self._action("Fit &Label", self.on_fit_label, "Ctrl+0")
+        self.fit_width_action = self._action("Fit &Width", self.on_fit_width, "Ctrl+9")
+        self.actual_size_action = self._action("&Actual Size", self.on_actual_size,
+                                               "Ctrl+1")
+
         self.label_size_action = self._action("Label Size…", self.on_label_size)
         self.printer_settings_action = self._action("Printer Settings…", self.on_printer_settings)
         self.printer_fonts_action = self._action("Printer Fonts…", self.on_printer_fonts)
@@ -183,6 +282,14 @@ class ZPLDesignerWindow(QMainWindow):
         # z-order both move underneath it.
         edit_menu.aboutToShow.connect(self._update_edit_menu)
 
+        view_menu = menubar.addMenu("&View")
+        view_menu.addAction(self.zoom_in_action)
+        view_menu.addAction(self.zoom_out_action)
+        view_menu.addSeparator()
+        view_menu.addAction(self.fit_label_action)
+        view_menu.addAction(self.fit_width_action)
+        view_menu.addAction(self.actual_size_action)
+
         settings_menu = menubar.addMenu("&Settings")
         settings_menu.addAction(self.label_size_action)
         settings_menu.addAction(self.printer_settings_action)
@@ -200,6 +307,11 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar.addAction(self._action("+ Image", self.on_add_image))
         toolbar.addSeparator()
         toolbar.addAction(self.delete_action)
+
+        toolbar.addSeparator()
+        toolbar.addAction(self._action("\u2212", self.on_zoom_out))
+        toolbar.addAction(self._action("Fit", self.on_fit_label))
+        toolbar.addAction(self._action("+", self.on_zoom_in))
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -610,6 +722,9 @@ class ZPLDesignerWindow(QMainWindow):
             dpi = parser.getint('printer', 'dpi', fallback=self.printer_dpi)
             if dpi > 0:
                 self.printer_dpi = dpi
+            if parser.has_section('window'):
+                self.saved_geometry = tuple(
+                    parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
         except (configparser.Error, OSError, ValueError):
             # A missing or corrupt config must never block startup
             pass
@@ -625,6 +740,12 @@ class ZPLDesignerWindow(QMainWindow):
             parser.set('printer', 'address', self.printer_address)
             parser.set('printer', 'port', str(self.printer_port))
             parser.set('printer', 'dpi', str(self.printer_dpi))
+            if self.saved_geometry is not None:
+                if not parser.has_section('window'):
+                    parser.add_section('window')
+                for key, value in zip(('x', 'y', 'width', 'height'),
+                                      self.saved_geometry):
+                    parser.set('window', key, str(int(value)))
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f:
                 parser.write(f)
@@ -634,10 +755,16 @@ class ZPLDesignerWindow(QMainWindow):
     # --- window --------------------------------------------------------------
 
     def closeEvent(self, event):
-        if self.check_unsaved_changes():
-            event.accept()
-        else:
+        if not self.check_unsaved_changes():
             event.ignore()
+            return
+        # Where the window was left, so it opens there next time. Saved on the
+        # way out because nothing else in the session has reason to write the
+        # settings file, and a resize is not worth a write of its own.
+        frame = self.geometry()
+        self.saved_geometry = (frame.x(), frame.y(), frame.width(), frame.height())
+        self._save_settings()
+        event.accept()
 
 
 def main():
@@ -645,6 +772,10 @@ def main():
     app.setApplicationName(APP_NAME)
     window = ZPLDesignerWindow()
     window.show()
+    # Ask for the front. Started from an editor running full screen, a new
+    # window can otherwise map behind it and look as though nothing happened.
+    window.raise_()
+    window.activateWindow()
     return app.exec_()
 
 

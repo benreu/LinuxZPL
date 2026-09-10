@@ -75,6 +75,28 @@ check("18.5 New restores a 4x6 label at the printer dpi",
 check("18.5 New has a Ctrl+N shortcut",
       w.new_action.shortcut().toString() == "Ctrl+N", w.new_action.shortcut().toString())
 
+# --- 18.x  the canvas no longer only fits the width --------------------------
+from zplcore import view as zpl_view
+zw = qt_main.ZPLDesignerWindow(); zw.unsaved_changes = False; zw.on_new()
+zc = zw.canvas
+zc.set_view_size(500, 400)
+zc.set_fit(zpl_view.FIT_LABEL)
+check("18.x fitting the label shows all of it, not just its width",
+      zc.width() <= 500 and zc.height() <= 400, (zc.width(), zc.height()))
+zc.set_fit(zpl_view.FIT_WIDTH)
+check("18.x fit-width is still available, and is the old behaviour",
+      zc.width() == 500, zc.width())
+zc.set_zoom(2.0)
+check("18.x an explicit zoom is honoured",
+      zc.zoom == 2.0 and zc.width() == 2 * zw.document.label_width, zc.width())
+check("18.x zooming has controls with shortcuts",
+      (zw.zoom_in_action.shortcut().toString(),
+       zw.zoom_out_action.shortcut().toString(),
+       zw.fit_label_action.shortcut().toString()) == ("Ctrl++", "Ctrl+-", "Ctrl+0"),
+      (zw.zoom_in_action.shortcut().toString(),
+       zw.zoom_out_action.shortcut().toString(),
+       zw.fit_label_action.shortcut().toString()))
+
 # --- dpi rescale prompt, which only fires on a mismatch ----------------------
 answers = []
 qt_dialogs.ask_dpi_rescale = lambda parent, old, new, assumed, wi, hi: (

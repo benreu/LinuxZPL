@@ -33,10 +33,23 @@ def handles(element) -> dict:
     }
 
 
-def handle_at_point(x: int, y: int, element):
+def handle_size(scale: float = 1.0) -> float:
+    """A handle's side in dots, so it is a constant size on screen.
+
+    The handles are drawn and hit-tested in label coordinates, which was the
+    same thing as screen pixels while the canvas only ever fitted the width.
+    Under zoom it is not: at a quarter scale an 8-dot handle is two pixels and
+    cannot be grabbed, and at four times it is a 32-pixel blob covering the
+    element it is meant to resize.
+    """
+    return HANDLE_SIZE / max(1e-6, scale)
+
+
+def handle_at_point(x: int, y: int, element, scale: float = 1.0):
     """Which handle, if any, is within the hit radius of the point."""
+    radius = handle_size(scale)
     for name, (hx, hy) in handles(element).items():
-        if abs(x - hx) <= HANDLE_SIZE and abs(y - hy) <= HANDLE_SIZE:
+        if abs(x - hx) <= radius and abs(y - hy) <= radius:
             return name
     return None
 

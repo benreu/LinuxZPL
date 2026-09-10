@@ -81,9 +81,28 @@ class GtkDriver:
 
     # -- the pointer, through each frontend's own event handlers -------------
     class _Event:
-        """The fields a button handler reads. GTK events cannot be built."""
+        """The fields a button handler reads. GTK events cannot be built.
+
+        Whole pixels, because that is what a pointer reports and what Qt's
+        QPoint can hold: a fractional pixel here would divide back into a
+        different dot from the one the Qt side lands on, and the harness would
+        be reporting its own arithmetic as a disagreement.
+        """
         def __init__(self, x, y, button=1):
-            self.x, self.y, self.button, self.state = float(x), float(y), button, 0
+            self.x, self.y = float(int(x)), float(int(y))
+            self.button, self.state = button, 0
+
+    def fresh_gesture(self):
+        """Forget the last click, so two scripted gestures are not a double one.
+
+        A user separates gestures by seconds; a script does not, and the
+        canvases time double clicks in real time.
+        """
+        self.canvas.last_click_time = 0
+        self.canvas.last_click_element = None
+
+    def set_zoom(self, zoom):
+        self.canvas.set_zoom(zoom)
 
     def click(self, lx, ly):
         """Press the left button at a point in label dots."""
@@ -194,6 +213,18 @@ class QtDriver:
         scale = self.canvas._scale()
         return QMouseEvent(kind, QPoint(int(lx * scale), int(ly * scale)),
                            Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+
+    def fresh_gesture(self):
+        """Forget the last click, so two scripted gestures are not a double one.
+
+        A user separates gestures by seconds; a script does not, and the
+        canvases time double clicks in real time.
+        """
+        self.canvas.last_click_time = 0
+        self.canvas.last_click_element = None
+
+    def set_zoom(self, zoom):
+        self.canvas.set_zoom(zoom)
 
     def click(self, lx, ly):
         """Press the left button at a point in label dots."""
@@ -329,11 +360,31 @@ def sequence(driver, record):
     # Through the real button handlers, not the geometry helpers underneath:
     # every step above moves elements directly, which is how a frontend whose
     # click handler raised on every press went unnoticed.
+    #
+    # Pinned to a scale first. Left to fit whatever window each frontend
+    # happens to have, the two run at different scales, and the dots a pointer
+    # position rounds to then differ by one or two - a real divergence, but one
+    # about the harness rather than about the frontends.
+    driver.set_zoom(1.0)
     picked = driver.elements[0]
     driver.click(picked.x + 3, picked.y + 3)
     record('select with the pointer')
     driver.drag_pointer(picked.x + 3, picked.y + 3, 25, 15)
     record('drag with the pointer')
+
+    # The same drag zoomed out and zoomed in. Zoom writes no ZPL of its own,
+    # but every pointer position passes through screen_to_label, and a scale
+    # far from 1 is where two frontends would quietly land on different dots.
+    # From the middle of the element, which is a plain move at every zoom - a
+    # corner is inside the handle radius at 0.25 and outside it at 4.0, so the
+    # same point would be a different gesture at each.
+    for zoom in (0.25, 4.0):
+        driver.set_zoom(zoom)
+        driver.fresh_gesture()
+        driver.drag_pointer(picked.x + picked.width // 2,
+                            picked.y + picked.height // 2, 20, 12)
+        record(f'drag with the pointer at {zoom:g}x')
+    driver.set_zoom(1.0)
 
     # Every ^BC parameter, since each one changes the label and each frontend
     # has its own dialog and its own drawing code for them.

@@ -465,8 +465,8 @@ def _ink_bands(image, element):
         inside = dark
     return bands
 
-# The canvas is sized to the label, so one pixel is one dot and the element's
-# own coordinates index the rendered image directly.
+# Pinned to 1:1, so one pixel is one dot and the element's own coordinates
+# index the rendered image directly.
 nw = qt_main.ZPLDesignerWindow()
 nw.unsaved_changes = False
 nw.on_new()
@@ -475,7 +475,7 @@ nofont = nw.document.add_text_element('one two three four five six')
 nofont.x, nofont.y = 20, 20
 nofont.block = FieldBlock(200, 6)
 nw.document.sync_text_width(nofont)
-nw.canvas.resize(812, 1218)
+nw.canvas.set_zoom(1.0)
 plain = QImage(812, 1218, QImage.Format_ARGB32); plain.fill(Qt.white)
 nw.canvas.render(plain)
 check("a block with no font chosen still draws as several lines",
@@ -531,6 +531,135 @@ _drive_text_dialog(de, ddoc,
                    lambda dialog: dialog.findChild(QCheckBox, 'wrap').setChecked(False))
 check("unticking wrap joins the lines rather than leaving a break behind",
       de.block is None and de.text == "ACME Widget Model 4400", de.text)
+
+# --- looking at the label: zoom, fit and the window -------------------------
+from zplcore import view as zpl_view
+
+check("zooming in from a fitted scale lands on the next step above it",
+      zpl_view.zoom_in(0.62) == 0.67, zpl_view.zoom_in(0.62))
+check("zooming out from 1:1 lands on the step below",
+      zpl_view.zoom_out(1.0) == 0.75, zpl_view.zoom_out(1.0))
+check("the steps stop at both ends",
+      (zpl_view.zoom_in(zpl_view.ZOOM_MAX), zpl_view.zoom_out(zpl_view.ZOOM_MIN))
+      == (zpl_view.ZOOM_MAX, zpl_view.ZOOM_MIN))
+check("a zoom outside the range is clamped into it",
+      zpl_view.clamp_zoom(99) == zpl_view.ZOOM_MAX
+      and zpl_view.clamp_zoom(0.001) == zpl_view.ZOOM_MIN)
+
+# a fit puts the whole label in view; fit-width is the rule that was there
+fitted = zpl_view.fit_scale(500, 400, 812, 1218)
+check("fitting the label puts all of it inside the view",
+      812 * fitted <= 500 + 1 and 1218 * fitted <= 400 + 1,
+      (812 * fitted, 1218 * fitted))
+check("fitting the width is the old scale_factor rule",
+      abs(zpl_view.fit_width(600, 812)
+          - geometry.scale_factor(600, 812)) < 1e-9)
+
+# zooming about the pointer keeps the dot that was under it under it
+before, after = 0.5, 1.0
+offset = zpl_view.zoom_anchor(pointer_in_canvas=300, pointer_in_view=120,
+                              old_scale=before, new_scale=after)
+dot_before = 300 / before
+dot_after = (offset + 120) / after
+check("a zoom about the pointer keeps the same dot under it",
+      abs(dot_before - dot_after) <= 1, (dot_before, dot_after))
+
+# the window opens onto the monitor it is opening on, not off the bottom of it
+WORK = (0, 0, 1600, 900)
+x, y, w, h = zpl_view.place_window(WORK)
+check("a first run fits the work area",
+      w <= WORK[2] and h <= WORK[3] and x >= 0 and y >= 0, (x, y, w, h))
+check("a first run is centred on it",
+      abs((x + w // 2) - WORK[2] // 2) <= 1 and abs((y + h // 2) - WORK[3] // 2) <= 1,
+      (x, y, w, h))
+big = zpl_view.place_window(WORK, saved=(0, 900, 1900, 1040))
+check("a geometry saved on a bigger monitor is brought onto this one",
+      big[0] >= 0 and big[1] >= 0
+      and big[0] + big[2] <= WORK[2] and big[1] + big[3] <= WORK[3], big)
+kept = zpl_view.place_window(WORK, saved=(120, 60, 1000, 680))
+check("a geometry that already fits comes back unchanged",
+      kept == (120, 60, 1000, 680), kept)
+
+# --- the canvas under zoom --------------------------------------------------
+zw = qt_main.ZPLDesignerWindow()
+zw.unsaved_changes = False
+zw.on_new()
+zcanvas = zw.canvas
+
+zcanvas.set_view_size(500, 400)
+zcanvas.set_fit(zpl_view.FIT_LABEL)
+check("the canvas defaults to fitting the whole label",
+      zcanvas.width() <= 500 and zcanvas.height() <= 400,
+      (zcanvas.width(), zcanvas.height()))
+check("fitting leaves no zoom pinned", zcanvas.zoom is None)
+
+doc = zw.document
+for zoom in (0.25, 1.0, 4.0):
+    zcanvas.set_zoom(zoom)
+    check(f"at {zoom:g}x the widget is the label at that scale",
+          (zcanvas.width(), zcanvas.height())
+          == (round(doc.label_width * zoom), round(doc.label_height * zoom)),
+          (zcanvas.width(), zcanvas.height()))
+    # a pointer at a known dot comes back as that dot
+    lx, ly = 200, 300
+    back = zcanvas._screen_to_label(int(lx * zoom), int(ly * zoom))
+    check(f"at {zoom:g}x a pointer maps back to the dot it was over",
+          abs(back[0] - lx) <= 1 and abs(back[1] - ly) <= 1, back)
+
+# a handle is a constant size on screen, or it cannot be grabbed zoomed out
+box = FrameElement(100, 100, 200, 150)
+check("zoomed out, a handle is grabbable well beyond 8 dots",
+      geometry.handle_at_point(100 + 20, 100, box, 0.25) == 'tl',
+      geometry.handle_size(0.25))
+check("zoomed in, a handle does not swallow the element it resizes",
+      geometry.handle_at_point(100 + 6, 100, box, 4.0) is None,
+      geometry.handle_size(4.0))
+check("at 1:1 the handle radius is what it always was",
+      geometry.handle_size(1.0) == geometry.HANDLE_SIZE)
+
+# Ctrl+wheel: the window measures the pointer, zooms, then scrolls. Only an
+# axis that actually scrolls can hold the anchor - an axis where the canvas is
+# narrower than the view is centred, and there is nothing to offset.
+from PySide2.QtCore import QPoint
+zw.resize(700, 500)
+zw.show()
+app.processEvents()
+zcanvas.set_zoom(1.0)
+app.processEvents()
+bar = zw.scroller.verticalScrollBar()
+bar.setValue(200)
+app.processEvents()
+point = QPoint(150, 400)
+in_view_y = zcanvas.mapTo(zw.scroller.viewport(), point).y()
+dot_before = (bar.value() + in_view_y) / zcanvas._scale()
+zw._zoom_at(point, True)
+app.processEvents()
+dot_after = (bar.value() + in_view_y) / zcanvas._scale()
+check("Ctrl+wheel zooms in", zcanvas.zoom > 1.0, zcanvas.zoom)
+check("and keeps the dot that was under the pointer under it",
+      abs(dot_after - dot_before) <= 2, (dot_before, dot_after))
+zw.hide()
+
+# the settings file carries the window geometry beside the printer
+import configparser as _cfg
+geo_dir = tempfile.mkdtemp()
+geo_path = Path(geo_dir) / 'settings.ini'
+real_config_path = qt_main._config_path
+qt_main._config_path = lambda: geo_path
+try:
+    zw.saved_geometry = (140, 60, 1000, 680)
+    zw._save_settings()
+    written = _cfg.ConfigParser(); written.read(geo_path)
+    check("the window geometry is written beside the printer settings",
+          written.has_section('window') and written.has_section('printer')
+          and written.getint('window', 'width') == 1000,
+          dict(written['window']) if written.has_section('window') else None)
+    zw.saved_geometry = None
+    zw._load_settings()
+    check("and is read back", zw.saved_geometry == (140, 60, 1000, 680),
+          zw.saved_geometry)
+finally:
+    qt_main._config_path = real_config_path
 
 # --- the preview draws the design, it does not merely agree with it ---------
 from zplcore.renderer import ZPLRenderer

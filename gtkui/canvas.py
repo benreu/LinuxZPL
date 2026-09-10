@@ -24,7 +24,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gdk, GdkPixbuf, GObject, Gtk
 
-from zplcore import geometry, textraster
+from zplcore import geometry, textraster, view
 from zplcore.model import (BarcodeElement, DesignElement, Document,
                            FrameElement, ImageElement, TextElement)
 
@@ -56,7 +56,13 @@ class DesignCanvas(Gtk.DrawingArea):
     """
 
     __gsignals__ = {
-        'element-double-clicked': (GObject.SignalFlags.RUN_FIRST, None, (object,))
+        'element-double-clicked': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        'scale-changed': (GObject.SignalFlags.RUN_FIRST, None, ()),
+        # (pointer x, pointer y, in) - a request rather than a notification.
+        # Keeping the dot under the pointer needs its position measured before
+        # the zoom moves everything, and the window owns the scrollbars, so the
+        # window applies the whole thing.
+        'zoom-at': (GObject.SignalFlags.RUN_FIRST, None, (float, float, bool)),
     }
 
     # Cursor shown while hovering each resize handle
@@ -69,10 +75,20 @@ class DesignCanvas(Gtk.DrawingArea):
     def __init__(self, on_change_callback=None, label_width: int = 812,
                  label_height: int = 1218, document: Optional[Document] = None):
         super().__init__()
-        self.set_size_request(600, 800)
 
         self.document = document if document is not None else Document(
             label_width, label_height)
+
+        # What the canvas is showing. `zoom` is display pixels per dot, or None
+        # while a fit mode is deciding it; `fit` says which fit. The widget's
+        # own size is a consequence of the scale, so the fit is measured
+        # against the visible area the window reports, never against self -
+        # measuring against self is a feedback loop.
+        self.zoom = None
+        self.fit = view.FIT_LABEL
+        self._view_size = (600, 600)
+        self.set_halign(Gtk.Align.CENTER)
+        self.set_valign(Gtk.Align.CENTER)
         self.on_change_callback = on_change_callback
         self.drag_start: Optional[Tuple[int, int]] = None
         self._drag_changed = False                # a drag moved something
@@ -83,6 +99,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self._cursor_cache = {}
 
         self.connect("draw", self.on_draw)
+        self.connect("scroll-event", self.on_scroll)
         self.connect("button-press-event", self.on_button_press)
         self.connect("button-release-event", self.on_button_release)
         self.connect("motion-notify-event", self.on_motion)
@@ -91,6 +108,8 @@ class DesignCanvas(Gtk.DrawingArea):
         self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK |
                         Gdk.EventMask.BUTTON_RELEASE_MASK |
                         Gdk.EventMask.POINTER_MOTION_MASK |
+                        Gdk.EventMask.SCROLL_MASK |
+                        Gdk.EventMask.SMOOTH_SCROLL_MASK |
                         Gdk.EventMask.LEAVE_NOTIFY_MASK)
 
     # --- the document, forwarded ---------------------------------------------
@@ -152,7 +171,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self.drag_start = None
         self.active_handle = None
         self.last_click_element = None
-        self.queue_draw()
+        self.sync_size()
 
     def _changed(self):
         """Redraw and report one change, so the window records one undo entry."""
@@ -231,16 +250,73 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def set_label_size(self, width: int, height: int):
         self.document.set_label_size(width, height)
-        self.queue_draw()
+        self.sync_size()
 
     # --- coordinates ---------------------------------------------------------
 
     def _scale(self) -> float:
-        allocation = self.get_allocation()
-        return geometry.scale_factor(allocation.width, self.label_width)
+        """Display pixels per dot: the zoom, or whichever fit is in force."""
+        if self.zoom is not None:
+            return self.zoom
+        vw, vh = self._view_size
+        if self.fit == view.FIT_WIDTH:
+            return view.fit_width(vw, self.label_width)
+        return view.fit_scale(vw, vh, self.label_width, self.label_height)
 
     def _screen_to_label(self, x: float, y: float) -> Tuple[int, int]:
         return geometry.screen_to_label(x, y, self._scale())
+
+    def set_view_size(self, width: int, height: int):
+        """The visible area the canvas is being shown in, from the window."""
+        size = (max(1, int(width)), max(1, int(height)))
+        if size == self._view_size:
+            return
+        self._view_size = size
+        if self.zoom is None:      # a fit follows the area it is fitting into
+            self.sync_size()
+
+    def set_zoom(self, zoom):
+        """Show the label at a fixed scale, or None to go back to fitting."""
+        self.zoom = None if zoom is None else view.clamp_zoom(zoom)
+        self.sync_size()
+
+    def set_fit(self, mode: str):
+        """Fit the whole label, or its width, and follow the view from now on."""
+        self.fit = mode
+        self.set_zoom(None)
+
+    def zoom_in(self):
+        self.set_zoom(view.zoom_in(self._scale()))
+
+    def zoom_out(self):
+        self.set_zoom(view.zoom_out(self._scale()))
+
+    def sync_size(self):
+        """Size the widget to the label at the current scale.
+
+        The label is drawn from the widget's own origin, so the widget has to
+        be exactly as big as the label is on screen: that is what gives the
+        scrolled window something to scroll and what lets it centre the canvas
+        when it is smaller than the view. Without it the canvas was whatever
+        height the viewport happened to be and the bottom of a tall label was
+        drawn outside the widget, clipped and unreachable.
+        """
+        self.queue_resize()
+        self.queue_draw()
+        self.emit('scale-changed')
+
+    # The size is asked for rather than set, so it is re-read on every
+    # allocation. A set_size_request that shrinks does not reach the viewport
+    # on its own - growing raises the minimum it must honour, shrinking asks
+    # nothing of it - and zooming back out would leave the canvas at the size
+    # it had when it was biggest.
+    def do_get_preferred_width(self):
+        width = max(1, int(round(self.label_width * self._scale())))
+        return width, width
+
+    def do_get_preferred_height(self):
+        height = max(1, int(round(self.label_height * self._scale())))
+        return height, height
 
     # --- text ----------------------------------------------------------------
 
@@ -444,15 +520,16 @@ class DesignCanvas(Gtk.DrawingArea):
     
     def _draw_handles(self, context, element):
         """The eight resize handles of the selected element."""
+        scale = self._scale()
+        size = geometry.handle_size(scale)
+        half = size / 2
         for _name, (hx, hy) in geometry.handles(element).items():
             context.set_source_rgb(0, 0.5, 1)
-            context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF,
-                              geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
+            context.rectangle(hx - half, hy - half, size, size)
             context.fill()
             context.set_source_rgb(0, 0, 1)
-            context.set_line_width(1)
-            context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF,
-                              geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
+            context.set_line_width(1 / max(1e-6, scale))
+            context.rectangle(hx - half, hy - half, size, size)
             context.stroke()
 
     def _draw_barcode_element(self, context, element, selected: bool):
@@ -646,7 +723,8 @@ class DesignCanvas(Gtk.DrawingArea):
 
         # Check if clicking on a resize handle of the selected element
         if self.selected_element:
-            handle = geometry.handle_at_point(lx, ly, self.selected_element)
+            handle = geometry.handle_at_point(lx, ly, self.selected_element,
+                                             self._scale())
             if handle:
                 self.active_handle = handle
                 self.drag_start = (lx, ly)
@@ -712,10 +790,26 @@ class DesignCanvas(Gtk.DrawingArea):
         name = None
         if self.selected_element:
             lx, ly = self._screen_to_label(event.x, event.y)
-            handle = geometry.handle_at_point(lx, ly, self.selected_element)
+            handle = geometry.handle_at_point(lx, ly, self.selected_element,
+                                             self._scale())
             if handle:
                 name = self.HANDLE_CURSORS.get(handle)
         self._set_cursor(name)
+
+    def on_scroll(self, widget, event):
+        """Ctrl+scroll zooms about the pointer; a plain scroll scrolls."""
+        if not event.state & Gdk.ModifierType.CONTROL_MASK:
+            return False            # let the scrolled window have it
+        direction = event.direction
+        if direction == Gdk.ScrollDirection.SMOOTH:
+            _ok, _dx, dy = event.get_scroll_deltas()
+            up = dy < 0
+        elif direction in (Gdk.ScrollDirection.UP, Gdk.ScrollDirection.DOWN):
+            up = direction == Gdk.ScrollDirection.UP
+        else:
+            return False
+        self.emit('zoom-at', event.x, event.y, up)
+        return True
 
     def on_leave(self, widget, event):
         """Restore the default cursor when the pointer leaves the canvas."""

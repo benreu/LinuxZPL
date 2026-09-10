@@ -17,11 +17,11 @@ only the Qt half: painting, events and cursors.
 import time
 from typing import Optional
 
-from PySide2.QtCore import QPointF, QRectF, Qt, Signal
+from PySide2.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide2.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen
 from PySide2.QtWidgets import QMenu, QWidget
 
-from zplcore import geometry, textraster
+from zplcore import geometry, textraster, view
 from zplcore.model import DesignElement, Document
 
 
@@ -45,6 +45,12 @@ class DesignCanvas(QWidget):
 
     elementDoubleClicked = Signal(object)
     documentChanged = Signal()
+    scaleChanged = Signal()
+    # (pointer position in canvas pixels, zooming in) - a request rather than
+    # a notification. Keeping the dot under the pointer needs its position
+    # measured before the zoom moves everything, and the window owns the
+    # scrollbars, so the window applies the whole thing.
+    zoomAt = Signal(object, bool)
 
     # Cursor shown while hovering each resize handle
     HANDLE_CURSORS = {
@@ -56,7 +62,16 @@ class DesignCanvas(QWidget):
     def __init__(self, document: Optional[Document] = None, parent=None):
         super().__init__(parent)
         self.document = document if document is not None else Document()
-        self.setMinimumSize(600, 800)
+
+        # What the canvas is showing. `zoom` is display pixels per dot, or None
+        # while a fit mode is deciding it; `fit` says which fit. The widget's
+        # own size is a consequence of the scale, so the fit is measured
+        # against the visible area the window reports, never against self -
+        # measuring against self is a feedback loop.
+        self.zoom = None
+        self.fit = view.FIT_LABEL
+        self._view_size = (600, 600)
+
         self.setMouseTracking(True)   # so handle cursors track a hover
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -86,27 +101,57 @@ class DesignCanvas(QWidget):
     # --- coordinates ---------------------------------------------------------
 
     def _scale(self) -> float:
-        return geometry.scale_factor(self.width(), self.document.label_width)
+        """Display pixels per dot: the zoom, or whichever fit is in force."""
+        if self.zoom is not None:
+            return self.zoom
+        doc = self.document
+        vw, vh = self._view_size
+        if self.fit == view.FIT_WIDTH:
+            return view.fit_width(vw, doc.label_width)
+        return view.fit_scale(vw, vh, doc.label_width, doc.label_height)
 
     def _screen_to_label(self, x: float, y: float):
         return geometry.screen_to_label(x, y, self._scale())
 
-    def _sync_size(self):
-        """Keep the widget as tall as the label is, at the current scale.
+    def set_view_size(self, width: int, height: int):
+        """The visible area the canvas is being shown in, from the window."""
+        size = (max(1, int(width)), max(1, int(height)))
+        if size == self._view_size:
+            return
+        self._view_size = size
+        if self.zoom is None:      # a fit follows the area it is fitting into
+            self._sync_size()
 
-        The canvas scales to fit the width, so its height is not free: it is
-        whatever that scale makes the label. The scroll area keeps its vertical
-        scrollbar always on, so the usable width does not change underneath
-        this and set off a resize loop.
+    def set_zoom(self, zoom):
+        """Show the label at a fixed scale, or None to go back to fitting."""
+        self.zoom = None if zoom is None else view.clamp_zoom(zoom)
+        self._sync_size()
+
+    def set_fit(self, mode: str):
+        """Fit the whole label, or its width, and follow the view from now on."""
+        self.fit = mode
+        self.set_zoom(None)
+
+    def zoom_in(self):
+        self.set_zoom(view.zoom_in(self._scale()))
+
+    def zoom_out(self):
+        self.set_zoom(view.zoom_out(self._scale()))
+
+    def _sync_size(self):
+        """Size the widget to the label at the current scale.
+
+        The label is drawn from the widget's own origin, so the widget has to
+        be exactly as big as the label is on screen: that is what gives the
+        scroll area something to scroll and what lets the container centre the
+        canvas when it is smaller than the view. Nothing here reads self.width().
         """
         doc = self.document
-        if doc.label_width > 0:
-            self.setMinimumHeight(
-                int(round(self.width() * doc.label_height / doc.label_width)))
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._sync_size()
+        scale = self._scale()
+        self.setFixedSize(QSize(max(1, int(round(doc.label_width * scale))),
+                                max(1, int(round(doc.label_height * scale)))))
+        self.update()
+        self.scaleChanged.emit()
 
     # --- painting ------------------------------------------------------------
 
@@ -153,7 +198,8 @@ class DesignCanvas(QWidget):
         """The eight resize handles, as small filled squares."""
         painter.setPen(QPen(QColor(0, 0, 255), 1))
         painter.setBrush(QColor(0, 128, 255))
-        half, size = geometry.HANDLE_HALF, geometry.HANDLE_SIZE
+        size = geometry.handle_size(self._scale())
+        half = size / 2
         for _, (hx, hy) in geometry.handles(element).items():
             painter.drawRect(QRectF(hx - half, hy - half, size, size))
         painter.setBrush(Qt.NoBrush)
@@ -426,7 +472,8 @@ class DesignCanvas(QWidget):
 
         # A handle of the selected element wins over anything under the pointer
         if doc.selected_element is not None:
-            handle = geometry.handle_at_point(lx, ly, doc.selected_element)
+            handle = geometry.handle_at_point(lx, ly, doc.selected_element,
+                                             self._scale())
             if handle:
                 self.active_handle = handle
                 self.drag_start = (lx, ly)
@@ -480,6 +527,17 @@ class DesignCanvas(QWidget):
         self._drag_changed = True
         self.update()
 
+    def wheelEvent(self, event):
+        """Ctrl+wheel zooms about the pointer; a plain wheel scrolls."""
+        if not event.modifiers() & Qt.ControlModifier:
+            event.ignore()          # let the scroll area have it
+            return
+        step = event.angleDelta().y()
+        if not step:
+            return
+        self.zoomAt.emit(event.pos(), step > 0)
+        event.accept()
+
     def mouseReleaseEvent(self, event):
         if event.button() != Qt.LeftButton:
             return
@@ -513,7 +571,9 @@ class DesignCanvas(QWidget):
         shape = None
         if self.document.selected_element is not None:
             lx, ly = self._screen_to_label(event.x(), event.y())
-            handle = geometry.handle_at_point(lx, ly, self.document.selected_element)
+            handle = geometry.handle_at_point(lx, ly,
+                                             self.document.selected_element,
+                                             self._scale())
             if handle:
                 shape = self.HANDLE_CURSORS.get(handle)
         self._set_cursor(shape)

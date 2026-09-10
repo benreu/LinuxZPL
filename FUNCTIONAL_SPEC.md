@@ -207,22 +207,39 @@ source at the new size — never from the previous bitmap.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ File  Edit  Settings              Title        ↶  ↷   ✕ │  header bar
+│ File Edit View Settings           Title        ↶  ↷   ✕ │  header bar
 ├─────────────────────────────────────────────────────────┤
-│ [+ Text] [+ Frame] [+ Barcode] [+ Image]       [Delete] │  toolbar
+│ [+ Text] [+ Frame] [+ Barcode] [+ Image] [− Fit +] [Del]│  toolbar
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │                    design canvas                        │  scrollable
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
-│ Ready                                                   │  status bar
+│ Ready                                            75% ▏  │  status bar
 └─────────────────────────────────────────────────────────┘
 ```
 
 The menu bar sits in the header bar; undo and redo are icon buttons at the
 opposite end, disabled when their history stack is empty. The canvas is
-scrollable. Default window size 900 × 1000; the canvas requests at least
-600 × 800.
+scrollable, with the vertical scrollbar always present so the width a fit is
+measured against cannot change when it appears.
+
+**Opening size.** The window opens onto the monitor the pointer is on — not
+whichever is primary — at a comfortable fraction of that monitor's *work area*,
+never larger than it, capped at 1200 × 900, and centred. A window taller than
+the work area is placed wherever the window manager can put it, which on a
+stacked multi-monitor desktop can be almost entirely off the bottom edge and is
+indistinguishable from the application never starting. Nothing may impose a
+minimum that stops the window being shrunk: the canvas is inside a scroll area
+and must never dictate the window's size.
+
+**Remembered.** Position and size are written to the settings file on close and
+restored next time, clamped back onto the monitor that is attached then — which
+may be smaller, or elsewhere, than the one they were saved on.
+
+The zoom percentage is its own widget in the status bar, so a status message
+does not wipe it away; `(fit)` marks a scale being decided by a fit rather than
+pinned.
 
 ---
 
@@ -230,9 +247,28 @@ scrollable. Default window size 900 × 1000; the canvas requests at least
 
 ### Display
 
-- The canvas draws in label coordinates, uniformly scaled so the label width
-  fills the available width. All hit-testing converts pointer position back to
-  label coordinates before comparing against element geometry.
+- The canvas draws in label coordinates, uniformly scaled. All hit-testing
+  converts pointer position back to label coordinates before comparing against
+  element geometry.
+- **The scale is a zoom level, or a fit.** A fit is measured against the
+  *visible area*, never against the canvas itself: the canvas's own size is a
+  consequence of the scale, so measuring against it is a feedback loop.
+  - **Fit Label** — the smaller of the two ratios, so the whole label is
+    visible. This is the default, for a new document and after a load.
+  - **Fit Width** — the label fills the width and a taller label scrolls.
+  - **A pinned zoom** — one of a fixed ladder of steps from 5% to 800%. Zoom In
+    and Zoom Out move to the next step above or below *the current scale*, so
+    zooming in from a fitted 62% lands on 67% rather than jumping back to
+    wherever the last step was.
+- **The canvas widget is exactly the label at the current scale**, and the label
+  is drawn from its origin. That is what gives the scroll area something to
+  scroll, what lets the container centre a canvas smaller than the view, and
+  what keeps every hit-test free of a pan offset. A canvas that is not resized
+  with the scale clips the part of the label that falls outside it, with no
+  scrollbar to reach it.
+- **Zooming about the pointer**: Ctrl with the wheel steps the zoom and moves
+  the scroll offsets so the dot that was under the pointer is still under it.
+  A plain wheel scrolls.
 - White background; the label boundary is a light grey dashed rectangle.
 - Elements are drawn in list order, bottom first.
 - An element with `print_enabled` false is drawn at 35% opacity — visible and
@@ -251,8 +287,10 @@ scrollable. Default window size 900 × 1000; the canvas requests at least
 - **Drag** moves the selected element. Position is clamped so the element stays
   inside the label: `0 ≤ x ≤ label_width − width`, likewise for y.
 - **Eight resize handles** on the selected element — four corners, four edge
-  midpoints — drawn as small filled squares. A handle is hit if the pointer is
-  within 8 dots of its centre. While hovering one, the pointer changes to the
+  midpoints — drawn as small filled squares. A handle is **8 screen pixels**,
+  drawn and hit-tested at `8 / scale` dots, so it is the same size to the
+  pointer at every zoom. A handle is hit if the pointer is within that of its
+  centre. While hovering one, the pointer changes to the
   matching directional resize cursor (`nw-resize`, `n-resize`, `ne-resize`,
   `w-resize`, `e-resize`, `sw-resize`, `s-resize`, `se-resize`).
 - Resizing enforces a **minimum of 20 × 20 dots**, clamps the element to the
@@ -614,6 +652,11 @@ above.
 | Ctrl+Shift+] | Bring to Front |
 | Ctrl+[ | Send Backward |
 | Ctrl+Shift+[ | Send to Back |
+| Ctrl++, Ctrl+= | Zoom In |
+| Ctrl+- | Zoom Out |
+| Ctrl+0 | Fit Label |
+| Ctrl+9 | Fit Width |
+| Ctrl+1 | Actual Size (1:1) |
 
 Three notes for a port:
 
@@ -625,7 +668,8 @@ Three notes for a port:
   selection; neither is an error.
 - On toolkits that report the *shifted* key symbol, `Ctrl+Shift+]` arrives as
   `}` and will not match a binding declared on `]`; both forms may need
-  registering.
+  registering. `Ctrl++` has the same problem from the other side — it needs
+  Shift on most layouts — so `Ctrl+=` is registered alongside it.
 
 ---
 
@@ -657,7 +701,9 @@ message — never a swallowed exception or a placeholder.
 | Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200 |
 | Image | 200 × 200 dots, JPEG/PNG source |
 | Minimum element size when resizing | 20 × 20 dots |
-| Resize handle hit radius | 8 dots |
+| Resize handle size and hit radius | 8 **screen pixels** — `8 / scale` dots, so it neither shrinks out of reach when zoomed out nor covers the element when zoomed in |
+| Zoom range | 5% to 800%, along a fixed ladder of steps |
+| Window opening size | the monitor's work area × 0.9, capped at 1200 × 900, minimum 480 × 360 |
 | Double-click interval | 500 ms |
 | Undo depth | 50 |
 | Printer font object name | 8 characters, `[A-Z0-9_-]`, stored on `E:` |
@@ -692,8 +738,6 @@ rather than requirements:
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
   drawn whole, wrapped, whether or not a font file is available.
-- **The canvas scales to fit width only.** A label taller than the viewport
-  scrolls; there is no zoom control and no fit-to-window.
 - **Code 128 only.** No other symbology is offered, and the value is not
   validated against the subset.
 - **Modes `U` and `D` are carried but not simulated.** Only `A` changes the

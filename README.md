@@ -47,6 +47,8 @@ disagree.
 - **203, 300 and 600 dpi**: label size is set in inches, and a label drawn for
   one head resolution can be rescaled for another
 - **Undo and redo** of every document change, 50 deep
+- **Zoom**: fit the whole label, fit its width, or pin a scale from 5% to 800%
+  — from the View menu, the toolbar, or Ctrl with the wheel
 
 ## Requirements
 
@@ -100,14 +102,16 @@ Identical in both frontends.
 | Ctrl+S | Save | Delete | Delete element |
 | Ctrl+Shift+S | Save As | Ctrl+] / Ctrl+Shift+] | Bring Forward / to Front |
 | Ctrl+P | Print | Ctrl+[ / Ctrl+Shift+[ | Send Backward / to Back |
-| Ctrl+Q | Quit | | |
+| Ctrl+Q | Quit | Ctrl++ / Ctrl+- | Zoom In / Out |
+| | | Ctrl+0 / Ctrl+9 / Ctrl+1 | Fit Label / Fit Width / 1:1 |
 
 ## Settings
 
 Printer address, port and resolution are kept in
-`~/.config/linuxzpl/settings.ini`, shared by both frontends. A missing or
+`~/.config/linuxzpl/settings.ini`, shared by both frontends, along with the
+window's size and position from the last time it was closed. A missing or
 corrupt file never blocks startup; the defaults are `192.168.50.21:9100` at
-203 dpi.
+203 dpi, and a window sized to the monitor it opens on.
 
 ## Structure
 
@@ -182,8 +186,6 @@ Sent to the printer but not rendered:
 
 Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
 
-- The canvas scales to fit the width. A label taller than the viewport scrolls;
-  there is no zoom control.
 - Barcodes are Code 128 subset B only, and the value is not validated against
   the subset.
 - Rescaling between resolutions cannot be exact for barcodes: a module is a

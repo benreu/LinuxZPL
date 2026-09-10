@@ -7,7 +7,7 @@ A simple GTK3 application for viewing rendered ZPL (Zebra Programming Language) 
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GdkPixbuf, GLib
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 import os
 import base64
 import configparser
@@ -16,6 +16,7 @@ from pathlib import Path
 from zplcore import fonts as zpl_fonts
 from zplcore import model
 from zplcore import parser as zpl_parser
+from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import textraster
 from zplcore.model import (TEXT_JUSTIFICATIONS, BarcodeElement, Document,
@@ -71,7 +72,6 @@ class ZPLViewerWindow(Gtk.Window):
     
     def __init__(self):
         super().__init__(title="ZPL Viewer")
-        self.set_default_size(900, 1000)
         self.set_border_width(10)
         self.connect("delete-event", self.main_window_closed)
         
@@ -88,7 +88,9 @@ class ZPLViewerWindow(Gtk.Window):
         self.printer_address = DEFAULT_PRINTER_ADDRESS
         self.printer_port = DEFAULT_PRINTER_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        self.saved_geometry = None
         self._load_settings()
+        self._place_on_screen()
         self.label_width, self.label_height = self.inches_to_dots(4, 6)
 
         # Create main layout
@@ -217,6 +219,33 @@ class ZPLViewerWindow(Gtk.Window):
         edit_menu.show_all()
         self._edit_menu = edit_menu
 
+        # View menu
+        view_menu = Gtk.Menu()
+        view_menu_item = Gtk.MenuItem(label="View")
+        view_menu_item.set_submenu(view_menu)
+        menu_bar.append(view_menu_item)
+
+        # Ctrl++ needs Shift on most layouts, so the unshifted key is bound as
+        # an unshown alias - the same trick the z-order items use.
+        for label, action, accel, alias in (
+                ("Zoom In", self.on_zoom_in, "<Control>plus", "<Control>equal"),
+                ("Zoom Out", self.on_zoom_out, "<Control>minus", None),
+                (None, None, None, None),
+                ("Fit Label", self.on_fit_label, "<Control>0", None),
+                ("Fit Width", self.on_fit_width, "<Control>9", None),
+                ("Actual Size", self.on_actual_size, "<Control>1", None)):
+            if label is None:
+                view_menu.append(Gtk.SeparatorMenuItem())
+                continue
+            item = Gtk.MenuItem(label=label)
+            item.connect("activate", action)
+            add_accel(item, accel)
+            if alias:
+                add_accel(item, alias, visible=False)
+            view_menu.append(item)
+
+        view_menu.show_all()
+
         # Undo/redo buttons at the far end of the header bar. pack_end fills
         # right to left, so redo goes in first to read undo then redo.
         button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -296,6 +325,18 @@ class ZPLViewerWindow(Gtk.Window):
         add_image_btn.connect("clicked", self.on_add_image_clicked)
         toolbar_box.pack_start(add_image_btn, False, False, 0)
 
+        # Zoom controls
+        zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        zoom_box.get_style_context().add_class("linked")
+        toolbar_box.pack_start(zoom_box, False, False, 10)
+        for label, action, tip in (("\u2212", self.on_zoom_out, "Zoom out (Ctrl+-)"),
+                                   ("Fit", self.on_fit_label, "Fit the label (Ctrl+0)"),
+                                   ("+", self.on_zoom_in, "Zoom in (Ctrl++)")):
+            button = Gtk.Button(label=label)
+            button.set_tooltip_text(tip)
+            button.connect("clicked", action)
+            zoom_box.pack_start(button, False, False, 0)
+
         # Delete button
         delete_btn = Gtk.Button(label="Delete")
         delete_btn.connect("clicked", self.on_delete_clicked)
@@ -305,6 +346,12 @@ class ZPLViewerWindow(Gtk.Window):
         scrolled_canvas = Gtk.ScrolledWindow()
         scrolled_canvas.set_hexpand(True)
         scrolled_canvas.set_vexpand(True)
+        # The vertical scrollbar is always present, so the width a fit is
+        # measured against does not change when it appears - which would set
+        # off a resize loop.
+        scrolled_canvas.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.ALWAYS)
+        scrolled_canvas.connect("size-allocate", self._on_view_allocated)
+        self.scrolled_canvas = scrolled_canvas
         left_box.pack_start(scrolled_canvas, True, True, 0)
         
         self.design_canvas = DesignCanvas(on_change_callback=self.on_canvas_changed, 
@@ -313,6 +360,8 @@ class ZPLViewerWindow(Gtk.Window):
         self.design_canvas.dpi = self.printer_dpi
         self.design_canvas.connect("draw", self.on_canvas_draw)
         self.design_canvas.connect("element-double-clicked", self.on_element_double_clicked)
+        self.design_canvas.connect("scale-changed", self._update_zoom_readout)
+        self.design_canvas.connect("zoom-at", self._zoom_at)
 
         # what is selected changes while the menu is closed. Connected here
         # rather than at build time: show_all() emits "show", and the handler
@@ -330,12 +379,102 @@ class ZPLViewerWindow(Gtk.Window):
         viewport.add(self.design_canvas)
         scrolled_canvas.add(viewport)
         
-        # Status bar
+        # Status bar. The zoom is its own label beside it, so a status message
+        # does not wipe it away.
+        status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         self.status_bar = Gtk.Statusbar()
-        main_box.pack_end(self.status_bar, False, False, 0)
-        
+        status_row.pack_start(self.status_bar, True, True, 0)
+        self.zoom_label = Gtk.Label()
+        self.zoom_label.set_margin_end(8)
+        status_row.pack_end(self.zoom_label, False, False, 0)
+        main_box.pack_end(status_row, False, False, 0)
+
         self.show_all()
+        self._update_zoom_readout()
         self.update_status("Ready")
+
+    # --- the view ------------------------------------------------------------
+
+    def _place_on_screen(self):
+        """Open at a size that fits the monitor, or where it was left.
+
+        The monitor being worked on, not whichever one is primary: with two
+        screens the window can otherwise open on the other one, and a window
+        taller than the work area lands wherever the window manager can put it
+        - which on a stacked desktop can be almost entirely off the bottom
+        edge, indistinguishable from the application never starting.
+        """
+        monitor = self._monitor_under_pointer()
+        if monitor is None:
+            self.set_default_size(*zpl_view.PREFERRED_SIZE)
+            return
+        area = monitor.get_workarea()
+        x, y, width, height = zpl_view.place_window(
+            (area.x, area.y, area.width, area.height), self.saved_geometry)
+        self.set_default_size(width, height)
+        self.move(x, y)
+
+    @staticmethod
+    def _monitor_under_pointer():
+        """The monitor the pointer is on, falling back to the primary one."""
+        display = Gdk.Display.get_default()
+        if display is None:
+            return None
+        try:
+            _screen, px, py = display.get_default_seat().get_pointer().get_position()
+            monitor = display.get_monitor_at_point(px, py)
+            if monitor is not None:
+                return monitor
+        except Exception:
+            pass
+        return display.get_primary_monitor() or display.get_monitor(0)
+
+    def _on_view_allocated(self, widget, allocation):
+        """Tell the canvas how much room it has, so a fit can follow it."""
+        self.design_canvas.set_view_size(allocation.width, allocation.height)
+
+    def _update_zoom_readout(self, *_args):
+        canvas = self.design_canvas
+        fitted = "" if canvas.zoom is not None else " (fit)"
+        self.zoom_label.set_text(
+            f"{zpl_view.percent(canvas._scale())}%{fitted}")
+
+    def _zoom_at(self, canvas, px, py, zoom_in):
+        """Step the zoom, keeping the dot that was under the pointer under it.
+
+        The pointer's position in the visible area is measured first: the zoom
+        resizes the canvas and can re-centre it, so measuring afterwards would
+        be measuring the wrong thing.
+        """
+        # PyGObject returns the pair, or None when the two widgets share no
+        # ancestor - which is every moment before the canvas is realised.
+        where = canvas.translate_coordinates(self.scrolled_canvas, px, py)
+        old_scale = canvas._scale()
+        canvas.zoom_in() if zoom_in else canvas.zoom_out()
+        if where is None:
+            return
+        vx, vy = where
+        new_scale = canvas._scale()
+        for adjustment, along, across in (
+                (self.scrolled_canvas.get_hadjustment(), px, vx),
+                (self.scrolled_canvas.get_vadjustment(), py, vy)):
+            adjustment.set_value(
+                zpl_view.zoom_anchor(along, across, old_scale, new_scale))
+
+    def on_zoom_in(self, *_args):
+        self.design_canvas.zoom_in()
+
+    def on_zoom_out(self, *_args):
+        self.design_canvas.zoom_out()
+
+    def on_fit_label(self, *_args):
+        self.design_canvas.set_fit(zpl_view.FIT_LABEL)
+
+    def on_fit_width(self, *_args):
+        self.design_canvas.set_fit(zpl_view.FIT_WIDTH)
+
+    def on_actual_size(self, *_args):
+        self.design_canvas.set_zoom(1.0)
 
     def main_window_closed(self, widget, event):
       if not self.close_app(widget):
@@ -345,6 +484,13 @@ class ZPLViewerWindow(Gtk.Window):
       """Handle quit app from Menu or Window close button."""
       if not self.check_unsaved_changes():
         return False
+      # Where the window was left, so it opens there next time. Saved on the
+      # way out because nothing else in the session has reason to write the
+      # settings file, and a resize is not worth a write of its own.
+      x, y = self.get_position()
+      width, height = self.get_size()
+      self.saved_geometry = (x, y, width, height)
+      self._save_settings()
       # Destroy the window rather than quitting the loop. The designer is not
       # always the application: opened as one window inside another Gtk
       # program, Gtk.main_quit() here would take that whole program down.
@@ -569,7 +715,7 @@ class ZPLViewerWindow(Gtk.Window):
             rescaled = self._offer_dpi_rescale(loaded_dpi)
             self.label_width = self.design_canvas.label_width
             self.label_height = self.design_canvas.label_height
-            self.design_canvas.queue_draw()
+            self.design_canvas.sync_size()
 
             # Both facts are worth reporting, and the load message would
             # otherwise overwrite the rescale one the instant it appeared.
@@ -818,6 +964,9 @@ class ZPLViewerWindow(Gtk.Window):
             dpi = parser.getint('printer', 'dpi', fallback=self.printer_dpi)
             if dpi > 0:
                 self.printer_dpi = dpi
+            if parser.has_section('window'):
+                self.saved_geometry = tuple(
+                    parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
         except (configparser.Error, OSError, ValueError):
             # A missing or corrupt config must never block startup
             pass
@@ -834,6 +983,12 @@ class ZPLViewerWindow(Gtk.Window):
             parser.set('printer', 'address', self.printer_address)
             parser.set('printer', 'port', str(self.printer_port))
             parser.set('printer', 'dpi', str(self.printer_dpi))
+            if self.saved_geometry is not None:
+                if not parser.has_section('window'):
+                    parser.add_section('window')
+                for key, value in zip(('x', 'y', 'width', 'height'),
+                                      self.saved_geometry):
+                    parser.set('window', key, str(int(value)))
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, 'w') as f:
                 parser.write(f)
@@ -959,7 +1114,7 @@ class ZPLViewerWindow(Gtk.Window):
                 # elements at the old scale and print the label oversized.
                 dialog.destroy()
                 note = self._offer_dpi_rescale()
-                self.design_canvas.queue_draw()
+                self.design_canvas.sync_size()
                 if note:
                     self.on_canvas_changed()
                     self.update_status(note[0].upper() + note[1:])
@@ -1103,6 +1258,7 @@ class ZPLViewerWindow(Gtk.Window):
         self.design_canvas.restore(snapshot)
         self.label_width = self.design_canvas.label_width
         self.label_height = self.design_canvas.label_height
+        self.design_canvas.sync_size()
         self.unsaved_changes = True
         self._update_undo_actions()
 
@@ -1555,6 +1711,9 @@ def main():
     """Main entry point for the application."""
     app = ZPLViewerWindow()
     app.connect('destroy', Gtk.main_quit)
+    # Ask for the front. Started from an editor running full screen, a new
+    # window can otherwise map behind it and look as though nothing happened.
+    app.present()
     Gtk.main()
 
 
