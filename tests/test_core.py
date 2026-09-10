@@ -205,6 +205,70 @@ check("load clears the history", not w._undo_stack and not w._redo_stack)
 check("failed save reports and keeps the flag",
       w.save_zpl_file('/nonexistent-dir/x.zpl', '^XA^XZ') is False)
 
+# --- ZPL as other tools write it -------------------------------------------
+# Two real templates, kept verbatim. They are the regression test for a parser
+# that used to read line by line and know nine commands.
+FIXTURES = Path(__file__).resolve().parent / 'fixtures'
+
+product = (FIXTURES / 'product_barcode.zpl').read_text()
+doc, _dpi = zpl_parser.parse_zpl(product)
+kinds = [e.element_type for e in doc.elements]
+check("product_barcode.zpl yields both elements", kinds == ['barcode', 'text'], kinds)
+
+serial = (FIXTURES / 'serial_barcode.zpl').read_text()
+doc_s, _dpi = zpl_parser.parse_zpl(serial)
+check("serial_barcode.zpl yields its barcode",
+      [e.element_type for e in doc_s.elements] == ['barcode'])
+# ^FO45,50^BY3 - two commands on one line, which the old scan could not see
+bar = doc_s.elements[0]
+check("both commands on a shared line are read",
+      (bar.x, bar.y, bar.module_width) == (45, 50, 3),
+      (bar.x, bar.y, bar.module_width))
+
+text = doc.elements[1]
+check("^A0 is read as the scalable font", text.font_code == '0', text.font_code)
+check("^FB is read onto the element",
+      text.block is not None and (text.block.width, text.block.max_lines,
+                                  text.block.justification) == (182, 4, 'C'),
+      text.block)
+check("a block sizes the element box, not the string",
+      text.width == 182, (text.width, text.height))
+
+# nothing that changes the label may be lost between opening and saving
+for name, source in (('product', product), ('serial', serial)):
+    reparsed = zpl_parser.parse_zpl(source)[0].to_zpl()
+    original = [c for c in zpl_parser.tokenise(source)
+                if c[0] not in ('^XA', '^XZ', '^FS', '^PW', '^LL')]
+    written = [c for c in zpl_parser.tokenise(reparsed)
+               if c[0] not in ('^XA', '^XZ', '^FS', '^PW', '^LL', '^FX')]
+    check(f"{name}_barcode.zpl round-trips its commands",
+          [(c, p.strip()) for c, p in original] == [(c, p.strip()) for c, p in written],
+          f"{original} != {written}")
+
+# ^FB wrapping, measured with the metrics the box is derived from
+from zplcore import textraster
+from zplcore.model import FieldBlock
+block = FieldBlock(182, 4, 1, 'C', 0)
+lines = textraster.wrap("Stainless Steel Hex Head Bolt 10mm", FONT, 40, 40, block)
+measure, _f = textraster._measurer(FONT, 40, 40)
+check("every wrapped line fits the block",
+      lines and all(measure(l) <= block.width for l in lines), lines)
+check("wrapping stops at max_lines",
+      len(textraster.wrap("one two three four five six seven eight",
+                          FONT, 40, 40, FieldBlock(182, 2, 1, 'L', 0))) == 2)
+check(r"\& forces a line break",
+      textraster.wrap(r"top\&bottom", FONT, 40, 40, block) == ['top', 'bottom'])
+check("a block with no font file still wraps",
+      len(textraster.wrap("a b c d e f g h", None, 40, 20, FieldBlock(60, 4))) > 1)
+
+# what a save would drop is reported rather than discovered on a label
+from zplcore import workflow
+check("nothing is reported for the templates",
+      workflow.unsupported_commands(product) == []
+      and workflow.unsupported_commands(serial) == [])
+check("unmodelled commands are reported",
+      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^LRY^XZ") == ['^BQ', '^LR'])
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

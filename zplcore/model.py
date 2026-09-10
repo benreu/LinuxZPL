@@ -42,11 +42,42 @@ class DesignElement:
                 self.y <= y <= self.y + self.height)
 
 
+class FieldBlock:
+    """^FB - the block a piece of text is wrapped into.
+
+    Width is in dots. Lines past `max_lines` are dropped rather than
+    overflowing, which is what the printer does with them.
+    """
+
+    JUSTIFICATIONS = ('L', 'C', 'R', 'J')
+
+    def __init__(self, width: int, max_lines: int = 1, line_spacing: int = 0,
+                 justification: str = 'L', indent: int = 0):
+        self.width = max(1, int(width))
+        self.max_lines = max(1, int(max_lines))
+        self.line_spacing = int(line_spacing)
+        self.justification = (justification or 'L').upper()
+        if self.justification not in self.JUSTIFICATIONS:
+            self.justification = 'L'
+        self.indent = int(indent)
+
+    def to_zpl(self) -> str:
+        return (f"^FB{self.width},{self.max_lines},{self.line_spacing},"
+                f"{self.justification},{self.indent}")
+
+    def __eq__(self, other):
+        return isinstance(other, FieldBlock) and vars(self) == vars(other)
+
+    def __repr__(self):
+        return f"FieldBlock({self.to_zpl()[3:]})"
+
+
 class TextElement(DesignElement):
     """Text element for the designer."""
 
     def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
-                 font_height: int = 36, font_width: int = 20):
+                 font_height: int = 36, font_width: int = 20,
+                 font_code: str = 'F'):
         self.x = x
         self.y = y
         self.text = text
@@ -58,6 +89,11 @@ class TextElement(DesignElement):
         self.font_path: Optional[str] = None
         self.font_family: Optional[str] = None
         self.printer_font_name: Optional[str] = None
+        # Built-in font designator: 'F' is what this designer has always
+        # written, '0' the scalable font most other tools reach for.
+        self.font_code = font_code
+        # ^FB, when the text is a wrapped block rather than a single line
+        self.block: Optional['FieldBlock'] = None
 
     def _measure(self, font_path: str) -> float:
         """Advance width of the text at em = font_height, or 0 if unmeasurable."""
@@ -101,7 +137,9 @@ class TextElement(DesignElement):
         if effective_font:
             zpl += f"^A@N,{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
         else:
-            zpl += f"^AFN,{self.font_height},{self.font_width}\n"
+            zpl += f"^A{self.font_code}N,{self.font_height},{self.font_width}\n"
+        if self.block is not None:
+            zpl += self.block.to_zpl() + "\n"
         zpl += f"^FD{self.text}^FS\n"
         return zpl
 
@@ -131,14 +169,37 @@ class BarcodeElement(DesignElement):
     """Barcode element for the designer. Code 128, subset B only."""
 
     def __init__(self, x: int = 50, y: int = 200, height: int = 100,
-                 barcode_value: str = "123456789", module_width: int = 2):
+                 barcode_value: str = "123456789", module_width: int = 2,
+                 orientation: str = '', options: tuple = (),
+                 font: Optional[tuple] = None):
         self.x = x
         self.y = y
         self.height = height
         self.barcode_value = barcode_value
         self.module_width = module_width
+        # ^BC's own parameters, kept as the file had them so that opening and
+        # saving someone else's label does not quietly change what prints.
+        # Empty is what this designer writes for a barcode it created itself.
+        self.orientation = orientation
+        self.options = tuple(options)
+        # The font a ^A before the ^BC selected, as (code, height, width). It
+        # sets the interpretation line - the digits printed under the bars -
+        # so losing it would change the label even though no text element
+        # uses it.
+        self.font = tuple(font) if font else None
         self.element_type = 'barcode'
         self.width = self.printed_width()
+
+    def _options_zpl(self) -> str:
+        """The trailing ^BC parameters, if the file carried any."""
+        return ("," + ",".join(self.options)) if self.options else ""
+
+    def _font_zpl(self) -> str:
+        """The interpretation line's font, if the file selected one."""
+        if not self.font:
+            return ""
+        code, height, width = self.font
+        return f"^A{code}N,{height},{width}\n"
 
     def printed_width(self) -> int:
         """Width in dots: Code 128B is start + data + check + stop modules."""
@@ -151,7 +212,8 @@ class BarcodeElement(DesignElement):
         # resolution and makes it the one element that cannot be rescaled.
         return (f"^FO{self.x},{self.y}\n"
                 f"^BY{max(1, self.module_width)}\n"
-                f"^BC,{self.height}\n"
+                f"{self._font_zpl()}"
+                f"^BC{self.orientation},{self.height}{self._options_zpl()}\n"
                 f"^FD{self.barcode_value}^FS\n")
 
 
@@ -502,10 +564,20 @@ class Document:
     # --- fonts ---------------------------------------------------------------
 
     def sync_text_width(self, element) -> None:
-        """Resize a text element's box to the width it will print at."""
-        if getattr(element, 'element_type', None) == 'text':
-            element.width = element.printed_width(self.font_path)
-            element.height = element.font_height
+        """Resize a text element's box to the size it will print at."""
+        if getattr(element, 'element_type', None) != 'text':
+            return
+        block = getattr(element, 'block', None)
+        if block is not None:
+            # A block is sized by ^FB, not by the string: its width is fixed
+            # and its height follows however many lines the text wraps into.
+            from . import textraster
+            element.width, element.height = textraster.block_size(
+                element.text, element.font_path or self.font_path,
+                element.font_height, element.font_width, block)
+            return
+        element.width = element.printed_width(self.font_path)
+        element.height = element.font_height
 
     def set_font(self, font_path: str, font_family: str, printer_font_name: str):
         """Set the document-wide font."""

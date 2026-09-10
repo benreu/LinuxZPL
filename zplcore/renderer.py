@@ -7,7 +7,24 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
+from . import textraster
 from .code128 import encode_b as _code128_modules
+from .model import FieldBlock
+
+
+def _parse_field_block(params: str) -> FieldBlock:
+    """^FB<width>,<max lines>,<line spacing>,<justification>,<indent>."""
+    parts = [p.strip() for p in params.split(',')]
+
+    def number(index, fallback):
+        try:
+            return int(parts[index])
+        except (IndexError, ValueError):
+            return fallback
+
+    justification = parts[3].upper() if len(parts) > 3 and parts[3] else 'L'
+    return FieldBlock(number(0, 1), number(1, 1), number(2, 0),
+                      justification, number(4, 0))
 
 
 class ZPLRenderer:
@@ -37,6 +54,8 @@ class ZPLRenderer:
         self.font_cache = {}
         self.barcode_height = 0
         self.is_barcode_mode = False
+        self.current_font_width = 0
+        self.current_block = None
         self.custom_font_path: Optional[str] = None
         self.current_field_font_path: Optional[str] = None
         self.font_registry: dict = {}
@@ -96,6 +115,33 @@ class ZPLRenderer:
         except:
             self.draw.text((x, text_y), barcode_value, fill='black')
     
+    def _render_block(self, text: str):
+        """Draw text wrapped into the ^FB block, so the preview matches."""
+        block = self.current_block
+        font_path = self.current_field_font_path or self.custom_font_path
+        font_width = self.current_font_width or self.current_font_size
+        lines = textraster.wrap(text, font_path, self.current_font_size,
+                                font_width, block)
+        pitch = max(1, self.current_font_size + block.line_spacing)
+        font = self._get_font(self.current_font_size)
+        measure, _ = textraster._measurer(font_path, self.current_font_size,
+                                          font_width)
+        for row, line in enumerate(lines):
+            width = measure(line)
+            if block.justification == 'C':
+                offset = max(0, (block.width - width) / 2)
+            elif block.justification == 'R':
+                offset = max(0, block.width - width)
+            else:
+                offset = block.indent
+            try:
+                self.draw.text((self.current_x + offset,
+                                self.current_y + row * pitch),
+                               line, fill='black', font=font)
+            except Exception:
+                self.draw.text((self.current_x + offset,
+                                self.current_y + row * pitch), line, fill='black')
+
     def _render_graphic(self, params: str):
         """Render a ^GF graphic field: ^GFa,total,total,bytes_per_row,<hex>."""
         parts = params.split(',', 4)
@@ -216,11 +262,14 @@ class ZPLRenderer:
         elif command == 'FD':
             # Field data: ^FD<data>
             self.field_data = params
-        elif command == 'AF':
-            # Font selection: ^AFn,h,w (orientation, height, width)
+        elif command[0] == 'A' and command != 'A@':
+            # Built-in font: ^A<font><orientation>,h,w. ^A0 is the scalable
+            # font most other tools use; ^AF one of the bitmap fonts.
             match = re.match(r'([A-Z]?)(?:,(\d+))?(?:,(\d+))?', params)
             if match and match.group(2):
                 self.current_font_size = int(match.group(2))
+                if match.group(3):
+                    self.current_font_width = int(match.group(3))
             self.current_field_font_path = None
         elif command == 'A@':
             # Downloaded font: ^A@o,h,w,device:name.TTF
@@ -243,13 +292,21 @@ class ZPLRenderer:
                     outline='black',
                     width=thickness
                 )
+        elif command == 'FB':
+            # Field block: the text that follows is wrapped into it
+            self.current_block = _parse_field_block(params)
         elif command == 'FS':
             # End field: render current field data
             if self.field_data is not None:
-                if self.is_barcode_mode:
+                if self.current_block is not None and not self.is_barcode_mode:
+                    self._render_block(self.field_data)
+                    self.current_block = None
+                elif self.is_barcode_mode:
                     # Render as barcode
-                    self._render_barcode(self.field_data, self.current_x, self.current_y, self.barcode_height)
+                    self._render_barcode(self.field_data, self.current_x,
+                                         self.current_y, self.barcode_height)
                     self.is_barcode_mode = False
+                    self.current_block = None
                 else:
                     # Render as text
                     font = self._get_font(self.current_font_size)

@@ -173,7 +173,19 @@ class DesignCanvas(QWidget):
         painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
         font_path = element.font_path or self.document.font_path
+        block = getattr(element, 'block', None)
         raster = None
+        if font_path and block is not None:
+            # A ^FB block is rasterised at its printed size, wrapped and
+            # justified, so nothing further is scaled here.
+            wrapped = to_qimage(textraster.raster_block(
+                element.text, font_path, element.font_height,
+                element.font_width, block))
+            if wrapped is not None:
+                painter.drawImage(QPointF(element.x, element.y), wrapped)
+                if selected:
+                    self._draw_handles(painter, element)
+                return
         if font_path:
             raster = to_qimage(
                 textraster.raster(element.text, font_path, element.font_height))

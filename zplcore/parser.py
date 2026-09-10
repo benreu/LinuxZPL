@@ -13,14 +13,21 @@ import re
 from typing import Optional, Tuple
 
 from . import fonts as zpl_fonts
-from .model import (BarcodeElement, Document, FrameElement, ImageElement,
-                    TextElement)
+from .model import (BarcodeElement, Document, FieldBlock, FrameElement,
+                    ImageElement, TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
 DPI_KEY = '^FXDESIGNER_DPI:'
 PREVIEW_KEY = '^FXDESIGNER_PREVIEW:'
 PATH_KEY = '^FXDESIGNER_PATH:'
+
+# The same keys as the tokeniser sees them: ^FX is the command, the rest is
+# its parameters.
+NOPRINT_PARAM = NOPRINT_MARKER[len('^FX'):]
+DPI_PARAM = DPI_KEY[len('^FX'):]
+PREVIEW_PARAM = PREVIEW_KEY[len('^FX'):]
+PATH_PARAM = PATH_KEY[len('^FX'):]
 
 
 def parse_label_size(zpl_content: str) -> Tuple[Optional[int], Optional[int]]:
@@ -31,7 +38,30 @@ def parse_label_size(zpl_content: str) -> Tuple[Optional[int], Optional[int]]:
             int(ll.group(1)) if ll else None)
 
 
-def _expand_hidden(zpl_content: str) -> list:
+COMMAND = re.compile(r'([\^~])([A-Za-z0-9@]{2})([^\^~]*)', re.S)
+
+# Commands that carry no element of their own and need no warning
+STRUCTURAL = {'^XA', '^XZ', '^FS', '^FX', '^CI', '^CF', '^LH', '^PR', '^MD',
+              '^LT', '^LS', '^PO', '^MN', '^MM', '^MT', '^JM', '^FW'}
+
+
+def tokenise(zpl_content: str):
+    """Every command in the source, as (name, parameters) pairs.
+
+    A ZPL command is a caret (or tilde) plus exactly two characters, and its
+    parameters run to the next caret - wherever the newlines happen to fall.
+    Reading line by line missed any command that did not start one, which is
+    how `^FO45,50^BY3` lost its module width and `^A0N,70,70^BCN,...` lost
+    both of its commands.
+
+    Two characters is also what makes the font family fall out for free: ^A0,
+    ^AF and ^A@ are one command whose second character is the font.
+    """
+    return [(m.group(1) + m.group(2).upper(), m.group(3))
+            for m in COMMAND.finditer(zpl_content)]
+
+
+def _expand_hidden(zpl_content: str) -> str:
     """Decode ^FXDESIGNER_NOPRINT payloads back into the line stream, in place.
 
     In place, because list position is z-order: a hidden element expanded at
@@ -50,7 +80,7 @@ def _expand_hidden(zpl_content: str) -> list:
             lines.extend(body.split('\n'))
         else:
             lines.append(raw)
-    return lines
+    return '\n'.join(lines)
 
 
 def _decode_gfa_image(x: int, y: int, gf_match, preview_b64, path_hint):
@@ -117,149 +147,206 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     if height:
         doc.label_height = height
 
-    lines = _expand_hidden(zpl_content)
+    tokens = tokenise(_expand_hidden(zpl_content))
     loaded_dpi = None
     pending_no_print = False
-    i = 0
+    field = None            # commands gathered since the last ^FO
 
-    while i < len(lines):
-        line = lines[i].strip()
-
-        # Skip comments and empty lines
-        if line.startswith(';') or not line:
-            i += 1
+    for cmd, params in tokens:
+        if cmd == '^FX':
+            key = params.strip()
+            if key.startswith(DPI_PARAM):
+                try:
+                    loaded_dpi = int(key[len(DPI_PARAM):])
+                except ValueError:
+                    pass
+            elif key == NOPRINT_PARAM:
+                pending_no_print = True
+            elif field is not None and key.startswith(PREVIEW_PARAM):
+                field['preview'] = key[len(PREVIEW_PARAM):]
+            elif field is not None and key.startswith(PATH_PARAM):
+                field['path'] = key[len(PATH_PARAM):]
             continue
 
-        if line.startswith(DPI_KEY):
-            try:
-                loaded_dpi = int(line[len(DPI_KEY):])
-            except ValueError:
-                pass
-            i += 1
+        if cmd == '^FO':
+            # A field that never saw ^FS still ends here, at the next one
+            pending_no_print = _flush(field, doc, renderer, pending_no_print)
+            match = re.match(r'\s*(\d+),(\d+)', params)
+            field = _new_field(int(match.group(1)), int(match.group(2))) if match else None
             continue
 
-        if line == NOPRINT_MARKER:
-            pending_no_print = True
-            i += 1
+        if cmd == '^FS':
+            pending_no_print = _flush(field, doc, renderer, pending_no_print)
+            field = None
             continue
 
-        if line.startswith('^FO'):
-            match = re.match(r'\^FO(\d+),(\d+)', line)
+        if field is None:
+            continue
+
+        if cmd == '^BY':
+            match = re.match(r'\s*(\d+)', params)
             if match:
-                x, y = int(match.group(1)), int(match.group(2))
-                before = len(doc.elements)
+                field['module_width'] = int(match.group(1))
+        elif cmd.startswith('^A'):
+            _read_font(cmd, params, field)
+        elif cmd == '^FB':
+            field['block'] = _read_block(params)
+        elif cmd == '^BC':
+            field['barcode'] = _read_barcode(params)
+        elif cmd == '^GB':
+            field['frame'] = params
+        elif cmd == '^GF':
+            field['graphic'] = params
+        elif cmd == '^FD':
+            field['data'] = params
 
-                # Look ahead for the element type
-                i += 1
-                module_width = 2    # ^BY, if the field carries one
-                preview_b64 = None  # JPEG preview embedded by designer on save
-                path_hint = None    # original file path embedded by designer
+    _flush(field, doc, renderer, pending_no_print)
 
-                while i < len(lines):
-                    next_line = lines[i].strip()
-
-                    # Designer metadata - collect and keep looking
-                    if next_line.startswith(PREVIEW_KEY):
-                        preview_b64 = next_line[len(PREVIEW_KEY):]
-                        i += 1
-                        continue
-                    if next_line.startswith(PATH_KEY):
-                        path_hint = next_line[len(PATH_KEY):]
-                        i += 1
-                        continue
-
-                    if next_line.startswith('^BY'):
-                        by_match = re.match(r'\^BY(\d+)', next_line)
-                        if by_match:
-                            module_width = int(by_match.group(1))
-                        i += 1
-                        continue
-
-                    if next_line.startswith('^AF') or next_line.startswith('^A@'):
-                        # Text. ^A@ names a font downloaded to the printer,
-                        # e.g. ^A@N,53,19,E:DEJAVUSA.TTF
-                        font_name = None
-                        if next_line.startswith('^A@'):
-                            match = re.match(
-                                r'\^A@[A-Z]?,(\d+),(\d+),[^:]*:([^.,]+)', next_line)
-                            if match:
-                                font_name = match.group(3).upper()
-                        else:
-                            match = re.match(r'\^AF[A-Z]?,(\d+),(\d+)', next_line)
-                        font_h, font_w = 36, 20
-                        if match:
-                            font_h = int(match.group(1))
-                            font_w = int(match.group(2))
-
-                        i += 1
-                        if i < len(lines) and lines[i].strip().startswith('^FD'):
-                            text = lines[i].strip()[3:-3]  # strip ^FD and ^FS
-                            el = TextElement(x, y, text, font_h, font_w)
-                            el.height = font_h
-                            el.printer_font_name = font_name
-                            # A .zpl records only the printer name, but that
-                            # name is derived from the font file, so the
-                            # installed .ttf can usually be found again -
-                            # without it the label would reopen in a substitute
-                            # face and at the wrong width.
-                            local = (zpl_fonts.file_for_printer_name(font_name)
-                                     if font_name else None)
-                            if local:
-                                el.font_path = local
-                                try:
-                                    el.font_family = zpl_fonts.family_for_file(local)
-                                except Exception:
-                                    el.font_family = None
-                                zpl_fonts.register_app_font(local)
-                                if renderer is not None:
-                                    renderer.register_font(font_name, local)
-                            doc.elements.append(el)
-                            doc.sync_text_width(el)
-                        break
-
-                    if next_line.startswith('^GB'):
-                        match = re.match(r'\^GB(\d+),(\d+)(?:,(\d+))?', next_line)
-                        if match:
-                            w, h = int(match.group(1)), int(match.group(2))
-                            t = int(match.group(3)) if match.group(3) else 1
-                            doc.elements.append(FrameElement(x, y, w, h, t))
-                        break
-
-                    if next_line.startswith('^BC'):
-                        match = re.match(r'\^BC[A-Z]?,(\d+)?', next_line)
-                        h = int(match.group(1)) if match and match.group(1) else 100
-                        barcode_value = "123456789"
-                        i += 1
-                        if i < len(lines) and lines[i].strip().startswith('^FD'):
-                            barcode_value = lines[i].strip()[3:-3]
-                        doc.elements.append(
-                            BarcodeElement(x, y, height=h, barcode_value=barcode_value,
-                                           module_width=module_width))
-                        break
-
-                    if next_line.startswith('^GF'):
-                        gf_match = re.match(r'\^GFA,(\d+),(\d+),(\d+),(.*)', next_line)
-                        if gf_match:
-                            img_el = _decode_gfa_image(x, y, gf_match,
-                                                       preview_b64, path_hint)
-                            if img_el is not None:
-                                doc.elements.append(img_el)
-                        break
-
-                    if next_line.startswith('^FS'):
-                        break
-
-                    i += 1
-
-                if pending_no_print:
-                    # Mark whatever this block appended, wherever it was
-                    # appended from, rather than touching each branch.
-                    for el in doc.elements[before:]:
-                        el.print_enabled = False
-                    pending_no_print = False
-
-        i += 1
-
-    if doc.elements:
-        doc.selected_element = None
+    doc.selected_element = None
     return doc, loaded_dpi
+
+
+def _new_field(x: int, y: int) -> dict:
+    """The state gathered between a ^FO and the ^FS that ends it."""
+    return {'x': x, 'y': y, 'module_width': 2, 'font': None, 'block': None,
+            'barcode': None, 'frame': None, 'graphic': None, 'data': None,
+            'preview': None, 'path': None}
+
+
+def _read_font(cmd: str, params: str, field: dict) -> None:
+    """^A0 / ^AF / ^A@ - the font, its height and its width.
+
+    The designator is the command's second character, so every built-in font
+    is read the same way; ^A@ additionally names a font downloaded to the
+    printer, e.g. ^A@N,53,19,E:DEJAVUSA.TTF.
+    """
+    code = cmd[2]
+    match = re.match(r'\s*[A-Z]?,(\d+),(\d+)', params)
+    font_height = int(match.group(1)) if match else 36
+    font_width = int(match.group(2)) if match else 20
+    name = None
+    if code == '@':
+        named = re.search(r'[^:,]*:([^.,]+)', params)
+        if named:
+            name = named.group(1).upper()
+    field['font'] = {'code': code, 'height': font_height,
+                     'width': font_width, 'name': name}
+
+
+def _read_block(params: str) -> FieldBlock:
+    """^FB<width>,<max lines>,<line spacing>,<justification>,<indent>."""
+    parts = [p.strip() for p in params.split(',')]
+
+    def number(index, fallback):
+        try:
+            return int(parts[index])
+        except (IndexError, ValueError):
+            return fallback
+
+    justification = parts[3].upper() if len(parts) > 3 and parts[3] else 'L'
+    return FieldBlock(number(0, 1), number(1, 1), number(2, 0),
+                      justification, number(4, 0))
+
+
+def _read_barcode(params: str) -> dict:
+    """^BC<orientation>,<height>,<interpretation line>,<above>,<check>,<mode>.
+
+    Everything after the height is carried through untouched: those flags
+    decide whether the digits print under the bars and which Code 128 subsets
+    the printer may use, and re-emitting a barcode without them would change
+    the label.
+    """
+    parts = [p.strip() for p in params.split(',')]
+    orientation = ''
+    if parts and parts[0][:1].isalpha():
+        orientation = parts[0][:1].upper()
+    try:
+        height = int(parts[1]) if len(parts) > 1 and parts[1] else 100
+    except ValueError:
+        height = 100
+    return {'orientation': orientation, 'height': height,
+            'options': tuple(p for p in parts[2:])}
+
+
+def _flush(field, doc, renderer, pending_no_print: bool) -> bool:
+    """Turn a gathered field into an element. Returns the no-print flag."""
+    if field is None:
+        return pending_no_print
+
+    before = len(doc.elements)
+    element = _build_element(field, doc, renderer)
+    if element is not None:
+        doc.elements.append(element)
+    if pending_no_print and len(doc.elements) > before:
+        for el in doc.elements[before:]:
+            el.print_enabled = False
+        return False
+    return pending_no_print
+
+
+def _build_element(field, doc, renderer):
+    """The element a field describes, or None if it describes none.
+
+    Decided once the whole field has been read rather than at the first
+    command that looks decisive, so a ^FB sitting between the font and the
+    data no longer loses the element.
+    """
+    x, y = field['x'], field['y']
+
+    if field['graphic'] is not None:
+        gf_match = re.match(r'\s*A,(\d+),(\d+),(\d+),(.*)', field['graphic'], re.S)
+        if gf_match:
+            return _decode_gfa_image(x, y, gf_match, field['preview'], field['path'])
+        return None
+
+    if field['frame'] is not None:
+        match = re.match(r'\s*(\d+),(\d+)(?:,(\d+))?', field['frame'])
+        if match:
+            thickness = int(match.group(3)) if match.group(3) else 1
+            return FrameElement(x, y, int(match.group(1)), int(match.group(2)),
+                                thickness)
+        return None
+
+    if field['barcode'] is not None:
+        bc = field['barcode']
+        # A ^A before the ^BC selects the interpretation line's font, not a
+        # text element's, so it belongs to the barcode.
+        font = field['font']
+        return BarcodeElement(x, y, height=bc['height'],
+                              barcode_value=field['data'] or "123456789",
+                              module_width=field['module_width'],
+                              orientation=bc['orientation'],
+                              options=bc['options'],
+                              font=(font['code'], font['height'], font['width'])
+                              if font else None)
+
+    if field['font'] is not None and field['data'] is not None:
+        return _build_text(x, y, field, doc, renderer)
+
+    return None
+
+
+def _build_text(x, y, field, doc, renderer):
+    """A text element, with its font found again on this machine if it can be."""
+    font = field['font']
+    element = TextElement(x, y, field['data'], font['height'], font['width'],
+                          font_code=font['code'])
+    element.height = font['height']
+    element.printer_font_name = font['name']
+    element.block = field['block']
+
+    # A .zpl records only the printer font name, but that name is derived from
+    # the font file, so the installed .ttf can usually be found again - without
+    # it the label reopens in a substitute face and at the wrong width.
+    local = zpl_fonts.file_for_printer_name(font['name']) if font['name'] else None
+    if local:
+        element.font_path = local
+        try:
+            element.font_family = zpl_fonts.family_for_file(local)
+        except Exception:
+            element.font_family = None
+        zpl_fonts.register_app_font(local)
+        if renderer is not None:
+            renderer.register_font(font['name'], local)
+    doc.sync_text_width(element)
+    return element

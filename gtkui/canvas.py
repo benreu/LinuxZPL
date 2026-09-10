@@ -250,6 +250,22 @@ class DesignCanvas(Gtk.DrawingArea):
         the string for printed_width(), so the glyphs and the box that claims
         to contain them cannot disagree.
         """
+        block = getattr(element, 'block', None)
+        if block is not None:
+            # A ^FB block is rasterised at its printed size, wrapped and
+            # justified, so nothing further is scaled here.
+            pixbuf = to_pixbuf(textraster.raster_block(
+                element.text, font_path, element.font_height,
+                element.font_width, block))
+            if not pixbuf:
+                return False
+            context.save()
+            context.translate(element.x, element.y)
+            Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+            context.paint()
+            context.restore()
+            return True
+
         pixbuf = to_pixbuf(
             textraster.raster(element.text, font_path, element.font_height))
         if not pixbuf:

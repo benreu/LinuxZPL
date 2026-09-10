@@ -121,3 +121,42 @@ def unsaved_changes_gate(is_dirty, ask, save):
     if answer == 'save':
         return bool(save())
     return False
+
+
+# Commands the parser turns into elements, plus the structural ones that carry
+# nothing of their own. Anything else in a file changes what prints and will
+# not survive a save, because the model has nowhere to keep it.
+MODELLED = {'^FO', '^FD', '^FS', '^BY', '^BC', '^GB', '^GF', '^FB',
+            '^PW', '^LL', '^XA', '^XZ', '^FX', '^CI', '^CF'}
+
+
+def unsupported_commands(zpl_content: str) -> list:
+    """Commands in the file that a save would drop, in the order they appear.
+
+    The designer rebuilds a file from its model rather than editing the text,
+    so anything the model cannot hold is gone the moment the user saves. That
+    is worth saying out loud, rather than letting someone discover it on a
+    printed label.
+    """
+    from .parser import tokenise
+
+    seen = []
+    for command, _params in tokenise(zpl_content):
+        if command.startswith('^A'):        # every font is modelled
+            continue
+        if command in MODELLED or command in seen:
+            continue
+        seen.append(command)
+    return seen
+
+
+def warn_unsupported(zpl_content: str, notify) -> list:
+    """Tell the user what opening this file has quietly left behind.
+
+    `notify(commands)` shows it however the toolkit shows things. Returns the
+    commands so a caller can log or test them.
+    """
+    dropped = unsupported_commands(zpl_content)
+    if dropped:
+        notify(dropped)
+    return dropped

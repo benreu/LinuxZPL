@@ -516,6 +516,8 @@ class ZPLDesignerWindow(QMainWindow):
             # Building elements while parsing does not count as an edit.
             self.unsaved_changes = False
             self._reset_history()
+            workflow.warn_unsupported(
+                content, lambda cmds: qt_dialogs.warn_unsupported(self, cmds))
         except Exception as e:
             self.show_error(f"Failed to load file: {e}")
             self.update_status("Error loading file")

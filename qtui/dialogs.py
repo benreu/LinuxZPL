@@ -29,6 +29,18 @@ PRESET_SIZES = [("4x6", 4, 6), ("5x7", 5, 7), ("6x4", 6, 4),
                 ("3x5", 3, 5), ("2x3", 2, 3)]
 
 
+def warn_unsupported(parent, commands):
+    """Say which commands opening this file has left behind."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Warning)
+    box.setWindowTitle("Unsupported commands")
+    box.setText("This label uses ZPL the designer does not understand.")
+    box.setInformativeText(
+        f"{', '.join(commands)}\n\nThese are not shown on the canvas, and "
+        f"saving will not preserve them.")
+    box.exec_()
+
+
 def show_error(parent, message: str):
     """Report a failure with the real underlying message, never a placeholder."""
     box = QMessageBox(parent)

@@ -71,8 +71,10 @@ At startup the label is 4 × 6 inches at the configured printer resolution
 | `font_height` | 36 dots |
 | `font_width` | 20 dots |
 | `font_path`, `font_family`, `printer_font_name` | none (uses the document font, or the printer's built-in font) |
+| `font_code` | `F` - the built-in font designator, written as `^A<code>`. `0` is the scalable font most other tools use |
+| `block` | none - a field block (`^FB`), when the text wraps rather than running on one line |
 
-`height` always equals `font_height`. **`width` is derived, never set
+`height` always equals `font_height` **unless the element has a block**. **`width` is derived, never set
 directly**, and must be recomputed whenever the text, the font or either font
 dimension changes:
 
@@ -86,6 +88,19 @@ dimension changes:
 Getting this wrong is the single most visible defect a port can have: assuming
 fixed width for a proportional font makes `IIII` print far narrower and `WWWW`
 far wider than the canvas showed.
+
+**A field block replaces both derivations.** `^FB` gives a width in dots, a
+maximum number of lines, extra spacing between them, a justification
+(left / centre / right / justified) and a hanging indent. Text in a block:
+
+- breaks first at `\&`, a forced line break inside the field data
+- then wraps greedily to the block width, measured with the same metrics as
+  above, so the wrap and the box that holds it cannot disagree
+- **drops** lines past the maximum rather than overflowing, as the printer does
+- takes its `width` from the block and its `height` from
+  `lines × (font_height + line spacing)`
+
+A word too long for the block is left on its own line rather than split.
 
 #### Frame
 
@@ -107,6 +122,11 @@ Code 128, subset B only.
 | `barcode_value` | `"123456789"` |
 | `height` | 100 dots |
 | `module_width` | 2 dots |
+| `orientation`, `options` | none - `^BC`'s own parameters, carried through exactly as the file had them |
+| `font` | none - a `^A` before the `^BC` sets the font of the interpretation line, the digits printed under the bars |
+
+The `^BC` parameters and that font belong to the barcode even though neither is
+visible on the canvas: dropping them on save changes the printed label.
 
 **`width` is derived**: `(35 + len(value) × 11) × module_width`. The constant 35
 is the start, check and stop modules; each data character is 11 modules.
@@ -282,10 +302,11 @@ effect of building elements while parsing.
 
 | Element | Block |
 |---|---|
-| Text, built-in font | `^FO<x>,<y>` / `^AFN,<font_height>,<font_width>` / `^FD<text>^FS` |
+| Text, built-in font | `^FO<x>,<y>` / `^A<font_code>N,<font_height>,<font_width>` / `^FD<text>^FS` |
+| Text in a block | as above, with `^FB<width>,<lines>,<spacing>,<justification>,<indent>` between the font and the data |
 | Text, downloaded font | `^FO<x>,<y>` / `^A@N,<font_height>,<font_width>,E:<NAME>.TTF` / `^FD<text>^FS` |
 | Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>` / `^FS` |
-| Barcode | `^FO<x>,<y>` / `^BY<module_width>` / `^BC,<height>` / `^FD<value>^FS` |
+| Barcode | `^FO<x>,<y>` / `^BY<module_width>` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
 
 Each command is on its own line. `^BY` must be emitted: without it the printer
@@ -316,14 +337,27 @@ path are caret-free and are stored as-is.
 
 ### 8.3 What is read
 
-`^PW`, `^LL`, `^FO`, `^AF`, `^A@`, `^GB`, `^BC`, `^BY`, `^GFA`, and the four
-metadata keys. Lines beginning with `;` and blank lines are skipped. A `^FO`
-starts an element; the following lines are scanned to determine its type, and
-field data is read from a `^FD…^FS` line.
+`^PW`, `^LL`, `^FO`, `^A` in every form (`^A0`, `^AF`, any bitmap font, `^A@`),
+`^FB`, `^GB`, `^BC`, `^BY`, `^GFA`, and the four metadata keys.
+
+**Read the source as commands, not as lines.** A ZPL command is a caret (or
+tilde) plus exactly two characters, and its parameters run to the next caret -
+wherever the newlines happen to fall. Real ZPL routinely puts several commands
+on one line (`^FO45,50^BY3`), and a port that scans line by line will silently
+lose every command that does not start one. Two characters is also what makes
+the font family fall out for free: `^A0`, `^AF` and `^A@` are one command whose
+second character is the font.
+
+A `^FO` opens a field and `^FS` closes it; everything between is gathered, and
+the element type is decided once the whole field has been read rather than at
+the first command that looks decisive - otherwise a `^FB` sitting between the
+font and the data loses the element.
 
 Parsing is deliberately tolerant: an unrecognised command is skipped rather
 than treated as an error, and missing parameters fall back to the defaults in
-§3.3.
+§3.3. Because a save rebuilds the file from the model, anything skipped is
+gone once the user saves, so on load the application lists the print-affecting
+commands it could not model.
 
 Before parsing, `^FXDESIGNER_NOPRINT` payloads are decoded and expanded back
 into the line stream in place, preceded by a marker, so hidden elements keep
@@ -608,4 +642,11 @@ rather than requirements:
   scrolls; there is no zoom control and no fit-to-window.
 - **Barcodes are Code 128 subset B only.** No other symbology is offered, and
   the value is not validated against the subset.
+- **A barcode's Code 128 mode is carried but not honoured.** `^BC…,A` asks the
+  printer to switch subsets, and for numeric data subset C packs two digits
+  into one symbol - roughly half the width. The width formula above is subset B
+  only, so such a barcode is **drawn wider than it prints**. The mode survives
+  a round trip; the canvas does not reflect it.
 - **There is no "New" command.** A blank document exists only at startup.
+- **Justified text (`^FB…,J`) is drawn left-aligned.** The parameter is
+  carried through and re-emitted, but the canvas does not stretch the spaces.

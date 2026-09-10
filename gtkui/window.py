@@ -541,10 +541,23 @@ class ZPLViewerWindow(Gtk.Window):
             # Building elements while parsing does not count as an edit.
             self.unsaved_changes = False
             self._reset_history()
+            workflow.warn_unsupported(content, self._warn_unsupported)
 
         except Exception as e:
             self.show_error_dialog(f"Failed to load file: {e}")
             self.update_status("Error loading file")
+
+    def _warn_unsupported(self, commands):
+        """Say which commands opening this file has left behind."""
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK,
+            text="This label uses ZPL the designer does not understand.")
+        dialog.format_secondary_text(
+            f"{', '.join(commands)}\n\nThese are not shown on the canvas, and "
+            f"saving will not preserve them.")
+        dialog.run()
+        dialog.destroy()
 
     def _confirm_printer_fonts(self) -> bool:
         """Check the label's fonts are on the printer. False cancels printing."""

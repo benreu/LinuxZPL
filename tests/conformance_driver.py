@@ -22,6 +22,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 FIXTURE_300 = ROOT / 'tests' / 'fixtures' / 'sample_300dpi.zpl'
+# ZPL as another tool writes it: ^A0, ^FB and two commands on one line
+FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'
 
 # A font every step can rely on; text width is the most divergence-prone rule,
 # so the sequence exercises the measured path as well as the fixed-width one.
@@ -69,6 +71,9 @@ class GtkDriver:
 
     def set_font(self, element, path):
         element.font_path = path
+        self.canvas.sync_text_width(element)
+
+    def resync(self, element):
         self.canvas.sync_text_width(element)
 
     def resize(self, element, handle, dx, dy):
@@ -145,6 +150,9 @@ class QtDriver:
 
     def set_font(self, element, path):
         element.font_path = path
+        self.document.sync_text_width(element)
+
+    def resync(self, element):
         self.document.sync_text_width(element)
 
     def resize(self, element, handle, dx, dy):
@@ -257,6 +265,18 @@ def sequence(driver, record):
     record('printer switched to 300dpi, rescaled')
     driver.change_printer_dpi(203, answer='keep')
     record('printer switched to 203dpi, dots kept')
+
+    # A template from another tool: the wrapped block is where the two
+    # frontends would most easily disagree, since each measures and lays out
+    # the text itself.
+    driver.load(FIXTURE_TEMPLATE)
+    record('load a template using ^A0 and ^FB')
+
+    block = next((e for e in driver.elements if e.element_type == 'text'), None)
+    if block is not None:
+        block.text = 'Stainless Steel Hex Head Bolt 10mm'
+        driver.resync(block)
+        record('a real product name wrapped into the block')
 
 
 def main():
