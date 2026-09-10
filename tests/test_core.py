@@ -572,10 +572,14 @@ check("a first run fits the work area",
 check("a first run is centred on it",
       abs((x + w // 2) - WORK[2] // 2) <= 1 and abs((y + h // 2) - WORK[3] // 2) <= 1,
       (x, y, w, h))
-big = zpl_view.place_window(WORK, saved=(0, 900, 1900, 1040))
-check("a geometry saved on a bigger monitor is brought onto this one",
-      big[0] >= 0 and big[1] >= 0
-      and big[0] + big[2] <= WORK[2] and big[1] + big[3] <= WORK[3], big)
+for saved in ((0, 900, 1900, 1040),        # saved on a bigger monitor
+              (1850, 60, 900, 700),        # saved off the right-hand edge
+              (-400, -200, 900, 700)):     # saved off the top left
+    brought = zpl_view.place_window(WORK, saved=saved)
+    check(f"a geometry saved at {saved[:2]} is brought onto this monitor",
+          brought[0] >= WORK[0] and brought[1] >= WORK[1]
+          and brought[0] + brought[2] <= WORK[0] + WORK[2]
+          and brought[1] + brought[3] <= WORK[1] + WORK[3], brought)
 kept = zpl_view.place_window(WORK, saved=(120, 60, 1000, 680))
 check("a geometry that already fits comes back unchanged",
       kept == (120, 60, 1000, 680), kept)
@@ -638,6 +642,23 @@ dot_after = (bar.value() + in_view_y) / zcanvas._scale()
 check("Ctrl+wheel zooms in", zcanvas.zoom > 1.0, zcanvas.zoom)
 check("and keeps the dot that was under the pointer under it",
       abs(dot_after - dot_before) <= 2, (dot_before, dot_after))
+
+# The pointer's place in the view has to be read before the zoom moves
+# everything. Reading it afterwards is right only by luck - it agrees whenever
+# the canvas happens not to move within the view - so the order is asserted
+# rather than inferred from a position.
+seen = []
+real_map_to = zcanvas.mapTo
+zcanvas.mapTo = lambda widget, point: (seen.append(zcanvas._scale())
+                                       or real_map_to(widget, point))
+try:
+    scale_before = zcanvas._scale()
+    zw._zoom_at(QPoint(150, 400), True)
+finally:
+    del zcanvas.mapTo
+check("the pointer is measured before the zoom, not after",
+      seen and all(s == scale_before for s in seen),
+      (scale_before, seen, zcanvas._scale()))
 zw.hide()
 
 # the settings file carries the window geometry beside the printer
