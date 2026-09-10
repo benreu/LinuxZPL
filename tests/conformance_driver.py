@@ -76,6 +76,9 @@ class GtkDriver:
     def resync(self, element):
         self.canvas.sync_text_width(element)
 
+    def resync_barcode(self, element):
+        element.sync_box()
+
     # -- the pointer, through each frontend's own event handlers -------------
     class _Event:
         """The fields a button handler reads. GTK events cannot be built."""
@@ -176,6 +179,9 @@ class QtDriver:
 
     def resync(self, element):
         self.document.sync_text_width(element)
+
+    def resync_barcode(self, element):
+        element.sync_box()
 
     # -- the pointer, through each frontend's own event handlers -------------
     @property
@@ -328,6 +334,29 @@ def sequence(driver, record):
     record('select with the pointer')
     driver.drag_pointer(picked.x + 3, picked.y + 3, 25, 15)
     record('drag with the pointer')
+
+    # Every ^BC parameter, since each one changes the label and each frontend
+    # has its own dialog and its own drawing code for them.
+    bars = next((e for e in driver.elements if e.element_type == 'barcode'), None)
+    if bars is not None:
+        bars.show_text, bars.text_above = True, False
+        driver.resync_barcode(bars)
+        record('barcode with the value printed below')
+        bars.text_above = True
+        driver.resync_barcode(bars)
+        record('barcode with the value printed above')
+        bars.show_text = False
+        driver.resync_barcode(bars)
+        record('barcode with no interpretation line')
+        bars.show_text, bars.mode, bars.barcode_value = True, 'A', '1234567890'
+        driver.resync_barcode(bars)
+        record('numeric barcode in mode A, packed into subset C')
+        bars.check_digit = True
+        driver.resync_barcode(bars)
+        record('barcode with a UCC check digit')
+        bars.orientation = 'R'
+        driver.resync_barcode(bars)
+        record('barcode rotated 90 degrees')
 
     block = next((e for e in driver.elements if e.element_type == 'text'), None)
     if block is not None:

@@ -14,6 +14,7 @@ this file is only the GTK half: Cairo painting, events and cursors.
 """
 
 import io as _io
+import math
 import time
 from typing import List, Optional, Tuple
 
@@ -24,7 +25,6 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gdk, GdkPixbuf, GObject, Gtk
 
 from zplcore import geometry, textraster
-from zplcore.code128 import encode_b as _code128_modules
 from zplcore.model import (BarcodeElement, DesignElement, Document,
                            FrameElement, ImageElement, TextElement)
 
@@ -375,22 +375,8 @@ class DesignCanvas(Gtk.DrawingArea):
             context.show_text(element.text[:20])
             context.restore()
         
-        # Draw resize handles if selected
         if selected:
-            handles = geometry.handles(element)
-            for handle_name, (hx, hy) in handles.items():
-                # Draw handle as a small square
-                context.set_source_rgb(0, 0.5, 1)
-                context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF, 
-                                geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
-                context.fill()
-                
-                # Draw handle border
-                context.set_source_rgb(0, 0, 1)
-                context.set_line_width(1)
-                context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF, 
-                                geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
-                context.stroke()
+            self._draw_handles(context, element)
     
     def _draw_frame_element(self, context, element, selected: bool):
         """Draw a frame element."""
@@ -423,54 +409,63 @@ class DesignCanvas(Gtk.DrawingArea):
             context.stroke()
 
         
-        # Draw resize handles if selected
         if selected:
-            handles = geometry.handles(element)
-            for handle_name, (hx, hy) in handles.items():
-                # Draw handle as a small square
-                context.set_source_rgb(0, 0.5, 1)
-                context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF, 
-                                geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
-                context.fill()
-                
-                # Draw handle border
-                context.set_source_rgb(0, 0, 1)
-                context.set_line_width(1)
-                context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF, 
-                                geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
-                context.stroke()
+            self._draw_handles(context, element)
     
+    def _draw_handles(self, context, element):
+        """The eight resize handles of the selected element."""
+        for _name, (hx, hy) in geometry.handles(element).items():
+            context.set_source_rgb(0, 0.5, 1)
+            context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF,
+                              geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
+            context.fill()
+            context.set_source_rgb(0, 0, 1)
+            context.set_line_width(1)
+            context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF,
+                              geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
+            context.stroke()
+
     def _draw_barcode_element(self, context, element, selected: bool):
-        """Draw a barcode element."""
-        # White background
+        """Draw a barcode the way it will print.
+
+        The layout - which way it faces, where the interpretation line sits,
+        what it says - comes from zplcore.geometry, so this and the Qt canvas
+        cannot form different opinions about it.
+        """
+        layout = geometry.barcode_layout(element)
+        run = layout['run']
+        stack = max(1, element.bar_height) + element.text_height()
+
+        context.save()
+        dx, dy = layout['offset']
+        context.translate(element.x + dx, element.y + dy)
+        if layout['angle']:
+            context.rotate(math.radians(layout['angle']))
+
+        # White behind the symbol: a barcode the printer cannot read is worse
+        # than one that covers something, so it is deliberately opaque.
         context.set_source_rgb(1, 1, 1)
-        context.rectangle(element.x, element.y, element.width, element.height)
+        context.rectangle(0, 0, run, stack)
         context.fill()
 
-        # Draw Code 128B bars
-        mods = _code128_modules(element.barcode_value)
-        mod_w = element.width / sum(mods)
+        bar_x, bar_y, bar_w, bar_h = layout['bars']
+        mods = element.modules()
+        mod_w = bar_w / max(1, sum(mods))
         context.set_source_rgb(0, 0, 0)
-        cx = element.x
+        cx = float(bar_x)
         for i, m in enumerate(mods):
             if i % 2 == 0:  # bars are at even indices
-                context.rectangle(cx, element.y, m * mod_w, element.height)
+                context.rectangle(cx, bar_y, m * mod_w, bar_h)
                 context.fill()
             cx += m * mod_w
 
-        # Barcode value text below the bars
-        scale = self._scale()
-        font_size = max(8, 14 / scale)
-        context.set_source_rgb(0, 0, 0)
-        context.select_font_face("sans-serif", 0, 0)
-        context.set_font_size(font_size)
-        text_y = element.y + element.height + font_size
-        extents = context.text_extents(element.barcode_value)
-        text_x = element.x + (element.width - extents.width) / 2
-        context.move_to(text_x, text_y)
-        context.show_text(element.barcode_value)
+        if layout['text']:
+            self._draw_barcode_text(context, layout)
+        context.restore()
 
-        # Selection border
+        # The selection border follows the footprint, which is axis-aligned at
+        # every quarter turn, so it is drawn outside the rotation.
+        scale = self._scale()
         if selected:
             context.set_source_rgb(0, 0.7, 0)
             context.set_line_width(2 / scale)
@@ -479,24 +474,37 @@ class DesignCanvas(Gtk.DrawingArea):
             context.set_line_width(1 / scale)
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
-        
-        # Draw resize handles if selected
+
         if selected:
-            handles = geometry.handles(element)
-            for handle_name, (hx, hy) in handles.items():
-                # Draw handle as a small square
-                context.set_source_rgb(0, 0.5, 1)
-                context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF, 
-                                geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
-                context.fill()
-                
-                # Draw handle border
-                context.set_source_rgb(0, 0, 1)
-                context.set_line_width(1)
-                context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF, 
-                                geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
-                context.stroke()
-    
+            self._draw_handles(context, element)
+
+    def _draw_barcode_text(self, context, layout):
+        """The interpretation line, in dots - not at a constant screen size.
+
+        It is what the printer puts under the bars, so it is measured and
+        drawn like any other text on the label.
+        """
+        text, font_height = layout['text'], max(1, int(layout['font'][1]))
+        font_path = self.document.font_path
+        pixbuf = (to_pixbuf(textraster.raster(text, font_path, font_height))
+                  if font_path else None)
+        if pixbuf:
+            context.save()
+            context.translate(max(0, (layout['run'] - pixbuf.get_width()) / 2),
+                              layout['text_y'])
+            Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+            context.paint()
+            context.restore()
+            return
+
+        context.set_source_rgb(0, 0, 0)
+        context.select_font_face("sans-serif", 0, 0)
+        context.set_font_size(font_height)
+        extents = context.text_extents(text)
+        context.move_to(max(0, (layout['run'] - extents.width) / 2),
+                        layout['text_y'] + font_height)
+        context.show_text(text)
+
     def _draw_image_element(self, context, element, selected: bool):
         """Draw an image element exactly as it will print (1-bit, dithered)."""
         # Re-dithering a large photo costs ~100ms, so while a resize handle is
@@ -540,17 +548,7 @@ class DesignCanvas(Gtk.DrawingArea):
         context.stroke()
 
         if selected:
-            handles = geometry.handles(element)
-            for _, (hx, hy) in handles.items():
-                context.set_source_rgb(0, 0.5, 1)
-                context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF,
-                                   geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
-                context.fill()
-                context.set_source_rgb(0, 0, 1)
-                context.set_line_width(1)
-                context.rectangle(hx - geometry.HANDLE_HALF, hy - geometry.HANDLE_HALF,
-                                   geometry.HANDLE_SIZE, geometry.HANDLE_SIZE)
-                context.stroke()
+            self._draw_handles(context, element)
     def _show_context_menu(self, event, element):
         """Show right-click context menu for element reordering."""
         menu = Gtk.Menu()

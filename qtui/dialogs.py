@@ -20,7 +20,9 @@ from PySide2.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
                                QDoubleSpinBox, QVBoxLayout, QWidget)
 
 from zplcore import fonts as zpl_fonts
-from zplcore.model import Document, TextElement
+from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
+                           BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
+                           Document, TextElement)
 
 IMAGE_FILTER = "Image files (*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG);;All files (*)"
 ZPL_FILTER = "ZPL files (*.zpl);;All files (*)"
@@ -288,19 +290,69 @@ def edit_barcode_dialog(parent, element) -> bool:
 
     height_spin = QSpinBox()
     height_spin.setRange(20, 300)
-    height_spin.setValue(element.height)
-    form.addRow("Barcode Height:", height_spin)
+    height_spin.setValue(element.bar_height)
+    form.addRow("Bar Height:", height_spin)
+
+    module_spin = QSpinBox()
+    module_spin.setRange(1, 20)
+    module_spin.setValue(element.module_width)
+    form.addRow("Module Width:", module_spin)
+
+    orientation_combo = QComboBox()
+    for label, code in BARCODE_ORIENTATIONS:
+        orientation_combo.addItem(label, code)
+    current = (element.orientation or 'N').upper()
+    orientation_combo.setCurrentIndex(
+        max(0, [c for _l, c in BARCODE_ORIENTATIONS].index(current)
+            if current in [c for _l, c in BARCODE_ORIENTATIONS] else 0))
+    form.addRow("Orientation:", orientation_combo)
+
+    text_combo = QComboBox()
+    for label, flags in BARCODE_TEXT_CHOICES:
+        text_combo.addItem(label, flags)
+    text_combo.setCurrentIndex(
+        [flags for _l, flags in BARCODE_TEXT_CHOICES].index(
+            (element.show_text, element.text_above))
+        if (element.show_text, element.text_above)
+        in [flags for _l, flags in BARCODE_TEXT_CHOICES] else 0)
+    form.addRow("Value Text:", text_combo)
+
+    font_spin = QSpinBox()
+    font_spin.setRange(6, 200)
+    font_spin.setValue(int((element.font or element.DEFAULT_FONT)[1]))
+    form.addRow("Text Height:", font_spin)
+
+    check_combo = QComboBox()
+    for label, flag in BARCODE_CHECK_DIGIT:
+        check_combo.addItem(label, flag)
+    check_combo.setCurrentIndex(1 if element.check_digit else 0)
+    form.addRow("UCC Check Digit:", check_combo)
+
+    mode_combo = QComboBox()
+    for label, code in BARCODE_MODES:
+        mode_combo.addItem(label, code)
+    mode_combo.setCurrentIndex(
+        [c for _l, c in BARCODE_MODES].index(element.mode)
+        if element.mode in [c for _l, c in BARCODE_MODES] else 0)
+    form.addRow("Mode:", mode_combo)
 
     layout.addWidget(_buttons(dialog))
     if dialog.exec_() != QDialog.Accepted:
         return False
 
     element.barcode_value = value_edit.text()
-    element.height = height_spin.value()
-    # Recomputed from the element's own module width. Assuming 2 here would
-    # shrink the box below what prints on any label that has been rescaled to
-    # 300 dpi, where a module is 3 dots.
-    element.width = element.printed_width()
+    element.bar_height = height_spin.value()
+    element.module_width = module_spin.value()
+    element.orientation = orientation_combo.currentData()
+    element.show_text, element.text_above = text_combo.currentData()
+    element.check_digit = check_combo.currentData()
+    element.mode = mode_combo.currentData()
+    if element.show_text:
+        # With the line switched on, name the font it prints in rather than
+        # leaving it to whatever the printer happens to have selected.
+        code = element.font[0] if element.font else element.DEFAULT_FONT[0]
+        element.font = (code, font_spin.value(), font_spin.value())
+    element.sync_box()
     return True
 
 

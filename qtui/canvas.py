@@ -22,7 +22,6 @@ from PySide2.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen
 from PySide2.QtWidgets import QMenu, QWidget
 
 from zplcore import geometry, textraster
-from zplcore.code128 import encode_b as _code128_modules
 from zplcore.model import DesignElement, Document
 
 
@@ -270,34 +269,45 @@ class DesignCanvas(QWidget):
     # --- barcode -------------------------------------------------------------
 
     def _draw_barcode_element(self, painter, element, selected: bool):
-        painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
-                         QColor(255, 255, 255))
+        """Draw a barcode the way it will print.
 
-        mods = _code128_modules(element.barcode_value)
-        total = sum(mods) or 1
-        mod_w = element.width / total
+        The layout - which way it faces, where the interpretation line sits,
+        what it says - comes from zplcore.geometry, so this and the GTK canvas
+        cannot form different opinions about it.
+        """
+        layout = geometry.barcode_layout(element)
+        run = layout['run']
+        stack = max(1, element.bar_height) + element.text_height()
+
+        painter.save()
+        dx, dy = layout['offset']
+        painter.translate(element.x + dx, element.y + dy)
+        if layout['angle']:
+            painter.rotate(layout['angle'])
+
+        # White behind the symbol: a barcode the printer cannot read is worse
+        # than one that covers something, so it is deliberately opaque.
+        painter.fillRect(QRectF(0, 0, run, stack), QColor(255, 255, 255))
+
+        bar_x, bar_y, bar_w, bar_h = layout['bars']
+        mods = element.modules()
+        mod_w = bar_w / max(1, sum(mods))
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(0, 0, 0))
-        cx = float(element.x)
+        cx = float(bar_x)
         for i, m in enumerate(mods):
             if i % 2 == 0:  # bars are at even indices
-                painter.drawRect(QRectF(cx, element.y, m * mod_w, element.height))
+                painter.drawRect(QRectF(cx, bar_y, m * mod_w, bar_h))
             cx += m * mod_w
         painter.setBrush(Qt.NoBrush)
 
-        # Barcode value beneath the bars, at a constant on-screen size
-        scale = self._scale()
-        font_size = max(8.0, 14 / max(1e-6, scale))
-        font = QFont("sans-serif")
-        font.setPixelSize(int(round(font_size)))
-        painter.setFont(font)
-        painter.setPen(QColor(0, 0, 0))
-        metrics = QFontMetricsF(font)
-        text_x = element.x + (element.width
-                              - metrics.horizontalAdvance(element.barcode_value)) / 2
-        painter.drawText(QPointF(text_x, element.y + element.height + font_size),
-                         element.barcode_value)
+        if layout['text']:
+            self._draw_barcode_text(painter, layout)
+        painter.restore()
 
+        # The selection border follows the footprint, which is axis-aligned at
+        # every quarter turn, so it is drawn outside the rotation.
+        scale = self._scale()
         pen = QPen(QColor(0, 179, 0) if selected else QColor(102, 102, 102))
         pen.setWidthF((2 if selected else 1) / max(1e-6, scale))
         painter.setPen(pen)
@@ -307,7 +317,30 @@ class DesignCanvas(QWidget):
         if selected:
             self._draw_handles(painter, element)
 
-    # --- image ---------------------------------------------------------------
+    def _draw_barcode_text(self, painter, layout):
+        """The interpretation line, in dots - not at a constant screen size.
+
+        It is what the printer puts under the bars, so it is measured and
+        drawn like any other text on the label.
+        """
+        text, font_height = layout['text'], max(1, int(layout['font'][1]))
+        font_path = self.document.font_path
+        raster = (to_qimage(textraster.raster(text, font_path, font_height))
+                  if font_path else None)
+        if raster is not None:
+            painter.drawImage(
+                QPointF(max(0, (layout['run'] - raster.width()) / 2),
+                        layout['text_y']), raster)
+            return
+
+        font = QFont("sans-serif")
+        font.setPixelSize(font_height)
+        painter.setFont(font)
+        painter.setPen(QColor(0, 0, 0))
+        metrics = QFontMetricsF(font)
+        painter.drawText(
+            QPointF(max(0, (layout['run'] - metrics.horizontalAdvance(text)) / 2),
+                    layout['text_y'] + font_height), text)
 
     def _draw_image_element(self, painter, element, selected: bool):
         # Re-dithering a large photo costs ~100ms, so while a resize handle is

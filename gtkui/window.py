@@ -14,6 +14,7 @@ import configparser
 import socket
 from pathlib import Path
 from zplcore import fonts as zpl_fonts
+from zplcore import model
 from zplcore import parser as zpl_parser
 from zplcore import workflow
 from zplcore.model import (BarcodeElement, Document, FrameElement,
@@ -1285,37 +1286,91 @@ class ZPLViewerWindow(Gtk.Window):
             dialog = Gtk.Dialog(title="Edit Barcode", parent=self, flags=0)
             dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                               Gtk.STOCK_OK, Gtk.ResponseType.OK)
-            
+
             content = dialog.get_content_area()
-            
-            # Barcode value/text
-            value_label = Gtk.Label(label="Barcode Value:")
-            content.pack_start(value_label, False, False, 0)
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                lbl = Gtk.Label(label=label_text)
+                lbl.set_size_request(130, -1)
+                lbl.set_halign(Gtk.Align.END)
+                row.pack_start(lbl, False, False, 0)
+                row.pack_start(widget, True, True, 0)
+                content.pack_start(row, False, False, 0)
+
+            def make_spin(value, lower, upper):
+                spin = Gtk.SpinButton()
+                spin.set_adjustment(Gtk.Adjustment(value=value, lower=lower,
+                                                   upper=upper, step_increment=1))
+                spin.set_numeric(True)
+                return spin
+
+            def make_combo(choices, current):
+                combo = Gtk.ComboBoxText()
+                for label_text, _code in choices:
+                    combo.append_text(label_text)
+                codes = [code for _l, code in choices]
+                combo.set_active(codes.index(current) if current in codes else 0)
+                return combo, codes
+
             value_entry = Gtk.Entry()
             value_entry.set_text(element.barcode_value)
-            content.pack_start(value_entry, False, False, 0)
-            
-            # Barcode height
-            height_label = Gtk.Label(label="Barcode Height:")
-            content.pack_start(height_label, False, False, 0)
-            height_spin = Gtk.SpinButton()
-            height_adj = Gtk.Adjustment(value=element.height, lower=20, upper=300, step_increment=1)
-            height_spin.set_adjustment(height_adj)
-            content.pack_start(height_spin, False, False, 0)
-            
+            make_row("Barcode Value:", value_entry)
+
+            height_spin = make_spin(element.bar_height, 20, 300)
+            make_row("Bar Height:", height_spin)
+
+            module_spin = make_spin(element.module_width, 1, 20)
+            make_row("Module Width:", module_spin)
+
+            orientation_combo, orientation_codes = make_combo(
+                model.BARCODE_ORIENTATIONS,
+                (element.orientation or 'N').upper())
+            make_row("Orientation:", orientation_combo)
+
+            text_combo, text_codes = make_combo(
+                model.BARCODE_TEXT_CHOICES,
+                (element.show_text, element.text_above))
+            make_row("Value Text:", text_combo)
+
+            font_spin = make_spin(int((element.font or element.DEFAULT_FONT)[1]), 6, 200)
+            make_row("Text Height:", font_spin)
+
+            check_combo, check_codes = make_combo(model.BARCODE_CHECK_DIGIT,
+                                                  element.check_digit)
+            make_row("UCC Check Digit:", check_combo)
+
+            mode_combo, mode_codes = make_combo(model.BARCODE_MODES,
+                                                element.mode)
+            make_row("Mode:", mode_combo)
+
             content.show_all()
-            
+
             response = dialog.run()
             if response == Gtk.ResponseType.OK:
                 element.barcode_value = value_entry.get_text()
-                # Recomputed from the element's own module width. Assuming 2
-                # here would shrink the box below what prints on any label
-                # rescaled to 300 dpi, where a module is 3 dots.
-                element.width = element.printed_width()
-                element.height = int(height_spin.get_value())
+                element.bar_height = int(height_spin.get_value())
+                element.module_width = int(module_spin.get_value())
+                element.orientation = orientation_codes[orientation_combo.get_active()]
+                element.show_text, element.text_above = text_codes[text_combo.get_active()]
+                element.check_digit = check_codes[check_combo.get_active()]
+                element.mode = mode_codes[mode_combo.get_active()]
+                if element.show_text:
+                    # With the line switched on, name the font it prints in
+                    # rather than leaving it to whatever the printer has
+                    # selected.
+                    code = (element.font or element.DEFAULT_FONT)[0]
+                    size = int(font_spin.get_value())
+                    element.font = (code, size, size)
+                element.sync_box()
                 self.design_canvas.queue_draw()
                 self.on_canvas_changed()
-            
+
             dialog.destroy()
         
         elif isinstance(element, ImageElement):

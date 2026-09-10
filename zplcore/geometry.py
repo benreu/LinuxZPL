@@ -16,6 +16,9 @@ HANDLE_HALF = HANDLE_SIZE // 2
 # Smallest an element may be dragged down to
 MIN_SIZE = 20
 
+# Gap between a barcode's bars and its interpretation line, in dots
+TEXT_BASELINE_GAP = 2
+
 # Corner and edge-midpoint handles, in the order they are drawn
 HANDLE_NAMES = ('tl', 'tm', 'tr', 'ml', 'mr', 'bl', 'bm', 'br')
 
@@ -94,3 +97,57 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int) -> None:
         # Snap the box to what will actually print, so the outline the user
         # drags is the outline that comes out of the printer.
         element.width = element.printed_width(document.font_path)
+
+    if element.element_type == 'barcode':
+        # A barcode is not free to be any size: its width is a whole number of
+        # modules and its height is the bars plus the interpretation line. Take
+        # the drag as a request for those two, then snap the box back to what
+        # they produce, rather than stretching the symbol to fill a rectangle.
+        run, stack = ((element.height, element.width) if element.rotated()
+                      else (element.width, element.height))
+        modules = sum(element.modules())
+        element.module_width = max(1, round(run / max(1, modules)))
+        element.bar_height = max(MIN_SIZE, stack - element.text_height())
+        element.sync_box()
+
+
+def barcode_layout(element) -> dict:
+    """Where a barcode's parts go, in its own unrotated frame.
+
+    Both frontends and the preview renderer draw from this, so none of them
+    can hold a different opinion about where the interpretation line sits or
+    which way the symbol faces.
+
+    `angle` and `offset` place that frame inside the element's footprint: a
+    rotation about the element's origin, after a translation that brings the
+    rotated content back onto it. The footprint stays axis-aligned at every
+    quarter turn, which is why nothing else here has to know about rotation.
+    """
+    run = element.printed_width()
+    bars = max(1, element.bar_height)
+    text_h = element.text_height()
+
+    orientation = (element.orientation or 'N').upper()
+    if orientation == 'R':          # 90 degrees, reading downward
+        angle, offset = 90, (element.width, 0)
+    elif orientation == 'I':        # upside down
+        angle, offset = 180, (element.width, element.height)
+    elif orientation == 'B':        # 270 degrees, reading upward
+        angle, offset = 270, (0, element.height)
+    else:
+        angle, offset = 0, (0, 0)
+
+    # The line goes above the bars or below them, and the bars move down to
+    # make room when it is above.
+    bars_y = text_h if (element.show_text and element.text_above) else 0
+    text_y = 0 if (element.show_text and element.text_above) else bars + TEXT_BASELINE_GAP
+
+    return {
+        'angle': angle,
+        'offset': offset,
+        'run': run,
+        'bars': (0, bars_y, run, bars),
+        'text': element.encoded_value() if element.show_text else None,
+        'text_y': text_y,
+        'font': element.font or element.DEFAULT_FONT,
+    }

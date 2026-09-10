@@ -7,9 +7,8 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
-from . import textraster
-from .code128 import encode_b as _code128_modules
-from .model import FieldBlock
+from . import geometry, textraster
+from .model import BarcodeElement, FieldBlock
 
 
 def _parse_field_block(params: str) -> FieldBlock:
@@ -56,6 +55,9 @@ class ZPLRenderer:
         self.is_barcode_mode = False
         self.current_font_width = 0
         self.current_block = None
+        self.barcode_orientation = ''
+        self.barcode_options = ()
+        self.module_width = 2
         self.custom_font_path: Optional[str] = None
         self.current_field_font_path: Optional[str] = None
         self.font_registry: dict = {}
@@ -85,36 +87,52 @@ class ZPLRenderer:
         return (int(x), int(y))
     
     def _render_barcode(self, barcode_value: str, x: int, y: int, height: int):
-        """Render a barcode visual representation using bars."""
-        value_length = len(barcode_value)
-        # Code 128B width formula matches BarcodeElement: (start+data+check+stop) * 2 dots/module
-        barcode_width = (35 + value_length * 11) * 2
+        """Draw a barcode through the same element the canvas draws.
 
-        # Draw Code 128B bars
-        mods = _code128_modules(barcode_value)
-        mod_w = barcode_width / sum(mods)
-        cx = x
+        Building one here rather than keeping a second set of rules is what
+        stops the preview and the canvas disagreeing about the width of a
+        subset C symbol or whether the interpretation line prints at all.
+        """
+        element = BarcodeElement(
+            x, y, height, barcode_value,
+            module_width=max(1, getattr(self, 'module_width', 2)),
+            orientation=self.barcode_orientation,
+            options=self.barcode_options,
+            font=(('0', self.current_font_size,
+                   self.current_font_width or self.current_font_size)
+                  if self.current_font_size else None))
+        layout = geometry.barcode_layout(element)
+
+        # PIL cannot rotate what has not been drawn, so the symbol is drawn
+        # into its own image and turned as a whole.
+        run = layout['run']
+        stack = max(1, element.bar_height) + element.text_height()
+        panel = Image.new('L', (max(1, run), max(1, stack)), 255)
+        draw = ImageDraw.Draw(panel)
+
+        bar_x, bar_y, bar_w, bar_h = layout['bars']
+        mods = element.modules()
+        mod_w = bar_w / max(1, sum(mods))
+        cx = float(bar_x)
         for i, m in enumerate(mods):
             if i % 2 == 0:  # bars are at even indices
-                right = round(cx + m * mod_w)
-                self.draw.rectangle([(round(cx), y), (right, y + height)], fill='black')
+                draw.rectangle([(round(cx), bar_y),
+                                (round(cx + m * mod_w), bar_y + bar_h)], fill=0)
             cx += m * mod_w
 
-        # Draw border around barcode
-        self.draw.rectangle(
-            [(x - 2, y - 2), (x + barcode_width + 2, y + height + 2)],
-            outline='black',
-            width=1
-        )
-        
-        # Draw barcode value text below
-        font = self._get_font(8)
-        text_y = y + height + 2
-        try:
-            self.draw.text((x, text_y), barcode_value, fill='black', font=font)
-        except:
-            self.draw.text((x, text_y), barcode_value, fill='black')
-    
+        if layout['text']:
+            font = self._get_font(max(1, int(layout['font'][1])))
+            try:
+                width = draw.textlength(layout['text'], font=font)
+            except Exception:
+                width = len(layout['text']) * layout['font'][1] * 0.6
+            draw.text((max(0, (run - width) / 2), layout['text_y']),
+                      layout['text'], fill=0, font=font)
+
+        if layout['angle']:
+            panel = panel.rotate(-layout['angle'], expand=True)
+        self.image.paste(panel, (x, y))
+
     def _render_block(self, text: str):
         """Draw text wrapped into the ^FB block, so the preview matches."""
         block = self.current_block
@@ -292,6 +310,11 @@ class ZPLRenderer:
                     outline='black',
                     width=thickness
                 )
+        elif command == 'BY':
+            # Module width, which sets how wide the bars are
+            match = re.match(r'\s*(\d+)', params)
+            if match:
+                self.module_width = max(1, int(match.group(1)))
         elif command == 'FB':
             # Field block: the text that follows is wrapped into it
             self.current_block = _parse_field_block(params)
@@ -306,6 +329,8 @@ class ZPLRenderer:
                     self._render_barcode(self.field_data, self.current_x,
                                          self.current_y, self.barcode_height)
                     self.is_barcode_mode = False
+                    self.barcode_orientation = ''
+                    self.barcode_options = ()
                     self.current_block = None
                 else:
                     # Render as text
@@ -332,16 +357,18 @@ class ZPLRenderer:
             # Change font
             pass
         elif command == 'BC':
-            # Barcode: ^BCo,h,f,g,e,m
-            # Format: ^BC,height
-            match = re.match(r'[A-Z]?,(\d+)?', params)
-            if match and match.group(1):
-                self.barcode_height = int(match.group(1))
-                self.is_barcode_mode = True
-            elif match:
-                # No height specified, use default
+            # Barcode: ^BCo,h,f,g,e,m - every parameter changes the label, so
+            # the preview keeps them all and draws from the same element the
+            # canvas would.
+            parts = [p.strip() for p in params.split(',')]
+            self.barcode_orientation = (parts[0][:1].upper()
+                                        if parts and parts[0][:1].isalpha() else '')
+            try:
+                self.barcode_height = int(parts[1]) if len(parts) > 1 and parts[1] else 50
+            except ValueError:
                 self.barcode_height = 50
-                self.is_barcode_mode = True
+            self.barcode_options = tuple(parts[2:])
+            self.is_barcode_mode = True
     
     def render_from_file(self, filepath: str) -> Image.Image:
         """

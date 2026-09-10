@@ -15,6 +15,7 @@ from typing import List, Optional
 from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
                  ImageFont as PILImageFont)
 
+from . import code128
 from . import fonts as zpl_fonts
 
 
@@ -166,7 +167,30 @@ class FrameElement(DesignElement):
 
 
 class BarcodeElement(DesignElement):
-    """Barcode element for the designer. Code 128, subset B only."""
+    """Barcode element for the designer. Code 128, subsets B and C.
+
+    ZPL's ^BC carries six parameters, and all six change the label. They are
+    held here by name rather than as a tail of strings, so the canvas can draw
+    what each one will actually do.
+
+    `bar_height` is ^BC's own height - the bars themselves. `width` and
+    `height` are the element's footprint: the bars plus the interpretation
+    line, transposed when the barcode is rotated. The shared geometry only
+    ever sees the footprint, which is why rotating one needs nothing from it.
+    """
+
+    # ZPL's defaults for the parameters after the height, in order. A barcode
+    # written with these is written without them, so a label this designer
+    # created serialises exactly as it always did.
+    DEFAULTS = ('Y', 'N', 'N', 'N')
+    ORIENTATIONS = ('', 'N', 'R', 'I', 'B')
+    MODES = ('N', 'U', 'A', 'D')
+
+    # Gap between the bars and the interpretation line, in dots
+    TEXT_GAP = 2
+    # The font used for the interpretation line when the line is switched on
+    # and the file named none
+    DEFAULT_FONT = ('0', 20, 20)
 
     def __init__(self, x: int = 50, y: int = 200, height: int = 100,
                  barcode_value: str = "123456789", module_width: int = 2,
@@ -174,36 +198,88 @@ class BarcodeElement(DesignElement):
                  font: Optional[tuple] = None):
         self.x = x
         self.y = y
-        self.height = height
+        self.bar_height = height
         self.barcode_value = barcode_value
         self.module_width = module_width
-        # ^BC's own parameters, kept as the file had them so that opening and
-        # saving someone else's label does not quietly change what prints.
-        # Empty is what this designer writes for a barcode it created itself.
         self.orientation = orientation
-        self.options = tuple(options)
         # The font a ^A before the ^BC selected, as (code, height, width). It
-        # sets the interpretation line - the digits printed under the bars -
-        # so losing it would change the label even though no text element
-        # uses it.
+        # sets the interpretation line, so losing it would change the label
+        # even though no text element uses it.
         self.font = tuple(font) if font else None
         self.element_type = 'barcode'
-        self.width = self.printed_width()
+
+        # ^BC's remaining parameters, by name. Each missing one falls back to
+        # ZPL's default for *that position* - padding with the defaults as a
+        # suffix would slide them along, so ^BC,100,N would read as "no line,
+        # printed above".
+        given = list(options)
+        show, above, check, mode = [
+            given[i] if i < len(given) and given[i] != '' else self.DEFAULTS[i]
+            for i in range(4)]
+        self.show_text = str(show).upper() != 'N'
+        self.text_above = str(above).upper() == 'Y'
+        self.check_digit = str(check).upper() == 'Y'
+        self.mode = str(mode).upper() if str(mode).upper() in self.MODES else 'N'
+
+        self.sync_box()
+
+    # --- what the printer will make of it -----------------------------------
+
+    def encoded_value(self) -> str:
+        """The data the symbol carries, and the interpretation line shows."""
+        value = self.barcode_value
+        if self.check_digit:
+            value += code128.ucc_check_digit(value)
+        return value
+
+    def modules(self) -> list:
+        """The bar and space widths of the symbol, in modules."""
+        return code128.encode(self.encoded_value(), self.mode)
+
+    def printed_width(self) -> int:
+        """The bars, end to end, in dots.
+
+        Summed from the symbol rather than from a character count, because no
+        formula covers subset C - there two digits share one symbol, and a
+        numeric barcode is about two thirds the width the count would predict.
+        """
+        return max(1, sum(self.modules()) * max(1, self.module_width))
+
+    def text_height(self) -> int:
+        """Dots the interpretation line occupies, including its gap."""
+        if not self.show_text:
+            return 0
+        font = self.font or self.DEFAULT_FONT
+        return int(font[1]) + self.TEXT_GAP
+
+    def rotated(self) -> bool:
+        """Whether the barcode is turned on its side."""
+        return self.orientation.upper() in ('R', 'B')
+
+    def sync_box(self) -> None:
+        """Set the footprint from what the barcode will actually print."""
+        run = self.printed_width()
+        stack = max(1, self.bar_height) + self.text_height()
+        self.width, self.height = (stack, run) if self.rotated() else (run, stack)
+
+    # --- serialisation ------------------------------------------------------
 
     def _options_zpl(self) -> str:
-        """The trailing ^BC parameters, if the file carried any."""
-        return ("," + ",".join(self.options)) if self.options else ""
+        """^BC's parameters after the height, up to the last non-default one."""
+        values = ['Y' if self.show_text else 'N',
+                  'Y' if self.text_above else 'N',
+                  'Y' if self.check_digit else 'N',
+                  self.mode]
+        while values and values[-1] == self.DEFAULTS[len(values) - 1]:
+            values.pop()
+        return ("," + ",".join(values)) if values else ""
 
     def _font_zpl(self) -> str:
-        """The interpretation line's font, if the file selected one."""
+        """The interpretation line's font, if one was chosen."""
         if not self.font:
             return ""
         code, height, width = self.font
         return f"^A{code}N,{height},{width}\n"
-
-    def printed_width(self) -> int:
-        """Width in dots: Code 128B is start + data + check + stop modules."""
-        return (35 + len(self.barcode_value) * 11) * max(1, self.module_width)
 
     def to_zpl(self) -> str:
         """Convert to ZPL commands."""
@@ -213,8 +289,27 @@ class BarcodeElement(DesignElement):
         return (f"^FO{self.x},{self.y}\n"
                 f"^BY{max(1, self.module_width)}\n"
                 f"{self._font_zpl()}"
-                f"^BC{self.orientation},{self.height}{self._options_zpl()}\n"
+                f"^BC{self.orientation},{self.bar_height}{self._options_zpl()}\n"
                 f"^FD{self.barcode_value}^FS\n")
+
+
+# The choices both frontends offer for a barcode, as (label, value). Here
+# rather than in either toolkit's dialog code, because a frontend offering a
+# different set would produce a different label from the same design.
+BARCODE_ORIENTATIONS = (("Normal", 'N'), ("Rotated 90\u00b0", 'R'),
+                        ("Upside down", 'I'), ("Rotated 270\u00b0", 'B'))
+
+# The interpretation line, as one choice rather than two flags
+BARCODE_TEXT_CHOICES = (("Below the bars", (True, False)),
+                        ("Above the bars", (True, True)),
+                        ("Not printed", (False, False)))
+
+BARCODE_MODES = (("None", 'N'),
+                 ("Automatic (uses subset C for digits)", 'A'),
+                 ("UCC case", 'U'),
+                 ("UCC/EAN", 'D'))
+
+BARCODE_CHECK_DIGIT = (("No", False), ("Yes", True))
 
 
 class ImageElement(DesignElement):
@@ -552,7 +647,11 @@ class Document:
                 # than 2.96 going 203 -> 300 dpi. Positions and heights scale
                 # exactly; a barcode's width cannot.
                 el.module_width = s(el.module_width)
-                el.width = el.printed_width()
+                el.bar_height = s(el.bar_height)
+                if el.font:
+                    code, fh, fw = el.font
+                    el.font = (code, s(fh), s(fw))
+                el.sync_box()
             elif el.element_type == 'image':
                 # the bitmap re-dithers from the source at the new size
                 el.reload()

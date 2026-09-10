@@ -115,18 +115,50 @@ the frame is a solid filled rectangle. Clamp to that maximum, minimum 1.
 
 #### Barcode
 
-Code 128, subset B only.
+Code 128, subsets B and C.
 
 | Property | Default |
 |---|---|
 | `barcode_value` | `"123456789"` |
-| `height` | 100 dots |
+| `bar_height` | 100 dots - the bars themselves, `^BC`'s own height |
 | `module_width` | 2 dots |
-| `orientation`, `options` | none - `^BC`'s own parameters, carried through exactly as the file had them |
-| `font` | none - a `^A` before the `^BC` sets the font of the interpretation line, the digits printed under the bars |
+| `orientation` | none - `N` upright, `R` 90°, `I` 180°, `B` 270° |
+| `show_text` | true - whether the value prints as an interpretation line |
+| `text_above` | false - the line goes above the bars instead of below |
+| `check_digit` | false - append a UCC/EAN mod-10 digit |
+| `mode` | `N` - `A` lets the symbol use subset C |
+| `font` | none - the `^A` before the `^BC`, which sets the interpretation line's font |
 
-The `^BC` parameters and that font belong to the barcode even though neither is
-visible on the canvas: dropping them on save changes the printed label.
+**`width` and `height` are the footprint, not the bars.** The element box is
+the bars plus the interpretation line, transposed when the barcode is rotated:
+
+```
+run   = sum(module widths) × module_width
+stack = bar_height + interpretation line height
+box   = (run, stack) upright,  (stack, run) rotated
+```
+
+Because a quarter turn leaves the box axis-aligned, rotation needs nothing from
+hit-testing, dragging or the resize handles - they only ever see the box.
+
+**Derive the width from the symbol, not from the character count.** Subset C
+packs two digits into one symbol, so `(35 + n×11) × module_width` is wrong by
+nearly half for a numeric value in mode A. Summing the encoded module widths is
+right for both subsets.
+
+Mode `A` is the printer's automatic subset switching: move into subset C across
+a run of four or more digits (or two, when the whole value is numeric and the
+start code is free), and back to B for anything else. Switching for a shorter
+run costs more than it saves.
+
+The interpretation line prints the encoded value - including the check digit
+when there is one - in the font the `^A` selected, at that font's dot height. A
+barcode whose line is switched on and whose file named no font is given one, so
+what prints is stated rather than inherited from the printer's `^CF`.
+
+Resizing a barcode is a request for a module width and a bar height, not for an
+arbitrary rectangle: the drag sets those two and the box snaps back to what
+they produce, so the symbol is never stretched to fill.
 
 **`width` is derived**: `(35 + len(value) × 11) × module_width`. The constant 35
 is the start, check and stop modules; each data character is 11 modules.
@@ -596,8 +628,8 @@ message — never a swallowed exception or a placeholder.
 | Text dialog limits | font height and width 8–500 dots |
 | Frame | 200 × 150 dots, 2 dot thickness |
 | Frame dialog limits | width 10–800, height 10–1200, thickness 1 to `min(w,h)/2` |
-| Barcode | Code 128B, `"123456789"`, 100 dot height, module width 2 |
-| Barcode dialog limits | height 20–300 dots |
+| Barcode | Code 128, `"123456789"`, 100 dot bar height, module width 2, value printed below |
+| Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200 |
 | Image | 200 × 200 dots, JPEG/PNG source |
 | Minimum element size when resizing | 20 × 20 dots |
 | Resize handle hit radius | 8 dots |
@@ -640,13 +672,16 @@ rather than requirements:
   prints. §3.3 gives the correct rule.
 - **The canvas scales to fit width only.** A label taller than the viewport
   scrolls; there is no zoom control and no fit-to-window.
-- **Barcodes are Code 128 subset B only.** No other symbology is offered, and
-  the value is not validated against the subset.
-- **A barcode's Code 128 mode is carried but not honoured.** `^BC…,A` asks the
-  printer to switch subsets, and for numeric data subset C packs two digits
-  into one symbol - roughly half the width. The width formula above is subset B
-  only, so such a barcode is **drawn wider than it prints**. The mode survives
-  a round trip; the canvas does not reflect it.
+- **Code 128 only.** No other symbology is offered, and the value is not
+  validated against the subset.
+- **Modes `U` and `D` are carried but not simulated.** Only `A` changes the
+  symbol; UCC case mode and UCC/EAN mode round-trip and can be chosen, but the
+  canvas draws them as `N`. The same goes for `>` FNC1 escapes in `^FD`.
+- **The exact subset-switching threshold is inferred.** Zebra does not publish
+  where mode A moves into subset C; the rule above is the conservative reading,
+  and a printer would settle it.
+- **The interpretation line's leading is assumed** to be the font height plus
+  two dots. ZPL does not document its own spacing.
 - **There is no "New" command.** A blank document exists only at startup.
 - **Justified text (`^FB…,J`) is drawn left-aligned.** The parameter is
   carried through and re-emitted, but the canvas does not stretch the spaces.

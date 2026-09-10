@@ -269,6 +269,67 @@ check("nothing is reported for the templates",
 check("unmodelled commands are reported",
       workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^LRY^XZ") == ['^BQ', '^LR'])
 
+# --- every ^BC parameter ----------------------------------------------------
+from zplcore.model import BARCODE_MODES, BARCODE_ORIENTATIONS
+from zplcore import code128
+
+bc = BarcodeElement(0, 0, 100, '12345678', 2)
+check("the box is the summed symbol, not a character count",
+      bc.width == sum(bc.modules()) * 2, bc.width)
+check("the box includes the interpretation line",
+      bc.height == 100 + bc.text_height(), bc.height)
+
+silent = BarcodeElement(0, 0, 100, '12345678', 2, '', ('N',))
+check("no line, no extra height", silent.height == 100)
+check("a barcode with no line writes ^BC,<h>,N",
+      '^BC,100,N\n' in silent.to_zpl(), silent.to_zpl())
+
+# subset C: the reason a numeric barcode was drawn twice its printed width
+plain = BarcodeElement(0, 0, 100, '1234567890', 2, '', ('Y', 'N', 'N', 'N'))
+auto = BarcodeElement(0, 0, 100, '1234567890', 2, '', ('Y', 'N', 'N', 'A'))
+check("mode A packs digit pairs, and the width follows",
+      auto.width < plain.width * 0.7, f"{plain.width} -> {auto.width}")
+check("mode A is never wider than subset B",
+      all(sum(code128.encode(v, 'A')) <= sum(code128.encode(v, 'N'))
+          for v in ('123456789', 'ABC123', 'A1B2', '12', 'PART-12345678-X')))
+check("subset B is unchanged", code128.encode('12345', 'N') == code128.encode_b('12345'))
+
+checked = BarcodeElement(0, 0, 100, '12345678', 2, '', ('Y', 'N', 'Y'))
+check("the UCC check digit joins both the symbol and the text",
+      len(checked.encoded_value()) == 9
+      and checked.encoded_value()[:-1] == '12345678', checked.encoded_value())
+
+for code in ('R', 'B'):
+    turned = BarcodeElement(0, 0, 100, '12345678', 2, code)
+    check(f"orientation {code} transposes the footprint",
+          (turned.width, turned.height) == (bc.height, bc.width))
+    lay = geometry.barcode_layout(turned)
+    check(f"orientation {code} turns the frame", lay['angle'] in (90, 270))
+
+# resizing asks for a module width and a bar height, not a rectangle
+rdoc = Document(812, 1218, dpi=203)
+rb = rdoc.add_barcode_element()
+geometry.resize_by_handle(rdoc, rb, 'br', 200, 60)
+check("resize leaves the box equal to what prints",
+      rb.width == rb.printed_width() and rb.height == rb.bar_height + rb.text_height(),
+      f"{rb.width}x{rb.height}, module {rb.module_width}, bars {rb.bar_height}")
+
+# the round trip carries every parameter
+full = BarcodeElement(5, 6, 80, '9876', 3, 'R', ('N', 'Y', 'Y', 'A'),
+                      font=('0', 24, 24))
+reparsed = zpl_parser.parse_zpl(f"^XA{full.to_zpl()}^XZ")[0].elements[0]
+check("every ^BC parameter survives a round trip",
+      (reparsed.orientation, reparsed.bar_height, reparsed.show_text,
+       reparsed.text_above, reparsed.check_digit, reparsed.mode,
+       reparsed.module_width, reparsed.font)
+      == ('R', 80, False, True, True, 'A', 3, ('0', 24, 24)),
+      reparsed.to_zpl())
+
+check("both frontends are offered the same modes",
+      [c for _l, c in BARCODE_MODES] == ['N', 'A', 'U', 'D'])
+check("both frontends are offered the same orientations",
+      [c for _l, c in BARCODE_ORIENTATIONS] == ['N', 'R', 'I', 'B'])
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
