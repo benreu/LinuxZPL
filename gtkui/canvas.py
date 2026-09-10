@@ -14,6 +14,7 @@ this file is only the GTK half: Cairo painting, events and cursors.
 """
 
 import io as _io
+import time
 from typing import List, Optional, Tuple
 
 import cairo

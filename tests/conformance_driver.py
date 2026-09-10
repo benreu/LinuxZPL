@@ -76,6 +76,28 @@ class GtkDriver:
     def resync(self, element):
         self.canvas.sync_text_width(element)
 
+    # -- the pointer, through each frontend's own event handlers -------------
+    class _Event:
+        """The fields a button handler reads. GTK events cannot be built."""
+        def __init__(self, x, y, button=1):
+            self.x, self.y, self.button, self.state = float(x), float(y), button, 0
+
+    def click(self, lx, ly):
+        """Press the left button at a point in label dots."""
+        scale = self.canvas._scale()
+        self.canvas.on_button_press(self.canvas,
+                                    self._Event(lx * scale, ly * scale))
+
+    def drag_pointer(self, from_x, from_y, dx, dy):
+        """Press, move and release - the path a user's drag actually takes."""
+        scale = self.canvas._scale()
+        self.click(from_x, from_y)
+        self.canvas.on_motion(self.canvas,
+                              self._Event((from_x + dx) * scale, (from_y + dy) * scale))
+        self.canvas.on_button_release(self.canvas,
+                                      self._Event((from_x + dx) * scale,
+                                                  (from_y + dy) * scale))
+
     def resize(self, element, handle, dx, dy):
         self.geometry.resize_by_handle(self.canvas.document, element, handle, dx, dy)
 
@@ -154,6 +176,32 @@ class QtDriver:
 
     def resync(self, element):
         self.document.sync_text_width(element)
+
+    # -- the pointer, through each frontend's own event handlers -------------
+    @property
+    def canvas(self):
+        return self.window.canvas
+
+    def _event(self, kind, lx, ly):
+        from PySide2.QtCore import QPoint, Qt
+        from PySide2.QtGui import QMouseEvent
+        scale = self.canvas._scale()
+        return QMouseEvent(kind, QPoint(int(lx * scale), int(ly * scale)),
+                           Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+
+    def click(self, lx, ly):
+        """Press the left button at a point in label dots."""
+        from PySide2.QtCore import QEvent
+        self.canvas.mousePressEvent(self._event(QEvent.MouseButtonPress, lx, ly))
+
+    def drag_pointer(self, from_x, from_y, dx, dy):
+        """Press, move and release - the path a user's drag actually takes."""
+        from PySide2.QtCore import QEvent
+        self.click(from_x, from_y)
+        self.canvas.mouseMoveEvent(
+            self._event(QEvent.MouseMove, from_x + dx, from_y + dy))
+        self.canvas.mouseReleaseEvent(
+            self._event(QEvent.MouseButtonRelease, from_x + dx, from_y + dy))
 
     def resize(self, element, handle, dx, dy):
         self.geometry.resize_by_handle(self.document, element, handle, dx, dy)
@@ -271,6 +319,15 @@ def sequence(driver, record):
     # the text itself.
     driver.load(FIXTURE_TEMPLATE)
     record('load a template using ^A0 and ^FB')
+
+    # Through the real button handlers, not the geometry helpers underneath:
+    # every step above moves elements directly, which is how a frontend whose
+    # click handler raised on every press went unnoticed.
+    picked = driver.elements[0]
+    driver.click(picked.x + 3, picked.y + 3)
+    record('select with the pointer')
+    driver.drag_pointer(picked.x + 3, picked.y + 3, 25, 15)
+    record('drag with the pointer')
 
     block = next((e for e in driver.elements if e.element_type == 'text'), None)
     if block is not None:
