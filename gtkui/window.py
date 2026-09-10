@@ -345,7 +345,12 @@ class ZPLViewerWindow(Gtk.Window):
       """Handle quit app from Menu or Window close button."""
       if not self.check_unsaved_changes():
         return False
-      Gtk.main_quit()
+      # Destroy the window rather than quitting the loop. The designer is not
+      # always the application: opened as one window inside another Gtk
+      # program, Gtk.main_quit() here would take that whole program down.
+      # main() below owns the loop when the designer really is the app.
+      self.destroy()
+      return True
 
     def check_unsaved_changes(self):
       """Ask what to do with unsaved work. True means it is safe to continue."""
@@ -1549,6 +1554,7 @@ class ZPLViewerWindow(Gtk.Window):
 def main():
     """Main entry point for the application."""
     app = ZPLViewerWindow()
+    app.connect('destroy', Gtk.main_quit)
     Gtk.main()
 
 
