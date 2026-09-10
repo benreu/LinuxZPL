@@ -62,6 +62,31 @@ class FieldBlock:
             self.justification = 'L'
         self.indent = int(indent)
 
+    @classmethod
+    def from_zpl(cls, params: str) -> 'FieldBlock':
+        """^FB<width>,<max lines>,<line spacing>,<justification>,<indent>.
+
+        Read here rather than in each caller: the parser and the preview
+        renderer both meet ^FB, and two readings of it would eventually
+        disagree about a label neither of them wrote.
+        """
+        parts = [p.strip() for p in params.split(',')]
+
+        def number(index, fallback):
+            try:
+                return int(parts[index])
+            except (IndexError, ValueError):
+                return fallback
+
+        justification = parts[3].upper() if len(parts) > 3 and parts[3] else 'L'
+        return cls(number(0, 1), number(1, 1), number(2, 0),
+                   justification, number(4, 0))
+
+    def copy(self) -> 'FieldBlock':
+        """An independent copy, for a snapshot that a later edit must not reach."""
+        return FieldBlock(self.width, self.max_lines, self.line_spacing,
+                          self.justification, self.indent)
+
     def to_zpl(self) -> str:
         return (f"^FB{self.width},{self.max_lines},{self.line_spacing},"
                 f"{self.justification},{self.indent}")
@@ -73,8 +98,27 @@ class FieldBlock:
         return f"FieldBlock({self.to_zpl()[3:]})"
 
 
+def _copy_element(element):
+    """A copy of one element that a later edit cannot reach back through.
+
+    Shallow, except for a text element's field block: that is an object rather
+    than a scalar, and a drag resizes it in place, so sharing one between
+    snapshots would rewrite every undo entry on the stack.
+    """
+    clone = copy.copy(element)
+    block = getattr(clone, 'block', None)
+    if block is not None:
+        clone.block = block.copy()
+    return clone
+
+
 class TextElement(DesignElement):
     """Text element for the designer."""
+
+    # Lines a block gets when wrapping is first switched on. The text is not
+    # wrapping yet at that width, so this is only how much room it has to grow
+    # into before the printer starts dropping lines.
+    DEFAULT_MAX_LINES = 4
 
     def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
                  font_height: int = 36, font_width: int = 20,
@@ -130,6 +174,23 @@ class TextElement(DesignElement):
         if natural <= 0:
             return max(1, round(target_width / max(1, len(self.text))))
         return max(1, round(target_width * max(1, self.font_height) / natural))
+
+    def default_block(self, default_font_path: Optional[str] = None) -> 'FieldBlock':
+        """A block that wraps this text where it already ends.
+
+        Switching wrapping on should not move anything: the width is what the
+        longest line prints at now, so what the user sees first is the text
+        unchanged, ready to be narrowed.
+        """
+        from . import textraster
+        measure, _font = textraster.measurer(
+            self.font_path or default_font_path, self.font_height, self.font_width)
+        lines = (self.text or "").split(textraster.FORCED_BREAK)
+        widest = max((measure(line) for line in lines), default=0)
+        # Rounded up, not to nearest: a block a fraction of a dot narrower than
+        # the line it was measured from would wrap that line immediately.
+        return FieldBlock(max(1, int(widest) + 1),
+                          max(self.DEFAULT_MAX_LINES, len(lines)))
 
     def to_zpl(self, printer_font_name: Optional[str] = None) -> str:
         """Convert to ZPL commands."""
@@ -310,6 +371,11 @@ BARCODE_MODES = (("None", 'N'),
                  ("UCC/EAN", 'D'))
 
 BARCODE_CHECK_DIGIT = (("No", False), ("Yes", True))
+
+# ^FB's justification, for the same reason: the wrap a user picks in one
+# frontend has to be a wrap the other can pick too.
+TEXT_JUSTIFICATIONS = (("Left", 'L'), ("Centred", 'C'),
+                       ("Right", 'R'), ("Justified", 'J'))
 
 
 class ImageElement(DesignElement):
@@ -577,16 +643,17 @@ class Document:
         """A restorable record of the whole design.
 
         A shallow copy per element is enough to be independent: everything an
-        edit touches is a scalar field. ImageElement's heavy attributes are
-        either immutable (the decoded source) or caches keyed by (width,
-        height) and replaced wholesale, so sharing them between snapshots is
-        safe and saves deep-copying decoded images and rendered bitmaps.
+        edit touches is a scalar field, bar the one exception _copy_element
+        handles. ImageElement's heavy attributes are either immutable (the
+        decoded source) or caches keyed by (width, height) and replaced
+        wholesale, so sharing them between snapshots is safe and saves
+        deep-copying decoded images and rendered bitmaps.
         """
         selected = None
         if self.selected_element in self.elements:
             selected = self.elements.index(self.selected_element)
         return (self.label_width, self.label_height,
-                [copy.copy(el) for el in self.elements], selected)
+                [_copy_element(el) for el in self.elements], selected)
 
     def restore(self, snap):
         """Put the design back to a snapshot taken earlier."""
@@ -597,7 +664,7 @@ class Document:
         self.label_height = label_height
         # copied again on the way out, or the next edit would rewrite the
         # snapshot still sitting on the undo stack
-        self.elements = [copy.copy(el) for el in elements]
+        self.elements = [_copy_element(el) for el in elements]
         self.selected_element = (self.elements[selected]
                                  if selected is not None else None)
 
@@ -616,6 +683,13 @@ class Document:
             element.y = max(0, min(element.y, self.label_height - 1))
             element.width = min(element.width, self.label_width - element.x)
             element.height = min(element.height, self.label_height - element.y)
+            block = getattr(element, 'block', None)
+            if block is not None:
+                # A wrapped element's box is its block, so a box clamped to the
+                # label is a narrower wrap - not a box that merely claims to be
+                # narrower while the text still runs to the old width.
+                block.width = max(1, element.width)
+                self.sync_text_width(element)
 
     def rescale(self, factor: float) -> None:
         """Scale the whole design by `factor`, keeping its physical size.
@@ -640,6 +714,13 @@ class Document:
             if el.element_type == 'text':
                 el.font_height = s(el.font_height)
                 el.font_width = s(el.font_width)
+                if el.block is not None:
+                    # The wrap width is in dots like everything else, so a
+                    # block left unscaled would re-wrap at the old physical
+                    # width - narrower text in a box the same size on paper.
+                    el.block.width = s(el.block.width)
+                    el.block.line_spacing = int(round(el.block.line_spacing * factor))
+                    el.block.indent = int(round(el.block.indent * factor))
             elif el.element_type == 'frame':
                 el.thickness = s(el.thickness)
             elif el.element_type == 'barcode':

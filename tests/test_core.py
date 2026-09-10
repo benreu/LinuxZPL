@@ -250,7 +250,7 @@ from zplcore import textraster
 from zplcore.model import FieldBlock
 block = FieldBlock(182, 4, 1, 'C', 0)
 lines = textraster.wrap("Stainless Steel Hex Head Bolt 10mm", FONT, 40, 40, block)
-measure, _f = textraster._measurer(FONT, 40, 40)
+measure, _f = textraster.measurer(FONT, 40, 40)
 check("every wrapped line fits the block",
       lines and all(measure(l) <= block.width for l in lines), lines)
 check("wrapping stops at max_lines",
@@ -329,6 +329,229 @@ check("both frontends are offered the same modes",
       [c for _l, c in BARCODE_MODES] == ['N', 'A', 'U', 'D'])
 check("both frontends are offered the same orientations",
       [c for _l, c in BARCODE_ORIENTATIONS] == ['N', 'R', 'I', 'B'])
+
+# --- wrapped text (^FB) -----------------------------------------------------
+
+# the editor's line breaks and ZPL's are the same thing, spelled differently
+check(r"a typed line break becomes \&",
+      textraster.from_editor("top\nbottom") == r"top\&bottom")
+check(r"\& comes back into the box as a line break",
+      textraster.to_editor(r"top\&bottom") == "top\nbottom")
+check("switching wrapping off joins the lines rather than leaving a break",
+      textraster.join_lines(r"top\&bottom") == "top bottom")
+
+# switching wrapping on must not move the element
+wdoc = Document(812, 1218, dpi=203)
+wt = wdoc.add_text_element('Stainless Steel Hex Head Bolt 10mm')
+wt.font_path = FONT
+wdoc.sync_text_width(wt)
+unwrapped = wt.width
+wt.block = wt.default_block(wdoc.font_path)
+wdoc.sync_text_width(wt)
+check("a default block wraps the text where it already ended",
+      abs(wt.width - unwrapped) <= 2 and wt.height == wt.font_height,
+      (unwrapped, wt.width, wt.height))
+
+# the box is the block by its lines, not the string by its glyphs
+wt.block = FieldBlock(200, 4, 0, 'L', 0)
+wdoc.sync_text_width(wt)
+wrapped = textraster.wrap(wt.text, FONT, wt.font_height, wt.font_width, wt.block)
+check("the box is the block by however many lines it wraps into",
+      (wt.width, wt.height) == (200, len(wrapped) * wt.font_height),
+      (wt.width, wt.height, len(wrapped)))
+
+# every parameter reaches the file and comes back
+wt.block = FieldBlock(240, 3, 4, 'J', 6)
+wdoc.sync_text_width(wt)
+check("^FB is written between the font and the data",
+      re.search(r"\^A[^\n]*\n\^FB[^\n]*\n\^FD", wt.to_zpl()) is not None,
+      wt.to_zpl().replace("\n", " "))
+reblocked = zpl_parser.parse_zpl(f"^XA{wt.to_zpl()}^XZ")[0].elements[0]
+check("every ^FB parameter survives a round trip",
+      reblocked.block == wt.block, reblocked.block)
+
+broken = TextElement(0, 0, textraster.from_editor("ACME Widget\nModel 4400"))
+broken.block = FieldBlock(400, 4)
+rebroken = zpl_parser.parse_zpl(f"^XA{broken.to_zpl()}^XZ")[0].elements[0]
+check("a typed break survives the file",
+      textraster.to_editor(rebroken.text) == "ACME Widget\nModel 4400",
+      rebroken.text)
+
+# dragging a wrapped element asks for a wrap width and a line count
+rd = Document(812, 1218, dpi=203)
+rw = rd.add_text_element('one two three four five six seven eight nine ten')
+rw.font_path = FONT
+rw.block = FieldBlock(300, 8)
+rd.sync_text_width(rw)
+geometry.resize_by_handle(rd, rw, 'mr', -120, 0)
+check("a side handle sets the wrap width",
+      (rw.block.width, rw.width) == (180, 180), (rw.block.width, rw.width))
+narrowed = len(textraster.wrap(rw.text, FONT, rw.font_height, rw.font_width, rw.block))
+check("the box still equals the wrap after dragging it narrower",
+      rw.height == narrowed * rw.font_height, (rw.height, narrowed))
+geometry.resize_by_handle(rd, rw, 'bm', 0, -rw.font_height)
+check("a bottom handle sets the line count, and the surplus is dropped",
+      rw.block.max_lines == narrowed - 1
+      and rw.height == (narrowed - 1) * rw.font_height,
+      (rw.block.max_lines, rw.height, narrowed))
+
+# a block is an object, so a snapshot must not be holding the live one
+udoc = Document(812, 1218, dpi=203)
+ut = udoc.add_text_element('wrap me around for a while')
+ut.block = FieldBlock(300, 4)
+udoc.sync_text_width(ut)
+snap = udoc.snapshot()
+ut.block.width = 120
+udoc.restore(snap)
+check("undo restores the wrap width a drag changed",
+      udoc.elements[0].block.width == 300, udoc.elements[0].block.width)
+
+# a block is in dots like everything else, so it scales with the head
+sdoc = Document(812, 1218, dpi=203)
+st = sdoc.add_text_element('wrap me')
+st.block = FieldBlock(400, 4, 2, 'C', 10)
+sdoc.rescale(300 / 203)
+check("rescale carries the wrap width to the new resolution",
+      st.block.width == max(1, round(400 * 300 / 203)), st.block.width)
+
+check("both frontends are offered the same justifications",
+      [c for _l, c in zpl_model.TEXT_JUSTIFICATIONS] == ['L', 'C', 'R', 'J'])
+
+# --- justified text ---------------------------------------------------------
+JTEXT = 'one two three four five six seven eight nine'
+jblock = FieldBlock(300, 6, 0, 'J', 0)
+jmeasure, _jf = textraster.measurer(FONT, 40, 40)
+jmarked = textraster.wrap_marked(JTEXT, FONT, 40, 40, jblock)
+jstretch = [line for line, last in jmarked if not last]
+check("a justified block has a line to stretch", bool(jstretch), jmarked)
+jplaces = textraster.placements(jstretch[0], jmeasure, jblock, False)
+check("a justified line starts at the left edge", jplaces[0][1] == 0, jplaces[0])
+check("a justified line ends at the right edge",
+      abs(jplaces[-1][1] + jmeasure(jplaces[-1][0]) - jblock.width) <= 1,
+      (jplaces[-1], jblock.width))
+check("the line that ends the text is not stretched",
+      len(textraster.placements(jmarked[-1][0], jmeasure, jblock, True)) == 1)
+
+jimage = textraster.raster_block(JTEXT, FONT, 40, 40, jblock)
+jband = jimage.crop((0, 0, jimage.width, textraster.pitch(40, jblock)))
+jcols = [x for x in range(jband.width)
+         if any(jband.getpixel((x, y))[3] for y in range(jband.height))]
+check("the drawn ink spans the block, not just the words that fit",
+      jcols and jcols[0] <= textraster.MARGIN + 2
+      and jcols[-1] >= jblock.width - 6,
+      (jcols[0], jcols[-1], jblock.width))
+
+# --- wrapping shows before a font is chosen ---------------------------------
+def _ink_bands(image, element):
+    """Separate horizontal bands of black ink inside an element's box.
+
+    The canvas paints the box a translucent blue and outlines it in blue, so
+    only the glyphs are dark in all three channels.
+    """
+    x0, y0 = max(0, element.x), max(0, element.y)
+    x1 = min(image.width(), element.x + element.width)
+    y1 = min(image.height(), element.y + element.height + 4)
+    bands, inside = 0, False
+    for y in range(y0, y1):
+        dark = False
+        for x in range(x0, x1):
+            rgb = image.pixel(x, y)
+            if (((rgb >> 16) & 0xFF) < 100 and ((rgb >> 8) & 0xFF) < 100
+                    and (rgb & 0xFF) < 100):
+                dark = True
+                break
+        if dark and not inside:
+            bands += 1
+        inside = dark
+    return bands
+
+# The canvas is sized to the label, so one pixel is one dot and the element's
+# own coordinates index the rendered image directly.
+nw = qt_main.ZPLDesignerWindow()
+nw.unsaved_changes = False
+nw.on_new()
+nw.document.set_label_size(812, 1218)
+nofont = nw.document.add_text_element('one two three four five six')
+nofont.x, nofont.y = 20, 20
+nofont.block = FieldBlock(200, 6)
+nw.document.sync_text_width(nofont)
+nw.canvas.resize(812, 1218)
+plain = QImage(812, 1218, QImage.Format_ARGB32); plain.fill(Qt.white)
+nw.canvas.render(plain)
+check("a block with no font chosen still draws as several lines",
+      _ink_bands(plain, nofont) > 1, _ink_bands(plain, nofont))
+nofont.block = None
+nw.document.sync_text_width(nofont)
+flat = QImage(812, 1218, QImage.Format_ARGB32); flat.fill(Qt.white)
+nw.canvas.render(flat)
+check("the same text unwrapped draws as one",
+      _ink_bands(flat, nofont) == 1, _ink_bands(flat, nofont))
+
+# --- the dialog, driven -----------------------------------------------------
+from PySide2.QtCore import QTimer
+from PySide2.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+                               QPlainTextEdit, QSpinBox)
+
+def _drive_text_dialog(element, document, fill):
+    """Open the text dialog, let `fill` set its fields, then accept it."""
+    def act():
+        dialog = next((widget for widget in app.topLevelWidgets()
+                       if isinstance(widget, QDialog) and widget.isVisible()), None)
+        if dialog is None:                      # not up yet, come back
+            QTimer.singleShot(50, act)
+            return
+        fill(dialog)
+        dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+
+    QTimer.singleShot(100, act)
+    return qt_dialogs.edit_text_dialog(None, element, document)
+
+ddoc = Document(812, 1218, dpi=203)
+de = ddoc.add_text_element('one two three four five six seven eight')
+
+def _fill_wrap(dialog):
+    dialog.findChild(QPlainTextEdit, 'text').setPlainText("ACME Widget\nModel 4400")
+    dialog.findChild(QCheckBox, 'wrap').setChecked(True)
+    dialog.findChild(QSpinBox, 'block_width').setValue(220)
+    dialog.findChild(QSpinBox, 'max_lines').setValue(5)
+    dialog.findChild(QSpinBox, 'line_spacing').setValue(3)
+    dialog.findChild(QComboBox, 'justification').setCurrentIndex(1)   # Centred
+    dialog.findChild(QSpinBox, 'indent').setValue(4)
+
+check("the text dialog reports the change", _drive_text_dialog(de, ddoc, _fill_wrap))
+check("the wrap set in the dialog reaches the element",
+      de.block == FieldBlock(220, 5, 3, 'C', 4), de.block)
+check("a break typed in the dialog reaches the field data",
+      de.text == r"ACME Widget\&Model 4400", de.text)
+check("the dialog leaves the box equal to the wrap",
+      (de.width, de.height) == (220, 2 * (de.font_height + 3)),
+      (de.width, de.height))
+
+_drive_text_dialog(de, ddoc,
+                   lambda dialog: dialog.findChild(QCheckBox, 'wrap').setChecked(False))
+check("unticking wrap joins the lines rather than leaving a break behind",
+      de.block is None and de.text == "ACME Widget Model 4400", de.text)
+
+# --- the preview draws the design, it does not merely agree with it ---------
+from zplcore.renderer import ZPLRenderer
+pdoc = Document(400, 300, dpi=203)
+pt = pdoc.add_text_element('one two three four five six seven eight')
+pt.x, pt.y = 0, 0
+pt.font_height = pt.font_width = 40
+pt.block = FieldBlock(300, 6, 0, 'C', 0)
+pdoc.sync_text_width(pt)
+preview = ZPLRenderer(400, 300).render(pdoc.to_zpl()).convert('L')
+expected = textraster.raster_block(pt.text, ZPLRenderer.DEFAULT_FONT_PATH,
+                                   pt.font_height, pt.font_width, pt.block)
+def _rows(get, width, height):
+    return [y for y in range(height) if any(get(x, y) for x in range(width))]
+preview_rows = _rows(lambda x, y: preview.getpixel((x, y)) < 128,
+                     expected.width, expected.height)
+raster_rows = _rows(lambda x, y: expected.getpixel((x, y))[3] > 0,
+                    expected.width, expected.height)
+check("the preview puts a block's lines where the canvas does",
+      preview_rows == raster_rows,
+      (preview_rows[:6], raster_rows[:6]))
 
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))

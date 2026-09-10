@@ -11,21 +11,6 @@ from . import geometry, textraster
 from .model import BarcodeElement, FieldBlock
 
 
-def _parse_field_block(params: str) -> FieldBlock:
-    """^FB<width>,<max lines>,<line spacing>,<justification>,<indent>."""
-    parts = [p.strip() for p in params.split(',')]
-
-    def number(index, fallback):
-        try:
-            return int(parts[index])
-        except (IndexError, ValueError):
-            return fallback
-
-    justification = parts[3].upper() if len(parts) > 3 and parts[3] else 'L'
-    return FieldBlock(number(0, 1), number(1, 1), number(2, 0),
-                      justification, number(4, 0))
-
-
 class ZPLRenderer:
     """Renders ZPL (Zebra Programming Language) commands to images."""
     
@@ -70,9 +55,16 @@ class ZPLRenderer:
         self.font_registry[printer_font_name.upper()] = font_path
         self.font_cache.clear()
 
+    DEFAULT_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+    def _font_path(self) -> str:
+        """The face this field will be drawn with."""
+        return (self.current_field_font_path or self.custom_font_path
+                or self.DEFAULT_FONT_PATH)
+
     def _get_font(self, size: int) -> ImageFont.FreeTypeFont:
         """Get or create a cached font."""
-        path = self.current_field_font_path or self.custom_font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        path = self._font_path()
         cache_key = (size, path)
         if cache_key not in self.font_cache:
             try:
@@ -134,31 +126,31 @@ class ZPLRenderer:
         self.image.paste(panel, (x, y))
 
     def _render_block(self, text: str):
-        """Draw text wrapped into the ^FB block, so the preview matches."""
+        """Draw text wrapped into the ^FB block, so the preview matches.
+
+        Through the same rasteriser both canvases use, rather than a second
+        arrangement of the same lines: the preview is what a user checks a
+        label against before printing it, so it has to be drawing the design
+        rather than agreeing with it by coincidence.
+        """
         block = self.current_block
-        font_path = self.current_field_font_path or self.custom_font_path
+        font_path = self._font_path()
         font_width = self.current_font_width or self.current_font_size
-        lines = textraster.wrap(text, font_path, self.current_font_size,
-                                font_width, block)
-        pitch = max(1, self.current_font_size + block.line_spacing)
+        drawn = textraster.raster_block(text, font_path, self.current_font_size,
+                                        font_width, block)
+        if drawn is not None:
+            self.image.paste(drawn, (self.current_x, self.current_y), drawn)
+            return
+
+        # No usable font file, so there are no glyph metrics to raster with;
+        # the lines still go where they belong.
         font = self._get_font(self.current_font_size)
-        measure, _ = textraster._measurer(font_path, self.current_font_size,
-                                          font_width)
-        for row, line in enumerate(lines):
-            width = measure(line)
-            if block.justification == 'C':
-                offset = max(0, (block.width - width) / 2)
-            elif block.justification == 'R':
-                offset = max(0, block.width - width)
-            else:
-                offset = block.indent
-            try:
-                self.draw.text((self.current_x + offset,
-                                self.current_y + row * pitch),
-                               line, fill='black', font=font)
-            except Exception:
-                self.draw.text((self.current_x + offset,
-                                self.current_y + row * pitch), line, fill='black')
+        step = textraster.pitch(self.current_font_size, block)
+        for row, line in enumerate(textraster.wrap(
+                text, font_path, self.current_font_size, font_width, block)):
+            self.draw.text((self.current_x + block.indent,
+                            self.current_y + row * step), line, fill='black',
+                           font=font)
 
     def _render_graphic(self, params: str):
         """Render a ^GF graphic field: ^GFa,total,total,bytes_per_row,<hex>."""
@@ -317,7 +309,7 @@ class ZPLRenderer:
                 self.module_width = max(1, int(match.group(1)))
         elif command == 'FB':
             # Field block: the text that follows is wrapped into it
-            self.current_block = _parse_field_block(params)
+            self.current_block = FieldBlock.from_zpl(params)
         elif command == 'FS':
             # End field: render current field data
             if self.field_data is not None:

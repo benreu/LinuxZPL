@@ -352,11 +352,14 @@ class DesignCanvas(Gtk.DrawingArea):
         # Draw text using PIL when a custom font is set, otherwise Cairo toy font
         context.set_source_rgb(0, 0, 0)
         font_path = element.font_path or self.font_path
+        block = getattr(element, 'block', None)
         pil_rendered = False
         if font_path:
             pil_rendered = self._render_text_pil(context, element, font_path)
 
-        if not pil_rendered:
+        if not pil_rendered and block is not None:
+            self._draw_text_block(context, element, font_path, block)
+        elif not pil_rendered:
             context.select_font_face(element.font_family or self.font_family or "monospace")
             context.set_font_size(element.font_height)
             extents = context.text_extents(element.text[:20])
@@ -374,10 +377,37 @@ class DesignCanvas(Gtk.DrawingArea):
             context.scale(horizontal_scale, 1.0)
             context.show_text(element.text[:20])
             context.restore()
-        
+
         if selected:
             self._draw_handles(context, element)
-    
+
+    def _draw_text_block(self, context, element, font_path, block):
+        """Wrap with the Cairo toy font when the block cannot be rasterised.
+
+        Which is the ordinary case for a new element: nothing has a font file
+        until one is chosen, and without this a block would draw as a single
+        truncated line, so switching wrapping on would appear to do nothing.
+        The lines and where they sit still come from the shared rasteriser, so
+        only the glyphs differ from what will print.
+        """
+        context.select_font_face(element.font_family or self.font_family or "monospace")
+        context.set_font_size(element.font_height)
+        measure, _font = textraster.measurer(font_path, element.font_height,
+                                             element.font_width)
+        step = textraster.pitch(element.font_height, block)
+        marked = textraster.wrap_marked(element.text, font_path,
+                                        element.font_height, element.font_width,
+                                        block)
+        for row, (line, last) in enumerate(marked):
+            for piece, x in textraster.placements(line, measure, block, last):
+                drawn = context.text_extents(piece).width or 1.0
+                context.save()
+                context.translate(element.x + x,
+                                  element.y + row * step + element.font_height - 2)
+                context.scale(max(1.0, measure(piece)) / drawn, 1.0)
+                context.show_text(piece)
+                context.restore()
+
     def _draw_frame_element(self, context, element, selected: bool):
         """Draw a frame element."""
         # Always draw at the real thickness. Using the frame's own stroke as the

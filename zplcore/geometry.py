@@ -92,11 +92,25 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int) -> None:
         element.thickness = max(1, min(element.thickness, element.max_thickness()))
 
     if element.element_type == 'text':
-        element.font_height = element.height
-        element.font_width = element.font_width_for(element.width, document.font_path)
-        # Snap the box to what will actually print, so the outline the user
-        # drags is the outline that comes out of the printer.
-        element.width = element.printed_width(document.font_path)
+        block = getattr(element, 'block', None)
+        if block is not None:
+            # A wrapped element's box is its block. The side handles ask for a
+            # wrap width and the top and bottom ones for a number of lines;
+            # the box is then whatever the text wraps into, never a rectangle
+            # the text is stretched to fill. Font size stays the dialog's
+            # business - a block's height is a consequence of its wrap, so
+            # scaling the font from the dragged height could not track it.
+            pitch = max(1, element.font_height + block.line_spacing)
+            block.width = max(MIN_SIZE, element.width)
+            block.max_lines = max(1, int(round(element.height / pitch)))
+            document.sync_text_width(element)
+        else:
+            element.font_height = element.height
+            element.font_width = element.font_width_for(element.width,
+                                                        document.font_path)
+            # Snap the box to what will actually print, so the outline the user
+            # drags is the outline that comes out of the printer.
+            element.width = element.printed_width(document.font_path)
 
     if element.element_type == 'barcode':
         # A barcode is not free to be any size: its width is a whole number of

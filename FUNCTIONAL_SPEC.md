@@ -102,6 +102,31 @@ maximum number of lines, extra spacing between them, a justification
 
 A word too long for the block is left on its own line rather than split.
 
+**Justified (`J`) is the one that cannot be expressed as a starting x.** Every
+line but the one that ends its paragraph is laid out word by word, with the
+slack between the block width and the words shared equally among the gaps, so
+the line meets both edges. A line that ends a paragraph - including whichever
+line survives when the maximum truncates the rest - is left aligned, because it
+is short from the text running out rather than from the next word not fitting.
+
+**Editing a block is editing the text, not spelling `\&`.** The value field is
+a multi-line box: a line break typed into it is written to the file as `\&`,
+and `\&` read from a file appears in the box as a line break. Two rules keep
+the two in step, because `\&` outside a `^FB` prints as the two characters it is
+written with rather than breaking:
+
+- typing a break into an element with no block gives it one, wide enough for
+  its longest line, so nothing moves on the canvas
+- switching wrapping off joins the lines back into one with spaces, rather than
+  leaving a break behind for the printer to print
+
+**The resize handles ask a block for a wrap, not a rectangle.** The side handles
+set the block width and the text re-flows; the top and bottom handles set the
+maximum number of lines, so dragging the bottom edge up cuts lines the printer
+would then drop and dragging it down reveals them. The box is then whatever the
+text wraps into - it is never stretched to fill the dragged rectangle, and the
+font size is the dialog's business alone.
+
 #### Frame
 
 | Property | Default |
@@ -310,9 +335,9 @@ effect of building elements while parsing.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
-| **Edit Text** | Text; Font Height; Font Width; Font (Choose… / Clear) | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". |
+| **Edit Text** | Text (multi-line); Font Height; Font Width; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. |
 | **Edit Frame** | Width; Height; Thickness | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change |
-| **Edit Barcode** | Value; Height | Height 20–300 dots. Width is recomputed from the value (§3.3). |
+| **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches** | 0.5–25 inches, one decimal. A live hint shows the resulting dots at the current resolution and the `^PW` / `^LL` values. Shrinking clamps elements to the new bounds. |
 | **Printer Settings** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). |
@@ -665,11 +690,8 @@ rather than requirements:
 
 - **Canvas text is truncated to the first 20 characters for display**, while
   the element box and the printed output use the whole string. A longer text
-  element therefore shows less on screen than it prints.
-- **The Edit Barcode dialog recomputes width with a hardcoded module width of
-  2**, rather than the element's own `module_width`. After a rescale to 300
-  dpi (module 3), editing a barcode's value shrinks its canvas box below what
-  prints. §3.3 gives the correct rule.
+  element therefore shows less on screen than it prints. Text in a block is
+  drawn whole, wrapped, whether or not a font file is available.
 - **The canvas scales to fit width only.** A label taller than the viewport
   scrolls; there is no zoom control and no fit-to-window.
 - **Code 128 only.** No other symbology is offered, and the value is not
@@ -683,5 +705,5 @@ rather than requirements:
 - **The interpretation line's leading is assumed** to be the font height plus
   two dots. ZPL does not document its own spacing.
 - **There is no "New" command.** A blank document exists only at startup.
-- **Justified text (`^FB…,J`) is drawn left-aligned.** The parameter is
-  carried through and re-emitted, but the canvas does not stretch the spaces.
+- **`^FB`'s indent is applied to every line**, where ZPL hangs it on the second
+  and later ones. The parameter round-trips; only where it lands differs.

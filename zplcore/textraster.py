@@ -66,7 +66,33 @@ def clear_cache():
 FORCED_BREAK = '\\&'
 
 
-def _measurer(font_path, font_height, font_width):
+def to_editor(text: str) -> str:
+    """Field data as it appears in a multi-line text box.
+
+    ZPL has no newline: a break inside ^FD is the two characters \\&, and only
+    inside a ^FB does the printer act on them. Here and in from_editor() is the
+    only place the two spellings meet, so neither dialog has to know the rule.
+    """
+    return (text or "").replace(FORCED_BREAK, "\n")
+
+
+def from_editor(text: str) -> str:
+    """A multi-line text box's contents as ZPL field data."""
+    return (text or "").replace("\r\n", "\n").replace(
+        "\r", "\n").replace("\n", FORCED_BREAK)
+
+
+def join_lines(text: str) -> str:
+    """The same text on one line, for when a block is switched off.
+
+    Left in place, a forced break would print as the two characters it is
+    written with, since nothing outside a ^FB reads it as a break.
+    """
+    return " ".join(part.strip() for part in
+                    (text or "").split(FORCED_BREAK) if part.strip())
+
+
+def measurer(font_path, font_height, font_width):
     """Advance width of a string in printed dots, however little is known.
 
     The printer scales the em square to font_width x font_height, so a width
@@ -94,20 +120,24 @@ def _measurer(font_path, font_height, font_width):
     return measure, font
 
 
-def wrap(text, font_path, font_height, font_width, block):
-    """The lines `text` breaks into inside `block`.
+def wrap_marked(text, font_path, font_height, font_width, block):
+    """(line, ends_a_paragraph) for each line `text` breaks into in `block`.
 
     Greedy, like the printer: words are added until the next one would not
     fit. A single word too long for the block is left on its own line rather
     than being split, and lines past max_lines are dropped - the printer
     discards them too, instead of overflowing the block.
+
+    The flag is what justification needs: a line that ends a paragraph is
+    short because the text ran out, not because the next word would not fit,
+    so stretching it to both edges would be wrong.
     """
-    measure, _font = _measurer(font_path, font_height, font_width)
-    lines = []
+    measure, _font = measurer(font_path, font_height, font_width)
+    marked = []
     for paragraph in (text or "").split(FORCED_BREAK):
         words = paragraph.split()
         if not words:
-            lines.append("")
+            marked.append(("", True))
             continue
         current = words[0]
         for word in words[1:]:
@@ -115,17 +145,33 @@ def wrap(text, font_path, font_height, font_width, block):
             if measure(candidate) <= block.width:
                 current = candidate
             else:
-                lines.append(current)
+                marked.append((current, False))
                 current = word
-        lines.append(current)
-    return lines[:block.max_lines]
+        marked.append((current, True))
+
+    kept = marked[:block.max_lines]
+    if kept:
+        # Whatever survives the truncation ends the text as printed, so it is
+        # not stretched either.
+        kept[-1] = (kept[-1][0], True)
+    return kept
+
+
+def wrap(text, font_path, font_height, font_width, block):
+    """The lines `text` breaks into inside `block`."""
+    return [line for line, _last in
+            wrap_marked(text, font_path, font_height, font_width, block)]
 
 
 def block_size(text, font_path, font_height, font_width, block):
     """The dots a wrapped block occupies: the block's width by its lines."""
     lines = wrap(text, font_path, font_height, font_width, block)
-    pitch = max(1, int(font_height) + block.line_spacing)
-    return block.width, max(1, len(lines) * pitch)
+    return block.width, max(1, len(lines) * pitch(font_height, block))
+
+
+def pitch(font_height, block) -> int:
+    """Dots from one baseline to the next inside a block."""
+    return max(1, int(font_height) + block.line_spacing)
 
 
 def raster_block(text, font_path, font_height, font_width, block):
@@ -135,28 +181,57 @@ def raster_block(text, font_path, font_height, font_width, block):
     is in final dots, so the horizontal squeeze from font_width is applied
     here, per line.
     """
-    measure, font = _measurer(font_path, font_height, font_width)
+    measure, font = measurer(font_path, font_height, font_width)
     if font is None:
         return None
 
-    lines = wrap(text, font_path, font_height, font_width, block)
-    pitch = max(1, int(font_height) + block.line_spacing)
-    height = max(1, len(lines) * pitch)
+    marked = wrap_marked(text, font_path, font_height, font_width, block)
+    step = pitch(font_height, block)
+    height = max(1, len(marked) * step)
     image = PILImage.new('RGBA', (max(1, block.width), height), (0, 0, 0, 0))
 
-    for row, line in enumerate(lines):
+    for row, (line, last) in enumerate(marked):
         if not line:
             continue
-        drawn = raster(line, font_path, max(1, int(font_height)))
-        if drawn is None:
-            continue
-        printed = max(1, int(round(measure(line))))
-        squeezed = drawn.resize(
-            (max(1, int(round(printed + 2 * MARGIN * max(1, int(font_width))
-                              / max(1, int(font_height))))), drawn.height),
-            PILImage.LANCZOS)
-        image.alpha_composite(squeezed, (_justified_x(printed, block), row * pitch))
+        for piece, x in placements(line, measure, block, last):
+            drawn = raster(piece, font_path, max(1, int(font_height)))
+            if drawn is None:
+                continue
+            printed = max(1, int(round(measure(piece))))
+            squeezed = drawn.resize(
+                (max(1, int(round(printed + 2 * MARGIN * max(1, int(font_width))
+                                  / max(1, int(font_height))))), drawn.height),
+                PILImage.LANCZOS)
+            image.alpha_composite(squeezed, (x, row * step))
     return image
+
+
+def placements(line, measure, block, last):
+    """(piece, x) pairs placing one line inside the block, x in dots.
+
+    One piece for the ordinary justifications. For `J` the line is placed word
+    by word, with the slack shared out among the gaps so it meets both edges -
+    which is the whole of justified text, and cannot be expressed as a single
+    starting x. The line that ends a paragraph is placed like a left-aligned
+    one, as the printer leaves it.
+    """
+    width = int(round(measure(line)))
+    if block.justification != 'J' or last:
+        return [(line, _justified_x(width, block))]
+
+    words = line.split()
+    widths = [measure(word) for word in words]
+    slack = block.width - sum(widths)
+    if len(words) < 2 or slack < 0:
+        return [(line, _justified_x(width, block))]
+
+    gap = slack / (len(words) - 1)
+    places = []
+    x = 0.0
+    for word, advance in zip(words, widths):
+        places.append((word, int(round(x))))
+        x += advance + gap
+    return places
 
 
 def _justified_x(line_width, block):

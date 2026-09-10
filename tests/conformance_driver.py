@@ -364,6 +364,36 @@ def sequence(driver, record):
         driver.resync(block)
         record('a real product name wrapped into the block')
 
+        # Every ^FB parameter, for the same reason as ^BC's: the wrap decides
+        # how many lines the label needs, and each frontend measures the text
+        # and lays the lines out itself.
+        from zplcore.model import FieldBlock
+        from zplcore import textraster
+        block.block = FieldBlock(block.block.width, 4, 1, 'L', 0)
+        driver.resync(block)
+        record('the block left-aligned')
+        block.block = FieldBlock(block.block.width, 4, 1, 'J', 0)
+        driver.resync(block)
+        record('the block justified')
+        block.block = FieldBlock(120, 6, 1, 'C', 8)
+        driver.resync(block)
+        record('the block narrowed, indented and re-wrapped')
+        block.text = textraster.from_editor('ACME Widget\nModel 4400')
+        driver.resync(block)
+        record('a forced line break typed into the block')
+        driver.resize(block, 'mr', 90, 0)
+        record('the wrap widened by its side handle')
+        driver.resize(block, 'bm', 0, -block.font_height)
+        record('a line cut by the bottom handle')
+
+        # Wrapping switched off is what a user does last, and it must not leave
+        # a forced break behind to print as the two characters it is written
+        # with.
+        block.text = textraster.join_lines(block.text)
+        block.block = None
+        driver.resync(block)
+        record('wrapping switched off, the lines joined')
+
 
 def main():
     ap = argparse.ArgumentParser()

@@ -17,8 +17,9 @@ from zplcore import fonts as zpl_fonts
 from zplcore import model
 from zplcore import parser as zpl_parser
 from zplcore import workflow
-from zplcore.model import (BarcodeElement, Document, FrameElement,
-                           ImageElement, TextElement)
+from zplcore import textraster
+from zplcore.model import (TEXT_JUSTIFICATIONS, BarcodeElement, Document,
+                           FieldBlock, FrameElement, ImageElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from .canvas import DesignCanvas
@@ -28,6 +29,36 @@ import io
 
 DEFAULT_PRINTER_ADDRESS = '192.168.50.21'
 DEFAULT_PRINTER_PORT = 9100
+
+
+def _make_row(content, label_text, widget, label_width: int = 130):
+    """One labelled row in a dialog's content area."""
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    label = Gtk.Label(label=label_text)
+    label.set_size_request(label_width, -1)
+    label.set_halign(Gtk.Align.END)
+    row.pack_start(label, False, False, 0)
+    row.pack_start(widget, True, True, 0)
+    content.pack_start(row, False, False, 0)
+
+
+def _make_spin(value, lower, upper):
+    """A whole-number spin button over a range."""
+    spin = Gtk.SpinButton()
+    spin.set_adjustment(Gtk.Adjustment(value=value, lower=lower,
+                                       upper=upper, step_increment=1))
+    spin.set_numeric(True)
+    return spin
+
+
+def _make_combo(choices, current):
+    """A combo over (label, code) choices, plus the codes to read it back."""
+    combo = Gtk.ComboBoxText()
+    for label_text, _code in choices:
+        combo.append_text(label_text)
+    codes = [code for _l, code in choices]
+    combo.set_active(codes.index(current) if current in codes else 0)
+    return combo, codes
 
 
 def _config_path() -> Path:
@@ -1165,29 +1196,25 @@ class ZPLViewerWindow(Gtk.Window):
             content.set_margin_bottom(8)
 
             def make_row(lbl_text, widget):
-                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-                lbl = Gtk.Label(label=lbl_text)
-                lbl.set_size_request(90, -1)
-                lbl.set_halign(Gtk.Align.END)
-                row.pack_start(lbl, False, False, 0)
-                row.pack_start(widget, True, True, 0)
-                content.pack_start(row, False, False, 0)
+                _make_row(content, lbl_text, widget)
 
-            # Text input
-            text_entry = Gtk.Entry()
-            text_entry.set_text(element.text)
-            make_row("Text:", text_entry)
+            # Text input. Multi-line, because ZPL's forced break is two
+            # characters a user should never have to spell: Enter here becomes
+            # \& on the way out.
+            text_view = Gtk.TextView()
+            text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            text_view.get_buffer().set_text(textraster.to_editor(element.text))
+            text_scroll = Gtk.ScrolledWindow()
+            text_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            text_scroll.set_shadow_type(Gtk.ShadowType.IN)
+            text_scroll.set_size_request(-1, 90)
+            text_scroll.add(text_view)
+            make_row("Text:", text_scroll)
 
-            # Font height
-            height_spin = Gtk.SpinButton()
-            height_adj = Gtk.Adjustment(value=element.font_height, lower=8, upper=500, step_increment=1)
-            height_spin.set_adjustment(height_adj)
+            height_spin = _make_spin(element.font_height, 8, 500)
             make_row("Font Height:", height_spin)
 
-            # Font width
-            width_spin = Gtk.SpinButton()
-            width_adj = Gtk.Adjustment(value=element.font_width, lower=8, upper=500, step_increment=1)
-            width_spin.set_adjustment(width_adj)
+            width_spin = _make_spin(element.font_width, 8, 500)
             make_row("Font Width:", width_spin)
 
             # Font chooser (installed families only)
@@ -1195,7 +1222,7 @@ class ZPLViewerWindow(Gtk.Window):
 
             font_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             font_lbl = Gtk.Label(label="Font:")
-            font_lbl.set_size_request(90, -1)
+            font_lbl.set_size_request(130, -1)
             font_lbl.set_halign(Gtk.Align.END)
             font_row.pack_start(font_lbl, False, False, 0)
 
@@ -1252,14 +1279,72 @@ class ZPLViewerWindow(Gtk.Window):
             choose_font_btn.connect("clicked", on_choose_font)
             clear_font_btn.connect("clicked", on_font_clear)
 
+            # Wrapping (^FB)
+            document = self.design_canvas.document
+            block = element.block or element.default_block(document.font_path)
+
+            wrap_check = Gtk.CheckButton(label="Wrap the text into a block")
+            wrap_check.set_active(element.block is not None)
+            make_row("Wrap:", wrap_check)
+
+            block_width_spin = _make_spin(block.width, 10, 2000)
+            make_row("Wrap Width:", block_width_spin)
+
+            max_lines_spin = _make_spin(block.max_lines, 1, 64)
+            make_row("Max Lines:", max_lines_spin)
+
+            spacing_spin = _make_spin(block.line_spacing, -100, 100)
+            make_row("Line Spacing:", spacing_spin)
+
+            justify_combo, justify_codes = _make_combo(TEXT_JUSTIFICATIONS,
+                                                       block.justification)
+            make_row("Justification:", justify_combo)
+
+            indent_spin = _make_spin(block.indent, 0, 2000)
+            make_row("Indent:", indent_spin)
+
+            block_fields = (block_width_spin, max_lines_spin, spacing_spin,
+                            justify_combo, indent_spin)
+
+            def on_wrap_toggled(btn):
+                for field in block_fields:
+                    field.set_sensitive(btn.get_active())
+
+            on_wrap_toggled(wrap_check)
+            wrap_check.connect("toggled", on_wrap_toggled)
+
             content.show_all()
 
             response = dialog.run()
             if response == Gtk.ResponseType.OK:
-                element.text = text_entry.get_text()
+                buffer = text_view.get_buffer()
+                element.text = textraster.from_editor(buffer.get_text(
+                    buffer.get_start_iter(), buffer.get_end_iter(), False))
                 element.font_height = int(height_spin.get_value())
                 element.font_width = int(width_spin.get_value())
                 element.height = element.font_height
+
+                if wrap_check.get_active():
+                    # Assigned rather than mutated: the block on the element
+                    # may be the one an undo snapshot is holding.
+                    element.block = FieldBlock(
+                        int(block_width_spin.get_value()),
+                        int(max_lines_spin.get_value()),
+                        int(spacing_spin.get_value()),
+                        justify_codes[justify_combo.get_active()],
+                        int(indent_spin.get_value()))
+                elif element.block is not None:
+                    # Unticked. A forced break left behind would print as the
+                    # two characters it is written with, so the lines are
+                    # joined rather than abandoned to the printer.
+                    element.text = textraster.join_lines(element.text)
+                    element.block = None
+                elif textraster.FORCED_BREAK in element.text:
+                    # A break typed into an element that never had a block
+                    # still needs one, for the same reason. Sized to the
+                    # longest line, so nothing moves.
+                    element.block = element.default_block(document.font_path)
+
                 self.design_canvas.sync_text_width(element)
 
                 new_path, new_family = selected_font
@@ -1295,28 +1380,9 @@ class ZPLViewerWindow(Gtk.Window):
             content.set_margin_bottom(8)
 
             def make_row(label_text, widget):
-                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-                lbl = Gtk.Label(label=label_text)
-                lbl.set_size_request(130, -1)
-                lbl.set_halign(Gtk.Align.END)
-                row.pack_start(lbl, False, False, 0)
-                row.pack_start(widget, True, True, 0)
-                content.pack_start(row, False, False, 0)
+                _make_row(content, label_text, widget)
 
-            def make_spin(value, lower, upper):
-                spin = Gtk.SpinButton()
-                spin.set_adjustment(Gtk.Adjustment(value=value, lower=lower,
-                                                   upper=upper, step_increment=1))
-                spin.set_numeric(True)
-                return spin
-
-            def make_combo(choices, current):
-                combo = Gtk.ComboBoxText()
-                for label_text, _code in choices:
-                    combo.append_text(label_text)
-                codes = [code for _l, code in choices]
-                combo.set_active(codes.index(current) if current in codes else 0)
-                return combo, codes
+            make_spin, make_combo = _make_spin, _make_combo
 
             value_entry = Gtk.Entry()
             value_entry.set_text(element.barcode_value)

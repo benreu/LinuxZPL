@@ -174,17 +174,19 @@ class DesignCanvas(QWidget):
         font_path = element.font_path or self.document.font_path
         block = getattr(element, 'block', None)
         raster = None
-        if font_path and block is not None:
+        if block is not None:
             # A ^FB block is rasterised at its printed size, wrapped and
             # justified, so nothing further is scaled here.
             wrapped = to_qimage(textraster.raster_block(
                 element.text, font_path, element.font_height,
-                element.font_width, block))
+                element.font_width, block)) if font_path else None
             if wrapped is not None:
                 painter.drawImage(QPointF(element.x, element.y), wrapped)
-                if selected:
-                    self._draw_handles(painter, element)
-                return
+            else:
+                self._draw_text_block(painter, element, font_path, block)
+            if selected:
+                self._draw_handles(painter, element)
+            return
         if font_path:
             raster = to_qimage(
                 textraster.raster(element.text, font_path, element.font_height))
@@ -205,6 +207,37 @@ class DesignCanvas(QWidget):
 
         if selected:
             self._draw_handles(painter, element)
+
+    def _draw_text_block(self, painter, element, font_path, block):
+        """Wrap with a Qt face when the block cannot be rasterised.
+
+        Which is the ordinary case for a new element: nothing has a font file
+        until one is chosen, and without this a block would draw as a single
+        unwrapped line, so switching wrapping on would appear to do nothing.
+        The lines and where they sit still come from the shared rasteriser, so
+        only the glyphs differ from what will print.
+        """
+        family = element.font_family or self.document.font_family or "monospace"
+        font = QFont(family)
+        font.setPixelSize(max(1, element.font_height))
+        painter.setFont(font)
+        painter.setPen(QColor(0, 0, 0))
+        metrics = QFontMetricsF(font)
+        measure, _font = textraster.measurer(font_path, element.font_height,
+                                             element.font_width)
+        step = textraster.pitch(element.font_height, block)
+        marked = textraster.wrap_marked(element.text, font_path,
+                                        element.font_height, element.font_width,
+                                        block)
+        for row, (line, last) in enumerate(marked):
+            for piece, x in textraster.placements(line, measure, block, last):
+                drawn = metrics.horizontalAdvance(piece) or 1.0
+                painter.save()
+                painter.translate(element.x + x,
+                                  element.y + row * step + element.font_height - 2)
+                painter.scale(max(1.0, measure(piece)) / drawn, 1.0)
+                painter.drawText(QPointF(0, 0), piece)
+                painter.restore()
 
     def _draw_text_fallback(self, painter, element, font_path):
         """Draw with a Qt face when the font file cannot be rasterised."""

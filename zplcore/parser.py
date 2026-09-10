@@ -190,7 +190,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
         elif cmd.startswith('^A'):
             _read_font(cmd, params, field)
         elif cmd == '^FB':
-            field['block'] = _read_block(params)
+            field['block'] = FieldBlock.from_zpl(params)
         elif cmd == '^BC':
             field['barcode'] = _read_barcode(params)
         elif cmd == '^GB':
@@ -231,21 +231,6 @@ def _read_font(cmd: str, params: str, field: dict) -> None:
             name = named.group(1).upper()
     field['font'] = {'code': code, 'height': font_height,
                      'width': font_width, 'name': name}
-
-
-def _read_block(params: str) -> FieldBlock:
-    """^FB<width>,<max lines>,<line spacing>,<justification>,<indent>."""
-    parts = [p.strip() for p in params.split(',')]
-
-    def number(index, fallback):
-        try:
-            return int(parts[index])
-        except (IndexError, ValueError):
-            return fallback
-
-    justification = parts[3].upper() if len(parts) > 3 and parts[3] else 'L'
-    return FieldBlock(number(0, 1), number(1, 1), number(2, 0),
-                      justification, number(4, 0))
 
 
 def _read_barcode(params: str) -> dict:

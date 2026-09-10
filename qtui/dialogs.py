@@ -12,17 +12,19 @@ from pathlib import Path
 from typing import Optional
 
 from PySide2.QtCore import Qt
-from PySide2.QtGui import QFont
-from PySide2.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
-                               QDialogButtonBox, QFileDialog, QFormLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QMessageBox, QPushButton, QSpinBox,
-                               QDoubleSpinBox, QVBoxLayout, QWidget)
+from PySide2.QtGui import QFont, QFontMetrics
+from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
+                               QDialog, QDialogButtonBox, QFileDialog,
+                               QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+                               QListWidget, QMessageBox, QPlainTextEdit,
+                               QPushButton, QSpinBox, QDoubleSpinBox,
+                               QVBoxLayout, QWidget)
 
-from zplcore import fonts as zpl_fonts
+from zplcore import fonts as zpl_fonts, textraster
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
                            BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
-                           Document, TextElement)
+                           TEXT_JUSTIFICATIONS, Document, FieldBlock,
+                           TextElement)
 
 IMAGE_FILTER = "Image files (*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG);;All files (*)"
 ZPL_FILTER = "ZPL files (*.zpl);;All files (*)"
@@ -161,7 +163,11 @@ def edit_text_dialog(parent, element: TextElement, document: Document) -> bool:
     form = QFormLayout()
     layout.addLayout(form)
 
-    text_edit = QLineEdit(element.text)
+    # Multi-line, because ZPL's forced break is two characters a user should
+    # never have to spell: Enter here becomes \& on the way out.
+    text_edit = QPlainTextEdit(textraster.to_editor(element.text))
+    text_edit.setObjectName("text")
+    text_edit.setMinimumHeight(4 * QFontMetrics(text_edit.font()).height())
     form.addRow("Text:", text_edit)
 
     height_spin = QSpinBox()
@@ -207,15 +213,85 @@ def edit_text_dialog(parent, element: TextElement, document: Document) -> bool:
 
     choose_btn.clicked.connect(on_choose)
     clear_btn.clicked.connect(on_clear)
+
+    # --- wrapping (^FB) ---
+    block = element.block or element.default_block(document.font_path)
+
+    wrap_check = QCheckBox("Wrap the text into a block")
+    wrap_check.setObjectName("wrap")
+    wrap_check.setChecked(element.block is not None)
+    form.addRow("Wrap:", wrap_check)
+
+    block_width = QSpinBox()
+    block_width.setRange(10, 2000)
+    block_width.setObjectName("block_width")
+    block_width.setValue(block.width)
+    form.addRow("Wrap Width:", block_width)
+
+    max_lines = QSpinBox()
+    max_lines.setRange(1, 64)
+    max_lines.setObjectName("max_lines")
+    max_lines.setValue(block.max_lines)
+    form.addRow("Max Lines:", max_lines)
+
+    spacing_spin = QSpinBox()
+    spacing_spin.setRange(-100, 100)
+    spacing_spin.setObjectName("line_spacing")
+    spacing_spin.setValue(block.line_spacing)
+    form.addRow("Line Spacing:", spacing_spin)
+
+    justify_combo = QComboBox()
+    justify_combo.setObjectName("justification")
+    for label, code in TEXT_JUSTIFICATIONS:
+        justify_combo.addItem(label, code)
+    codes = [code for _label, code in TEXT_JUSTIFICATIONS]
+    justify_combo.setCurrentIndex(codes.index(block.justification)
+                                  if block.justification in codes else 0)
+    form.addRow("Justification:", justify_combo)
+
+    indent_spin = QSpinBox()
+    indent_spin.setRange(0, 2000)
+    indent_spin.setObjectName("indent")
+    indent_spin.setValue(block.indent)
+    form.addRow("Indent:", indent_spin)
+
+    block_fields = (block_width, max_lines, spacing_spin, justify_combo,
+                    indent_spin)
+
+    def sync_block_fields():
+        for field in block_fields:
+            field.setEnabled(wrap_check.isChecked())
+
+    sync_block_fields()
+    wrap_check.stateChanged.connect(sync_block_fields)
+
     layout.addWidget(_buttons(dialog))
 
     if dialog.exec_() != QDialog.Accepted:
         return False
 
-    element.text = text_edit.text()
+    element.text = textraster.from_editor(text_edit.toPlainText())
     element.font_height = height_spin.value()
     element.font_width = width_spin.value()
     element.height = element.font_height
+
+    if wrap_check.isChecked():
+        # Assigned rather than mutated: the block on the element may be the one
+        # an undo snapshot is holding.
+        element.block = FieldBlock(block_width.value(), max_lines.value(),
+                                   spacing_spin.value(),
+                                   justify_combo.currentData(),
+                                   indent_spin.value())
+    elif element.block is not None:
+        # Unticked. A forced break left behind would print as the two
+        # characters it is written with, so the lines are joined rather than
+        # abandoned to the printer.
+        element.text = textraster.join_lines(element.text)
+        element.block = None
+    elif textraster.FORCED_BREAK in element.text:
+        # A break typed into an element that never had a block still needs one,
+        # for the same reason. Sized to the longest line, so nothing moves.
+        element.block = element.default_block(document.font_path)
 
     if chosen['path'] != element.font_path:
         if chosen['path']:
