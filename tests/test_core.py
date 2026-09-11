@@ -150,6 +150,126 @@ w.on_bring_to_front()
 check("bring to front reorders", w.document.elements[-1] is a)
 check("undo entry recorded for reorder", len(w._undo_stack) >= 1)
 
+# --- selection and alignment ------------------------------------------------
+def pair(label=(400, 400), first=(100, 100, 60, 40), second=(300, 250, 80, 20)):
+    """A document holding two frames at known boxes, both selected."""
+    d = Document(*label)
+    made = []
+    for x, y, wd, ht in (first, second):
+        el = FrameElement(x, y, wd, ht)
+        d.elements.append(el)
+        made.append(el)
+    d.select_many(made)
+    return (d, *made)
+
+d, one, two = pair()
+check("a selection holds more than one element", len(d.selection) == 2)
+check("the primary is the last one picked", d.selected_element is two)
+check("selection bounds cover the pair",
+      geometry.selection_bounds([one, two]) == (100, 100, 280, 170),
+      geometry.selection_bounds([one, two]))
+check("bounds of nothing is None, not a box at the origin",
+      geometry.selection_bounds([]) is None)
+
+d, one, two = pair()
+check("align left takes both to the leftmost edge of the pair",
+      d.align_selected('left') and (one.x, two.x) == (100, 100), (one.x, two.x))
+check("and leaves the other axis where it was", (one.y, two.y) == (100, 250))
+check("aligning what is already aligned moves nothing, so nothing is undone",
+      not d.align_selected('left'))
+
+d, one, two = pair()
+d.align_selected('right')
+check("align right takes both to the rightmost edge",
+      (one.x + one.width, two.x + two.width) == (380, 380), (one.x, two.x))
+d, one, two = pair()
+d.align_selected('center')
+check("centre horizontally puts both centres on the pair's centre",
+      (one.x + one.width // 2, two.x + two.width // 2) == (240, 240),
+      (one.x, two.x))
+d, one, two = pair()
+d.align_selected('top')
+check("align top takes both to the topmost edge", (one.y, two.y) == (100, 100))
+d, one, two = pair()
+d.align_selected('bottom')
+check("align bottom takes both to the bottom edge",
+      (one.y + one.height, two.y + two.height) == (270, 270), (one.y, two.y))
+d, one, two = pair()
+d.align_selected('middle')
+check("centre vertically puts both centres on the pair's centre",
+      (one.y + one.height // 2, two.y + two.height // 2) == (185, 185),
+      (one.y, two.y))
+
+# one element has nothing to line up with but the label
+d, one, two = pair()
+d.selected_element = one
+d.align_selected('right'); d.align_selected('bottom')
+check("a single selection aligns to the label, not to itself",
+      (one.x + one.width, one.y + one.height) == (400, 400), (one.x, one.y))
+d.align_selected('center'); d.align_selected('middle')
+check("and centres on the label", (one.x, one.y) == (170, 180), (one.x, one.y))
+check("the other element stayed out of it", (two.x, two.y) == (300, 250))
+
+d, one, two = pair(first=(50, 50, 600, 40))
+d.selected_element = one
+d.align_selected('right')
+check("an element wider than the label lands at 0, not at a negative x",
+      one.x == 0, one.x)
+check("an unknown edge is refused rather than guessed at",
+      not d.align_selected('sideways'))
+
+# a group drags as one box, clamped as one box
+d, one, two = pair()
+geometry.move_selection(d, d.selection, -9999, -9999)
+check("a group drag keeps the members' relative offsets",
+      (two.x - one.x, two.y - one.y) == (200, 150), (one.x, one.y, two.x, two.y))
+check("and stops with the whole group inside the label",
+      (one.x, one.y) == (0, 0), (one.x, one.y))
+geometry.move_selection(d, d.selection, 9999, 9999)
+check("the far edge clamps the group too",
+      (two.x + two.width, two.y + two.height) == (400, 400), (two.x, two.y))
+
+# the rubber band's hit rule
+d, one, two = pair()
+caught = geometry.elements_in_box(d.elements, 90, 90, 170, 170)
+check("a band catches what it overlaps", caught == [one], len(caught))
+check("a band drawn in reverse catches the same",
+      geometry.elements_in_box(d.elements, 170, 170, 90, 90) == [one])
+check("a band of no area catches nothing",
+      geometry.elements_in_box(d.elements, 90, 90, 90, 90) == [])
+check("a band over both catches both, in z-order",
+      geometry.elements_in_box(d.elements, 0, 0, 400, 400) == [one, two])
+
+# the selection through the rest of the document
+d, one, two = pair()
+d.select(one, additive=True)
+check("an additive pick of a selected element drops it", d.selection == [two])
+d.select(one, additive=True)
+check("and an additive pick of an unselected one adds it", d.selection == [two, one])
+d.extend_selection([one, two])
+check("an additive band adds without dropping what it passed over",
+      d.selection == [two, one], len(d.selection))
+d.select(two)
+check("a plain pick of a member keeps the group, so it can be dragged",
+      sorted(map(id, d.selection)) == sorted(map(id, [one, two])), len(d.selection))
+check("and makes it the primary, so a right-click acts on what was pointed at",
+      d.selected_element is two)
+d.selected_element = one
+check("assigning the singular name still replaces the whole selection",
+      d.selection == [one])
+
+d, one, two = pair()
+snap = d.snapshot()
+d.clear_selection()
+d.restore(snap)
+check("a snapshot brings the whole selection back, as the restored elements",
+      len(d.selection) == 2 and all(el in d.elements for el in d.selection),
+      len(d.selection))
+
+d, one, two = pair()
+check("delete takes the whole selection", d.remove_selected() and not d.elements)
+check("and leaves nothing selected", not d.selection)
+
 # paint every element type without exceptions
 w.unsaved_changes = False; w.on_new()
 w.document.add_text_element('paint me')
@@ -162,6 +282,14 @@ canvas = w.canvas; canvas.resize(600, 900)
 target = QImage(600, 900, QImage.Format_ARGB32); target.fill(Qt.white)
 canvas.render(target)
 check("all element types paint, with a selection and handles", True)
+
+# the group outline and the rubber band are their own paint paths
+w.document.select_many(w.document.elements[:2])
+canvas.band_origin, canvas.band_now = (10, 10), (300, 400)
+canvas.render(target)
+canvas.band_origin = canvas.band_now = None
+w.document.selected_element = w.document.elements[0]
+check("a group selection and a rubber band paint too", True)
 
 # an unprintable element still paints (dimmed) and stays hittable
 w.document.elements[0].print_enabled = False

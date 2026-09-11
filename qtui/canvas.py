@@ -78,6 +78,12 @@ class DesignCanvas(QWidget):
         self.drag_start = None
         self._drag_changed = False               # a drag moved something
         self.active_handle: Optional[str] = None
+        # A rubber band being dragged over empty canvas: where it started and
+        # where the pointer is now, both in dots, and whether it adds to the
+        # selection rather than replacing it.
+        self.band_origin = None
+        self.band_now = None
+        self.band_additive = False
         self.last_click_time = 0.0
         self.last_click_element = None
         self._cursor_shape = None
@@ -90,6 +96,7 @@ class DesignCanvas(QWidget):
         self.drag_start = None
         self.active_handle = None
         self.last_click_element = None
+        self.band_origin = self.band_now = None
         self._sync_size()
         self.update()
 
@@ -175,12 +182,14 @@ class DesignCanvas(QWidget):
         painter.drawRect(QRectF(0, 0, doc.label_width, doc.label_height))
 
         for element in doc.elements:
-            selected = element is doc.selected_element
+            selected = doc.is_selected(element)
             # An element that will not print is dimmed rather than hidden: the
             # canvas shows what the file contains, and it stays selectable.
             painter.setOpacity(1.0 if element.print_enabled else 0.35)
             self._draw_element(painter, element, selected)
         painter.setOpacity(1.0)
+
+        self._draw_band(painter, scale)
 
         painter.restore()
 
@@ -194,8 +203,29 @@ class DesignCanvas(QWidget):
         elif element.element_type == 'image':
             self._draw_image_element(painter, element, selected)
 
+    def _draw_band(self, painter, scale: float):
+        """The rubber band, while one is being dragged."""
+        if self.band_origin is None or self.band_now is None:
+            return
+        (x0, y0), (x1, y1) = self.band_origin, self.band_now
+        pen = QPen(QColor(0, 128, 255))
+        pen.setWidthF(1.0 / max(1e-6, scale))
+        pen.setStyle(Qt.CustomDashLine)
+        pen.setDashPattern([4, 4])
+        painter.setPen(pen)
+        painter.setBrush(QColor(0, 128, 255, 30))
+        painter.drawRect(QRectF(min(x0, x1), min(y0, y1),
+                                abs(x1 - x0), abs(y1 - y0)))
+        painter.setBrush(Qt.NoBrush)
+
     def _draw_handles(self, painter, element: DesignElement):
-        """The eight resize handles, as small filled squares."""
+        """The eight resize handles, as small filled squares.
+
+        Only ever on a selection of one. A group has no single box to resize,
+        and handles on each member would offer a drag with nowhere to go.
+        """
+        if len(self.document.selection) != 1:
+            return
         painter.setPen(QPen(QColor(0, 0, 255), 1))
         painter.setBrush(QColor(0, 128, 255))
         size = geometry.handle_size(self._scale())
@@ -500,9 +530,11 @@ class DesignCanvas(QWidget):
             return
 
         self.active_handle = None
+        # Shift or Ctrl adds to the selection instead of replacing it.
+        additive = bool(event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier))
 
         # A handle of the selected element wins over anything under the pointer
-        if doc.selected_element is not None:
+        if len(doc.selection) == 1:
             handle = geometry.handle_at_point(lx, ly, doc.selected_element,
                                              self._scale())
             if handle:
@@ -512,10 +544,22 @@ class DesignCanvas(QWidget):
 
         clicked_element = doc.element_at(lx, ly)
 
+        # Nothing under the pointer: start a rubber band, which selects what it
+        # is dragged over and clears the selection if it is dragged over nothing.
+        if clicked_element is None:
+            self.band_origin = self.band_now = (lx, ly)
+            self.band_additive = additive
+            self.last_click_element = None
+            if not additive:
+                doc.clear_selection()
+            self.update()
+            return
+
         # Double click, tracked here rather than left to the toolkit so the
         # interval stays the 500ms the spec names, on the same element.
         now = time.time()
-        if (self.last_click_element is clicked_element
+        if (not additive
+                and self.last_click_element is clicked_element
                 and clicked_element is not None
                 and (now - self.last_click_time) < 0.5):
             self.elementDoubleClicked.emit(clicked_element)
@@ -526,8 +570,11 @@ class DesignCanvas(QWidget):
         self.last_click_time = now
         self.last_click_element = clicked_element
 
-        doc.selected_element = clicked_element
-        if clicked_element is not None:
+        doc.select(clicked_element, additive)
+        # An additive click is a selection gesture, not the start of a drag:
+        # picking up the group on the same click would move it by whatever the
+        # pointer wandered before the button came back up.
+        if clicked_element is not None and not additive:
             self.drag_start = (lx, ly)
         self.update()
 
@@ -541,7 +588,12 @@ class DesignCanvas(QWidget):
         self._update_cursor(event)
 
         doc = self.document
-        if not self.drag_start or doc.selected_element is None:
+        if self.band_origin is not None:
+            self.band_now = self._screen_to_label(event.x(), event.y())
+            self.update()
+            return
+
+        if not self.drag_start or not doc.selection:
             return
 
         lx, ly = self._screen_to_label(event.x(), event.y())
@@ -552,7 +604,8 @@ class DesignCanvas(QWidget):
             geometry.resize_by_handle(doc, doc.selected_element,
                                       self.active_handle, dx, dy)
         else:
-            geometry.move_element(doc, doc.selected_element, dx, dy)
+            # The whole selection moves together, clamped as one box.
+            geometry.move_selection(doc, doc.selection, dx, dy)
 
         self.drag_start = (lx, ly)
         self._drag_changed = True
@@ -572,6 +625,9 @@ class DesignCanvas(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() != Qt.LeftButton:
             return
+        if self.band_origin is not None:
+            self._finish_band()
+            return
         self.drag_start = None
         self.active_handle = None
         if self._drag_changed:
@@ -580,6 +636,20 @@ class DesignCanvas(QWidget):
             self._drag_changed = False
             self.update()
             self.documentChanged.emit()
+
+    def _finish_band(self):
+        """Select what the rubber band was dragged over, and put it away."""
+        doc = self.document
+        (x0, y0), (x1, y1) = self.band_origin, self.band_now
+        self.band_origin = self.band_now = None
+        caught = geometry.elements_in_box(doc.elements, x0, y0, x1, y1)
+        if self.band_additive:
+            doc.extend_selection(caught)
+        else:
+            doc.select_many(caught)
+        # A band changes the selection, never the document, so it is not a
+        # change to undo - only a redraw.
+        self.update()
 
     def leaveEvent(self, event):
         if not self.active_handle:
@@ -600,7 +670,7 @@ class DesignCanvas(QWidget):
             self._set_cursor(self.HANDLE_CURSORS.get(self.active_handle))
             return
         shape = None
-        if self.document.selected_element is not None:
+        if len(self.document.selection) == 1:
             lx, ly = self._screen_to_label(event.x(), event.y())
             handle = geometry.handle_at_point(lx, ly,
                                              self.document.selected_element,
@@ -618,7 +688,9 @@ class DesignCanvas(QWidget):
         if element is None:
             return
 
-        doc.selected_element = element
+        # select() rather than an assignment, so right-clicking one element of
+        # a group does not throw the rest of the group away.
+        doc.select(element)
         self.update()
 
         menu = QMenu(self)

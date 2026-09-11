@@ -22,6 +22,9 @@ TEXT_BASELINE_GAP = 2
 # Corner and edge-midpoint handles, in the order they are drawn
 HANDLE_NAMES = ('tl', 'tm', 'tr', 'ml', 'mr', 'bl', 'bm', 'br')
 
+# The alignments, in menu order: the three horizontal, then the three vertical
+ALIGNMENTS = ('left', 'center', 'right', 'top', 'middle', 'bottom')
+
 
 def handles(element) -> dict:
     """Positions of the resize handles for any element type."""
@@ -74,6 +77,111 @@ def move_element(document, element, dx: int, dy: int) -> None:
     element.y += dy
     element.x = max(0, min(element.x, document.label_width - element.width))
     element.y = max(0, min(element.y, document.label_height - element.height))
+
+
+def selection_bounds(elements):
+    """The box around a group of elements, as (x, y, width, height).
+
+    None for an empty group, so a caller cannot mistake "nothing selected" for
+    a zero-sized box at the origin.
+    """
+    elements = [el for el in elements if el is not None]
+    if not elements:
+        return None
+    left = min(el.x for el in elements)
+    top = min(el.y for el in elements)
+    right = max(el.x + el.width for el in elements)
+    bottom = max(el.y + el.height for el in elements)
+    return (left, top, right - left, bottom - top)
+
+
+def move_selection(document, elements, dx: int, dy: int) -> None:
+    """Drag a group, keeping its shape and keeping all of it inside the label.
+
+    The delta is clamped against the group's own box and then applied to every
+    member. Clamping each element separately instead - a move_element per
+    element - would let the ones still inside carry on while the one against
+    the edge stopped, and the group would come apart in the user's hand.
+    """
+    elements = [el for el in elements if el is not None]
+    if not elements:
+        return
+    if len(elements) == 1:
+        move_element(document, elements[0], dx, dy)
+        return
+
+    x, y, width, height = selection_bounds(elements)
+    dx = max(-x, min(dx, document.label_width - width - x))
+    dy = max(-y, min(dy, document.label_height - height - y))
+    for element in elements:
+        element.x += dx
+        element.y += dy
+
+
+def elements_in_box(elements, x0: int, y0: int, x1: int, y1: int):
+    """Every element a rubber band has caught, in the order it was given.
+
+    Overlapping the band is enough - the band does not have to swallow an
+    element whole. Containment would mean zooming out far enough to draw around
+    a barcode that runs to the edge of the label before it could be picked up,
+    which is the opposite of what the gesture is for.
+
+    The corners may be given in any order, since a band is dragged in whichever
+    direction the user pleases. A band of no area catches nothing, so a plain
+    click on empty canvas still clears the selection.
+    """
+    left, right = sorted((x0, x1))
+    top, bottom = sorted((y0, y1))
+    return [el for el in elements
+            if el.x < right and el.x + el.width > left
+            and el.y < bottom and el.y + el.height > top]
+
+
+def align_elements(document, elements, edge: str) -> bool:
+    """Line a group up on one edge, or centre it on one axis.
+
+    Each alignment moves one axis and leaves the other alone. What the group is
+    lined up against depends on how much of it there is: two or more elements
+    line up against each other's bounding box, and a single element - which has
+    nothing else to line up with - against the label.
+
+    Returns whether anything actually moved, so an align that changes nothing
+    records no undo entry.
+    """
+    elements = [el for el in elements if el is not None]
+    if not elements or edge not in ALIGNMENTS:
+        return False
+
+    if len(elements) > 1:
+        box = selection_bounds(elements)
+    else:
+        box = (0, 0, document.label_width, document.label_height)
+    bx, by, bw, bh = box
+
+    moved = False
+    for element in elements:
+        x, y = element.x, element.y
+        if edge == 'left':
+            x = bx
+        elif edge == 'center':
+            x = bx + (bw - element.width) // 2
+        elif edge == 'right':
+            x = bx + bw - element.width
+        elif edge == 'top':
+            y = by
+        elif edge == 'middle':
+            y = by + (bh - element.height) // 2
+        elif edge == 'bottom':
+            y = by + bh - element.height
+
+        # Clamped the way a drag is, so an element larger than the label lands
+        # against the edge rather than at a negative coordinate.
+        x = max(0, min(x, document.label_width - element.width))
+        y = max(0, min(y, document.label_height - element.height))
+        if (x, y) != (element.x, element.y):
+            element.x, element.y = x, y
+            moved = True
+    return moved
 
 
 def resize_by_handle(document, element, handle: str, dx: int, dy: int) -> None:

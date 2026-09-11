@@ -109,6 +109,12 @@ class DesignCanvas(Gtk.DrawingArea):
         self.last_click_time = 0
         self.last_click_element = None
         self.active_handle: Optional[str] = None  # which handle is being dragged
+        # A rubber band being dragged over empty canvas: where it started and
+        # where the pointer is now, both in dots, and whether it adds to the
+        # selection rather than replacing it.
+        self.band_origin: Optional[Tuple[int, int]] = None
+        self.band_now: Optional[Tuple[int, int]] = None
+        self.band_additive = False
         self._cursor_name: Optional[str] = None   # cursor currently set
         self._cursor_cache = {}
 
@@ -185,6 +191,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self.drag_start = None
         self.active_handle = None
         self.last_click_element = None
+        self.band_origin = self.band_now = None
         self.sync_size()
 
     def _changed(self):
@@ -229,6 +236,10 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def send_to_back(self):
         if self.document.send_to_back():
+            self._changed()
+
+    def align_selected(self, edge: str):
+        if self.document.align_selected(edge):
             self._changed()
 
     def snapshot(self):
@@ -396,7 +407,7 @@ class DesignCanvas(Gtk.DrawingArea):
 
         # Draw elements in label coordinates (context is scaled)
         for element in self.elements:
-            selected = element == self.selected_element
+            selected = self.document.is_selected(element)
             if element.print_enabled:
                 self._draw_element(context, element, selected)
             else:
@@ -406,7 +417,9 @@ class DesignCanvas(Gtk.DrawingArea):
                 self._draw_element(context, element, selected)
                 context.pop_group_to_source()
                 context.paint_with_alpha(0.35)
-            
+
+        self._draw_band(context, scale_factor)
+
         context.restore()
     
     def _draw_element(self, context, element: DesignElement, selected: bool):
@@ -551,8 +564,31 @@ class DesignCanvas(Gtk.DrawingArea):
         if selected:
             self._draw_handles(context, element)
     
+    def _draw_band(self, context, scale: float):
+        """The rubber band, while one is being dragged."""
+        if self.band_origin is None or self.band_now is None:
+            return
+        (x0, y0), (x1, y1) = self.band_origin, self.band_now
+        x, y = min(x0, x1), min(y0, y1)
+        width, height = abs(x1 - x0), abs(y1 - y0)
+        context.set_source_rgba(0, 0.5, 1, 0.12)
+        context.rectangle(x, y, width, height)
+        context.fill()
+        context.set_source_rgb(0, 0.5, 1)
+        context.set_line_width(1 / max(1e-6, scale))
+        context.set_dash([4, 4], 0)
+        context.rectangle(x, y, width, height)
+        context.stroke()
+        context.set_dash([], 0)
+
     def _draw_handles(self, context, element):
-        """The eight resize handles of the selected element."""
+        """The eight resize handles of the selected element.
+
+        Only ever on a selection of one. A group has no single box to resize,
+        and handles on each member would offer a drag with nowhere to go.
+        """
+        if len(self.document.selection) != 1:
+            return
         scale = self._scale()
         size = geometry.handle_size(scale)
         half = size / 2
@@ -742,7 +778,9 @@ class DesignCanvas(Gtk.DrawingArea):
                     clicked_element = element
                     break
             if clicked_element:
-                self.selected_element = clicked_element
+                # select() rather than an assignment, so right-clicking one
+                # element of a group does not throw the rest of the group away.
+                self.document.select(clicked_element)
                 self.queue_draw()
                 self._show_context_menu(event, clicked_element)
             return
@@ -753,9 +791,12 @@ class DesignCanvas(Gtk.DrawingArea):
         # Reset active handle for new click
         self.active_handle = None
 
+        # Shift or Ctrl adds to the selection instead of replacing it.
+        additive = bool(event.state & (Gdk.ModifierType.SHIFT_MASK |
+                                       Gdk.ModifierType.CONTROL_MASK))
 
         # Check if clicking on a resize handle of the selected element
-        if self.selected_element:
+        if len(self.document.selection) == 1:
             handle = geometry.handle_at_point(lx, ly, self.selected_element,
                                              self._scale())
             if handle:
@@ -769,10 +810,22 @@ class DesignCanvas(Gtk.DrawingArea):
             if element.contains_point(lx, ly):
                 clicked_element = element
                 break
-        
+
+        # Nothing under the pointer: start a rubber band, which selects what it
+        # is dragged over and clears the selection if it is dragged over nothing.
+        if clicked_element is None:
+            self.band_origin = self.band_now = (lx, ly)
+            self.band_additive = additive
+            self.last_click_element = None
+            if not additive:
+                self.document.clear_selection()
+            self.queue_draw()
+            return
+
         # Check for double-click (within 500ms and same element)
         current_time = time.time()
-        if (self.last_click_element == clicked_element and 
+        if (not additive and
+            self.last_click_element == clicked_element and 
             clicked_element is not None and 
             (current_time - self.last_click_time) < 0.5):
             # Double-click detected
@@ -786,14 +839,20 @@ class DesignCanvas(Gtk.DrawingArea):
         self.last_click_element = clicked_element
         
         # Single click selection
-        self.selected_element = clicked_element
-        if clicked_element:
+        self.document.select(clicked_element, additive)
+        # An additive click is a selection gesture, not the start of a drag:
+        # picking up the group on the same click would move it by whatever the
+        # pointer wandered before the button came back up.
+        if clicked_element and not additive:
             self.drag_start = (lx, ly)
         self.queue_draw()
     
     def on_button_release(self, widget, event):
         """Handle mouse button release."""
         if event.button == 1:
+            if self.band_origin is not None:
+                self._finish_band()
+                return
             self.drag_start = None
             self.active_handle = None
             # a drag is one change, reported once it finishes, so that it is
@@ -803,6 +862,19 @@ class DesignCanvas(Gtk.DrawingArea):
                 if self.on_change_callback:
                     self.on_change_callback()
     
+    def _finish_band(self):
+        """Select what the rubber band was dragged over, and put it away."""
+        (x0, y0), (x1, y1) = self.band_origin, self.band_now
+        self.band_origin = self.band_now = None
+        caught = geometry.elements_in_box(self.elements, x0, y0, x1, y1)
+        if self.band_additive:
+            self.document.extend_selection(caught)
+        else:
+            self.document.select_many(caught)
+        # A band changes the selection, never the document, so it is not a
+        # change to undo - only a redraw.
+        self.queue_draw()
+
     def _set_cursor(self, name: Optional[str]):
         """Set the window cursor by CSS name, or None for the default."""
         if name == self._cursor_name:
@@ -821,7 +893,7 @@ class DesignCanvas(Gtk.DrawingArea):
             self._set_cursor(self.HANDLE_CURSORS.get(self.active_handle))
             return
         name = None
-        if self.selected_element:
+        if len(self.document.selection) == 1:
             lx, ly = self._screen_to_label(event.x, event.y)
             handle = geometry.handle_at_point(lx, ly, self.selected_element,
                                              self._scale())
@@ -853,7 +925,12 @@ class DesignCanvas(Gtk.DrawingArea):
         """Handle mouse motion for dragging elements or resizing."""
         self._update_cursor(event)
 
-        if not self.drag_start or not self.selected_element:
+        if self.band_origin is not None:
+            self.band_now = self._screen_to_label(event.x, event.y)
+            self.queue_draw()
+            return
+
+        if not self.drag_start or not self.document.selection:
             return
         
         # Calculate movement in label coordinates
@@ -866,7 +943,8 @@ class DesignCanvas(Gtk.DrawingArea):
             geometry.resize_by_handle(self.document, self.selected_element,
                                       self.active_handle, dx, dy)
         else:
-            geometry.move_element(self.document, self.selected_element, dx, dy)
+            # The whole selection moves together, clamped as one box.
+            geometry.move_selection(self.document, self.document.selection, dx, dy)
         
         # Update drag start for next movement (always update)
         self.drag_start = (lx, ly)

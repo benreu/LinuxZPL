@@ -17,6 +17,7 @@ from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
 
 from . import code128
 from . import fonts as zpl_fonts
+from . import geometry
 
 
 class DesignElement:
@@ -608,7 +609,7 @@ class Document:
     def __init__(self, label_width: int = 812, label_height: int = 1218,
                  dpi: int = zpl_fonts.DEFAULT_DPI):
         self.elements: List[DesignElement] = []
-        self.selected_element: Optional[DesignElement] = None
+        self.selection: List[DesignElement] = []
         self.label_width = label_width
         self.label_height = label_height
         self.dpi = dpi
@@ -617,6 +618,77 @@ class Document:
         self.font_path: Optional[str] = None
         self.font_family: Optional[str] = None
         self.printer_font_name: Optional[str] = None
+
+    # --- selection -----------------------------------------------------------
+    #
+    # More than one element can be selected at once, so that a group of them
+    # can be aligned against each other. `selection` is the truth; the singular
+    # `selected_element` is the last one picked - the primary, which carries
+    # the resize handles and is what the z-order commands move. Keeping the
+    # singular name as a property over the list means everything that only ever
+    # wants one element - the editors, the context menu, the parser - is
+    # unchanged by there being more than one.
+
+    @property
+    def selected_element(self) -> Optional[DesignElement]:
+        return self.selection[-1] if self.selection else None
+
+    @selected_element.setter
+    def selected_element(self, element: Optional[DesignElement]):
+        self.selection = [element] if element is not None else []
+
+    def select(self, element: Optional[DesignElement], additive: bool = False):
+        """Pick an element, or add one to the selection and take it out again.
+
+        A plain pick of an element already in the selection keeps the whole
+        selection, so a group can be dragged by any of its members; an additive
+        pick of one takes it out, which is how a member is dropped.
+        """
+        if element is None:
+            if not additive:
+                self.clear_selection()
+            return
+        if not additive:
+            if element not in self.selection:
+                self.selection = [element]
+            else:
+                # The picked element becomes the primary even though the group
+                # survives, so the commands that act on one element - the
+                # z-order four, reached by right-clicking a member - act on the
+                # element the user actually pointed at.
+                self.make_primary(element)
+            return
+        if element in self.selection:
+            self.selection.remove(element)
+        else:
+            self.selection.append(element)
+
+    def make_primary(self, element) -> None:
+        """Move a selected element to the end, making it the primary."""
+        if element in self.selection and self.selection[-1] is not element:
+            self.selection.remove(element)
+            self.selection.append(element)
+
+    def select_many(self, elements) -> None:
+        """Select exactly these, ignoring any that are not in the document."""
+        self.selection = [el for el in elements if el in self.elements]
+
+    def extend_selection(self, elements) -> None:
+        """Add these to the selection, leaving what is already in it alone.
+
+        Adding rather than toggling, which is what an additive rubber band
+        wants: a band dragged over a group to pick up one more element should
+        not drop every element it passed on the way.
+        """
+        for element in elements:
+            if element in self.elements and element not in self.selection:
+                self.selection.append(element)
+
+    def clear_selection(self) -> None:
+        self.selection = []
+
+    def is_selected(self, element) -> bool:
+        return element in self.selection
 
     # --- adding and removing -------------------------------------------------
 
@@ -648,11 +720,18 @@ class Document:
         return element
 
     def remove_selected(self) -> bool:
-        if self.selected_element and self.selected_element in self.elements:
-            self.elements.remove(self.selected_element)
-            self.selected_element = None
-            return True
-        return False
+        """Delete every selected element.
+
+        The whole selection goes, not just the primary: a user who picked three
+        elements and pressed Delete meant all three.
+        """
+        doomed = [el for el in self.selection if el in self.elements]
+        if not doomed:
+            return False
+        for element in doomed:
+            self.elements.remove(element)
+        self.clear_selection()
+        return True
 
     def clear(self):
         """Clear all elements."""
@@ -660,6 +739,10 @@ class Document:
         self.selected_element = None
 
     # --- z-order -------------------------------------------------------------
+    #
+    # These move the primary element only, even while a group is selected: what
+    # "bring forward" should mean for three elements at different depths is a
+    # question of its own, and answering it badly is worse than leaving it.
 
     def can_raise(self) -> bool:
         return (self.selected_element is not None
@@ -717,10 +800,13 @@ class Document:
         decoded source) or caches keyed by (width, height) and replaced
         wholesale, so sharing them between snapshots is safe and saves
         deep-copying decoded images and rendered bitmaps.
+
+        The selection is recorded as indices rather than elements, since undo
+        replaces every element object - a group selection has to come back as
+        the group, not as a set of detached copies.
         """
-        selected = None
-        if self.selected_element in self.elements:
-            selected = self.elements.index(self.selected_element)
+        selected = [self.elements.index(el) for el in self.selection
+                    if el in self.elements]
         return (self.label_width, self.label_height,
                 [_copy_element(el) for el in self.elements], selected)
 
@@ -734,10 +820,19 @@ class Document:
         # copied again on the way out, or the next edit would rewrite the
         # snapshot still sitting on the undo stack
         self.elements = [_copy_element(el) for el in elements]
-        self.selected_element = (self.elements[selected]
-                                 if selected is not None else None)
+        self.selection = [self.elements[i] for i in selected]
 
     # --- geometry ------------------------------------------------------------
+
+    def align_selected(self, edge: str) -> bool:
+        """Line the selection up on one edge, or centre it on one axis.
+
+        Two or more elements line up against each other; one on its own lines
+        up against the label. Returns whether anything actually moved, so an
+        align that changes nothing records no undo entry - the same contract
+        the z-order commands keep.
+        """
+        return geometry.align_elements(self, self.selection, edge)
 
     def set_label_size(self, width: int, height: int):
         """Set the label size and clamp elements to the new bounds."""

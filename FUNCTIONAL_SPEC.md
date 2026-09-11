@@ -304,15 +304,33 @@ pinned.
 
 - **Left click** selects the topmost element containing the point, or clears the
   selection.
-- **Drag** moves the selected element. Position is clamped so the element stays
-  inside the label: `0 ≤ x ≤ label_width − width`, likewise for y.
-- **Eight resize handles** on the selected element — four corners, four edge
-  midpoints — drawn as small filled squares. A handle is **8 screen pixels**,
-  drawn and hit-tested at `8 / scale` dots, so it is the same size to the
-  pointer at every zoom. A handle is hit if the pointer is within that of its
-  centre. While hovering one, the pointer changes to the
-  matching directional resize cursor (`nw-resize`, `n-resize`, `ne-resize`,
-  `w-resize`, `e-resize`, `sw-resize`, `s-resize`, `se-resize`).
+- **Shift-click or Ctrl-click** adds the element under the pointer to the
+  selection, or takes it out again if it is already in. A plain click on an
+  element that is already selected keeps the whole selection, so a group can be
+  picked up by any of its members; a click on empty canvas is what reduces a
+  group back to nothing.
+- **Dragging on empty canvas** draws a rubber band, and everything its rectangle
+  **overlaps** is selected when the button comes up — overlapping, not
+  containing, so an element running to the edge of the label can still be caught.
+  Holding Shift or Ctrl adds the catch to the selection instead of replacing it.
+  A band changes only the selection, never the document, so it is not undoable.
+- The selection is **ordered by when each element was picked**. Its last member
+  is the *primary*: the one that carries the resize handles and the one the
+  z-order commands move.
+- **Drag** moves the selection. A single element is clamped so it stays inside
+  the label: `0 ≤ x ≤ label_width − width`, likewise for y. A group moves by one
+  shared delta, clamped against the group's own bounding box — clamping each
+  element separately would let the ones still inside carry on while the one
+  against the edge stopped, and the group would come apart.
+- **Eight resize handles** on a selection of exactly one — four corners, four
+  edge midpoints — drawn as small filled squares. A group gets none: there is no
+  single box to resize, and a handle on each member would offer a drag with
+  nowhere to go. A handle is **8 screen pixels**, drawn and hit-tested at
+  `8 / scale` dots, so it is the same size to the pointer at every zoom. A handle
+  is hit if the pointer is within that of its centre. While hovering one, the
+  pointer changes to the matching directional resize cursor (`nw-resize`,
+  `n-resize`, `ne-resize`, `w-resize`, `e-resize`, `sw-resize`, `s-resize`,
+  `se-resize`).
 - Resizing enforces a **minimum of 20 × 20 dots**, clamps the element to the
   label bounds, and then applies per-type rules:
   - frame: thickness clamped to `min(width, height) / 2`
@@ -320,9 +338,12 @@ pinned.
     text prints at the new width, and the box is then snapped to that printed
     width — the outline the user drags is the outline that prints
 - **Double click** (same element, within 500 ms) opens that element's edit
-  dialog.
+  dialog. A modified click is a selection gesture and never a double click.
 - **Right click** selects the element under the pointer and opens a context menu
-  (§6.6).
+  (§6.6). If that element is part of a group the rest of the group is kept, and
+  the element becomes the primary — so the z-order commands in the menu act on
+  the element that was actually pointed at.
+- **Delete** removes every selected element, not only the primary.
 
 ---
 
@@ -350,10 +371,33 @@ must report the real error and leave the flag set.
 ### 6.2 Edit
 
 Undo, Redo, Delete, then Bring to Front / Bring Forward / Send Backward / Send
-to Back. Delete and the four z-order items are disabled when nothing is
-selected; the raise pair is disabled when the selection is already on top and
-the lower pair when it is already at the bottom. Sensitivity is re-evaluated
-each time the menu opens.
+to Back, then an **Align** submenu. Delete and the four z-order items are
+disabled when nothing is selected; the raise pair is disabled when the selection
+is already on top and the lower pair when it is already at the bottom.
+Sensitivity is re-evaluated each time the menu opens.
+
+The z-order commands move the **primary** element only, even while a group is
+selected: what "bring forward" should mean for three elements at different
+depths is a question of its own, and answering it badly is worse than leaving it.
+
+**Align** holds six commands, in this order: Align Left, Centre Horizontally,
+Align Right, Align Top, Centre Vertically, Align Bottom. Each moves one axis and
+leaves the other alone, and all six are disabled when nothing is selected.
+
+| Selection | What it lines up against |
+|---|---|
+| Two or more elements | The selection's own bounding box — Align Left takes every member to the leftmost x in the group, Centre Horizontally puts every member's centre on the group's centre |
+| Exactly one element | The label, which is the only other thing there is to line it up with — Align Left is `x = 0`, Centre Horizontally is `(label_width − width) / 2`, Align Right is `label_width − width` |
+
+Results are clamped into the label the way a drag is, so an element larger than
+the label lands against the edge rather than at a negative coordinate. An align
+that moves nothing records no undo entry. Nothing else about an element changes:
+a field placed by `^FT` is written back as `^FT` at its new position, and a
+rotated element aligns by its footprint, which is axis-aligned at every quarter
+turn (§3.2).
+
+The align commands have **no keyboard shortcuts**: six more window-wide bindings
+would be six more keys taken away from the canvas (§14).
 
 ### 6.3 View
 
@@ -373,7 +417,12 @@ those two groups. §5 describes what each does to the scale.
 `+ Text`, `+ Frame`, `+ Barcode` add an element with the defaults from §3.3.
 `+ Image` opens a file chooser (JPEG/PNG) first. Each new element is placed at a
 staggered offset so successive additions do not stack exactly, and becomes the
-selection. `Delete` removes the selected element.
+selection. `Delete` removes the selected elements.
+
+`Align ▾` opens the same six commands the Edit menu holds, under the same enable
+rules, re-evaluated as the popup opens — the popup can be reached without the
+Edit menu ever having been shown. One button rather than six: the toolbar is
+text-labelled, and the icon theme has no object-align icons to label six with.
 
 ### 6.6 Element context menu (right click)
 
@@ -701,14 +750,19 @@ error of up to half a dot per module. Positions and heights scale exactly.
 ## 12. Undo and redo
 
 A single linear history of document snapshots. A snapshot holds the label size,
-every element with all its properties, and which element is selected.
+every element with all its properties, and which elements are selected — as
+indices, since restoring replaces every element object and a group selection has
+to come back as the group.
 
 - **One entry per user action.** A drag or a resize is one entry, recorded when
   the mouse is released — not one per motion event.
 - Every document change is undoable: adding, deleting, moving, resizing,
-  reordering, editing an element through its dialog, toggling Print This
-  Element, and changing the label size (including the element clamping that a
-  smaller label causes).
+  reordering, aligning, editing an element through its dialog, toggling Print
+  This Element, and changing the label size (including the element clamping that
+  a smaller label causes).
+- Changing the **selection** is not a document change and is not undoable: a
+  click, a shift-click and a rubber band record no entry. An align that moves
+  nothing records none either.
 - Performing a new action after undoing discards the redo branch.
 - History is capped at 50 entries, oldest discarded.
 - Loading a file clears the history — undo never crosses a file boundary.

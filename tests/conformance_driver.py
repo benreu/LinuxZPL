@@ -142,9 +142,9 @@ class GtkDriver:
         different dot from the one the Qt side lands on, and the harness would
         be reporting its own arithmetic as a disagreement.
         """
-        def __init__(self, x, y, button=1):
+        def __init__(self, x, y, button=1, state=0):
             self.x, self.y = float(int(x)), float(int(y))
-            self.button, self.state = button, 0
+            self.button, self.state = button, state
 
     def fresh_gesture(self):
         """Forget the last click, so two scripted gestures are not a double one.
@@ -163,6 +163,28 @@ class GtkDriver:
         scale = self.canvas._scale()
         self.canvas.on_button_press(self.canvas,
                                     self._Event(lx * scale, ly * scale))
+
+    def shift_click(self, lx, ly):
+        """Press and release with Shift held, which adds to the selection."""
+        from gi.repository import Gdk
+        scale = self.canvas._scale()
+        shifted = self._Event(lx * scale, ly * scale,
+                              state=Gdk.ModifierType.SHIFT_MASK)
+        self.canvas.on_button_press(self.canvas, shifted)
+        self.canvas.on_button_release(self.canvas, shifted)
+
+    def band(self, from_x, from_y, to_x, to_y):
+        """Drag a rubber band across the canvas, from one point to another."""
+        scale = self.canvas._scale()
+        self.click(from_x, from_y)
+        self.canvas.on_motion(self.canvas, self._Event(to_x * scale, to_y * scale))
+        self.canvas.on_button_release(self.canvas,
+                                      self._Event(to_x * scale, to_y * scale))
+
+    def selection(self):
+        """Which elements are selected, as indices into the document."""
+        document = self.canvas.document
+        return [document.elements.index(el) for el in document.selection]
 
     def drag_pointer(self, from_x, from_y, dx, dy):
         """Press, move and release - the path a user's drag actually takes."""
@@ -189,8 +211,21 @@ class GtkDriver:
     def send_to_back(self):
         self.canvas.send_to_back()
 
+    def select_many(self, elements):
+        self.canvas.document.select_many(elements)
+
+    def align(self, edge):
+        self.canvas.align_selected(edge)
+
+    def move_group(self, dx, dy):
+        self.geometry.move_selection(self.canvas.document,
+                                     self.canvas.document.selection, dx, dy)
+
     def set_label_size(self, w, h):
         self.canvas.set_label_size(w, h)
+
+    def label_size(self):
+        return (self.canvas.label_width, self.canvas.label_height)
 
     def load(self, path):
         self.window.load_zpl_file(str(path))
@@ -218,20 +253,28 @@ class GtkDriver:
         # The menu bar lives in the header bar, not directly under the window.
         bar = find_bar(self.window.get_titlebar()) or find_bar(self.window)
         lines = []
-        for top in bar.get_children():
-            lines.append(f'[{menu_label(top.get_label())}]')
-            submenu = top.get_submenu()
-            if submenu is None:
-                continue
-            for item in submenu.get_children():
+
+        def walk(menu, depth):
+            """Items of a menu and of any submenu under it, indented by depth."""
+            pad = '  ' * depth
+            for item in menu.get_children():
                 if isinstance(item, Gtk.SeparatorMenuItem):
-                    lines.append('  ---')
+                    lines.append(f'{pad}---')
                     continue
                 accel = self.window.accelerators.get(item, '')
                 if accel:
                     key, mods = Gtk.accelerator_parse(accel)
                     accel = Gtk.accelerator_get_label(key, mods)
-                lines.append(f'  {menu_label(item.get_label())}\t{menu_accel(accel)}')
+                lines.append(f'{pad}{menu_label(item.get_label())}\t{menu_accel(accel)}')
+                # A submenu is the other half of a menu bar: an Align that held
+                # different commands in the two frontends would otherwise pass.
+                if item.get_submenu() is not None:
+                    walk(item.get_submenu(), depth + 1)
+
+        for top in bar.get_children():
+            lines.append(f'[{menu_label(top.get_label())}]')
+            if top.get_submenu() is not None:
+                walk(top.get_submenu(), 1)
         return '\n'.join(lines)
 
     def to_zpl(self):
@@ -297,12 +340,13 @@ class QtDriver:
     def canvas(self):
         return self.window.canvas
 
-    def _event(self, kind, lx, ly):
+    def _event(self, kind, lx, ly, modifiers=None):
         from PySide2.QtCore import QPoint, Qt
         from PySide2.QtGui import QMouseEvent
         scale = self.canvas._scale()
         return QMouseEvent(kind, QPoint(int(lx * scale), int(ly * scale)),
-                           Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+                           Qt.LeftButton, Qt.LeftButton,
+                           Qt.NoModifier if modifiers is None else modifiers)
 
     def fresh_gesture(self):
         """Forget the last click, so two scripted gestures are not a double one.
@@ -320,6 +364,27 @@ class QtDriver:
         """Press the left button at a point in label dots."""
         from PySide2.QtCore import QEvent
         self.canvas.mousePressEvent(self._event(QEvent.MouseButtonPress, lx, ly))
+
+    def shift_click(self, lx, ly):
+        """Press and release with Shift held, which adds to the selection."""
+        from PySide2.QtCore import QEvent, Qt
+        self.canvas.mousePressEvent(
+            self._event(QEvent.MouseButtonPress, lx, ly, Qt.ShiftModifier))
+        self.canvas.mouseReleaseEvent(
+            self._event(QEvent.MouseButtonRelease, lx, ly, Qt.ShiftModifier))
+
+    def band(self, from_x, from_y, to_x, to_y):
+        """Drag a rubber band across the canvas, from one point to another."""
+        from PySide2.QtCore import QEvent
+        self.click(from_x, from_y)
+        self.canvas.mouseMoveEvent(self._event(QEvent.MouseMove, to_x, to_y))
+        self.canvas.mouseReleaseEvent(
+            self._event(QEvent.MouseButtonRelease, to_x, to_y))
+
+    def selection(self):
+        """Which elements are selected, as indices into the document."""
+        return [self.document.elements.index(el)
+                for el in self.document.selection]
 
     def drag_pointer(self, from_x, from_y, dx, dy):
         """Press, move and release - the path a user's drag actually takes."""
@@ -345,8 +410,21 @@ class QtDriver:
     def send_to_back(self):
         self.document.send_to_back()
 
+    def select_many(self, elements):
+        self.document.select_many(elements)
+
+    def align(self, edge):
+        self.document.align_selected(edge)
+
+    def move_group(self, dx, dy):
+        self.geometry.move_selection(self.document, self.document.selection,
+                                     dx, dy)
+
     def set_label_size(self, w, h):
         self.document.set_label_size(w, h)
+
+    def label_size(self):
+        return (self.document.label_width, self.document.label_height)
 
     def load(self, path):
         self.window.unsaved_changes = False
@@ -360,17 +438,25 @@ class QtDriver:
     def menus(self):
         """The menu bar as text: titles, items, separators and accelerators."""
         lines = []
-        for top in self.window.menuBar().actions():
-            lines.append(f'[{menu_label(top.text())}]')
-            menu = top.menu()
-            if menu is None:
-                continue
+
+        def walk(menu, depth):
+            """Items of a menu and of any submenu under it, indented by depth."""
+            pad = '  ' * depth
             for action in menu.actions():
                 if action.isSeparator():
-                    lines.append('  ---')
+                    lines.append(f'{pad}---')
                     continue
-                lines.append(f'  {menu_label(action.text())}\t'
+                lines.append(f'{pad}{menu_label(action.text())}\t'
                              f'{menu_accel(action.shortcut().toString())}')
+                # A submenu is the other half of a menu bar: an Align that held
+                # different commands in the two frontends would otherwise pass.
+                if action.menu() is not None:
+                    walk(action.menu(), depth + 1)
+
+        for top in self.window.menuBar().actions():
+            lines.append(f'[{menu_label(top.text())}]')
+            if top.menu() is not None:
+                walk(top.menu(), 1)
         return '\n'.join(lines)
 
     def to_zpl(self):
@@ -445,6 +531,41 @@ def sequence(driver, record):
     record('bring frame forward')
     driver.send_to_back()
     record('send frame to back')
+
+    # Selecting more than one, through each frontend's own event handlers: a
+    # rubber band dragged across the label, then a click and a shift-click.
+    # Neither gesture emits any ZPL, so what is recorded is the selection
+    # itself - which is the whole of what the two could disagree about.
+    driver.fresh_gesture()
+    width, height = driver.label_size()
+    driver.band(width - 1, height - 1, 0, 0)
+    record('a band dragged across the label selects: ' + json.dumps(driver.selection()))
+    record('and the band changed nothing in the design')
+
+    # A band of no area over empty canvas is how a user clears the selection;
+    # the click and the shift-click after it then build a group of two.
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    record('a click on empty canvas selects: ' + json.dumps(driver.selection()))
+    driver.fresh_gesture()
+    driver.click(text.x + text.width // 2, text.y + text.height // 2)
+    driver.fresh_gesture()
+    driver.shift_click(frame.x + frame.width // 2, frame.y + frame.height // 2)
+    record('a click then a shift-click selects: ' + json.dumps(driver.selection()))
+
+    # Alignment. A group lines up against its own bounding box and a lone
+    # element against the label, so both rules are compared; the group drag
+    # after them is the clamp that has to treat the pair as one box.
+    driver.select_many([text, frame])
+    for edge in ('left', 'center', 'right', 'top', 'middle', 'bottom'):
+        driver.align(edge)
+        record(f'the pair aligned {edge}')
+    driver.move_group(-9999, -9999)
+    record('the pair dragged into the corner as one box')
+
+    driver.select(barcode)
+    for edge in ('right', 'bottom', 'center', 'middle'):
+        driver.align(edge)
+        record(f'one element aligned {edge} on the label')
 
     text.print_enabled = False
     record('text marked not printing')

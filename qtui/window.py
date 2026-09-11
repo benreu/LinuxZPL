@@ -16,8 +16,8 @@ from pathlib import Path
 from PySide2.QtCore import QSize, Qt
 from PySide2.QtGui import QCursor, QImage, QKeySequence, QPixmap
 from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QLabel,
-                               QMainWindow, QScrollArea, QSizePolicy,
-                               QToolBar, QWidget)
+                               QMainWindow, QMenu, QScrollArea, QSizePolicy,
+                               QToolBar, QToolButton, QWidget)
 
 from zplcore import fonts as zpl_fonts
 from zplcore import parser as zpl_parser
@@ -29,6 +29,18 @@ from zplcore.renderer import ZPLRenderer
 
 from . import dialogs as qt_dialogs
 from .canvas import DesignCanvas
+
+# The align commands, in menu order: the three horizontal, then the three
+# vertical. The GTK frontend spells the same six the same way, and the
+# conformance suite diffs the two menu bars against each other.
+ALIGN_ITEMS = (
+    ('left', "Align &Left"),
+    ('center', "Centre &Horizontally"),
+    ('right', "Align &Right"),
+    ('top', "Align &Top"),
+    ('middle', "Centre &Vertically"),
+    ('bottom', "Align &Bottom"),
+)
 
 APP_NAME = "LinuxZPL (Qt)"
 UNDO_LIMIT = 50
@@ -242,6 +254,12 @@ class ZPLDesignerWindow(QMainWindow):
         for a in (self._alt_front, self._alt_back):
             a.setVisible(False)
 
+        # No shortcuts on the align commands: six more window-wide bindings
+        # would be six more chances to take a key away from the canvas.
+        self.align_actions = [
+            self._action(label, lambda _checked=False, edge=edge: self.on_align(edge))
+            for edge, label in ALIGN_ITEMS]
+
         self.zoom_in_action = self._action("Zoom &In", self.on_zoom_in,
                                            QKeySequence.ZoomIn)
         # Ctrl++ needs Shift on most layouts, so the unshifted key is bound too;
@@ -282,6 +300,10 @@ class ZPLDesignerWindow(QMainWindow):
         for action in (self.front_action, self.forward_action,
                        self.backward_action, self.back_action):
             edit_menu.addAction(action)
+        edit_menu.addSeparator()
+        align_menu = edit_menu.addMenu("&Align")
+        for action in self.align_actions:
+            align_menu.addAction(action)
         # Re-evaluated each time the menu opens, since the selection and the
         # z-order both move underneath it.
         edit_menu.aboutToShow.connect(self._update_edit_menu)
@@ -317,6 +339,25 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar.addAction(self._action("Fit", self.on_fit_label))
         toolbar.addAction(self._action("+", self.on_zoom_in))
 
+        # One button opening the same six commands the Edit menu holds, rather
+        # than six buttons: the toolbar is text-labelled, and there are no
+        # object-align icons in the icon theme to label them with. The actions
+        # are the same objects, so the two menus can never disagree.
+        toolbar.addSeparator()
+        align_button = QToolButton(self)
+        align_button.setText("Align \u25be")
+        align_button.setToolTip("Line the selection up (Edit \u25b8 Align)")
+        align_button.setPopupMode(QToolButton.InstantPopup)
+        align_popup = QMenu(align_button)
+        for action in self.align_actions:
+            align_popup.addAction(action)
+        # The popup can open without the Edit menu ever having been shown, so
+        # it re-evaluates the same enable rules on the way up.
+        align_popup.aboutToShow.connect(self._update_edit_menu)
+        align_button.setMenu(align_popup)
+        self.align_button = align_button
+        toolbar.addWidget(align_button)
+
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
@@ -329,7 +370,9 @@ class ZPLDesignerWindow(QMainWindow):
     def _update_edit_menu(self):
         """Grey out the actions that need a selection, or a place to move to."""
         doc = self.document
-        self.delete_action.setEnabled(doc.selected_element is not None)
+        self.delete_action.setEnabled(bool(doc.selection))
+        for action in self.align_actions:
+            action.setEnabled(bool(doc.selection))
         for action in (self.front_action, self.forward_action):
             action.setEnabled(doc.can_raise())
         for action in (self.backward_action, self.back_action):
@@ -410,9 +453,12 @@ class ZPLDesignerWindow(QMainWindow):
         self.canvas.commit()
 
     def on_delete(self):
-        doomed = self.document.selected_element
+        # Every selected element goes, so every editor open on one has to be
+        # closed - an editor must never outlive the element it is editing.
+        doomed = list(self.document.selection)
         if self.document.remove_selected():
-            self._close_editor_for(doomed)
+            for element in doomed:
+                self._close_editor_for(element)
             self.canvas.commit()
 
     def _reorder(self, moved: bool):
@@ -430,6 +476,10 @@ class ZPLDesignerWindow(QMainWindow):
 
     def on_send_to_back(self):
         self._reorder(self.document.send_to_back())
+
+    def on_align(self, edge: str):
+        if self.document.align_selected(edge):
+            self.canvas.commit()
 
     def on_element_double_clicked(self, element):
         """Open the editor for whichever element was double-clicked."""

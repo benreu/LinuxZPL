@@ -94,6 +94,37 @@ window.on_delete_clicked(None)
 check("deleting an element closes the editor open on it",
       not window._editors, len(window._editors))
 
+# --- and a group delete closes every editor it orphans ----------------------
+# Delete takes the whole selection, so one editor left open over one of the
+# deleted elements would be exactly the detached editor the rule above forbids.
+
+pair = [document.add_text_element('one'), document.add_text_element('two')]
+for element in pair:
+    window.on_element_double_clicked(None, element)
+check("an editor is open on each of the two", len(window._editors) == 2,
+      len(window._editors))
+document.select_many(pair)
+window.on_delete_clicked(None)
+check("deleting a group takes every element in it",
+      all(element not in document.elements for element in pair))
+check("and closes every editor that was open on one",
+      not window._editors, len(window._editors))
+
+# --- the canvas paints a group and a rubber band ----------------------------
+# Neither path has any other cover: the conformance suite compares ZPL, and ZPL
+# says nothing about what a selection looks like.
+
+import cairo
+
+canvas = window.design_canvas
+canvas.set_zoom(1.0)
+document.select_many(document.elements[:2])
+canvas.band_origin, canvas.band_now = (10, 10), (300, 400)
+surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 400, 400)
+canvas.on_draw(canvas, cairo.Context(surface))
+canvas.band_origin = canvas.band_now = None
+check("a group selection and a rubber band paint without raising", True)
+
 window.destroy()
 
 print()

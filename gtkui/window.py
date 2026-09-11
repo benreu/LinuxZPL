@@ -33,6 +33,19 @@ DEFAULT_PRINTER_ADDRESS = '192.168.50.21'
 DEFAULT_PRINTER_PORT = 9100
 
 
+# The align commands, in menu order: the three horizontal, then the three
+# vertical. The Qt frontend spells the same six the same way, and the
+# conformance suite diffs the two menu bars against each other.
+ALIGN_ITEMS = (
+    ('left', "Align _Left"),
+    ('center', "Centre _Horizontally"),
+    ('right', "Align _Right"),
+    ('top', "Align _Top"),
+    ('middle', "Centre _Vertically"),
+    ('bottom', "Align _Bottom"),
+)
+
+
 def _make_row(content, label_text, widget, label_width: int = 130):
     """One labelled row in a dialog's content area."""
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -206,6 +219,17 @@ class ZPLViewerWindow(Gtk.Window):
             edit_menu.append(item)
             self.zorder_items.append(item)
 
+        edit_menu.append(Gtk.SeparatorMenuItem())
+
+        # Every align item in the window, across both copies of the menu, so
+        # the enable rules can be applied to all of them at once, and the menus
+        # holding them, whose "show" is connected once the canvas exists.
+        self.align_items = []
+        self._align_menus = []
+        align_item = Gtk.MenuItem.new_with_mnemonic("_Align")
+        align_item.set_submenu(self._build_align_menu())
+        edit_menu.append(align_item)
+
         edit_menu.show_all()
         self._edit_menu = edit_menu
 
@@ -327,6 +351,18 @@ class ZPLViewerWindow(Gtk.Window):
             button.connect("clicked", action)
             zoom_box.pack_start(button, False, False, 0)
 
+        # One button opening the same six commands the Edit menu holds, rather
+        # than six buttons: the toolbar is text-labelled, and there are no
+        # object-align icons in the icon theme to label them with. GTK menu
+        # items belong to one menu, so this is a second copy of the items - the
+        # handlers and the enable rules are shared, and the conformance suite
+        # diffs this menu against the Qt frontend's.
+        align_button = Gtk.MenuButton(label="Align \u25be")
+        align_button.set_tooltip_text("Line the selection up (Edit \u25b8 Align)")
+        align_button.set_popup(self._build_align_menu())
+        self.align_button = align_button
+        toolbar_box.pack_start(align_button, False, False, 0)
+
         # Delete button
         delete_btn = Gtk.Button(label="Delete")
         delete_btn.connect("clicked", self.on_delete_clicked)
@@ -361,6 +397,10 @@ class ZPLViewerWindow(Gtk.Window):
         # rather than at build time: show_all() emits "show", and the handler
         # needs the canvas.
         self._edit_menu.connect("show", self._update_edit_menu)
+        # The toolbar's copy can be opened without the Edit menu ever having
+        # been shown, so every copy re-evaluates the rules on the way up.
+        for menu in self._align_menus:
+            menu.connect("show", lambda _m: self._update_align_items())
 
         # Edit history: snapshots older than the current state, and newer ones
         self._undo_stack = []
@@ -1274,10 +1314,17 @@ class ZPLViewerWindow(Gtk.Window):
         for widget in (self.redo_item, self.redo_button):
             widget.set_sensitive(can_redo)
 
+    def _update_align_items(self):
+        """The align commands need something selected to line up."""
+        selected = bool(self.design_canvas.document.selection)
+        for item in self.align_items:
+            item.set_sensitive(selected)
+
     def _update_edit_menu(self, menu):
         """Grey out the actions that need a selected element."""
         element = self.design_canvas.selected_element
         self.delete_item.set_sensitive(element is not None)
+        self._update_align_items()
         elements = self.design_canvas.elements
         idx = elements.index(element) if element in elements else None
         front, forward, backward, back = self.zorder_items
@@ -1286,6 +1333,21 @@ class ZPLViewerWindow(Gtk.Window):
         for item in (backward, back):
             item.set_sensitive(idx is not None and idx > 0)
     
+    def _build_align_menu(self) -> Gtk.Menu:
+        """One copy of the align commands, for a menu or a popup."""
+        menu = Gtk.Menu()
+        for edge, label in ALIGN_ITEMS:
+            item = Gtk.MenuItem.new_with_mnemonic(label)
+            item.connect("activate", self.on_align_clicked, edge)
+            menu.append(item)
+            self.align_items.append(item)
+        menu.show_all()
+        self._align_menus.append(menu)
+        return menu
+
+    def on_align_clicked(self, _widget, edge: str):
+        self.design_canvas.align_selected(edge)
+
     def on_add_text_clicked(self, widget):
         """Handle add text element button click."""
         self.design_canvas.add_text_element("New Text")
@@ -1329,9 +1391,12 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_delete_clicked(self, widget):
         """Handle delete selected element button click."""
-        doomed = self.design_canvas.document.selected_element
+        # Every selected element goes, so every editor open on one has to be
+        # closed - an editor must never outlive the element it is editing.
+        doomed = list(self.design_canvas.document.selection)
         self.design_canvas.remove_selected()
-        self._close_editor_for(doomed)
+        for element in doomed:
+            self._close_editor_for(element)
     
     def on_canvas_draw(self, widget, context):
         """Canvas draw event handler - re-render when canvas changes."""

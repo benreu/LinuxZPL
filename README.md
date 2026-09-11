@@ -42,6 +42,10 @@ disagree.
   fonts are actually there
 - **Network Printing**: straight over TCP to a Zebra, no printing subsystem
   involved
+- **Select more than one**: shift-click, or drag a band across the canvas, and
+  the whole group moves together
+- **Align**: line a group up on any edge, or centre it on either axis; a single
+  element lines up against the label itself
 - **Per-element Print Toggle**: keep an element in the design and in the saved
   file, but leave it off the printed label
 - **203, 300 and 600 dpi**: label size is set in inches, and a label drawn for
