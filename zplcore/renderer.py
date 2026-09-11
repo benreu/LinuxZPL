@@ -7,7 +7,7 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
-from . import geometry, parser, textraster
+from . import geometry, graphics, parser, textraster
 from .model import BarcodeElement, FieldBlock, FrameElement, TextElement
 
 
@@ -261,23 +261,16 @@ class ZPLRenderer:
             self.draw.rectangle(box, outline=ink, width=thickness)
 
     def _render_graphic(self, params: str):
-        """Render a ^GF graphic field: ^GFa,total,total,bytes_per_row,<hex>."""
-        parts = params.split(',', 4)
-        if len(parts) < 5:
+        """Render a ^GF graphic field, in whichever encoding it arrived in.
+
+        Through zplcore.graphics, so the preview and the canvas cannot disagree
+        about what the field holds.
+        """
+        decoded = graphics.decode(params)
+        if decoded is None:
             return
-        fmt = parts[0].strip().upper()
-        if fmt and fmt != 'A':
-            return  # only ASCII hex (^GFA) is produced by the designer
-        try:
-            bytes_per_row = int(parts[3])
-            raw = bytes.fromhex(parts[4].strip())
-        except ValueError:
-            return
-        if bytes_per_row <= 0:
-            return
+        raw, bytes_per_row = decoded
         rows = len(raw) // bytes_per_row
-        if rows <= 0:
-            return
 
         # ZPL sets a bit for a black dot, while PIL mode '1' reads a set bit as
         # white, so the bytes are inverted before decoding. Row width is always

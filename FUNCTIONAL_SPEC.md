@@ -516,6 +516,37 @@ to the head resolution and makes it the one element that cannot be rescaled.
 black** — the inverse of the usual 1-bit image convention, where 0 is black.
 Padding bits at the end of a row are white (0).
 
+**Written uncompressed, read in four encodings.** Plain hex is what this
+designer writes; almost nothing else does, because a 5 KB logo is 100 KB of it.
+A port must *read* all of:
+
+| Encoding | Form |
+|---|---|
+| plain hex | the digits, as written above |
+| `:B64:` | `:B64:<base64 of the bytes>:<crc>` |
+| `:Z64:` | `:Z64:<base64 of the zlib-deflated bytes>:<crc>` |
+| ASCII run-length | the shorthands below, expanded into the hex stream |
+
+The run-length shorthands, which is why expanding them needs the row width:
+`G`–`Y` repeat the next hex digit 1–19 times; `g`–`z` repeat it 20–400 times in
+steps of 20; a lowercase followed by an uppercase adds the two, so `hK` is 45;
+`,` fills the rest of the row with white and `!` with black; `:` repeats the row
+above.
+
+The trailing CRC is read past rather than checked — Zebra does not publish which
+CRC-16 variant it is, and rejecting a valid label over a guessed initial value
+would be worse than not checking. `:Z64:` carries zlib's own checksum anyway.
+
+**Take the row count from the decoded data**, `len(bytes) / bytes_per_row`, not
+from either header count: `^GFa,b,c,d` has two, and once the data is compressed
+generators disagree about which is the transmitted length and which the
+uncompressed total.
+
+`^GFB` and `^GFC` are binary. A designer that reads its files as text cannot
+recover those bytes, so they are **reported as unsupported** — as is a `^GFA`
+whose data will not decode. Failing silently costs the label an image and says
+nothing.
+
 ### 8.2 Designer metadata
 
 Four `^FX` comment keys, which printers ignore:
@@ -536,7 +567,8 @@ path are caret-free and are stored as-is.
 ### 8.3 What is read
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
-`^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA`, and the four metadata keys.
+`^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
+and the four metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -612,7 +644,8 @@ their z-order position.
 
 1. the original file, if `^FXDESIGNER_PATH` still exists on disk
 2. the embedded JPEG preview
-3. decoding the 1-bit `^GFA` data (the only option for ZPL from other tools)
+3. decoding the 1-bit `^GF` data, in any of the encodings of §8.1 (the only
+   option for ZPL from other tools)
 
 ---
 

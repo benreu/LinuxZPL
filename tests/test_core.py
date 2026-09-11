@@ -1,4 +1,4 @@
-import base64, math, os, re, sys, tempfile
+import base64, math, os, re, sys, tempfile, zlib
 from pathlib import Path
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -1322,6 +1322,100 @@ check("a ^BC is still a barcode",
       [e.element_type for e in zpl_parser.parse_zpl(
           "^XA^PW812^LL1218^FO50,50^BY3^BCN,100^FD12345^FS^XZ")[0].elements]
       == ['barcode'])
+
+# --- ^GF in the encodings real labels carry ---------------------------------
+
+from zplcore import graphics as zpl_graphics
+
+def _run_length(raw, bytes_per_row):
+    """ZPL ASCII run-length, so the decoder is fed data it has to match."""
+    out = []
+    for start in range(0, len(raw), bytes_per_row):
+        digits = raw[start:start + bytes_per_row].hex().upper()
+        row, i = [], 0
+        while i < len(digits):
+            char, run = digits[i], 1
+            while i + run < len(digits) and digits[i + run] == char:
+                run += 1
+            left = run
+            while left >= 20:
+                take = min(400, left - left % 20)
+                row.append('ghijklmnopqrstuvwxyz'[take // 20 - 1])
+                left -= take
+            if left:
+                row.append('GHIJKLMNOPQRSTUVWXY'[left - 1])
+            row.append(char)
+            i += run
+        out.append(''.join(row))
+    return ''.join(out)
+
+# Ground truth: the logo this designer itself wrote into a fixture, whose
+# correct bytes are known without reading a word of the compression format.
+_logo = re.search(r'\^GFA,(\d+),(\d+),(\d+),([0-9A-Fa-f]+)',
+                  open(FIXTURES / 'sample_203dpi.zpl').read())
+GF_TOTAL, GF_BPR = int(_logo.group(1)), int(_logo.group(3))
+GF_TRUTH = bytes.fromhex(_logo.group(4))
+
+GF_FORMS = {
+    'plain hex': _logo.group(4),
+    ':Z64:': ':Z64:' + base64.b64encode(zlib.compress(GF_TRUTH)).decode() + ':ABCD',
+    ':B64:': ':B64:' + base64.b64encode(GF_TRUTH).decode() + ':ABCD',
+    'run-length': _run_length(GF_TRUTH, GF_BPR),
+}
+for name, data in GF_FORMS.items():
+    decoded = zpl_graphics.decode(f"A,{GF_TOTAL},{GF_TOTAL},{GF_BPR},{data}")
+    check(f"^GF as {name} decodes to the very same bitmap",
+          decoded is not None and decoded[0] == GF_TRUTH,
+          f"{len(decoded[0]) if decoded else None} vs {len(GF_TRUTH)} bytes")
+    page = (f"^XA^PW812^LL1218^FO50,50"
+            f"^GFA,{GF_TOTAL},{GF_TOTAL},{GF_BPR},{data}^FS^XZ")
+    read = zpl_parser.parse_zpl(page)[0]
+    check(f"and opens as one image, {name}",
+          [(e.element_type, e.width, e.height) for e in read.elements]
+          == [('image', GF_BPR * 8, len(GF_TRUTH) // GF_BPR)],
+          [(e.element_type, e.width, e.height) for e in read.elements])
+
+check(":Z64: is worth using: it is far shorter than the hex",
+      len(GF_FORMS[':Z64:']) < len(GF_FORMS['plain hex']) / 4,
+      f"{len(GF_FORMS[':Z64:'])} vs {len(GF_FORMS['plain hex'])} characters")
+
+# the run-length table, case by case, so it can be read against the manual
+for source, width, expected in (("MF", 4, "FFFFFFF0"),
+                                ("hKF", 32, "F" * 45 + "0" * 19),
+                                ("FF,", 4, "FF000000"),
+                                ("00!", 4, "00FFFFFF"),
+                                ("FF00FF00:", 4, "FF00FF00FF00FF00")):
+    got = zpl_graphics.decode_data(source, width)
+    check(f"run-length {source!r} expands to {expected}",
+          got is not None and got.hex().upper() == expected,
+          got.hex().upper() if got else None)
+check("a repeat with no row above it is not decodable",
+      zpl_graphics.decode_data(":FF", 4) is None)
+check("a character that is not hex is not decodable",
+      zpl_graphics.decode_data("FF@0", 4) is None)
+
+# what cannot be read is named, rather than leaving the label short an image
+for name, params in (('^GFB', "B,40,40,4,binary"),
+                     ('^GFC', "C,40,40,4,binary"),
+                     ('^GFA', "A,40,40,4,:Z64:####:AB"),
+                     ('^GFA', "A,40,40,4,:B64:not base64 at all:AB")):
+    page = f"^XA^PW812^LL1218^FO50,50^GF{params}^FS^XZ"
+    check(f"{name} is named when it cannot be read: {params[:14]}",
+          workflow.unsupported_commands(page) == [name],
+          workflow.unsupported_commands(page))
+check("a ^GF that can be read is not named",
+      workflow.unsupported_commands(
+          f"^XA^FO1,1^GFA,{GF_TOTAL},{GF_TOTAL},{GF_BPR},{GF_FORMS[':Z64:']}^FS^XZ") == [])
+
+# the preview draws the same ink for every encoding, not just the one we write
+_gf_ink = {}
+for name, data in GF_FORMS.items():
+    _gf_ink[name] = _preview_ink(
+        f"^XA^PW400^LL300^FO10,10^GFA,{GF_TOTAL},{GF_TOTAL},{GF_BPR},{data}^FS^XZ",
+        400, 300)
+check("the preview draws every encoding the same",
+      len(set(map(str, _gf_ink.values()))) == 1 and _gf_ink['plain hex'] is not None,
+      _gf_ink)
 
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))

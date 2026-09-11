@@ -131,7 +131,9 @@ def unsaved_changes_gate(is_dirty, ask, save):
 # different question "can the parser skip it without choking?" - ^CI could be
 # skipped but not kept, and listing it here said otherwise, so a file's
 # encoding was dropped without a word.
-MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^GF', '^FB',
+# ^GF is absent deliberately: whether one can be read depends on how its data
+# is encoded, so unsupported_commands() asks zplcore.graphics per field.
+MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^FB',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF'}
 
 
@@ -145,9 +147,19 @@ def unsupported_commands(zpl_content: str) -> list:
     """
     from .parser import tokenise
 
+    from . import graphics
+
     seen = []
-    for command, _params in tokenise(zpl_content):
+    for command, params in tokenise(zpl_content):
         if command.startswith('^A'):        # every font is modelled
+            continue
+        if command == '^GF':
+            # Only some spellings of ^GF can be read. One that cannot has to be
+            # named, or a label loses an image and is told nothing - which is
+            # what a blanket entry in MODELLED did.
+            name = graphics.unsupported(params)
+            if name and name not in seen:
+                seen.append(name)
             continue
         if command in MODELLED or command in seen:
             continue

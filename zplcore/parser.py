@@ -13,6 +13,7 @@ import re
 from typing import Optional, Tuple
 
 from . import fonts as zpl_fonts
+from . import graphics
 from .model import (BarcodeElement, Document, FieldBlock, FrameElement,
                     ImageElement, TextElement)
 
@@ -93,20 +94,24 @@ def _expand_hidden(zpl_content: str) -> str:
     return '\n'.join(lines)
 
 
-def _decode_gfa_image(x: int, y: int, gf_match, preview_b64, path_hint):
-    """An image element from a ^GFA field, best source first.
+def _decode_gfa_image(x: int, y: int, params: str, preview_b64, path_hint):
+    """An image element from a ^GF field, best source first.
 
     The 1-bit data is the only thing a printer needs, but it is also the worst
     thing to edit from - it has already been dithered. So the original file
     wins, then the embedded JPEG, and the ^GF data is the last resort (and the
     only option for ZPL that came from another tool).
     """
-    total_b = int(gf_match.group(1))
-    bpr = int(gf_match.group(3))
+    decoded = graphics.decode(params)
+    header = graphics.header(params)
+    bpr = decoded[1] if decoded else (header[3] if header else 0)
     if bpr <= 0:
         return None
-    gf_h = total_b // bpr
     gf_w = bpr * 8
+    # The row count comes from the data when there is data: ^GF's two byte
+    # counts mean different things once it is compressed, and generators
+    # disagree about which is which.
+    gf_h = (len(decoded[0]) // bpr) if decoded else (header[2] // bpr)
 
     # 1. Original file still present - highest quality
     if path_hint and os.path.exists(path_hint):
@@ -126,18 +131,18 @@ def _decode_gfa_image(x: int, y: int, gf_match, preview_b64, path_hint):
             pass
 
     # 3. Decode the 1-bit ^GF data - last resort
-    hex_data = gf_match.group(4).strip()
-    if total_b > 0 and hex_data:
+    if decoded is not None:
+        raw, bpr = decoded
         try:
             import numpy as np
             from PIL import Image
-            raw = bytes.fromhex(hex_data)
-            arr = np.frombuffer(raw, dtype=np.uint8).reshape(gf_h, bpr)
+            rows = len(raw) // bpr
+            arr = np.frombuffer(raw, dtype=np.uint8).reshape(rows, bpr)
             unpacked = np.unpackbits(arr, axis=1)[:, :gf_w]
             # A set bit is black, so the bits invert to greyscale levels.
             pixel_data = ((1 - unpacked) * 255).astype(np.uint8)
             pil_img = Image.fromarray(pixel_data, mode='L').convert('RGB')
-            return ImageElement(x, y, gf_w, gf_h, _pil_image=pil_img)
+            return ImageElement(x, y, gf_w, rows, _pil_image=pil_img)
         except Exception:
             pass
     return None
@@ -413,10 +418,11 @@ def _build_element(field, doc, renderer):
     x, y = field['x'], field['y']
 
     if field['graphic'] is not None:
-        gf_match = re.match(r'\s*A,(\d+),(\d+),(\d+),(.*)', field['graphic'], re.S)
-        if gf_match:
-            return _decode_gfa_image(x, y, gf_match, field['preview'], field['path'])
-        return None
+        # Every format reaches the decoder, so one that cannot be read fails
+        # where it can be reported rather than at a regex that matched only
+        # the spelling this designer writes.
+        return _decode_gfa_image(x, y, field['graphic'],
+                                 field['preview'], field['path'])
 
     if field['frame'] is not None:
         return FrameElement(x, y, *_read_frame(field['frame']))
