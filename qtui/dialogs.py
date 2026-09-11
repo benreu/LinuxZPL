@@ -23,8 +23,8 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
 from zplcore import fonts as zpl_fonts, textraster
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
                            BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
-                           TEXT_JUSTIFICATIONS, Document, FieldBlock,
-                           TextElement)
+                           FRAME_COLOURS, TEXT_JUSTIFICATIONS, Document,
+                           FieldBlock, FrameElement, TextElement)
 
 IMAGE_FILTER = "Image files (*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG);;All files (*)"
 ZPL_FILTER = "ZPL files (*.zpl);;All files (*)"
@@ -343,6 +343,22 @@ def edit_frame_dialog(parent, element) -> bool:
     width_spin.valueChanged.connect(sync_thickness_range)
     height_spin.valueChanged.connect(sync_thickness_range)
 
+    # ^GB's colour and corner rounding
+    colour_combo = QComboBox()
+    colour_combo.setObjectName("colour")
+    for label, code in FRAME_COLOURS:
+        colour_combo.addItem(label, code)
+    codes = [code for _label, code in FRAME_COLOURS]
+    colour_combo.setCurrentIndex(codes.index(element.colour)
+                                 if element.colour in codes else 0)
+    form.addRow("Colour:", colour_combo)
+
+    rounding_spin = QSpinBox()
+    rounding_spin.setObjectName("rounding")
+    rounding_spin.setRange(0, FrameElement.MAX_ROUNDING)
+    rounding_spin.setValue(element.rounding)
+    form.addRow("Corner Rounding:", rounding_spin)
+
     layout.addWidget(_buttons(dialog))
     if dialog.exec_() != QDialog.Accepted:
         return False
@@ -350,6 +366,8 @@ def edit_frame_dialog(parent, element) -> bool:
     element.width = width_spin.value()
     element.height = height_spin.value()
     element.thickness = thickness_spin.value()
+    element.colour = colour_combo.currentData()
+    element.rounding = rounding_spin.value()
     return True
 
 

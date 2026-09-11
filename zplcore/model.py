@@ -207,24 +207,62 @@ class TextElement(DesignElement):
 
 
 class FrameElement(DesignElement):
-    """Frame element for the designer."""
+    """Frame element for the designer.
+
+    ^GB carries a colour and a corner rounding after the thickness. Dropping
+    them turned a white box black and squared off every rounded corner, without
+    saying so.
+    """
+
+    # ZPL's defaults for the parameters after the thickness, in order. A frame
+    # written with these is written without them, so a label this designer
+    # created serialises exactly as it always did.
+    DEFAULTS = ('B', 0)
+    COLOURS = ('B', 'W')
+    MAX_ROUNDING = 8
 
     def __init__(self, x: int = 100, y: int = 100, width: int = 200,
-                 height: int = 150, thickness: int = 2):
+                 height: int = 150, thickness: int = 2,
+                 colour: str = 'B', rounding: int = 0):
         self.x = x
         self.y = y
         self.width = width
         self.height = height
         self.thickness = thickness
+        self.colour = (colour or 'B').upper()
+        if self.colour not in self.COLOURS:
+            self.colour = 'B'
+        self.rounding = max(0, min(int(rounding or 0), self.MAX_ROUNDING))
         self.element_type = 'frame'
 
     def max_thickness(self) -> int:
         """Thickest useful border: at half the smaller side it fills solid."""
         return max(1, min(self.width, self.height) // 2)
 
+    def corner_radius(self) -> float:
+        """The corner radius in dots, from ^GB's 0-8 rounding index.
+
+        8 is the most ZPL will round, which is half the shorter side - at which
+        point the ends are semicircles.
+        """
+        if not self.rounding:
+            return 0.0
+        return (self.rounding / self.MAX_ROUNDING) * min(self.width, self.height) / 2
+
+    def _options_zpl(self) -> str:
+        """The colour and rounding, trimmed after the last non-default one."""
+        given = [self.colour, self.rounding]
+        keep = 0
+        for index, value in enumerate(given):
+            if value != self.DEFAULTS[index]:
+                keep = index + 1
+        return ''.join(f",{value}" for value in given[:keep])
+
     def to_zpl(self) -> str:
         """Convert to ZPL commands."""
-        return f"^FO{self.x},{self.y}\n^GB{self.width},{self.height},{self.thickness}\n^FS\n"
+        return (f"^FO{self.x},{self.y}\n"
+                f"^GB{self.width},{self.height},{self.thickness}"
+                f"{self._options_zpl()}\n^FS\n")
 
 
 class BarcodeElement(DesignElement):
@@ -371,6 +409,8 @@ BARCODE_MODES = (("None", 'N'),
                  ("UCC/EAN", 'D'))
 
 BARCODE_CHECK_DIGIT = (("No", False), ("Yes", True))
+
+FRAME_COLOURS = (("Black", 'B'), ("White", 'W'))
 
 # ^FB's justification, for the same reason: the wrap a user picks in one
 # frontend has to be a wrap the other can pick too.

@@ -25,6 +25,8 @@ sys.path.insert(0, str(ROOT))
 FIXTURE_300 = ROOT / 'tests' / 'fixtures' / 'sample_300dpi.zpl'
 # ZPL as another tool writes it: ^A0, ^FB and two commands on one line
 FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'
+# A ^CF default font and a ^GB that names its colour and rounding
+FIXTURE_DEFAULTS = ROOT / 'tests' / 'fixtures' / 'default_font.zpl'
 
 # A font every step can rely on; text width is the most divergence-prone rule,
 # so the sequence exercises the measured path as well as the fixed-width one.
@@ -94,6 +96,9 @@ class GtkDriver:
         self.window._offer_dpi_rescale = lambda loaded_dpi=None: workflow.reconcile_dpi(
             self.canvas.document, self.window.printer_dpi,
             lambda *a: 'rescale', file_dpi=loaded_dpi)
+        # A fixture carrying a command the model cannot keep would otherwise
+        # stop the run on a modal nobody is there to dismiss.
+        self.window._warn_unsupported = lambda commands: None
 
     # -- document ---------------------------------------------------------
     @property
@@ -243,6 +248,9 @@ class QtDriver:
         from zplcore import geometry
         self.geometry = geometry
         dialogs.ask_dpi_rescale = lambda *a, **k: 'rescale'
+        # A fixture carrying a command the model cannot keep would otherwise
+        # stop the run on a modal nobody is there to dismiss.
+        dialogs.warn_unsupported = lambda *a, **k: None
         self.window = window.ZPLDesignerWindow()
         self.window._save_settings = lambda *a: None
         self.window.printer_dpi = 203
@@ -541,6 +549,22 @@ def sequence(driver, record):
         block.block = None
         driver.resync(block)
         record('wrapping switched off, the lines joined')
+
+    # ^GB's colour and corner rounding, which both frontends now draw and
+    # neither used to keep.
+    frame = next((e for e in driver.elements if e.element_type == 'frame'), None)
+    if frame is None:
+        frame = driver.add_frame()
+    frame.colour, frame.rounding = 'W', 8
+    record('a white frame with rounded corners')
+    frame.colour, frame.rounding = 'B', 3
+    record('a black frame, less rounded')
+
+    # ZPL as other tools leave it: a ^CF default font rather than an ^A on
+    # every field, and a ^GB carrying its colour and rounding. Last, because
+    # loading replaces the document every earlier step built up.
+    driver.load(FIXTURE_DEFAULTS)
+    record('load a file using ^CF and a painted ^GB')
 
 
 def main():

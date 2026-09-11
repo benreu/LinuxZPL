@@ -11,6 +11,15 @@ from . import geometry, textraster
 from .model import BarcodeElement, FieldBlock
 
 
+def _parse_frame(x: int, y: int, params: str):
+    """A ^GB's parameters as the FrameElement the canvas would draw."""
+    from .parser import _build_element
+    return _build_element({'x': x, 'y': y, 'frame': params, 'graphic': None,
+                           'barcode': None, 'data': None, 'font': None,
+                           'block': None, 'module_width': 2,
+                           'preview': None, 'path': None}, None, None)
+
+
 class ZPLRenderer:
     """Renders ZPL (Zebra Programming Language) commands to images."""
     
@@ -152,6 +161,37 @@ class ZPLRenderer:
                             self.current_y + row * step), line, fill='black',
                            font=font)
 
+    def _render_frame(self, params: str):
+        """Draw a ^GB box through the same element the canvas draws.
+
+        Through zplcore's parser and FrameElement rather than a second reading
+        of ^GB: the preview is what a user checks a label against before
+        printing it, so it has to be drawing the design rather than agreeing
+        with it by coincidence. The old reading here matched digits where the
+        colour is a letter, so it lost the colour and the rounding, and it drew
+        an outline where a thick border fills solid.
+        """
+        element = _parse_frame(self.current_x, self.current_y, params)
+        if element is None:
+            return
+        ink = 255 if element.colour == 'W' else 0
+        thickness = max(1, element.thickness)
+        box = [(element.x, element.y),
+               (element.x + element.width, element.y + element.height)]
+        radius = element.corner_radius()
+
+        if 2 * thickness >= min(element.width, element.height):
+            # ^GB fills solid once the border meets in the middle
+            if radius > 0:
+                self.draw.rounded_rectangle(box, radius=radius, fill=ink)
+            else:
+                self.draw.rectangle(box, fill=ink)
+        elif radius > 0:
+            self.draw.rounded_rectangle(box, radius=radius, outline=ink,
+                                        width=thickness)
+        else:
+            self.draw.rectangle(box, outline=ink, width=thickness)
+
     def _render_graphic(self, params: str):
         """Render a ^GF graphic field: ^GFa,total,total,bytes_per_row,<hex>."""
         parts = params.split(',', 4)
@@ -289,19 +329,7 @@ class ZPLRenderer:
                 font_name = match.group(5).replace('.TTF', '').replace('.ttf', '').upper()
                 self.current_field_font_path = self.font_registry.get(font_name)
         elif command == 'GB':
-            # Draw box: ^GBw,h,t,c
-            match = re.match(r'(\d+),(\d+)(?:,(\d+))?(?:,(\d+))?', params)
-            if match:
-                width = int(match.group(1))
-                height = int(match.group(2))
-                thickness = int(match.group(3)) if match.group(3) else 1
-                # Draw rectangle
-                self.draw.rectangle(
-                    [(self.current_x, self.current_y),
-                     (self.current_x + width, self.current_y + height)],
-                    outline='black',
-                    width=thickness
-                )
+            self._render_frame(params)
         elif command == 'BY':
             # Module width, which sets how wide the bars are
             match = re.match(r'\s*(\d+)', params)

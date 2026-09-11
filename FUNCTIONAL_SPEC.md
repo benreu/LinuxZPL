@@ -133,6 +133,17 @@ font size is the dialog's business alone.
 |---|---|
 | `width`, `height` | 200 × 150 dots |
 | `thickness` | 2 dots |
+| `colour` | `B` — `^GB`'s fourth parameter, `B` or `W` |
+| `rounding` | 0 — `^GB`'s fifth, 0 to 8 |
+
+**White is not the absence of a frame.** A thermal head only adds black, so a
+`W` frame prints nothing on bare stock and shows only over something already
+black. Drawing it black instead is the one case where the canvas would show the
+opposite of what prints.
+
+**Rounding** is an index, not a radius: 8 is the most ZPL will round, which is
+half the shorter side, so the radius is `rounding / 8 × min(width, height) / 2`.
+A border insets its own radius by half the thickness, as it insets its path.
 
 Thickness is a border drawn inward from the element bounds. Its useful maximum
 is `min(width, height) / 2`, at which point the border meets in the middle and
@@ -410,7 +421,7 @@ effect of building elements while parsing.
 | Text, built-in font | `^FO<x>,<y>` / `^A<font_code>N,<font_height>,<font_width>` / `^FD<text>^FS` |
 | Text in a block | as above, with `^FB<width>,<lines>,<spacing>,<justification>,<indent>` between the font and the data |
 | Text, downloaded font | `^FO<x>,<y>` / `^A@N,<font_height>,<font_width>,E:<NAME>.TTF` / `^FD<text>^FS` |
-| Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>` / `^FS` |
+| Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>[,<colour>[,<rounding>]]` / `^FS` — the colour and rounding are written only when they are not `B` and `0` |
 | Barcode | `^FO<x>,<y>` / `^BY<module_width>` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
 
@@ -443,7 +454,18 @@ path are caret-free and are stored as-is.
 ### 8.3 What is read
 
 `^PW`, `^LL`, `^FO`, `^A` in every form (`^A0`, `^AF`, any bitmap font, `^A@`),
-`^FB`, `^GB`, `^BC`, `^BY`, `^GFA`, and the four metadata keys.
+`^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA`, and the four metadata keys.
+
+**`^CF` is the default font, and a field without an `^A` is not a field without
+a font.** `^CF<f>,<h>,<w>` sets the font every later field prints in unless it
+names its own, and each of its three parameters keeps its previous value when
+omitted. With no `^CF` anywhere the default is ZPL's own: font `A` at 9 × 5
+dots. Requiring an explicit `^A` before building a text element does not
+degrade such a field — it **discards** it, and the element is gone from the
+canvas, the preview and the next save.
+
+The default applies to text only. A barcode that named no font of its own must
+go on naming none, or a file that had no `^A` before its `^BC` grows one.
 
 **Read the source as commands, not as lines.** A ZPL command is a caret (or
 tilde) plus exactly two characters, and its parameters run to the next caret -

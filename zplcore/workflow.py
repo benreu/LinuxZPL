@@ -123,11 +123,16 @@ def unsaved_changes_gate(is_dirty, ask, save):
     return False
 
 
-# Commands the parser turns into elements, plus the structural ones that carry
-# nothing of their own. Anything else in a file changes what prints and will
-# not survive a save, because the model has nowhere to keep it.
+# Commands whose effect the model actually keeps: it turns them into elements,
+# or they carry nothing of their own. Anything else in a file changes what
+# prints and will not survive a save, because the model has nowhere to put it.
+#
+# This answers "is it safe to say nothing?". parser.STRUCTURAL answers the
+# different question "can the parser skip it without choking?" - ^CI could be
+# skipped but not kept, and listing it here said otherwise, so a file's
+# encoding was dropped without a word.
 MODELLED = {'^FO', '^FD', '^FS', '^BY', '^BC', '^GB', '^GF', '^FB',
-            '^PW', '^LL', '^XA', '^XZ', '^FX', '^CI', '^CF'}
+            '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF'}
 
 
 def unsupported_commands(zpl_content: str) -> list:

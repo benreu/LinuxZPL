@@ -326,21 +326,39 @@ class DesignCanvas(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
+        # ^GB's colour: white is what the printer leaves unburnt, so it shows
+        # only over something already black - drawing it black instead was the
+        # one case where the canvas showed the opposite of what prints.
+        ink = QColor(255, 255, 255) if getattr(element, 'colour', 'B') == 'W' \
+            else QColor(0, 0, 0)
+        radius = element.corner_radius() if hasattr(element, 'corner_radius') else 0
+
         if 2 * t >= min(element.width, element.height):
             # ^GB fills solid once the border meets in the middle
-            painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
-                             QColor(0, 0, 0))
+            box = QRectF(element.x, element.y, element.width, element.height)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(ink)
+            if radius > 0:
+                painter.drawRoundedRect(box, radius, radius)
+            else:
+                painter.fillRect(box, ink)
+            painter.setBrush(Qt.NoBrush)
         else:
             # ^GB draws its border inside the w x h box, while a stroke is
             # centred on its path, so inset by half the thickness to put the
             # outer edge on the element bounds.
-            pen = QPen(QColor(0, 0, 0))
+            pen = QPen(ink)
             pen.setWidthF(t)
             pen.setJoinStyle(Qt.MiterJoin)
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
-            painter.drawRect(QRectF(element.x + t / 2, element.y + t / 2,
-                                    element.width - t, element.height - t))
+            box = QRectF(element.x + t / 2, element.y + t / 2,
+                         element.width - t, element.height - t)
+            inner = max(0.0, radius - t / 2)
+            if inner > 0:
+                painter.drawRoundedRect(box, inner, inner)
+            else:
+                painter.drawRect(box)
 
         if selected:
             self._draw_handles(painter, element)

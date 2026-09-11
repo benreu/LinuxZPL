@@ -19,8 +19,9 @@ from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import textraster
-from zplcore.model import (TEXT_JUSTIFICATIONS, BarcodeElement, Document,
-                           FieldBlock, FrameElement, ImageElement, TextElement)
+from zplcore.model import (FRAME_COLOURS, TEXT_JUSTIFICATIONS, BarcodeElement,
+                           Document, FieldBlock, FrameElement, ImageElement,
+                           TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from .canvas import DesignCanvas
@@ -1665,7 +1666,19 @@ class ZPLViewerWindow(Gtk.Window):
 
             width_spin.connect("value-changed", on_size_changed)
             height_spin.connect("value-changed", on_size_changed)
-            
+
+            # ^GB's colour and corner rounding
+            colour_label = Gtk.Label(label="Colour:")
+            content.pack_start(colour_label, False, False, 0)
+            colour_combo, colour_codes = _make_combo(FRAME_COLOURS, element.colour)
+            content.pack_start(colour_combo, False, False, 0)
+
+            rounding_label = Gtk.Label(label="Corner Rounding:")
+            content.pack_start(rounding_label, False, False, 0)
+            rounding_spin = _make_spin(element.rounding, 0,
+                                       FrameElement.MAX_ROUNDING)
+            content.pack_start(rounding_spin, False, False, 0)
+
             content.show_all()
             
             response = dialog.run()
@@ -1673,6 +1686,8 @@ class ZPLViewerWindow(Gtk.Window):
                 element.width = int(width_spin.get_value())
                 element.height = int(height_spin.get_value())
                 element.thickness = int(thickness_spin.get_value())
+                element.colour = colour_codes[colour_combo.get_active()]
+                element.rounding = int(rounding_spin.get_value())
                 self.design_canvas.queue_draw()
                 self.on_canvas_changed()
             

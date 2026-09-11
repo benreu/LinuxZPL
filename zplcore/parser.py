@@ -40,7 +40,12 @@ def parse_label_size(zpl_content: str) -> Tuple[Optional[int], Optional[int]]:
 
 COMMAND = re.compile(r'([\^~])([A-Za-z0-9@]{2})([^\^~]*)', re.S)
 
-# Commands that carry no element of their own and need no warning
+# ZPL's own factory default font, used by any field that carries neither an ^A
+# of its own nor a ^CF before it.
+DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None}
+
+# Commands the parser can skip without choking. Whether skipping one is worth
+# telling the user about is a separate question, answered by workflow.MODELLED.
 STRUCTURAL = {'^XA', '^XZ', '^FS', '^FX', '^CI', '^CF', '^LH', '^PR', '^MD',
               '^LT', '^LS', '^PO', '^MN', '^MM', '^MT', '^JM', '^FW'}
 
@@ -151,6 +156,9 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     loaded_dpi = None
     pending_no_print = False
     field = None            # commands gathered since the last ^FO
+    # ^CF sets the font for every field that does not name one of its own, so
+    # it has to be carried between fields rather than gathered into one.
+    default_font = dict(DEFAULT_FONT)
 
     for cmd, params in tokens:
         if cmd == '^FX':
@@ -168,11 +176,16 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 field['path'] = key[len(PATH_PARAM):]
             continue
 
+        if cmd == '^CF':
+            default_font = _read_default_font(params, default_font)
+            continue
+
         if cmd == '^FO':
             # A field that never saw ^FS still ends here, at the next one
             pending_no_print = _flush(field, doc, renderer, pending_no_print)
             match = re.match(r'\s*(\d+),(\d+)', params)
-            field = _new_field(int(match.group(1)), int(match.group(2))) if match else None
+            field = _new_field(int(match.group(1)), int(match.group(2)),
+                               default_font) if match else None
             continue
 
         if cmd == '^FS':
@@ -206,11 +219,38 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     return doc, loaded_dpi
 
 
-def _new_field(x: int, y: int) -> dict:
-    """The state gathered between a ^FO and the ^FS that ends it."""
-    return {'x': x, 'y': y, 'module_width': 2, 'font': None, 'block': None,
+def _new_field(x: int, y: int, default_font=None) -> dict:
+    """The state gathered between a ^FO and the ^FS that ends it.
+
+    `font` stays None until an ^A names one, because "this field named a font"
+    and "this field inherits the default" are different things: a barcode with
+    no ^A of its own must go on writing none, while text with no ^A prints in
+    whatever ^CF last set.
+    """
+    return {'x': x, 'y': y, 'module_width': 2, 'block': None, 'font': None,
+            'default_font': dict(default_font or DEFAULT_FONT),
             'barcode': None, 'frame': None, 'graphic': None, 'data': None,
             'preview': None, 'path': None}
+
+
+def _read_default_font(params: str, current: dict) -> dict:
+    """^CFf,h,w - the font every later field uses unless it names its own.
+
+    Each parameter is optional and keeps its previous value when omitted, which
+    is what makes a bare ^CF0 mean "font 0, sizes unchanged".
+    """
+    parts = [p.strip() for p in params.split(',')]
+    font = dict(current)
+    if parts and parts[0]:
+        font['code'] = parts[0][0].upper()
+        font['name'] = None
+    for index, key in ((1, 'height'), (2, 'width')):
+        if len(parts) > index and parts[index]:
+            try:
+                font[key] = int(parts[index])
+            except ValueError:
+                pass
+    return font
 
 
 def _read_font(cmd: str, params: str, field: dict) -> None:
@@ -285,11 +325,15 @@ def _build_element(field, doc, renderer):
         return None
 
     if field['frame'] is not None:
-        match = re.match(r'\s*(\d+),(\d+)(?:,(\d+))?', field['frame'])
+        # ^GBw,h,t,c,r - the colour is a letter, which is why a digits-only
+        # pattern silently dropped it along with the rounding after it.
+        match = re.match(r'\s*(\d+),(\d+)(?:,(\d+))?(?:,([A-Za-z]))?(?:,(\d+))?',
+                         field['frame'])
         if match:
             thickness = int(match.group(3)) if match.group(3) else 1
             return FrameElement(x, y, int(match.group(1)), int(match.group(2)),
-                                thickness)
+                                thickness, match.group(4) or 'B',
+                                int(match.group(5) or 0))
         return None
 
     if field['barcode'] is not None:
@@ -305,7 +349,7 @@ def _build_element(field, doc, renderer):
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
 
-    if field['font'] is not None and field['data'] is not None:
+    if field['data'] is not None:
         return _build_text(x, y, field, doc, renderer)
 
     return None
@@ -313,7 +357,9 @@ def _build_element(field, doc, renderer):
 
 def _build_text(x, y, field, doc, renderer):
     """A text element, with its font found again on this machine if it can be."""
-    font = field['font']
+    # No ^A in the field means whatever ^CF last set, which is what the printer
+    # would use. Discarding the field for want of an ^A lost it altogether.
+    font = field['font'] or field['default_font']
     element = TextElement(x, y, field['data'], font['height'], font['width'],
                           font_code=font['code'])
     element.height = font['height']

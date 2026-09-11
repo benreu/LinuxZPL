@@ -11,6 +11,7 @@ from PySide2.QtGui import QMouseEvent
 from zplcore import fonts as zpl_fonts, geometry, parser as zpl_parser, geometry
 from zplcore import model as zpl_model
 from zplcore.model import Document, TextElement, BarcodeElement, FrameElement, ImageElement
+from zplcore.renderer import ZPLRenderer
 
 app = QApplication([])
 from qtui import canvas as qt_canvas, window as qt_main, dialogs as qt_dialogs
@@ -532,6 +533,63 @@ _drive_text_dialog(de, ddoc,
 check("unticking wrap joins the lines rather than leaving a break behind",
       de.block is None and de.text == "ACME Widget Model 4400", de.text)
 
+# --- commands that used to lose what they carried ---------------------------
+
+# ^CF: a field with no ^A of its own prints in whatever ^CF last set. Requiring
+# an explicit ^A dropped the element altogether.
+cf_doc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^CF0,40,40\n^FO50,50^FDdefault font^FS\n"
+    "^FO50,150^A0N,30,30^FDits own^FS\n^XZ")[0]
+check("a field using ^CF's font is kept, not dropped",
+      [e.text for e in cf_doc.elements] == ['default font', 'its own'],
+      [(e.element_type, getattr(e, 'text', None)) for e in cf_doc.elements])
+check("and it takes ^CF's font and size",
+      (cf_doc.elements[0].font_code, cf_doc.elements[0].font_height,
+       cf_doc.elements[0].font_width) == ('0', 40, 40),
+      (cf_doc.elements[0].font_code, cf_doc.elements[0].font_height))
+bare = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^FDbare^FS^XZ")[0]
+check("with no ^CF at all, ZPL's own default font applies",
+      (bare.elements[0].font_code, bare.elements[0].font_height,
+       bare.elements[0].font_width) == ('A', 9, 5),
+      (bare.elements[0].font_code, bare.elements[0].font_height))
+# a barcode names no font of its own and must go on naming none
+bc_cf = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^CF0,40,40\n^FO50,50^BY2^BC,100^FD123^FS^XZ")[0]
+check("^CF does not put an ^A on a barcode that had none",
+      '^A' not in bc_cf.elements[0].to_zpl(),
+      bc_cf.elements[0].to_zpl().replace('\n', ' '))
+
+# ^CI cannot be modelled, so it has to be reported rather than dropped in
+# silence - which is what listing it as modelled did
+check("^CI is reported as a command a save would drop",
+      workflow.unsupported_commands("^XA^CI28^FO1,1^A0N,9,9^FDx^FS^XZ") == ['^CI'])
+check("^CF is not reported, now that it is honoured",
+      workflow.unsupported_commands("^XA^CF0,40^FO1,1^FDx^FS^XZ") == [])
+
+# ^GB's colour and rounding: the colour is a letter, which is why a
+# digits-only pattern dropped it and the rounding after it
+painted = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^GB300,200,4,W,5^FS^XZ")[0]
+frame = painted.elements[0]
+check("^GB's colour and rounding are read",
+      (frame.colour, frame.rounding) == ('W', 5), (frame.colour, frame.rounding))
+check("and written back",
+      "^GB300,200,4,W,5" in frame.to_zpl(), frame.to_zpl().replace('\n', ' '))
+plain_frame = Document().add_frame_element()
+check("a frame the designer created still writes no colour or rounding",
+      f"^GB{plain_frame.width},{plain_frame.height},{plain_frame.thickness}\n"
+      in plain_frame.to_zpl(), plain_frame.to_zpl().replace('\n', ' '))
+check("rounding 8 is half the shorter side",
+      FrameElement(0, 0, 300, 200, 2, 'B', 8).corner_radius() == 100,
+      FrameElement(0, 0, 300, 200, 2, 'B', 8).corner_radius())
+check("rounding 0 is square", FrameElement(0, 0, 300, 200).corner_radius() == 0)
+
+# the preview draws the frame the canvas draws, rounding and all
+rounded = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO20,20^GB360,260,4,B,8^FS^XZ").convert('L')
+check("the preview rounds a rounded frame's corners",
+      rounded.getpixel((22, 22)) > 200 and rounded.getpixel((200, 21)) < 100,
+      (rounded.getpixel((22, 22)), rounded.getpixel((200, 21))))
+
 # --- looking at the label: zoom, fit and the window -------------------------
 from zplcore import view as zpl_view
 
@@ -713,7 +771,6 @@ finally:
     qt_main._config_path = real_config_path
 
 # --- the preview draws the design, it does not merely agree with it ---------
-from zplcore.renderer import ZPLRenderer
 pdoc = Document(400, 300, dpi=203)
 pt = pdoc.add_text_element('one two three four five six seven eight')
 pt.x, pt.y = 0, 0

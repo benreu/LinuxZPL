@@ -47,6 +47,20 @@ def to_pixbuf(pil_image) -> Optional[GdkPixbuf.Pixbuf]:
         return None
 
 
+def _rounded_path(context, x, y, width, height, radius):
+    """A rectangle path, with ^GB's rounded corners when it asks for them."""
+    radius = max(0.0, min(radius, min(width, height) / 2))
+    if radius <= 0:
+        context.rectangle(x, y, width, height)
+        return
+    context.new_sub_path()
+    context.arc(x + width - radius, y + radius, radius, -math.pi / 2, 0)
+    context.arc(x + width - radius, y + height - radius, radius, 0, math.pi / 2)
+    context.arc(x + radius, y + height - radius, radius, math.pi / 2, math.pi)
+    context.arc(x + radius, y + radius, radius, math.pi, 3 * math.pi / 2)
+    context.close_path()
+
+
 class DesignCanvas(Gtk.DrawingArea):
     """Canvas widget for designing ZPL layouts with drag and drop.
 
@@ -500,18 +514,26 @@ class DesignCanvas(Gtk.DrawingArea):
             context.rectangle(element.x, element.y, element.width, element.height)
             context.stroke()
 
-        context.set_source_rgb(0, 0, 0)
+        # ^GB's colour: white is what the printer leaves unburnt, so it shows
+        # only over something already black - drawing it black instead was the
+        # one case where the canvas showed the opposite of what prints.
+        white = getattr(element, 'colour', 'B') == 'W'
+        context.set_source_rgb(1, 1, 1) if white else context.set_source_rgb(0, 0, 0)
+        radius = element.corner_radius() if hasattr(element, 'corner_radius') else 0
+
         if 2 * t >= min(element.width, element.height):
             # ^GB fills solid once the border meets in the middle
-            context.rectangle(element.x, element.y, element.width, element.height)
+            _rounded_path(context, element.x, element.y,
+                          element.width, element.height, radius)
             context.fill()
         else:
             # ^GB draws its border inside the w x h box, while cairo centres a
             # stroke on its path, so inset by half the thickness to put the
             # outer edge on the element bounds.
             context.set_line_width(t)
-            context.rectangle(element.x + t / 2, element.y + t / 2,
-                              element.width - t, element.height - t)
+            _rounded_path(context, element.x + t / 2, element.y + t / 2,
+                          element.width - t, element.height - t,
+                          max(0.0, radius - t / 2))
             context.stroke()
 
         
