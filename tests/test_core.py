@@ -661,6 +661,36 @@ check("the pointer is measured before the zoom, not after",
       (scale_before, seen, zcanvas._scale()))
 zw.hide()
 
+# The label size is entered in inches and stored in dots, so the number of
+# decimals it accepts is the resolution a user can actually ask for: at 203 dpi
+# a tenth of an inch is 20 dots.
+from PySide2.QtWidgets import QDoubleSpinBox
+
+def _drive_label_size(document, dpi, fill):
+    def act():
+        dialog = next((widget for widget in app.topLevelWidgets()
+                       if isinstance(widget, QDialog) and widget.isVisible()), None)
+        if dialog is None:
+            QTimer.singleShot(50, act)
+            return
+        fill(dialog.findChildren(QDoubleSpinBox))
+        dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+
+    QTimer.singleShot(100, act)
+    return qt_dialogs.label_size_dialog(None, document, dpi)
+
+sized = _drive_label_size(Document(812, 1218, dpi=203), 203,
+                          lambda spins: (spins[0].setValue(2.75),
+                                         spins[1].setValue(4.25)))
+check("a label size keeps two decimals rather than rounding to one",
+      sized == (558, 863), f"{sized}, expected (558, 863)")
+reopened = {}
+_drive_label_size(Document(*sized, dpi=203), 203,
+                  lambda spins: reopened.update(w=round(spins[0].value(), 2),
+                                                h=round(spins[1].value(), 2)))
+check("and shows that size again to the hundredth",
+      (reopened['w'], reopened['h']) == (2.75, 4.25), reopened)
+
 # the settings file carries the window geometry beside the printer
 import configparser as _cfg
 geo_dir = tempfile.mkdtemp()

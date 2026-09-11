@@ -1163,7 +1163,7 @@ class ZPLViewerWindow(Gtk.Window):
                                    step_increment=0.1)
         width_spin.set_adjustment(width_adj)
         width_spin.set_numeric(True)
-        width_spin.set_digits(1)
+        width_spin.set_digits(2)
         width_box.pack_start(width_spin, True, True, 0)
         
         # Height
@@ -1179,7 +1179,7 @@ class ZPLViewerWindow(Gtk.Window):
                                     step_increment=0.1)
         height_spin.set_adjustment(height_adj)
         height_spin.set_numeric(True)
-        height_spin.set_digits(1)
+        height_spin.set_digits(2)
         height_box.pack_start(height_spin, True, True, 0)
         
         # Info label

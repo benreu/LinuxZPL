@@ -455,14 +455,14 @@ def label_size_dialog(parent, document: Document, dpi: int):
 
     width_spin = QDoubleSpinBox()
     width_spin.setRange(0.5, 25.0)
-    width_spin.setDecimals(1)
+    width_spin.setDecimals(2)
     width_spin.setSingleStep(0.1)
     width_spin.setValue(document.label_width / dpi)
     form.addRow("Width:", width_spin)
 
     height_spin = QDoubleSpinBox()
     height_spin.setRange(0.5, 25.0)
-    height_spin.setDecimals(1)
+    height_spin.setDecimals(2)
     height_spin.setSingleStep(0.1)
     height_spin.setValue(document.label_height / dpi)
     form.addRow("Height:", height_spin)
