@@ -131,7 +131,7 @@ def unsaved_changes_gate(is_dirty, ask, save):
 # different question "can the parser skip it without choking?" - ^CI could be
 # skipped but not kept, and listing it here said otherwise, so a file's
 # encoding was dropped without a word.
-MODELLED = {'^FO', '^FD', '^FS', '^BY', '^BC', '^GB', '^GF', '^FB',
+MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^GF', '^FB',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF'}
 
 

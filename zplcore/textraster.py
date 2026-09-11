@@ -120,6 +120,30 @@ def measurer(font_path, font_height, font_width):
     return measure, font
 
 
+# Where a baseline sits inside a character cell when there is no font file to
+# measure it from: about four fifths of the way down, which is where the faces
+# that can be measured come out.
+BASELINE_RATIO = 0.8
+
+
+def baseline_offset(font_path, font_height) -> int:
+    """Dots from the top of a character cell down to the baseline.
+
+    ^FT names the baseline where ^FO names the top, so converting one into the
+    other needs this. Asked of the same library that measures the advance, so
+    the glyphs and the origin that places them cannot disagree.
+    """
+    height = max(1, int(font_height))
+    if font_path:
+        try:
+            ascent, descent = PILImageFont.truetype(font_path, height).getmetrics()
+            if ascent + descent > 0:
+                return int(round(height * ascent / (ascent + descent)))
+        except Exception:
+            pass
+    return int(round(height * BASELINE_RATIO))
+
+
 def wrap_marked(text, font_path, font_height, font_width, block):
     """(line, ends_a_paragraph) for each line `text` breaks into in `block`.
 

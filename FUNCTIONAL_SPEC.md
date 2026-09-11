@@ -462,8 +462,26 @@ path are caret-free and are stored as-is.
 
 ### 8.3 What is read
 
-`^PW`, `^LL`, `^FO`, `^A` in every form (`^A0`, `^AF`, any bitmap font, `^A@`),
-`^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA`, and the four metadata keys.
+`^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
+`^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA`, and the four metadata keys.
+
+**Every parameter of a command is optional, and an omitted one is not an
+absent one.** A pattern that requires all of them either replaces what was
+given or drops the field, and does both silently, since the command itself is
+one the model holds:
+
+| Written | Means |
+|---|---|
+| `^A0N,40` | height 40, and a scalable font with no width is proportional - which this model spells as a width equal to the height |
+| `^AFN,18` | height 18, width from `^CF`, because a bitmap font is not proportional |
+| `^A0N` | both sizes from `^CF` |
+| `^GB300` | a 300 x 1 rule: `w` and `h` both default to the thickness |
+| `^GB300,0,4` | a 300 x 4 rule: `w` and `h` are also **clamped up** to the thickness, so neither can be thinner than the border drawing it |
+
+`^A0N,40` came back as `^A0N,36,20`, losing the height it did give, while the
+preview - which required nothing - drew it at 40. `^GB300` and `^GB,,4` were
+dropped outright, and a rule survived only as a box with a zero side, which
+the canvas then drew as nothing at all.
 
 **`^CF` is the default font, and a field without an `^A` is not a field without
 a font.** `^CF<f>,<h>,<w>` sets the font every later field prints in unless it
@@ -475,6 +493,24 @@ canvas, the preview and the next save.
 
 The default applies to text only. A barcode that named no font of its own must
 go on naming none, or a file that had no `^A` before its `^BC` grows one.
+
+**`^FT` places a field from its baseline, and `^FO` from its top.** `^FT`
+opens a field exactly as `^FO` does; ignoring it does not misplace such a field
+but drops it, so a label written by a tool that typesets its text opens
+completely empty. Its `y` is the baseline of the first line for text, and the
+bottom-left corner of everything else.
+
+The gap between that point and the element's top is **kept on the element**, and
+a save writes the `^FT` back. Normalising it to an `^FO` would be simpler, but
+where a baseline sits inside a character cell is measured from the font file and
+is only an estimate of what the printer will do - and normalising bakes that
+estimate into the file every time such a label is opened and saved.
+
+**A symbology that cannot be drawn is dropped, not redrawn as text.** `^B3`,
+`^BQ`, `^BX` and the rest reached the text branch, so a Code 39 sixty dots tall
+arrived as nine-dot text holding the barcode's data, and saved that way. The
+label gaining something that was never in it is worse than losing the barcode,
+which the load warning names either way.
 
 **Read the source as commands, not as lines.** A ZPL command is a caret (or
 tilde) plus exactly two characters, and its parameters run to the next caret -

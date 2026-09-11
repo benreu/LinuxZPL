@@ -888,6 +888,149 @@ check("the preview puts a block's lines where the canvas does",
       preview_rows == raster_rows,
       (preview_rows[:6], raster_rows[:6]))
 
+# --- an omitted parameter means what ZPL says it means ----------------------
+
+# ^A0N,40 gave 36 x 20, losing the height it did give, while the preview drew
+# it at 40: the model and the preview read the same command differently.
+partial = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^A0N,40^FDHg^FS^XZ")[0].elements[0]
+check("^A keeps a height given without a width",
+      partial.font_height == 40, partial.font_height)
+check("and a scalable font with no width stays proportional",
+      partial.font_width == 40, partial.font_width)
+full = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^A0N,40,40^FDHg^FS^XZ")[0].elements[0]
+check("so ^A0N,40 and ^A0N,40,40 are the same element",
+      (partial.width, partial.height) == (full.width, full.height),
+      ((partial.width, partial.height), (full.width, full.height)))
+
+# A bitmap font is not proportional, so it inherits ^CF's width instead
+bitmap = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^AFN,18^FDHg^FS^XZ")[0].elements[0]
+check("a bitmap font with no width inherits ^CF's",
+      bitmap.font_width == zpl_parser.DEFAULT_FONT['width'], bitmap.font_width)
+inherited = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^CF0,40,20^FO50,50^A0N,40^FDHg^FS^XZ")[0].elements[0]
+check("and ^CF still wins when it set a width for a scalable font",
+      inherited.font_width == 20, inherited.font_width)
+
+# ^GB's width and height both default to the thickness and clamp up to it,
+# which is how ZPL spells a rule. Demanding two numbers dropped the element.
+for source, want in (("^GB300", (300, 1, 1)), ("^GB,,4", (4, 4, 4)),
+                     ("^GB300,0,4", (300, 4, 4)), ("^GB0,200,4", (4, 200, 4))):
+    built = zpl_parser.parse_zpl(f"^XA^PW812^LL1218^FO50,50{source}^FS^XZ")[0].elements
+    check(f"{source} is a frame of {want[0]}x{want[1]}",
+          len(built) == 1 and (built[0].width, built[0].height,
+                               built[0].thickness) == want,
+          [(e.width, e.height, e.thickness) for e in built])
+
+offside = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO-10,50^A0N,40,40^FDoff^FS^XZ")[0]
+check("^FO keeps a negative coordinate instead of dropping the field",
+      len(offside.elements) == 1 and offside.elements[0].x == -10,
+      [(e.x, e.y) for e in offside.elements])
+
+# measured, not asserted: the preview's ink has to fall inside the box the
+# model claims, for a partial ^A and for a field relying on ^CF
+def _preview_ink(zpl, width, height):
+    """The bounds of the preview's black ink, as (x, y, w, h)."""
+    image = ZPLRenderer(width, height).render(zpl).convert('L')
+    dots = [(x, y) for y in range(height) for x in range(width)
+            if image.getpixel((x, y)) < 128]
+    if not dots:
+        return None
+    xs = [d[0] for d in dots]
+    ys = [d[1] for d in dots]
+    return (min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
+
+def _inside(ink, element, slack=2):
+    if ink is None:
+        return False
+    return (ink[0] >= element.x - slack and ink[1] >= element.y - slack
+            and ink[0] + ink[2] <= element.x + element.width + slack
+            and ink[1] + ink[3] <= element.y + element.height + slack)
+
+for name, source in (("a partial ^A", "^FO50,50^A0N,40^FDHg^FS"),
+                     ("a ^CF default font", "^CF0,40,40^FO50,50^FDHg^FS")):
+    page = f"^XA^PW400^LL300{source}^XZ"
+    shown = zpl_parser.parse_zpl(page)[0].elements[0]
+    check(f"the preview draws {name} inside the box the model gives it",
+          _inside(_preview_ink(page, 400, 300), shown),
+          (_preview_ink(page, 400, 300), (shown.x, shown.y, shown.width, shown.height)))
+
+# a rule is the case where a zero side used to leave nothing to draw at all
+check("the preview draws a ^GB rule at its full thickness",
+      _preview_ink("^XA^PW400^LL300^FO50,50^GB300,0,4^FS^XZ", 400, 300)
+      == (50, 50, 300, 4),
+      _preview_ink("^XA^PW400^LL300^FO50,50^GB300,0,4^FS^XZ", 400, 300))
+
+fw = qt_main.ZPLDesignerWindow()
+fw.unsaved_changes = False
+fw.on_new()
+fw.document.set_label_size(400, 300)
+fw.document.elements.append(zpl_parser.parse_zpl(
+    "^XA^PW400^LL300^FO50,50^GB300,0,4^FS^XZ")[0].elements[0])
+fw.canvas.set_zoom(1.0)
+ruled = QImage(400, 300, QImage.Format_ARGB32); ruled.fill(Qt.white)
+fw.canvas.render(ruled)
+ruled_rows = [y for y in range(300)
+              if any((ruled.pixel(x, y) & 0xFFFFFF) < 0x646464 for x in range(400))]
+check("and the canvas draws it too, four dots thick",
+      len(ruled_rows) == 4 and ruled_rows[0] == 50, ruled_rows)
+
+# --- ^FT names a baseline where ^FO names a top -----------------------------
+
+typeset = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FT50,150^A0N,40,40^FDHg^FS^XZ")[0]
+check("^FT opens a field, where it used to drop the whole label",
+      len(typeset.elements) == 1, len(typeset.elements))
+typed = typeset.elements[0]
+check("and its y is a baseline, so the box sits above it",
+      typed.y + typed.typeset == 150, (typed.y, typed.typeset))
+check("written back as the ^FT it came from, at the same y",
+      "^FT50,150" in typed.to_zpl(), typed.to_zpl().replace('\n', ' '))
+
+typed_frame = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FT50,250^GB300,200,4^FS^XZ")[0].elements[0]
+check("^FT gives everything but text its bottom-left corner",
+      (typed_frame.y, typed_frame.y + typed_frame.height) == (50, 250),
+      (typed_frame.y, typed_frame.height))
+
+# the baseline is where the file said, not merely somewhere above the y
+baseline_page = "^XA^PW400^LL300^FT50,150^A0N,40,40^FDHxy^FS^XZ"
+baseline_ink = _preview_ink(baseline_page, 400, 300)
+sat_on = baseline_ink[1] + textraster.baseline_offset(
+    ZPLRenderer.DEFAULT_FONT_PATH, 40)
+check("the preview puts the baseline on the y ^FT named",
+      abs(sat_on - 150) <= 1, (sat_on, baseline_ink))
+
+rescaled = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FT50,300^GB300,200,4^FS^XZ")[0]
+rescaled.rescale(1.5)
+check("rescaling carries the ^FT offset with the dots",
+      "^FT75,450" in rescaled.elements[0].to_zpl(),
+      rescaled.elements[0].to_zpl().replace('\n', ' '))
+
+# --- a symbology this designer cannot draw is not text ----------------------
+
+for symbology, source in (("^B3", "^B3N,N,60,Y,N^FD123ABC^FS"),
+                          ("^BQ", "^BQN,2,5^FDMM,AHELLO^FS"),
+                          ("^BX", "^BXN,6,200^FDdata^FS"),
+                          ("^BE", "^BEN,80,Y,N^FD123456789012^FS")):
+    page = f"^XA^PW812^LL1218^FO50,50{source}^XZ"
+    read = zpl_parser.parse_zpl(page)[0]
+    check(f"{symbology} is dropped, not turned into text",
+          not read.elements, [e.element_type for e in read.elements])
+    check(f"and {symbology} is named as a command a save would drop",
+          symbology in workflow.unsupported_commands(page),
+          workflow.unsupported_commands(page))
+
+check("the preview draws nothing for one either",
+      _preview_ink("^XA^PW400^LL300^FO50,50^B3N,N,60,Y,N^FD123ABC^FS^XZ",
+                   400, 300) is None,
+      _preview_ink("^XA^PW400^LL300^FO50,50^B3N,N,60,Y,N^FD123ABC^FS^XZ", 400, 300))
+
+check("a ^BC is still a barcode",
+      [e.element_type for e in zpl_parser.parse_zpl(
+          "^XA^PW812^LL1218^FO50,50^BY3^BCN,100^FD12345^FS^XZ")[0].elements]
+      == ['barcode'])
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

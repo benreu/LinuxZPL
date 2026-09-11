@@ -33,9 +33,24 @@ class DesignElement:
     height: int
     element_type: str  # 'text', 'frame', 'barcode', 'image'
 
-    # Class attribute, so every element inherits the default without each
+    # Class attributes, so every element inherits the default without each
     # __init__ having to set it.
     print_enabled = True
+    # Dots from this element's top down to the ^FT baseline it was placed by,
+    # or None when it was placed by ^FO. Kept rather than normalised away so a
+    # file written with ^FT is written back with ^FT, at the same y.
+    typeset = None
+
+    def origin_zpl(self) -> str:
+        """The ^FO or ^FT that places this element.
+
+        One method rather than an ^FO formatted into each element's to_zpl, so
+        a label that came in typeset cannot go out typeset in some of its
+        fields and not others.
+        """
+        if self.typeset is None:
+            return f"^FO{self.x},{self.y}\n"
+        return f"^FT{self.x},{self.y + self.typeset}\n"
 
     def contains_point(self, x: int, y: int) -> bool:
         """Check if point is within element bounds."""
@@ -205,7 +220,7 @@ class TextElement(DesignElement):
         """Convert to ZPL commands."""
         effective_font = self.printer_font_name or printer_font_name
         turn = self.orientation or 'N'
-        zpl = f"^FO{self.x},{self.y}\n"
+        zpl = self.origin_zpl()
         if effective_font:
             zpl += f"^A@{turn},{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
         else:
@@ -270,7 +285,7 @@ class FrameElement(DesignElement):
 
     def to_zpl(self) -> str:
         """Convert to ZPL commands."""
-        return (f"^FO{self.x},{self.y}\n"
+        return (self.origin_zpl() +
                 f"^GB{self.width},{self.height},{self.thickness}"
                 f"{self._options_zpl()}\n^FS\n")
 
@@ -395,7 +410,7 @@ class BarcodeElement(DesignElement):
         # ^BY sets the module width. Without it the printer uses its own default
         # of 2 dots, which pins the barcode's physical size to the head
         # resolution and makes it the one element that cannot be rescaled.
-        return (f"^FO{self.x},{self.y}\n"
+        return (self.origin_zpl() +
                 f"^BY{max(1, self.module_width)}\n"
                 f"{self._font_zpl()}"
                 f"^BC{self.orientation},{self.bar_height}{self._options_zpl()}\n"
@@ -573,7 +588,7 @@ class ImageElement(DesignElement):
         img_sized.convert('RGB').save(preview_bio, format='JPEG', quality=85, optimize=True)
         b64_preview = _b64.b64encode(preview_bio.getvalue()).decode('ascii')
 
-        zpl = f"^FO{self.x},{self.y}\n"
+        zpl = self.origin_zpl()
         zpl += f"^FXDESIGNER_PREVIEW:{b64_preview}\n"
         if self.image_path:
             zpl += f"^FXDESIGNER_PATH:{self.image_path}\n"
@@ -765,6 +780,9 @@ class Document:
             el.y = int(round(el.y * factor))
             el.width = s(el.width)
             el.height = s(el.height)
+            if el.typeset is not None:
+                # The gap to the ^FT baseline is in dots like everything else
+                el.typeset = int(round(el.typeset * factor))
             if el.element_type == 'text':
                 el.font_height = s(el.font_height)
                 el.font_width = s(el.font_width)

@@ -7,17 +7,8 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
-from . import geometry, textraster
-from .model import BarcodeElement, FieldBlock, TextElement
-
-
-def _parse_frame(x: int, y: int, params: str):
-    """A ^GB's parameters as the FrameElement the canvas would draw."""
-    from .parser import _build_element
-    return _build_element({'x': x, 'y': y, 'frame': params, 'graphic': None,
-                           'barcode': None, 'data': None, 'font': None,
-                           'block': None, 'module_width': 2,
-                           'preview': None, 'path': None}, None, None)
+from . import geometry, parser, textraster
+from .model import BarcodeElement, FieldBlock, FrameElement, TextElement
 
 
 class ZPLRenderer:
@@ -50,6 +41,13 @@ class ZPLRenderer:
         self.current_font_width = 0
         self.current_font_orientation = 'N'
         self.current_block = None
+        # ^CF's font, for any field that names none of its own
+        self.default_font = dict(parser.DEFAULT_FONT)
+        # Whether the current field was placed by ^FT, which names a baseline
+        # where ^FO names a top
+        self.typeset = False
+        # Whether the current field is a symbology this designer cannot draw
+        self.unsupported_field = False
         self.barcode_orientation = ''
         self.barcode_options = ()
         self.module_width = 2
@@ -71,6 +69,22 @@ class ZPLRenderer:
         """The face this field will be drawn with."""
         return (self.current_field_font_path or self.custom_font_path
                 or self.DEFAULT_FONT_PATH)
+
+    def _top(self, offset: int) -> int:
+        """Where the current field's content starts.
+
+        ^FO gives the top of it outright; ^FT gives the baseline of the first
+        line, or the bottom-left corner of everything that is not text, so the
+        content starts `offset` dots above the y the file named.
+        """
+        return self.current_y - offset if self.typeset else self.current_y
+
+    def _use_default_font(self):
+        """Fall back to ^CF's font, as a printer does at every field start."""
+        self.current_font_size = self.default_font['height']
+        self.current_font_width = self.default_font['width']
+        self.current_font_orientation = self.default_font['orientation']
+        self.current_field_font_path = None
 
     def _get_font(self, size: int) -> ImageFont.FreeTypeFont:
         """Get or create a cached font."""
@@ -133,7 +147,7 @@ class ZPLRenderer:
 
         if layout['angle']:
             panel = panel.rotate(-layout['angle'], expand=True)
-        self.image.paste(panel, (x, y))
+        self.image.paste(panel, (x, y - element.height if self.typeset else y))
 
     def _turned(self, panel, run: int, stack: int):
         """Paste a drawn panel onto the label, turned to face the right way.
@@ -149,7 +163,9 @@ class ZPLRenderer:
         angle = geometry.text_layout(element)['angle']
         if angle:
             panel = panel.rotate(-angle, expand=True)
-        self.image.paste(panel, (self.current_x, self.current_y))
+        offset = textraster.baseline_offset(self._font_path(),
+                                            self.current_font_size)
+        self.image.paste(panel, (self.current_x, self._top(offset)))
 
     def _render_text(self, text: str):
         """A plain ^FD field, in the font and the direction ^A asked for."""
@@ -204,13 +220,16 @@ class ZPLRenderer:
         colour is a letter, so it lost the colour and the rounding, and it drew
         an outline where a thick border fills solid.
         """
-        element = _parse_frame(self.current_x, self.current_y, params)
-        if element is None:
-            return
+        element = FrameElement(self.current_x, self.current_y,
+                               *parser._read_frame(params))
+        element.y = self._top(element.height)
         ink = 255 if element.colour == 'W' else 0
         thickness = max(1, element.thickness)
+        # PIL's rectangle includes both corners, so the far edge is one dot
+        # short of the width - otherwise every ^GB drew a dot wider and a dot
+        # taller here than on the canvas, which is most visible on a rule.
         box = [(element.x, element.y),
-               (element.x + element.width, element.y + element.height)]
+               (element.x + element.width - 1, element.y + element.height - 1)]
         radius = element.corner_radius()
 
         if 2 * thickness >= min(element.width, element.height):
@@ -249,7 +268,8 @@ class ZPLRenderer:
         # a whole number of bytes, which is exactly what mode '1' expects.
         inverted = bytes(b ^ 0xFF for b in raw[:rows * bytes_per_row])
         bitmap = Image.frombytes('1', (bytes_per_row * 8, rows), inverted)
-        self.image.paste(bitmap.convert('RGB'), (self.current_x, self.current_y))
+        self.image.paste(bitmap.convert('RGB'),
+                         (self.current_x, self._top(rows)))
 
     def render(self, zpl_content: str) -> Image.Image:
         """
@@ -265,6 +285,9 @@ class ZPLRenderer:
         self.image = Image.new('RGB', (self.width, self.height), color='white')
         self.draw = ImageDraw.Draw(self.image)
         self.current_field_font_path = None
+        self.default_font = dict(parser.DEFAULT_FONT)
+        self.typeset = False
+        self.unsupported_field = False
         
         # Parse and execute ZPL commands
         self._execute_zpl(zpl_content)
@@ -337,33 +360,31 @@ class ZPLRenderer:
                 self.height = int(params)
             except ValueError:
                 pass
-        elif command == 'FO':
-            # Set field origin: ^FOx,y
-            match = re.match(r'(\d+),(\d+)', params)
+        elif command in ('FO', 'FT'):
+            # Field origin: ^FOx,y names the top-left, ^FTx,y the baseline.
+            match = re.match(r'(-?\d+),(-?\d+)', params)
             if match:
                 self.current_x, self.current_y = self._parse_position(match.group(1), match.group(2))
+                self.typeset = (command == 'FT')
+                self.unsupported_field = False
+                # A field names its own font with ^A or inherits ^CF's, and a
+                # printer starts every field from the latter.
+                self._use_default_font()
         elif command == 'FD':
             # Field data: ^FD<data>
             self.field_data = params
-        elif command[0] == 'A' and command != 'A@':
-            # Built-in font: ^A<font><orientation>,h,w. ^A0 is the scalable
-            # font most other tools use; ^AF one of the bitmap fonts.
-            match = re.match(r'([A-Z]?)(?:,(\d+))?(?:,(\d+))?', params)
-            if match:
-                self.current_font_orientation = (match.group(1) or 'N').upper()
-                if match.group(2):
-                    self.current_font_size = int(match.group(2))
-                    if match.group(3):
-                        self.current_font_width = int(match.group(3))
-            self.current_field_font_path = None
-        elif command == 'A@':
-            # Downloaded font: ^A@o,h,w,device:name.TTF
-            match = re.match(r'([A-Z]?),(\d+),(\d+),([^:]+):(.+)', params)
-            if match:
-                self.current_font_orientation = (match.group(1) or 'N').upper()
-                self.current_font_size = int(match.group(2))
-                font_name = match.group(5).replace('.TTF', '').replace('.ttf', '').upper()
-                self.current_field_font_path = self.font_registry.get(font_name)
+        elif command[0] == 'A':
+            # ^A<font><orientation>,h,w - ^A0 is the scalable font most other
+            # tools use, ^AF one of the bitmap fonts, ^A@ one downloaded to the
+            # printer. Read through the parser rather than by a second pair of
+            # patterns here, which is what let the preview and the model
+            # disagree about how wide ^A0N,40 is.
+            font = parser.read_font(command[1], params, self.default_font)
+            self.current_font_orientation = font['orientation']
+            self.current_font_size = font['height']
+            self.current_font_width = font['width']
+            self.current_field_font_path = (self.font_registry.get(font['name'])
+                                            if font['name'] else None)
         elif command == 'GB':
             self._render_frame(params)
         elif command == 'BY':
@@ -376,7 +397,13 @@ class ZPLRenderer:
             self.current_block = FieldBlock.from_zpl(params)
         elif command == 'FS':
             # End field: render current field data
-            if self.field_data is not None:
+            if self.unsupported_field:
+                # Drawing the ^FD would put the barcode's data on the label as
+                # text, which is exactly what the parser no longer does.
+                self.unsupported_field = False
+                self.field_data = None
+                self.current_block = None
+            elif self.field_data is not None:
                 if self.current_block is not None and not self.is_barcode_mode:
                     self._render_block(self.field_data)
                     self.current_block = None
@@ -395,8 +422,11 @@ class ZPLRenderer:
             # Graphic field: ^GFa,total,total,bytes_per_row,<data>
             self._render_graphic(params)
         elif command == 'CF':
-            # Change font
-            pass
+            # ^CFf,h,w - the font every later field prints in unless it names
+            # its own. Ignoring it drew a default-font field at this class's
+            # own 12 dots, whatever the file asked for.
+            self.default_font = parser._read_default_font(params, self.default_font)
+            self._use_default_font()
         elif command == 'BC':
             # Barcode: ^BCo,h,f,g,e,m - every parameter changes the label, so
             # the preview keeps them all and draws from the same element the
@@ -410,6 +440,10 @@ class ZPLRenderer:
                 self.barcode_height = 50
             self.barcode_options = tuple(parts[2:])
             self.is_barcode_mode = True
+        elif command[0] == 'B':
+            # Code 39, QR, Data Matrix, EAN - a symbology this designer cannot
+            # draw. ^BY and ^BC are matched above, so only the rest reach here.
+            self.unsupported_field = True
     
     def render_from_file(self, filepath: str) -> Image.Image:
         """

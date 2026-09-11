@@ -27,6 +27,12 @@ FIXTURE_300 = ROOT / 'tests' / 'fixtures' / 'sample_300dpi.zpl'
 FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'
 # A ^CF default font and a ^GB that names its colour and rounding
 FIXTURE_DEFAULTS = ROOT / 'tests' / 'fixtures' / 'default_font.zpl'
+# Fields placed by ^FT, whose y is a baseline rather than a top
+FIXTURE_TYPESET = ROOT / 'tests' / 'fixtures' / 'typeset.zpl'
+# ^GB rules, where the width or the height is left to default to the thickness
+FIXTURE_RULES = ROOT / 'tests' / 'fixtures' / 'rules.zpl'
+# ^A with its sizes left off, inherited from ^CF or from the font itself
+FIXTURE_PARTIAL = ROOT / 'tests' / 'fixtures' / 'partial_font.zpl'
 
 # A font every step can rely on; text width is the most divergence-prone rule,
 # so the sequence exercises the measured path as well as the fixed-width one.
@@ -575,6 +581,17 @@ def sequence(driver, record):
     # loading replaces the document every earlier step built up.
     driver.load(FIXTURE_DEFAULTS)
     record('load a file using ^CF and a painted ^GB')
+
+    # The rest of how other tools write a label: a field placed from its
+    # baseline, a rule drawn by leaving one of ^GB's sides to default, and an
+    # ^A that gives a height and lets the width follow. Each load replaces the
+    # document, so these stay at the end with the one above.
+    driver.load(FIXTURE_TYPESET)
+    record('load a file placed by ^FT')
+    driver.load(FIXTURE_RULES)
+    record('load a file of ^GB rules')
+    driver.load(FIXTURE_PARTIAL)
+    record('load a file whose ^A leaves its sizes off')
 
 
 def main():

@@ -45,6 +45,10 @@ COMMAND = re.compile(r'([\^~])([A-Za-z0-9@]{2})([^\^~]*)', re.S)
 DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None,
                 'orientation': 'N'}
 
+# The fonts whose glyphs are scaled rather than chosen from a bitmap, and so
+# the ones an omitted ^A width leaves proportional.
+SCALABLE_FONTS = ('0', '@')
+
 # Commands the parser can skip without choking. Whether skipping one is worth
 # telling the user about is a separate question, answered by workflow.MODELLED.
 STRUCTURAL = {'^XA', '^XZ', '^FS', '^FX', '^CI', '^CF', '^LH', '^PR', '^MD',
@@ -181,12 +185,18 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             default_font = _read_default_font(params, default_font)
             continue
 
-        if cmd == '^FO':
+        if cmd in ('^FO', '^FT'):
             # A field that never saw ^FS still ends here, at the next one
             pending_no_print = _flush(field, doc, renderer, pending_no_print)
-            match = re.match(r'\s*(\d+),(\d+)', params)
+            match = re.match(r'\s*(-?\d+),(-?\d+)', params)
             field = _new_field(int(match.group(1)), int(match.group(2)),
                                default_font) if match else None
+            # ^FT places a field exactly as ^FO does, but names its baseline
+            # rather than its top. Opening no field on it did not degrade such
+            # a label - it dropped every field in it, so a file from another
+            # tool opened completely empty.
+            if field is not None:
+                field['typeset'] = (cmd == '^FT')
             continue
 
         if cmd == '^FS':
@@ -202,11 +212,17 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             if match:
                 field['module_width'] = int(match.group(1))
         elif cmd.startswith('^A'):
-            _read_font(cmd, params, field)
+            field['font'] = read_font(cmd[2], params, field['default_font'])
         elif cmd == '^FB':
             field['block'] = FieldBlock.from_zpl(params)
         elif cmd == '^BC':
             field['barcode'] = _read_barcode(params)
+        elif cmd.startswith('^B'):
+            # Code 39, QR, Data Matrix, EAN - a symbology this designer cannot
+            # draw. Recorded so the field is dropped, because falling through
+            # to the text branch did not merely lose the barcode: it put a text
+            # element holding the barcode's data on the label in its place.
+            field['symbology'] = cmd
         elif cmd == '^GB':
             field['frame'] = params
         elif cmd == '^GF':
@@ -231,7 +247,7 @@ def _new_field(x: int, y: int, default_font=None) -> dict:
     return {'x': x, 'y': y, 'module_width': 2, 'block': None, 'font': None,
             'default_font': dict(default_font or DEFAULT_FONT),
             'barcode': None, 'frame': None, 'graphic': None, 'data': None,
-            'preview': None, 'path': None}
+            'preview': None, 'path': None, 'typeset': False, 'symbology': None}
 
 
 def _read_default_font(params: str, current: dict) -> dict:
@@ -255,28 +271,79 @@ def _read_default_font(params: str, current: dict) -> dict:
     return font
 
 
-def _read_font(cmd: str, params: str, field: dict) -> None:
-    """^A0 / ^AF / ^A@ - the font, its height and its width.
+def read_font(code: str, params: str, default_font=None) -> dict:
+    """^A<code><orientation>,<h>,<w> - the font a field names for itself.
 
     The designator is the command's second character, so every built-in font
     is read the same way; ^A@ additionally names a font downloaded to the
     printer, e.g. ^A@N,53,19,E:DEJAVUSA.TTF.
+
+    Every parameter is optional, and an omitted one keeps the ^CF default for
+    that position - the same rule _read_default_font applies to ^CF itself.
+    Demanding all three is what made ^A0N,40 come back as ^A0N,36,20, losing
+    the height it did give while the preview, which demanded nothing, drew it
+    at 40.
+
+    The orientation is the first parameter, and dropping it is why text was
+    the one element that could not be turned: it loaded flat and saved flat.
     """
-    code = cmd[2]
-    # The orientation is the first parameter, and dropping it is why text was
-    # the one element that could not be turned: it loaded flat and saved flat.
-    match = re.match(r'\s*([A-Z])?,(\d+),(\d+)', params)
-    orientation = (match.group(1) or 'N').upper() if match else 'N'
-    font_height = int(match.group(2)) if match else 36
-    font_width = int(match.group(3)) if match else 20
+    current = dict(default_font or DEFAULT_FONT)
+    # The font file is split off first: its device path carries commas of its
+    # own, e.g. ^A@N,53,19,E:DEJAVUSA.TTF.
+    parts = [p.strip() for p in params.split(':', 1)[0].split(',')]
+
+    def number(index, fallback):
+        if len(parts) > index and parts[index]:
+            try:
+                return int(parts[index])
+            except ValueError:
+                pass
+        return fallback
+
+    letter = re.match(r'\s*([A-Za-z])', parts[0]) if parts else None
+    height = number(1, current['height'])
+    # A scalable font given no width is proportional. ^CF still wins when it
+    # set one for a scalable font, but inheriting a bitmap font's width would
+    # squeeze ^A0N,40 into five dots rather than letting it keep its shape.
+    inherited = current['width']
+    if code in SCALABLE_FONTS and current['code'] not in SCALABLE_FONTS:
+        inherited = height
+
     name = None
     if code == '@':
         named = re.search(r'[^:,]*:([^.,]+)', params)
         if named:
             name = named.group(1).upper()
-    field['font'] = {'code': code, 'height': font_height,
-                     'width': font_width, 'name': name,
-                     'orientation': orientation}
+    return {'code': code, 'height': height, 'width': number(2, inherited),
+            'name': name,
+            'orientation': letter.group(1).upper() if letter else 'N'}
+
+
+def _read_frame(params: str):
+    """^GBw,h,t,c,r - as (width, height, thickness, colour, rounding).
+
+    The width and the height both default to the thickness and are clamped up
+    to it, which is how ZPL spells a rule: ^GB300,0,4 is a 300 x 4 line, not a
+    box with no height. Demanding two numbers dropped ^GB300 and ^GB,,4
+    outright, and let a rule through as a box the canvas then drew as nothing.
+    """
+    parts = [p.strip() for p in params.split(',')]
+
+    def number(index, fallback):
+        if len(parts) > index and parts[index]:
+            try:
+                return int(parts[index])
+            except ValueError:
+                pass
+        return fallback
+
+    thickness = max(1, number(2, 1))
+    # The colour is a letter, which is why a digits-only pattern silently
+    # dropped it along with the rounding after it.
+    colour = parts[3][:1].upper() if len(parts) > 3 and parts[3] else 'B'
+    return (max(thickness, number(0, thickness)),
+            max(thickness, number(1, thickness)),
+            thickness, colour, number(4, 0))
 
 
 def _read_barcode(params: str) -> dict:
@@ -307,12 +374,33 @@ def _flush(field, doc, renderer, pending_no_print: bool) -> bool:
     before = len(doc.elements)
     element = _build_element(field, doc, renderer)
     if element is not None:
+        if field['typeset']:
+            _apply_typeset(element, doc)
         doc.elements.append(element)
     if pending_no_print and len(doc.elements) > before:
         for el in doc.elements[before:]:
             el.print_enabled = False
         return False
     return pending_no_print
+
+
+def _apply_typeset(element, doc) -> None:
+    """Move an element placed by ^FT, whose y is a baseline and not a top.
+
+    The offset is kept on the element rather than normalised away, so a save
+    writes the ^FT back at the y it came from. Our idea of a font's ascent is
+    an estimate, and converting to ^FO would bake that estimate into the file
+    every time such a label was opened and saved.
+    """
+    if element.element_type == 'text':
+        from . import textraster
+        offset = textraster.baseline_offset(
+            element.font_path or doc.font_path, element.font_height)
+    else:
+        # ^FT names the bottom-left corner of everything that is not text.
+        offset = element.height
+    element.typeset = offset
+    element.y -= offset
 
 
 def _build_element(field, doc, renderer):
@@ -331,16 +419,7 @@ def _build_element(field, doc, renderer):
         return None
 
     if field['frame'] is not None:
-        # ^GBw,h,t,c,r - the colour is a letter, which is why a digits-only
-        # pattern silently dropped it along with the rounding after it.
-        match = re.match(r'\s*(\d+),(\d+)(?:,(\d+))?(?:,([A-Za-z]))?(?:,(\d+))?',
-                         field['frame'])
-        if match:
-            thickness = int(match.group(3)) if match.group(3) else 1
-            return FrameElement(x, y, int(match.group(1)), int(match.group(2)),
-                                thickness, match.group(4) or 'B',
-                                int(match.group(5) or 0))
-        return None
+        return FrameElement(x, y, *_read_frame(field['frame']))
 
     if field['barcode'] is not None:
         bc = field['barcode']
@@ -354,6 +433,11 @@ def _build_element(field, doc, renderer):
                               options=bc['options'],
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
+
+    if field['symbology'] is not None:
+        # Already named in the load warning. Dropping it here is what stops a
+        # Code 39 sixty dots tall from arriving as nine-dot text.
+        return None
 
     if field['data'] is not None:
         return _build_text(x, y, field, doc, renderer)
