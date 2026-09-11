@@ -550,6 +550,16 @@ def sequence(driver, record):
         driver.resync(block)
         record('wrapping switched off, the lines joined')
 
+    # Text at each quarter turn. Rotation writes one letter into ^A, but it
+    # also transposes the footprint, and a footprint is what every later drag
+    # and clamp is measured against.
+    turning = next((e for e in driver.elements if e.element_type == 'text'), None)
+    if turning is not None:
+        for facing in ('R', 'I', 'B', 'N'):
+            turning.orientation = facing
+            driver.resync(turning)
+            record(f'text turned to {facing}')
+
     # ^GB's colour and corner rounding, which both frontends now draw and
     # neither used to keep.
     frame = next((e for e in driver.elements if e.element_type == 'frame'), None)

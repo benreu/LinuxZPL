@@ -138,6 +138,33 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int) -> None:
         element.sync_box()
 
 
+def turn(element) -> dict:
+    """The rotation that places an element's own frame inside its footprint.
+
+    `angle` and `offset` together are a rotation about the element's origin
+    after a translation that brings the rotated content back onto it. Every
+    quarter turn leaves the footprint axis-aligned, which is why handles,
+    hit-testing, dragging and clamping never have to know about rotation.
+    """
+    orientation = (getattr(element, 'orientation', 'N') or 'N').upper()
+    if orientation == 'R':          # 90 degrees, reading downward
+        return {'angle': 90, 'offset': (element.width, 0)}
+    if orientation == 'I':          # upside down
+        return {'angle': 180, 'offset': (element.width, element.height)}
+    if orientation == 'B':          # 270 degrees, reading upward
+        return {'angle': 270, 'offset': (0, element.height)}
+    return {'angle': 0, 'offset': (0, 0)}
+
+
+def text_layout(element) -> dict:
+    """Which way a text element faces, and where its own frame sits.
+
+    Both frontends and the preview draw from this, so none of them can hold a
+    different opinion about it - the same reason barcode_layout exists.
+    """
+    return turn(element)
+
+
 def barcode_layout(element) -> dict:
     """Where a barcode's parts go, in its own unrotated frame.
 
@@ -154,15 +181,8 @@ def barcode_layout(element) -> dict:
     bars = max(1, element.bar_height)
     text_h = element.text_height()
 
-    orientation = (element.orientation or 'N').upper()
-    if orientation == 'R':          # 90 degrees, reading downward
-        angle, offset = 90, (element.width, 0)
-    elif orientation == 'I':        # upside down
-        angle, offset = 180, (element.width, element.height)
-    elif orientation == 'B':        # 270 degrees, reading upward
-        angle, offset = 270, (0, element.height)
-    else:
-        angle, offset = 0, (0, 0)
+    facing = turn(element)
+    angle, offset = facing['angle'], facing['offset']
 
     # The line goes above the bars or below them, and the bars move down to
     # make room when it is above.

@@ -219,6 +219,17 @@ class DesignCanvas(QWidget):
 
         font_path = element.font_path or self.document.font_path
         block = getattr(element, 'block', None)
+
+        # Everything below draws the text in its own upright frame; the frame
+        # is what turns. The footprint stays axis-aligned, so the outline and
+        # the handles are drawn outside the rotation.
+        facing = geometry.text_layout(element)
+        painter.save()
+        painter.translate(element.x + facing['offset'][0],
+                          element.y + facing['offset'][1])
+        if facing['angle']:
+            painter.rotate(facing['angle'])
+
         raster = None
         if block is not None:
             # A ^FB block is rasterised at its printed size, wrapped and
@@ -227,9 +238,10 @@ class DesignCanvas(QWidget):
                 element.text, font_path, element.font_height,
                 element.font_width, block)) if font_path else None
             if wrapped is not None:
-                painter.drawImage(QPointF(element.x, element.y), wrapped)
+                painter.drawImage(QPointF(0, 0), wrapped)
             else:
                 self._draw_text_block(painter, element, font_path, block)
+            painter.restore()
             if selected:
                 self._draw_handles(painter, element)
             return
@@ -243,13 +255,15 @@ class DesignCanvas(QWidget):
             # always look like it fits, hiding any difference from what prints.
             h_scale = element.font_width / max(1, element.font_height)
             painter.save()
-            painter.translate(element.x + textraster.MARGIN, element.y)
+            painter.translate(textraster.MARGIN, 0)
             painter.scale(h_scale, 1.0)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
             painter.drawImage(QPointF(0, 0), raster)
             painter.restore()
         else:
             self._draw_text_fallback(painter, element, font_path)
+
+        painter.restore()
 
         if selected:
             self._draw_handles(painter, element)
@@ -279,8 +293,7 @@ class DesignCanvas(QWidget):
             for piece, x in textraster.placements(line, measure, block, last):
                 drawn = metrics.horizontalAdvance(piece) or 1.0
                 painter.save()
-                painter.translate(element.x + x,
-                                  element.y + row * step + element.font_height - 2)
+                painter.translate(x, row * step + element.font_height - 2)
                 painter.scale(max(1.0, measure(piece)) / drawn, 1.0)
                 painter.drawText(QPointF(0, 0), piece)
                 painter.restore()
@@ -305,7 +318,7 @@ class DesignCanvas(QWidget):
 
         painter.save()
         painter.setPen(QColor(0, 0, 0))
-        painter.translate(element.x + 2, element.y + element.font_height - 2)
+        painter.translate(2, element.font_height - 2)
         painter.scale(h_scale, 1.0)
         painter.drawText(QPointF(0, 0), element.text)
         painter.restore()

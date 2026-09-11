@@ -351,7 +351,6 @@ class DesignCanvas(Gtk.DrawingArea):
             if not pixbuf:
                 return False
             context.save()
-            context.translate(element.x, element.y)
             Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
             context.paint()
             context.restore()
@@ -367,7 +366,7 @@ class DesignCanvas(Gtk.DrawingArea):
         # look like it fits, hiding any difference from what actually prints.
         h_scale = element.font_width / max(1, element.font_height)
         context.save()
-        context.translate(element.x + textraster.MARGIN, element.y)
+        context.translate(textraster.MARGIN, 0)
         context.scale(h_scale, 1.0)
         Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
         context.paint()
@@ -443,6 +442,17 @@ class DesignCanvas(Gtk.DrawingArea):
         context.set_source_rgb(0, 0, 0)
         font_path = element.font_path or self.font_path
         block = getattr(element, 'block', None)
+
+        # Everything below draws the text in its own upright frame; the frame
+        # is what turns. The footprint stays axis-aligned, so the outline and
+        # the handles above are drawn outside the rotation.
+        facing = geometry.text_layout(element)
+        context.save()
+        context.translate(element.x + facing['offset'][0],
+                          element.y + facing['offset'][1])
+        if facing['angle']:
+            context.rotate(math.radians(facing['angle']))
+
         pil_rendered = False
         if font_path:
             pil_rendered = self._render_text_pil(context, element, font_path)
@@ -463,10 +473,12 @@ class DesignCanvas(Gtk.DrawingArea):
                 measured = extents.width if extents.width > 0 else 1.0
                 horizontal_scale = element.width / measured
             context.save()
-            context.translate(element.x + 2, element.y + element.font_height - 2)
+            context.translate(2, element.font_height - 2)
             context.scale(horizontal_scale, 1.0)
             context.show_text(element.text[:20])
             context.restore()
+
+        context.restore()
 
         if selected:
             self._draw_handles(context, element)
@@ -492,8 +504,7 @@ class DesignCanvas(Gtk.DrawingArea):
             for piece, x in textraster.placements(line, measure, block, last):
                 drawn = context.text_extents(piece).width or 1.0
                 context.save()
-                context.translate(element.x + x,
-                                  element.y + row * step + element.font_height - 2)
+                context.translate(x, row * step + element.font_height - 2)
                 context.scale(max(1.0, measure(piece)) / drawn, 1.0)
                 context.show_text(piece)
                 context.restore()

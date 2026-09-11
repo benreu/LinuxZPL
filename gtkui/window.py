@@ -19,9 +19,9 @@ from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import textraster
-from zplcore.model import (FRAME_COLOURS, TEXT_JUSTIFICATIONS, BarcodeElement,
-                           Document, FieldBlock, FrameElement, ImageElement,
-                           TextElement)
+from zplcore.model import (FRAME_COLOURS, ORIENTATIONS, TEXT_JUSTIFICATIONS,
+                           BarcodeElement, Document, FieldBlock, FrameElement,
+                           ImageElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from .canvas import DesignCanvas
@@ -1368,6 +1368,10 @@ class ZPLViewerWindow(Gtk.Window):
             width_spin = _make_spin(element.font_width, 8, 500)
             make_row("Font Width:", width_spin)
 
+            orientation_combo, orientation_codes = _make_combo(
+                ORIENTATIONS, element.orientation)
+            make_row("Orientation:", orientation_combo)
+
             # Font chooser (installed families only)
             selected_font = [element.font_path, element.font_family]
 
@@ -1473,6 +1477,8 @@ class ZPLViewerWindow(Gtk.Window):
                     buffer.get_start_iter(), buffer.get_end_iter(), False))
                 element.font_height = int(height_spin.get_value())
                 element.font_width = int(width_spin.get_value())
+                element.orientation = orientation_codes[
+                    orientation_combo.get_active()]
                 element.height = element.font_height
 
                 if wrap_check.get_active():

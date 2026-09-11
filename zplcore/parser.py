@@ -42,7 +42,8 @@ COMMAND = re.compile(r'([\^~])([A-Za-z0-9@]{2})([^\^~]*)', re.S)
 
 # ZPL's own factory default font, used by any field that carries neither an ^A
 # of its own nor a ^CF before it.
-DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None}
+DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None,
+                'orientation': 'N'}
 
 # Commands the parser can skip without choking. Whether skipping one is worth
 # telling the user about is a separate question, answered by workflow.MODELLED.
@@ -244,6 +245,7 @@ def _read_default_font(params: str, current: dict) -> dict:
     if parts and parts[0]:
         font['code'] = parts[0][0].upper()
         font['name'] = None
+        font['orientation'] = 'N'
     for index, key in ((1, 'height'), (2, 'width')):
         if len(parts) > index and parts[index]:
             try:
@@ -261,16 +263,20 @@ def _read_font(cmd: str, params: str, field: dict) -> None:
     printer, e.g. ^A@N,53,19,E:DEJAVUSA.TTF.
     """
     code = cmd[2]
-    match = re.match(r'\s*[A-Z]?,(\d+),(\d+)', params)
-    font_height = int(match.group(1)) if match else 36
-    font_width = int(match.group(2)) if match else 20
+    # The orientation is the first parameter, and dropping it is why text was
+    # the one element that could not be turned: it loaded flat and saved flat.
+    match = re.match(r'\s*([A-Z])?,(\d+),(\d+)', params)
+    orientation = (match.group(1) or 'N').upper() if match else 'N'
+    font_height = int(match.group(2)) if match else 36
+    font_width = int(match.group(3)) if match else 20
     name = None
     if code == '@':
         named = re.search(r'[^:,]*:([^.,]+)', params)
         if named:
             name = named.group(1).upper()
     field['font'] = {'code': code, 'height': font_height,
-                     'width': font_width, 'name': name}
+                     'width': font_width, 'name': name,
+                     'orientation': orientation}
 
 
 def _read_barcode(params: str) -> dict:
@@ -362,6 +368,7 @@ def _build_text(x, y, field, doc, renderer):
     font = field['font'] or field['default_font']
     element = TextElement(x, y, field['data'], font['height'], font['width'],
                           font_code=font['code'])
+    element.orientation = font.get('orientation', 'N')
     element.height = font['height']
     element.printer_font_name = font['name']
     element.block = field['block']

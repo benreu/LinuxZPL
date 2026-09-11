@@ -122,7 +122,7 @@ class TextElement(DesignElement):
 
     def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
                  font_height: int = 36, font_width: int = 20,
-                 font_code: str = 'F'):
+                 font_code: str = 'F', orientation: str = 'N'):
         self.x = x
         self.y = y
         self.text = text
@@ -137,6 +137,11 @@ class TextElement(DesignElement):
         # Built-in font designator: 'F' is what this designer has always
         # written, '0' the scalable font most other tools reach for.
         self.font_code = font_code
+        # ^A's orientation, the letter before the sizes. `width` and `height`
+        # are the element's footprint, transposed at a quarter turn, so the
+        # shared geometry only ever sees an axis-aligned box - which is why
+        # rotating text needs nothing from hit-testing or dragging.
+        self.orientation = (orientation or 'N').upper()
         # ^FB, when the text is a wrapped block rather than a single line
         self.block: Optional['FieldBlock'] = None
 
@@ -175,6 +180,10 @@ class TextElement(DesignElement):
             return max(1, round(target_width / max(1, len(self.text))))
         return max(1, round(target_width * max(1, self.font_height) / natural))
 
+    def rotated(self) -> bool:
+        """Whether the text runs down or up the label rather than across it."""
+        return self.orientation in ('R', 'B')
+
     def default_block(self, default_font_path: Optional[str] = None) -> 'FieldBlock':
         """A block that wraps this text where it already ends.
 
@@ -195,11 +204,12 @@ class TextElement(DesignElement):
     def to_zpl(self, printer_font_name: Optional[str] = None) -> str:
         """Convert to ZPL commands."""
         effective_font = self.printer_font_name or printer_font_name
+        turn = self.orientation or 'N'
         zpl = f"^FO{self.x},{self.y}\n"
         if effective_font:
-            zpl += f"^A@N,{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
+            zpl += f"^A@{turn},{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
         else:
-            zpl += f"^A{self.font_code}N,{self.font_height},{self.font_width}\n"
+            zpl += f"^A{self.font_code}{turn},{self.font_height},{self.font_width}\n"
         if self.block is not None:
             zpl += self.block.to_zpl() + "\n"
         zpl += f"^FD{self.text}^FS\n"
@@ -395,8 +405,12 @@ class BarcodeElement(DesignElement):
 # The choices both frontends offer for a barcode, as (label, value). Here
 # rather than in either toolkit's dialog code, because a frontend offering a
 # different set would produce a different label from the same design.
-BARCODE_ORIENTATIONS = (("Normal", 'N'), ("Rotated 90\u00b0", 'R'),
-                        ("Upside down", 'I'), ("Rotated 270\u00b0", 'B'))
+ORIENTATIONS = (("Normal", 'N'), ("Rotated 90\u00b0", 'R'),
+                ("Upside down", 'I'), ("Rotated 270\u00b0", 'B'))
+# Text and barcodes turn by the same four quarter turns and ^A and ^BC spell
+# them with the same letters, so they offer one list rather than two that could
+# drift apart.
+BARCODE_ORIENTATIONS = ORIENTATIONS
 
 # The interpretation line, as one choice rather than two flags
 BARCODE_TEXT_CHOICES = (("Below the bars", (True, False)),
@@ -792,12 +806,14 @@ class Document:
             # A block is sized by ^FB, not by the string: its width is fixed
             # and its height follows however many lines the text wraps into.
             from . import textraster
-            element.width, element.height = textraster.block_size(
+            run, stack = textraster.block_size(
                 element.text, element.font_path or self.font_path,
                 element.font_height, element.font_width, block)
-            return
-        element.width = element.printed_width(self.font_path)
-        element.height = element.font_height
+        else:
+            run, stack = element.printed_width(self.font_path), element.font_height
+        # The run is along the text, so a quarter turn swaps it with the stack.
+        element.width, element.height = ((stack, run) if element.rotated()
+                                         else (run, stack))
 
     def set_font(self, font_path: str, font_family: str, printer_font_name: str):
         """Set the document-wide font."""

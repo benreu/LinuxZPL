@@ -72,6 +72,7 @@ At startup the label is 4 × 6 inches at the configured printer resolution
 | `font_width` | 20 dots |
 | `font_path`, `font_family`, `printer_font_name` | none (uses the document font, or the printer's built-in font) |
 | `font_code` | `F` - the built-in font designator, written as `^A<code>`. `0` is the scalable font most other tools use |
+| `orientation` | `N` - `^A`'s orientation letter: `N`, `R` (90°), `I` (180°), `B` (270°) |
 | `block` | none - a field block (`^FB`), when the text wraps rather than running on one line |
 
 `height` always equals `font_height` **unless the element has a block**. **`width` is derived, never set
@@ -101,6 +102,14 @@ maximum number of lines, extra spacing between them, a justification
   `lines × (font_height + line spacing)`
 
 A word too long for the block is left on its own line rather than split.
+
+**A quarter turn transposes the footprint.** `width` and `height` are the box
+the label occupies, so at `R` and `B` they are the run and the stack swapped -
+exactly as a rotated barcode's are. The box stays axis-aligned at every quarter
+turn, which is why hit-testing, dragging, the resize handles and the clamping
+need to know nothing about rotation: only the drawing turns, about the
+element's origin. A wrapped block turns with its text, its width still measured
+along the text.
 
 **Justified (`J`) is the one that cannot be expressed as a starting x.** Every
 line but the one that ends its paragraph is laid out word by word, with the
@@ -394,8 +403,8 @@ effect of building elements while parsing.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
-| **Edit Text** | Text (multi-line); Font Height; Font Width; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. |
-| **Edit Frame** | Width; Height; Thickness | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change |
+| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. |
+| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). |
 | **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches** | 0.5–25 inches, two decimals, stepping by a tenth. A live hint shows the resulting dots at the current resolution and the `^PW` / `^LL` values. Shrinking clamps elements to the new bounds. |
@@ -418,9 +427,9 @@ effect of building elements while parsing.
 
 | Element | Block |
 |---|---|
-| Text, built-in font | `^FO<x>,<y>` / `^A<font_code>N,<font_height>,<font_width>` / `^FD<text>^FS` |
+| Text, built-in font | `^FO<x>,<y>` / `^A<font_code><orientation>,<font_height>,<font_width>` / `^FD<text>^FS` |
 | Text in a block | as above, with `^FB<width>,<lines>,<spacing>,<justification>,<indent>` between the font and the data |
-| Text, downloaded font | `^FO<x>,<y>` / `^A@N,<font_height>,<font_width>,E:<NAME>.TTF` / `^FD<text>^FS` |
+| Text, downloaded font | `^FO<x>,<y>` / `^A@<orientation>,<font_height>,<font_width>,E:<NAME>.TTF` / `^FD<text>^FS` |
 | Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>[,<colour>[,<rounding>]]` / `^FS` — the colour and rounding are written only when they are not `B` and `0` |
 | Barcode | `^FO<x>,<y>` / `^BY<module_width>` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |

@@ -23,8 +23,9 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
 from zplcore import fonts as zpl_fonts, textraster
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
                            BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
-                           FRAME_COLOURS, TEXT_JUSTIFICATIONS, Document,
-                           FieldBlock, FrameElement, TextElement)
+                           FRAME_COLOURS, ORIENTATIONS,
+                           TEXT_JUSTIFICATIONS, Document, FieldBlock,
+                           FrameElement, TextElement)
 
 IMAGE_FILTER = "Image files (*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG);;All files (*)"
 ZPL_FILTER = "ZPL files (*.zpl);;All files (*)"
@@ -180,6 +181,15 @@ def edit_text_dialog(parent, element: TextElement, document: Document) -> bool:
     width_spin.setValue(element.font_width)
     form.addRow("Font Width:", width_spin)
 
+    orientation_combo = QComboBox()
+    orientation_combo.setObjectName("orientation")
+    for label, code in ORIENTATIONS:
+        orientation_combo.addItem(label, code)
+    turns = [code for _label, code in ORIENTATIONS]
+    orientation_combo.setCurrentIndex(turns.index(element.orientation)
+                                      if element.orientation in turns else 0)
+    form.addRow("Orientation:", orientation_combo)
+
     chosen = {'path': element.font_path, 'family': element.font_family}
 
     def font_display():
@@ -273,6 +283,7 @@ def edit_text_dialog(parent, element: TextElement, document: Document) -> bool:
     element.text = textraster.from_editor(text_edit.toPlainText())
     element.font_height = height_spin.value()
     element.font_width = width_spin.value()
+    element.orientation = orientation_combo.currentData()
     element.height = element.font_height
 
     if wrap_check.isChecked():

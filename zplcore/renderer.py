@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
 from . import geometry, textraster
-from .model import BarcodeElement, FieldBlock
+from .model import BarcodeElement, FieldBlock, TextElement
 
 
 def _parse_frame(x: int, y: int, params: str):
@@ -48,6 +48,7 @@ class ZPLRenderer:
         self.barcode_height = 0
         self.is_barcode_mode = False
         self.current_font_width = 0
+        self.current_font_orientation = 'N'
         self.current_block = None
         self.barcode_orientation = ''
         self.barcode_options = ()
@@ -134,6 +135,36 @@ class ZPLRenderer:
             panel = panel.rotate(-layout['angle'], expand=True)
         self.image.paste(panel, (x, y))
 
+    def _turned(self, panel, run: int, stack: int):
+        """Paste a drawn panel onto the label, turned to face the right way.
+
+        PIL cannot rotate what has not been drawn, so text goes into its own
+        image and is turned as a whole - the same way a rotated barcode is
+        drawn. The footprint transposes at a quarter turn, which is what keeps
+        the preview's box the same one the canvas shows.
+        """
+        element = TextElement(self.current_x, self.current_y,
+                              orientation=self.current_font_orientation)
+        element.width, element.height = run, stack
+        angle = geometry.text_layout(element)['angle']
+        if angle:
+            panel = panel.rotate(-angle, expand=True)
+        self.image.paste(panel, (self.current_x, self.current_y))
+
+    def _render_text(self, text: str):
+        """A plain ^FD field, in the font and the direction ^A asked for."""
+        font = self._get_font(self.current_font_size)
+        try:
+            box = self.draw.textbbox((0, 0), text, font=font)
+        except Exception:
+            box = (0, 0, max(1, len(text) * self.current_font_size),
+                   self.current_font_size)
+        run = max(1, box[2] - box[0])
+        stack = max(1, box[3] - box[1])
+        panel = Image.new('L', (run, stack), 255)
+        ImageDraw.Draw(panel).text((-box[0], -box[1]), text, fill=0, font=font)
+        self._turned(panel, run, stack)
+
     def _render_block(self, text: str):
         """Draw text wrapped into the ^FB block, so the preview matches.
 
@@ -148,7 +179,9 @@ class ZPLRenderer:
         drawn = textraster.raster_block(text, font_path, self.current_font_size,
                                         font_width, block)
         if drawn is not None:
-            self.image.paste(drawn, (self.current_x, self.current_y), drawn)
+            panel = Image.new('L', drawn.size, 255)
+            panel.paste(drawn.convert('L'), (0, 0), drawn)
+            self._turned(panel, drawn.width, drawn.height)
             return
 
         # No usable font file, so there are no glyph metrics to raster with;
@@ -316,15 +349,18 @@ class ZPLRenderer:
             # Built-in font: ^A<font><orientation>,h,w. ^A0 is the scalable
             # font most other tools use; ^AF one of the bitmap fonts.
             match = re.match(r'([A-Z]?)(?:,(\d+))?(?:,(\d+))?', params)
-            if match and match.group(2):
-                self.current_font_size = int(match.group(2))
-                if match.group(3):
-                    self.current_font_width = int(match.group(3))
+            if match:
+                self.current_font_orientation = (match.group(1) or 'N').upper()
+                if match.group(2):
+                    self.current_font_size = int(match.group(2))
+                    if match.group(3):
+                        self.current_font_width = int(match.group(3))
             self.current_field_font_path = None
         elif command == 'A@':
             # Downloaded font: ^A@o,h,w,device:name.TTF
             match = re.match(r'([A-Z]?),(\d+),(\d+),([^:]+):(.+)', params)
             if match:
+                self.current_font_orientation = (match.group(1) or 'N').upper()
                 self.current_font_size = int(match.group(2))
                 font_name = match.group(5).replace('.TTF', '').replace('.ttf', '').upper()
                 self.current_field_font_path = self.font_registry.get(font_name)
@@ -353,22 +389,7 @@ class ZPLRenderer:
                     self.barcode_options = ()
                     self.current_block = None
                 else:
-                    # Render as text
-                    font = self._get_font(self.current_font_size)
-                    try:
-                        self.draw.text(
-                            (self.current_x, self.current_y),
-                            self.field_data,
-                            fill='black',
-                            font=font
-                        )
-                    except Exception as e:
-                        # Fallback if font rendering fails
-                        self.draw.text(
-                            (self.current_x, self.current_y),
-                            self.field_data,
-                            fill='black'
-                        )
+                    self._render_text(self.field_data)
                 self.field_data = None
         elif command == 'GF':
             # Graphic field: ^GFa,total,total,bytes_per_row,<data>

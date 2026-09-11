@@ -590,6 +590,104 @@ check("the preview rounds a rounded frame's corners",
       rounded.getpixel((22, 22)) > 200 and rounded.getpixel((200, 21)) < 100,
       (rounded.getpixel((22, 22)), rounded.getpixel((200, 21))))
 
+# --- text turns the way barcodes already do ---------------------------------
+
+turned = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^A0R,40,40^FDturned^FS^XZ")[0]
+check("^A's orientation letter is read, not discarded",
+      turned.elements[0].orientation == 'R', turned.elements[0].orientation)
+check("and written back",
+      "^A0R,40,40" in turned.elements[0].to_zpl(),
+      turned.elements[0].to_zpl().replace('\n', ' '))
+flat = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^A0N,40,40^FDturned^FS^XZ")[0]
+check("a quarter turn transposes the footprint",
+      (turned.elements[0].width, turned.elements[0].height)
+      == (flat.elements[0].height, flat.elements[0].width),
+      ((turned.elements[0].width, turned.elements[0].height),
+       (flat.elements[0].width, flat.elements[0].height)))
+check("an upright element is unchanged",
+      flat.elements[0].orientation == 'N' and not flat.elements[0].rotated())
+check("text and barcodes are offered the same turns",
+      [c for _l, c in zpl_model.ORIENTATIONS] == ['N', 'R', 'I', 'B'])
+
+# a wrapped block turns with its text
+rot_block = Document(812, 1218, dpi=203)
+rb = rot_block.add_text_element('one two three four five six')
+rb.font_path = FONT
+rb.block = FieldBlock(200, 6)
+rot_block.sync_text_width(rb)
+upright_box = (rb.width, rb.height)
+rb.orientation = 'R'
+rot_block.sync_text_width(rb)
+check("a wrapped block's footprint transposes too",
+      (rb.width, rb.height) == (upright_box[1], upright_box[0]),
+      (upright_box, (rb.width, rb.height)))
+
+# drawn, not merely stored: the ink has to land inside the turned box
+def _ink_box(image, element):
+    """The bounds of the black ink inside an element's box, or None."""
+    xs, ys = [], []
+    for y in range(max(0, element.y), min(image.height(), element.y + element.height)):
+        for x in range(max(0, element.x), min(image.width(), element.x + element.width)):
+            rgb = image.pixel(x, y)
+            if (((rgb >> 16) & 0xFF) < 100 and ((rgb >> 8) & 0xFF) < 100
+                    and (rgb & 0xFF) < 100):
+                xs.append(x)
+                ys.append(y)
+    return (min(xs), min(ys), max(xs), max(ys)) if xs else None
+
+rw = qt_main.ZPLDesignerWindow()
+rw.unsaved_changes = False
+rw.on_new()
+rw.document.set_label_size(812, 1218)
+rt = rw.document.add_text_element('Turned')
+rt.x, rt.y = 40, 40
+rt.font_path = FONT
+rw.document.sync_text_width(rt)
+rw.canvas.set_zoom(1.0)
+
+shapes = {}
+for facing in ('N', 'R', 'I', 'B'):
+    rt.orientation = facing
+    rw.document.sync_text_width(rt)
+    rw.canvas.set_zoom(1.0)
+    surface = QImage(812, 1218, QImage.Format_ARGB32); surface.fill(Qt.white)
+    rw.canvas.render(surface)
+    box = _ink_box(surface, rt)
+    shapes[facing] = box
+    check(f"text at {facing} draws ink inside its own box", box is not None, box)
+
+def _shape(box):
+    return (box[2] - box[0], box[3] - box[1]) if box else None
+
+check("turning 90 degrees transposes the drawn ink",
+      _shape(shapes['R']) == tuple(reversed(_shape(shapes['N']))),
+      (_shape(shapes['N']), _shape(shapes['R'])))
+check("and 270 too",
+      _shape(shapes['B']) == tuple(reversed(_shape(shapes['N']))),
+      (_shape(shapes['N']), _shape(shapes['B'])))
+check("upside down keeps the upright shape",
+      _shape(shapes['I']) == _shape(shapes['N']),
+      (_shape(shapes['N']), _shape(shapes['I'])))
+rt.orientation = 'R'
+rw.document.sync_text_width(rt)
+check("a click inside a turned element still selects it",
+      rw.document.element_at(rt.x + 2, rt.y + 2) is rt)
+
+# the preview turns it the same way
+def _preview_shape(zpl):
+    img = ZPLRenderer(300, 300).render(zpl).convert('L')
+    marks = [(x, y) for x in range(300) for y in range(300)
+             if img.getpixel((x, y)) < 128]
+    if not marks:
+        return None
+    xs = [x for x, _ in marks]; ys = [y for _, y in marks]
+    return (max(xs) - min(xs), max(ys) - min(ys))
+
+up = _preview_shape("^XA^PW300^LL300^FO20,20^A0N,30,30^FDTurn^FS^XZ")
+side = _preview_shape("^XA^PW300^LL300^FO20,20^A0R,30,30^FDTurn^FS^XZ")
+check("the preview turns text too, transposing its ink",
+      up and side and side == tuple(reversed(up)), (up, side))
+
 # --- looking at the label: zoom, fit and the window -------------------------
 from zplcore import view as zpl_view
 
