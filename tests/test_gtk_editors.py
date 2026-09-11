@@ -125,6 +125,40 @@ canvas.on_draw(canvas, cairo.Context(surface))
 canvas.band_origin = canvas.band_now = None
 check("a group selection and a rubber band paint without raising", True)
 
+# --- the resolution a rescale is measured against ---------------------------
+# Called with no argument, _offer_dpi_rescale is settling the open design
+# against a resolution that changed underneath it, so the design's own dpi is
+# what it scales from. Defaulting to the "file recorded nothing, assume 203"
+# branch instead is silent: it scales by 600/203 where it should scale by
+# 600/300, and the label merely prints the wrong size. Qt has always passed the
+# document; this is the GTK half, which the conformance suite cannot reach
+# because it replaces this method wholesale.
+
+from zplcore import workflow as _wf
+
+asked = []
+window.printer_dpi = 600
+window.design_canvas.document.dpi = 300
+window.design_canvas.document.add_text_element("scaled")
+
+# reconcile_dpi rather than the prompt inside it: the real method builds a
+# Gtk.MessageDialog, and the point here is which file_dpi reaches the core.
+real_reconcile = _wf.reconcile_dpi
+def _spy(document, printer_dpi, ask, file_dpi=_wf._FROM_DOCUMENT):
+    return real_reconcile(document, printer_dpi,
+                          lambda old, new, assumed, wi, hi: (
+                              asked.append((old, new, assumed)) or 'keep'),
+                          file_dpi=file_dpi)
+_wf.reconcile_dpi = _spy
+try:
+    window._offer_dpi_rescale()          # the real method, with its real default
+finally:
+    _wf.reconcile_dpi = real_reconcile
+
+check("a resolution change reads the design's own dpi, not an assumed 203",
+      asked == [(300, 600, False)],
+      f"{asked}, expected [(300, 600, False)]")
+
 window.destroy()
 
 print()

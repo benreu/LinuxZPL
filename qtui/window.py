@@ -46,6 +46,7 @@ APP_NAME = "LinuxZPL (Qt)"
 UNDO_LIMIT = 50
 DEFAULT_ADDRESS = "192.168.50.21"
 DEFAULT_PORT = 9100
+DEFAULT_LABEL_INCHES = (4.0, 6.0)
 PRINT_TIMEOUT = 10
 PREVIEW_MAX_WIDTH = 300
 
@@ -65,6 +66,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_address = DEFAULT_ADDRESS
         self.printer_port = DEFAULT_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        self.label_inches = DEFAULT_LABEL_INCHES
         self.saved_geometry = None
         self._load_settings()
         self._place_on_screen()
@@ -80,9 +82,11 @@ class ZPLDesignerWindow(QMainWindow):
         # element, so the id cannot be reused while it is registered here.
         self._editors = {}
 
-        # A label is 4 x 6 inches at whatever resolution the printer is set to,
-        # so its dot dimensions depend on that setting.
-        document = Document(*self._inches_to_dots(4, 6), dpi=self.printer_dpi)
+        # A label is the size last chosen in Label Settings, at whatever
+        # resolution the printer is set to, so its dot dimensions depend on
+        # both settings.
+        document = Document(*self._inches_to_dots(*self.label_inches),
+                            dpi=self.printer_dpi)
         self.canvas = DesignCanvas(document)
         self.canvas.documentChanged.connect(self.on_canvas_changed)
         self.canvas.elementDoubleClicked.connect(self.on_element_double_clicked)
@@ -555,16 +559,40 @@ class ZPLDesignerWindow(QMainWindow):
     # --- settings dialogs ----------------------------------------------------
 
     def on_label_size(self):
-        size = qt_dialogs.label_size_dialog(self, self.document, self.printer_dpi)
-        if size is None:
+        result = qt_dialogs.label_size_dialog(self, self.document, self.printer_dpi)
+        if result is None:
             return
-        width, height = size
+        self.apply_label_settings(*result)
+
+    def apply_label_settings(self, width, height, dpi, w_in, h_in):
+        """One accepted visit to Label Settings, whatever it changed.
+
+        The resolution and the size can both have moved in the same visit, and
+        they interact: reconciling may rescale the whole design, label included.
+        So the resolution is settled first, against the design the user was
+        actually looking at - the prompt quotes what keeping the dots would
+        measure, and that has to describe the label on the canvas rather than
+        the one about to replace it - and the size typed in the dialog is then
+        laid on top of whatever it did.
+        """
+        old_dpi = self.printer_dpi
+        self.printer_dpi = dpi
+        self.label_inches = (w_in, h_in)
+        # Written before the prompt, as the printer dialog writes its own: the
+        # prompt is modal and can be dismissed by the window manager, and the
+        # choice the user already made should be on disk by then.
+        self._save_settings()
+
+        note = self._offer_dpi_rescale() if dpi != old_dpi else None
+
         # Shrinking clamps elements to the new bounds, which is itself part of
-        # the change being recorded.
+        # the change being recorded. Last, so the size typed in the dialog wins
+        # over the one a rescale just moved.
         self.document.set_label_size(width, height)
         self.canvas._sync_size()
-        self.canvas.commit()
-        self.update_status(f"Label size set to {width}x{height}")
+        self.canvas.commit()          # one history entry for the whole visit
+        message = f"Label size set to {width}x{height}"
+        self.update_status(f"{message} - {note}" if note else message)
 
     def on_printer_settings(self):
         result = qt_dialogs.printer_settings_dialog(
@@ -603,7 +631,8 @@ class ZPLDesignerWindow(QMainWindow):
     def on_new(self):
         if not self.check_unsaved_changes():
             return
-        document = Document(*self._inches_to_dots(4, 6), dpi=self.printer_dpi)
+        document = Document(*self._inches_to_dots(*self.label_inches),
+                            dpi=self.printer_dpi)
         self.canvas.set_document(document)
         self.current_filepath = None
         self.unsaved_changes = False
@@ -826,6 +855,16 @@ class ZPLDesignerWindow(QMainWindow):
             if parser.has_section('window'):
                 self.saved_geometry = tuple(
                     parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
+            # Read last: getfloat raises on a malformed value rather than
+            # falling back, and everything after it in this try would be lost.
+            w_in = parser.getfloat('label', 'width_in',
+                                   fallback=self.label_inches[0])
+            h_in = parser.getfloat('label', 'height_in',
+                                   fallback=self.label_inches[1])
+            # The range the dialog allows. A hand-edited value outside it would
+            # otherwise open the designer onto a one-dot label.
+            if 0.5 <= w_in <= 25 and 0.5 <= h_in <= 25:
+                self.label_inches = (w_in, h_in)
         except (configparser.Error, OSError, ValueError):
             # A missing or corrupt config must never block startup
             pass
@@ -841,6 +880,14 @@ class ZPLDesignerWindow(QMainWindow):
             parser.set('printer', 'address', self.printer_address)
             parser.set('printer', 'port', str(self.printer_port))
             parser.set('printer', 'dpi', str(self.printer_dpi))
+            if not parser.has_section('label'):
+                parser.add_section('label')
+            # Inches, not dots: dots only mean a size once a resolution is
+            # fixed, and the resolution beside them is the very thing that can
+            # change between sessions. Two decimals is the dialog's own
+            # precision, so the file round-trips what was typed.
+            parser.set('label', 'width_in', f"{self.label_inches[0]:.2f}")
+            parser.set('label', 'height_in', f"{self.label_inches[1]:.2f}")
             if self.saved_geometry is not None:
                 if not parser.has_section('window'):
                     parser.add_section('window')

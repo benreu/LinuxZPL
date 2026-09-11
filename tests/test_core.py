@@ -997,23 +997,40 @@ def _drive_label_size(document, dpi, fill):
         if dialog is None:
             QTimer.singleShot(50, act)
             return
-        fill(dialog.findChildren(QDoubleSpinBox))
+        fill(dialog)
         dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
 
     QTimer.singleShot(100, act)
     return qt_dialogs.label_size_dialog(None, document, dpi)
 
+def _spins(dialog):
+    return dialog.findChildren(QDoubleSpinBox)
+
 sized = _drive_label_size(Document(812, 1218, dpi=203), 203,
-                          lambda spins: (spins[0].setValue(2.75),
-                                         spins[1].setValue(4.25)))
+                          lambda d: (_spins(d)[0].setValue(2.75),
+                                     _spins(d)[1].setValue(4.25)))
 check("a label size keeps two decimals rather than rounding to one",
-      sized == (558, 863), f"{sized}, expected (558, 863)")
+      sized[:2] == (558, 863), f"{sized[:2]}, expected (558, 863)")
+check("and reports back the inches that were typed, for the settings file",
+      sized[2:] == (203, 2.75, 4.25), sized[2:])
 reopened = {}
-_drive_label_size(Document(*sized, dpi=203), 203,
-                  lambda spins: reopened.update(w=round(spins[0].value(), 2),
-                                                h=round(spins[1].value(), 2)))
+_drive_label_size(Document(*sized[:2], dpi=203), 203,
+                  lambda d: reopened.update(w=round(_spins(d)[0].value(), 2),
+                                            h=round(_spins(d)[1].value(), 2)))
 check("and shows that size again to the hundredth",
       (reopened['w'], reopened['h']) == (2.75, 4.25), reopened)
+
+# The resolution sits in the same dialog as the inches, because the dots are a
+# consequence of both: 4x6in is 812x1218 dots at 203dpi and 1200x1800 at 300.
+def _set_dpi(d, text):
+    d.findChild(QComboBox).setCurrentText(text)
+
+at300 = _drive_label_size(Document(812, 1218, dpi=203), 203,
+                          lambda d: (_spins(d)[0].setValue(4.0),
+                                     _spins(d)[1].setValue(6.0),
+                                     _set_dpi(d, '300')))
+check("the resolution chosen in the dialog is what the inches convert with",
+      at300[:3] == (1200, 1800, 300), at300[:3])
 
 # the settings file carries the window geometry beside the printer
 import configparser as _cfg
@@ -1033,8 +1050,79 @@ try:
     zw._load_settings()
     check("and is read back", zw.saved_geometry == (140, 60, 1000, 680),
           zw.saved_geometry)
+
+    # The label size is remembered too, in inches: dots only mean a physical
+    # size once a resolution is fixed, and the resolution beside them is itself
+    # a setting that can change between sessions.
+    zw.label_inches = (2.75, 4.25)
+    zw._save_settings()
+    written = _cfg.ConfigParser(); written.read(geo_path)
+    check("the label size is persisted in inches, not dots",
+          written.getfloat('label', 'width_in') == 2.75
+          and written.getfloat('label', 'height_in') == 4.25,
+          dict(written['label']) if written.has_section('label') else None)
+    zw.label_inches = qt_main.DEFAULT_LABEL_INCHES
+    zw._load_settings()
+    check("and is read back", zw.label_inches == (2.75, 4.25), zw.label_inches)
+
+    # A hand-edited file must never open the designer onto a one-dot label, or
+    # stop it starting at all.
+    for bad in ('wide', '0', '900'):
+        written.set('label', 'width_in', bad)
+        with open(geo_path, 'w') as f:
+            written.write(f)
+        zw.label_inches = qt_main.DEFAULT_LABEL_INCHES
+        zw._load_settings()
+        check(f"a label width of {bad!r} falls back rather than being used",
+              zw.label_inches == qt_main.DEFAULT_LABEL_INCHES, zw.label_inches)
 finally:
     qt_main._config_path = real_config_path
+
+# --- one visit to Label Settings can move the resolution and the size -------
+# They interact: reconciling rescales the whole design, label included, and the
+# size typed in the dialog then has to win over the one the rescale produced.
+lw = qt_main.ZPLDesignerWindow()
+lw._save_settings = lambda *a: None
+# Pinned rather than inherited: the window reads the real settings file, so a
+# machine already set to 300dpi would make this a visit that changed nothing.
+lw.printer_dpi = lw.document.dpi = 203
+lel = lw.document.add_text_element('scaled')
+lel.x, lel.y = 100, 200
+lw.canvas.commit()
+undo_before = len(lw._undo_stack)
+qt_dialogs.ask_dpi_rescale = lambda *a, **k: 'rescale'
+lw.apply_label_settings(900, 600, 300, 3.0, 2.0)
+moved = lw.document.elements[0]
+check("the size typed in the dialog wins over the one a rescale produced",
+      (lw.document.label_width, lw.document.label_height) == (900, 600),
+      (lw.document.label_width, lw.document.label_height))
+check("and the rescale still ran, and ran first",
+      (moved.x, moved.y) == (round(100 * 300 / 203), round(200 * 300 / 203)),
+      (moved.x, moved.y))
+check("the document is stamped with the resolution chosen there",
+      lw.document.dpi == 300 and lw.printer_dpi == 300,
+      (lw.document.dpi, lw.printer_dpi))
+check("the whole visit is one undo entry",
+      len(lw._undo_stack) == undo_before + 1,
+      (undo_before, len(lw._undo_stack)))
+check("and the size is remembered for the next new label",
+      lw.label_inches == (3.0, 2.0), lw.label_inches)
+
+# Keep Dots leaves the elements alone - but the label still takes the size the
+# dialog was accepted on, which is the whole content of that dialog.
+kw = qt_main.ZPLDesignerWindow()
+kw._save_settings = lambda *a: None
+kw.printer_dpi = kw.document.dpi = 203
+kel = kw.document.add_text_element('kept')
+kel.x, kel.y = 100, 200
+qt_dialogs.ask_dpi_rescale = lambda *a, **k: 'keep'
+kw.apply_label_settings(900, 600, 300, 3.0, 2.0)
+check("Keep Dots leaves the elements where they were",
+      (kw.document.elements[0].x, kw.document.elements[0].y) == (100, 200),
+      (kw.document.elements[0].x, kw.document.elements[0].y))
+check("but the label still takes the size the dialog was accepted on",
+      (kw.document.label_width, kw.document.label_height) == (900, 600),
+      (kw.document.label_width, kw.document.label_height))
 
 # --- the preview draws the design, it does not merely agree with it ---------
 pdoc = Document(400, 300, dpi=203)

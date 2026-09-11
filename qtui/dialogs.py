@@ -64,6 +64,30 @@ def _buttons(dialog, accept_text="OK"):
     return box
 
 
+def _dpi_combo(dpi: int) -> QComboBox:
+    """The resolution choice, offered the same way wherever it is edited.
+
+    Label Settings and Printer Settings both write the one printer_dpi setting,
+    so they have to offer the same list - including the fallback: a resolution
+    the designer does not support can still be the one in force, and must be
+    shown rather than silently replaced with a supported one.
+    """
+    combo = QComboBox()
+    for d in zpl_fonts.SUPPORTED_DPI:
+        combo.addItem(str(d))
+    if dpi in zpl_fonts.SUPPORTED_DPI:
+        combo.setCurrentIndex(list(zpl_fonts.SUPPORTED_DPI).index(dpi))
+    else:
+        combo.addItem(str(dpi))
+        combo.setCurrentIndex(combo.count() - 1)
+    return combo
+
+
+def _dpi_from(combo: QComboBox, fallback: int) -> int:
+    text = combo.currentText()
+    return int(text) if text.isdigit() else fallback
+
+
 def _show_editor(dialog, apply_edits, on_accept=None):
     """Put an element editor on screen as a non-modal child of the designer.
 
@@ -499,7 +523,15 @@ def choose_image_file(parent, title="Select Image") -> Optional[str]:
 # --- label and printer ------------------------------------------------------
 
 def label_size_dialog(parent, document: Document, dpi: int):
-    """New label size in dots, or None. Entered in inches, stored in dots."""
+    """New (width, height, dpi, width_in, height_in), or None.
+
+    The size is entered in inches and stored in dots, so the resolution belongs
+    beside it: the dots are a consequence of both, and having to leave for
+    another dialog to change one of the two halves is how a label ends up the
+    wrong physical size. The inches come back as well as the dots - they are
+    what gets remembered for the next new label, and dividing the dots back out
+    would not give the two decimals that were typed.
+    """
     dialog = QDialog(parent)
     dialog.setWindowTitle("Label Settings")
     layout = QVBoxLayout(dialog)
@@ -526,6 +558,9 @@ def label_size_dialog(parent, document: Document, dpi: int):
     height_spin.setValue(document.label_height / dpi)
     form.addRow("Height:", height_spin)
 
+    dpi_combo = _dpi_combo(dpi)
+    form.addRow("DPI:", dpi_combo)
+
     for text, w_in, h_in in PRESET_SIZES:
         btn = QPushButton(text)
         btn.clicked.connect(
@@ -537,23 +572,30 @@ def label_size_dialog(parent, document: Document, dpi: int):
     hint.setWordWrap(True)
     layout.addWidget(hint)
 
+    def chosen_dpi():
+        return _dpi_from(dpi_combo, dpi)
+
     def to_dots():
-        return (max(1, int(round(width_spin.value() * dpi))),
-                max(1, int(round(height_spin.value() * dpi))))
+        # The inches are the physical size the user asked for, so changing the
+        # resolution recomputes the dots rather than the other way round.
+        resolution = chosen_dpi()
+        return (max(1, int(round(width_spin.value() * resolution))),
+                max(1, int(round(height_spin.value() * resolution))))
 
     def update_hint():
         w, h = to_dots()
-        hint.setText(f"{w} x {h} dots at {dpi} dpi "
+        hint.setText(f"{w} x {h} dots at {chosen_dpi()} dpi "
                      f"(^PW{w} / ^LL{h}), saved with the file.")
 
     width_spin.valueChanged.connect(update_hint)
     height_spin.valueChanged.connect(update_hint)
+    dpi_combo.currentIndexChanged.connect(update_hint)
     update_hint()
 
     layout.addWidget(_buttons(dialog))
     if dialog.exec_() != QDialog.Accepted:
         return None
-    return to_dots()
+    return to_dots() + (chosen_dpi(), width_spin.value(), height_spin.value())
 
 
 def printer_settings_dialog(parent, address: str, port: int, dpi: int):
@@ -572,14 +614,7 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int):
     port_spin.setValue(port)
     form.addRow("Port:", port_spin)
 
-    dpi_combo = QComboBox()
-    for d in zpl_fonts.SUPPORTED_DPI:
-        dpi_combo.addItem(str(d))
-    if dpi in zpl_fonts.SUPPORTED_DPI:
-        dpi_combo.setCurrentIndex(list(zpl_fonts.SUPPORTED_DPI).index(dpi))
-    else:
-        dpi_combo.addItem(str(dpi))
-        dpi_combo.setCurrentIndex(dpi_combo.count() - 1)
+    dpi_combo = _dpi_combo(dpi)
     form.addRow("DPI:", dpi_combo)
 
     test_btn = QPushButton("Test Connection")
@@ -636,9 +671,7 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int):
     if not new_address:
         show_error(parent, "Printer address cannot be empty.")
         return None
-    chosen = dpi_combo.currentText()
-    return (new_address, port_spin.value(),
-            int(chosen) if chosen.isdigit() else dpi)
+    return new_address, port_spin.value(), _dpi_from(dpi_combo, dpi)
 
 
 class PrinterFontsDialog(QDialog):

@@ -31,6 +31,7 @@ import io
 
 DEFAULT_PRINTER_ADDRESS = '192.168.50.21'
 DEFAULT_PRINTER_PORT = 9100
+DEFAULT_LABEL_INCHES = (4.0, 6.0)
 
 
 # The align commands, in menu order: the three horizontal, then the three
@@ -76,6 +77,30 @@ def _make_combo(choices, current):
     return combo, codes
 
 
+def _dpi_combo(dpi: int) -> Gtk.ComboBoxText:
+    """The resolution choice, offered the same way wherever it is edited.
+
+    Label Settings and Printer Settings both write the one printer_dpi setting,
+    so they have to offer the same list - including the fallback: a resolution
+    the designer does not support can still be the one in force, and must be
+    shown rather than silently replaced with a supported one.
+    """
+    combo = Gtk.ComboBoxText()
+    for d in zpl_fonts.SUPPORTED_DPI:
+        combo.append_text(str(d))
+    try:
+        combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(dpi))
+    except ValueError:
+        combo.append_text(str(dpi))
+        combo.set_active(len(zpl_fonts.SUPPORTED_DPI))
+    return combo
+
+
+def _dpi_from(combo: Gtk.ComboBoxText, fallback: int) -> int:
+    text = combo.get_active_text()
+    return int(text) if text and text.isdigit() else fallback
+
+
 def _config_path() -> Path:
     """Path to the persisted settings file."""
     return Path(GLib.get_user_config_dir()) / 'linuxzpl' / 'settings.ini'
@@ -94,18 +119,19 @@ class ZPLViewerWindow(Gtk.Window):
         self.current_filepath = None
         self.unsaved_changes = False
         
-        # Label size settings (default: 4x6 inch at 203 DPI = 812x1218 pixels)
-        self.label_width = 812
-        self.label_height = 1218
-
         # Printer connection settings (persisted in the config file)
         self.printer_address = DEFAULT_PRINTER_ADDRESS
         self.printer_port = DEFAULT_PRINTER_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        # The size last chosen in Label Settings, also persisted. Held in
+        # inches because the resolution it converts with is itself a setting
+        # that can change between sessions.
+        self.label_inches = DEFAULT_LABEL_INCHES
         self.saved_geometry = None
         self._load_settings()
         self._place_on_screen()
-        self.label_width, self.label_height = self.inches_to_dots(4, 6)
+        # Label size in dots, which depends on both settings above
+        self.label_width, self.label_height = self.inches_to_dots(*self.label_inches)
 
         # Create main layout
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -557,7 +583,7 @@ class ZPLViewerWindow(Gtk.Window):
         """Start a blank label, after asking about unsaved work."""
         if not self.check_unsaved_changes():
             return
-        document = Document(*self.inches_to_dots(4, 6))
+        document = Document(*self.inches_to_dots(*self.label_inches))
         document.dpi = self.printer_dpi
         self.design_canvas.set_document(document)
         self.label_width = document.label_width
@@ -944,7 +970,7 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
-    def _offer_dpi_rescale(self, loaded_dpi=None):
+    def _offer_dpi_rescale(self, loaded_dpi=workflow._FROM_DOCUMENT):
         """If the file was drawn for another resolution, offer to rescale it.
 
         Returns a note for the status bar when it rescaled, else None.
@@ -1001,6 +1027,16 @@ class ZPLViewerWindow(Gtk.Window):
             if parser.has_section('window'):
                 self.saved_geometry = tuple(
                     parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
+            # Read last: getfloat raises on a malformed value rather than
+            # falling back, and everything after it in this try would be lost.
+            w_in = parser.getfloat('label', 'width_in',
+                                   fallback=self.label_inches[0])
+            h_in = parser.getfloat('label', 'height_in',
+                                   fallback=self.label_inches[1])
+            # The range the dialog allows. A hand-edited value outside it would
+            # otherwise open the designer onto a one-dot label.
+            if 0.5 <= w_in <= 25 and 0.5 <= h_in <= 25:
+                self.label_inches = (w_in, h_in)
         except (configparser.Error, OSError, ValueError):
             # A missing or corrupt config must never block startup
             pass
@@ -1017,6 +1053,14 @@ class ZPLViewerWindow(Gtk.Window):
             parser.set('printer', 'address', self.printer_address)
             parser.set('printer', 'port', str(self.printer_port))
             parser.set('printer', 'dpi', str(self.printer_dpi))
+            if not parser.has_section('label'):
+                parser.add_section('label')
+            # Inches, not dots: dots only mean a size once a resolution is
+            # fixed, and the resolution beside them is the very thing that can
+            # change between sessions. Two decimals is the dialog's own
+            # precision, so the file round-trips what was typed.
+            parser.set('label', 'width_in', f"{self.label_inches[0]:.2f}")
+            parser.set('label', 'height_in', f"{self.label_inches[1]:.2f}")
             if self.saved_geometry is not None:
                 if not parser.has_section('window'):
                     parser.add_section('window')
@@ -1065,14 +1109,7 @@ class ZPLViewerWindow(Gtk.Window):
         make_row("Port:", port_spin)
 
         # Printer resolution
-        dpi_combo = Gtk.ComboBoxText()
-        for d in zpl_fonts.SUPPORTED_DPI:
-            dpi_combo.append_text(str(d))
-        try:
-            dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(self.printer_dpi))
-        except ValueError:
-            dpi_combo.append_text(str(self.printer_dpi))
-            dpi_combo.set_active(len(zpl_fonts.SUPPORTED_DPI))
+        dpi_combo = _dpi_combo(self.printer_dpi)
         make_row("DPI:", dpi_combo)
 
         # Connection test, which also asks the printer its resolution
@@ -1135,10 +1172,8 @@ class ZPLViewerWindow(Gtk.Window):
                 return
             self.printer_address = new_address
             self.printer_port = new_port
-            chosen = dpi_combo.get_active_text()
             old_dpi = self.printer_dpi
-            if chosen and chosen.isdigit():
-                self.printer_dpi = int(chosen)
+            self.printer_dpi = _dpi_from(dpi_combo, self.printer_dpi)
             self._save_settings()
             self.update_status(f"Printer set to {new_address}:{new_port}")
             if self.printer_dpi != old_dpi:
@@ -1226,18 +1261,43 @@ class ZPLViewerWindow(Gtk.Window):
         height_spin.set_numeric(True)
         height_spin.set_digits(2)
         height_box.pack_start(height_spin, True, True, 0)
-        
+
+        # Resolution. The inches above only mean a number of dots once this is
+        # fixed, so it belongs beside them rather than a dialog away.
+        dpi_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        content.pack_start(dpi_box, False, False, 0)
+
+        dpi_label = Gtk.Label(label="DPI:")
+        dpi_label.set_size_request(80, -1)
+        dpi_box.pack_start(dpi_label, False, False, 0)
+
+        dpi_combo = _dpi_combo(self.printer_dpi)
+        dpi_box.pack_start(dpi_combo, True, True, 0)
+
         # Info label
         info_label = Gtk.Label()
 
+        def chosen_dpi():
+            return _dpi_from(dpi_combo, self.printer_dpi)
+
+        def to_dots():
+            # Not self.inches_to_dots: that reads self.printer_dpi, which is
+            # still the old resolution until the dialog is accepted. The
+            # inches are the physical size the user asked for, so changing the
+            # resolution recomputes the dots rather than the other way round.
+            resolution = chosen_dpi()
+            return (max(1, int(round(width_spin.get_value() * resolution))),
+                    max(1, int(round(height_spin.get_value() * resolution))))
+
         def update_hint(*_a):
-            w, h = self.inches_to_dots(width_spin.get_value(), height_spin.get_value())
+            w, h = to_dots()
             info_label.set_text(
-                f"{w} x {h} dots at {self.printer_dpi} dpi "
+                f"{w} x {h} dots at {chosen_dpi()} dpi "
                 f"(^PW{w} / ^LL{h}), saved with the file.")
 
         width_spin.connect("value-changed", update_hint)
         height_spin.connect("value-changed", update_hint)
+        dpi_combo.connect("changed", update_hint)
         update_hint()
         info_label.set_halign(Gtk.Align.START)
         info_label.set_line_wrap(True)
@@ -1246,16 +1306,47 @@ class ZPLViewerWindow(Gtk.Window):
         content.show_all()
         
         response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            new_width, new_height = self.inches_to_dots(
-                width_spin.get_value(), height_spin.get_value())
-            self.label_width = new_width
-            self.label_height = new_height
-            self.design_canvas.set_label_size(new_width, new_height)
-            self.on_canvas_changed()
-            self.update_status(f"Label size set to {new_width}x{new_height}")
-        
+        if response != Gtk.ResponseType.OK:
+            dialog.destroy()
+            return
+        new_width, new_height = to_dots()
+        new_dpi = chosen_dpi()
+        w_in, h_in = width_spin.get_value(), height_spin.get_value()
+        # Destroyed before anything modal can be raised over it, as the printer
+        # dialog does before its own rescale prompt.
         dialog.destroy()
+        self.apply_label_settings(new_width, new_height, new_dpi, w_in, h_in)
+
+    def apply_label_settings(self, width, height, dpi, w_in, h_in):
+        """One accepted visit to Label Settings, whatever it changed.
+
+        The resolution and the size can both have moved in the same visit, and
+        they interact: reconciling may rescale the whole design, label included.
+        So the resolution is settled first, against the design the user was
+        actually looking at - the prompt quotes what keeping the dots would
+        measure, and that has to describe the label on the canvas rather than
+        the one about to replace it - and the size typed in the dialog is then
+        laid on top of whatever it did.
+        """
+        old_dpi = self.printer_dpi
+        self.printer_dpi = dpi
+        self.label_inches = (w_in, h_in)
+        # Written before the prompt, as the printer dialog writes its own: the
+        # prompt is modal and can be dismissed by the window manager, and the
+        # choice the user already made should be on disk by then.
+        self._save_settings()
+
+        note = self._offer_dpi_rescale() if dpi != old_dpi else None
+
+        # Shrinking clamps elements to the new bounds, which is itself part of
+        # the change being recorded. Last, so the size typed in the dialog wins
+        # over the one a rescale just moved - and the window's own copy of the
+        # size has to follow the document's, which a rescale moved underneath it.
+        self.label_width, self.label_height = width, height
+        self.design_canvas.set_label_size(width, height)
+        self.on_canvas_changed()      # one history entry for the whole visit
+        message = f"Label size set to {width}x{height}"
+        self.update_status(f"{message} - {note}" if note else message)
     
     UNDO_LIMIT = 50
 

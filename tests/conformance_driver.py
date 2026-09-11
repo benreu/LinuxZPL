@@ -99,9 +99,10 @@ class GtkDriver:
         self.canvas.dpi = 203
         # Take the Rescale branch without a dialog, matching what the Qt side
         # is told to do.
-        self.window._offer_dpi_rescale = lambda loaded_dpi=None: workflow.reconcile_dpi(
-            self.canvas.document, self.window.printer_dpi,
-            lambda *a: 'rescale', file_dpi=loaded_dpi)
+        self.window._offer_dpi_rescale = \
+            lambda loaded_dpi=workflow._FROM_DOCUMENT: workflow.reconcile_dpi(
+                self.canvas.document, self.window.printer_dpi,
+                lambda *a: 'rescale', file_dpi=loaded_dpi)
         # A fixture carrying a command the model cannot keep would otherwise
         # stop the run on a modal nobody is there to dismiss.
         self.window._warn_unsupported = lambda commands: None
@@ -223,6 +224,10 @@ class GtkDriver:
 
     def set_label_size(self, w, h):
         self.canvas.set_label_size(w, h)
+
+    def label_settings(self, w, h, dpi, w_in, h_in):
+        """One accepted Label Settings visit, through the frontend's handler."""
+        self.window.apply_label_settings(w, h, dpi, w_in, h_in)
 
     def label_size(self):
         return (self.canvas.label_width, self.canvas.label_height)
@@ -423,6 +428,10 @@ class QtDriver:
     def set_label_size(self, w, h):
         self.document.set_label_size(w, h)
 
+    def label_settings(self, w, h, dpi, w_in, h_in):
+        """One accepted Label Settings visit, through the frontend's handler."""
+        self.window.apply_label_settings(w, h, dpi, w_in, h_in)
+
     def label_size(self):
         return (self.document.label_width, self.document.label_height)
 
@@ -582,6 +591,13 @@ def sequence(driver, record):
     record('printer switched to 300dpi, rescaled')
     driver.change_printer_dpi(203, answer='keep')
     record('printer switched to 203dpi, dots kept')
+
+    # Label Settings can change the resolution as well as the size, and the two
+    # interact: reconciling rescales the whole design, and the size typed in the
+    # dialog is then laid on top of it. The order is the divergence-prone part,
+    # and nothing else in this sequence reaches it.
+    driver.label_settings(900, 600, 300, 3.0, 2.0)
+    record('label settings: 3x2 inches at 300dpi, design rescaled')
 
     # A template from another tool: the wrapped block is where the two
     # frontends would most easily disagree, since each measures and lays out

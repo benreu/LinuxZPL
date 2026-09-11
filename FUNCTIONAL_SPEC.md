@@ -53,8 +53,9 @@ something that will still print.
 | `dpi` | Resolution the label is drawn for. Written as designer metadata. |
 | elements | Ordered list. Index 0 is the bottom of the z-order, the last element is the top. |
 
-At startup the label is 4 × 6 inches at the configured printer resolution
-(812 × 1218 dots at 203 dpi, 1200 × 1800 at 300).
+At startup the label is the size last chosen in Label Settings — 4 × 6 inches
+until one is (§13) — at the configured printer resolution (4 × 6 inches is
+812 × 1218 dots at 203 dpi, 1200 × 1800 at 300).
 
 ### 3.2 Properties common to every element
 
@@ -353,7 +354,7 @@ pinned.
 
 | Command | Behaviour |
 |---|---|
-| **New** | Prompts about unsaved changes (§6.7), then a blank 4 × 6 label at the printer's resolution. Clears the elements, the undo history and the current file, and resets the status to `Ready`. |
+| **New** | Prompts about unsaved changes (§6.7), then a blank label of the remembered size (§13) at the printer's resolution. Clears the elements, the undo history and the current file, and resets the status to `Ready`. |
 | **Open…** | Prompts about unsaved changes (§6.7), then a file chooser filtered to `*.zpl`. The chooser previews the selected `.zpl` by rendering it to an image, scaled to at most 300 px wide. Opening replaces the whole document and resets the undo history. |
 | **Save** | Writes to the current path, or behaves as Save As if there is none. |
 | **Save as…** | File chooser, default name `untitled.zpl`. Adopts the chosen path as the current file. |
@@ -479,7 +480,7 @@ prompts — are modal.
 | **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). |
 | **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
-| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches** | 0.5–25 inches, two decimals, stepping by a tenth. A live hint shows the resulting dots at the current resolution and the `^PW` / `^LL` values. Shrinking clamps elements to the new bounds. |
+| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Printer Settings and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Printer Settings** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). |
 
 ---
@@ -712,7 +713,12 @@ if the printer had no fonts.
 ## 11. Print resolution
 
 The printer's resolution is a persisted setting (203, 300 or 600 dpi, default
-203), and can be detected: the Test Connection button opens the socket and then
+203). It is editable from **both** Printer Settings and Label Size, which offer
+the same choice and write the same one setting: label size is entered in inches
+but stored in dots, so the resolution is half of what the size means, and
+having to leave for another dialog to change that half is how a label ends up
+the wrong physical size. It can also be detected: the Test Connection button
+opens the socket and then
 asks the printer, mapping the reported dots per mm (6, 8, 12, 24) to dpi (152,
 203, 300, 600) and filling the field in. A printer that does not answer, or
 reports a resolution the application does not support, leaves the manual
@@ -722,13 +728,14 @@ Label size is entered in **inches** and converted to dots with the current
 resolution.
 
 When a file is opened whose recorded `^FXDESIGNER_DPI` differs from the
-printer's setting, offer three choices:
+printer's setting — or when the resolution is changed under an open design,
+from either dialog — offer three choices:
 
 | Choice | Result |
 |---|---|
 | Rescale (default) | Multiply the whole design by `printer_dpi / file_dpi`, preserving physical size |
 | Keep Dots | Leave the dots alone; the label prints at a different physical size, which the prompt states in inches |
-| Cancel | Leave the dots alone |
+| Cancel | Leave the dots alone. It does not abandon the dialog the change came from — the resolution is still adopted and the design still stamped with it |
 
 Rescaling multiplies positions, sizes, label dimensions, font height and width,
 frame thickness and barcode module width, rounding to whole dots; text widths
@@ -740,6 +747,13 @@ printer's current setting. Adopting the printer's setting would stamp a guess
 into the file on the next save — permanently mislabelling a 203 dpi label as
 whatever printer happened to open it. When the assumption differs from the
 printer, the prompt must say the resolution was assumed rather than read.
+
+**From Label Size, the prompt governs the elements only.** The label itself
+takes the size typed in that dialog, at the resolution chosen beside it, under
+every answer — that size is the whole content of the dialog the user accepted,
+so it wins over the one a rescale produced. The resolution is settled first, so
+the prompt describes the design on the canvas rather than the one about to
+replace it, and is skipped entirely when the resolution did not change.
 
 **Barcodes cannot rescale exactly.** Module width is a whole number of dots, so
 a module of 2 becomes 3 rather than 2.96 going from 203 to 300 dpi — a width
@@ -775,7 +789,10 @@ to come back as the group.
   Deleting an element closes the editor open on it for the same reason.
 
 Changes that are *not* part of the document — printer address, port, resolution
-— are not undoable.
+— are not undoable. This holds for a resolution changed through Label Size too:
+one visit to that dialog is one history entry, and undoing it restores the label
+size and the element positions a rescale moved, but not the resolution the
+document is stamped with.
 
 ---
 
@@ -788,10 +805,39 @@ An INI file at the platform's user config directory, `linuxzpl/settings.ini`:
 address = 192.168.50.21
 port = 9100
 dpi = 203
+
+[label]
+width_in = 4.00
+height_in = 6.00
+
+[window]
+x = 401
+y = 952
+width = 1201
+height = 844
 ```
 
+| Section | Written | Used by |
+|---|---|---|
+| `[printer]` | when Printer Settings or Label Size is accepted | printing, font queries, every inch↔dot conversion |
+| `[label]` | when Label Size is accepted | the label at startup and on File > New |
+| `[window]` | on quit | where the window opens (§2) |
+
+Writing re-reads the file first, so a section another version wrote survives.
+
+**The label size is stored in inches, not dots.** Dots only mean a physical size
+once a resolution is fixed, and the resolution beside them is exactly what can
+change between sessions — a size remembered as 812 × 1218 dots would silently
+become a 2.7 × 4.1 inch label the day the printer became a 300 dpi one. Two
+decimals is the dialog's own precision, so the file round-trips what was typed.
+
+**Opening a file does not change the remembered size.** Opening someone else's
+2 × 3 label must not redefine what File > New gives you from then on; only
+accepting the Label Size dialog does.
+
 A missing or corrupt file must never block startup; fall back to the defaults
-above.
+above. A label size outside the range the dialog allows (0.5–25 inches) is
+treated as corrupt and falls back too.
 
 ---
 
@@ -849,7 +895,7 @@ message — never a swallowed exception or a placeholder.
 
 | | Value |
 |---|---|
-| Default label | 4 × 6 inches at the configured dpi |
+| Default label | the size last chosen in Label Settings, 4 × 6 inches until one is, at the configured dpi |
 | Default printer | `192.168.50.21:9100`, 203 dpi |
 | Supported resolutions | 203, 300, 600 dpi |
 | Text | 36 dot height, 20 dot width, `"New Text"` |
