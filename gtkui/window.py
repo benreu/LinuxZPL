@@ -716,6 +716,10 @@ class ZPLViewerWindow(Gtk.Window):
         )
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                           Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
+        # GTK writes over an existing file without a word unless this is set;
+        # Qt's save dialog asks on its own. A label overwritten by accident is
+        # not recoverable, so both frontends have to ask.
+        dialog.set_do_overwrite_confirmation(True)
         
         # Add ZPL file filter
         filter_zpl = Gtk.FileFilter()
@@ -734,14 +738,30 @@ class ZPLViewerWindow(Gtk.Window):
         else:
             dialog.set_current_name("untitled.zpl")
         
+        # A name is only checked for an overwrite once its suffix is settled,
+        # so declining a replace comes back here rather than dropping the save.
+        while True:
+            if dialog.run() != Gtk.ResponseType.OK:
+                dialog.destroy()
+                return False
+            filepath = workflow.confirm_save_path(
+                dialog.get_filename(), self._confirm_overwrite)
+            if filepath:
+                dialog.destroy()
+                return self.save_zpl_file(filepath, content)
+
+    def _confirm_overwrite(self, filepath):
+        """Whether to replace a file the chooser never asked about."""
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"A file named \u201c{os.path.basename(filepath)}\u201d already exists.")
+        dialog.format_secondary_text("Replacing it will overwrite its contents.")
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           "Replace", Gtk.ResponseType.ACCEPT)
         response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            filepath = dialog.get_filename()
-            dialog.destroy()
-            return self.save_zpl_file(filepath, content)
-        else:
-            dialog.destroy()
-            return False       
+        dialog.destroy()
+        return response == Gtk.ResponseType.ACCEPT
   
     def save_zpl_file(self, filepath: str, content: str):
       """Save ZPL content to a file."""

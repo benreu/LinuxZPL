@@ -357,7 +357,7 @@ pinned.
 | **New** | Prompts about unsaved changes (§6.7), then a blank label of the remembered size (§13) at the printer's resolution. Clears the elements, the undo history and the current file, and resets the status to `Ready`. |
 | **Open…** | Prompts about unsaved changes (§6.7), then a file chooser filtered to `*.zpl`. The chooser previews the selected `.zpl` by rendering it to an image, scaled to at most 300 px wide. Opening replaces the whole document and resets the undo history. |
 | **Save** | Writes to the current path, or behaves as Save As if there is none. |
-| **Save as…** | File chooser, default name `untitled.zpl`. Adopts the chosen path as the current file. |
+| **Save as…** | File chooser, default name `untitled.zpl`. A name typed with no extension gets `.zpl`; one that already has an extension is left alone. Confirms before overwriting an existing file, and declining returns to the chooser. Adopts the chosen path as the current file. |
 | **Print** | §9. |
 | **Quit** | Prompts about unsaved changes (§6.7). |
 

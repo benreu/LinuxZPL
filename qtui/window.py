@@ -720,12 +720,19 @@ class ZPLDesignerWindow(QMainWindow):
         content = self._document_zpl()
         if content is None:
             return False
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save ZPL File", self.current_filepath or "untitled.zpl",
-            qt_dialogs.ZPL_FILTER)
-        if not path:
-            return False
-        return self.save_zpl_file(path, content)
+        start = self.current_filepath or "untitled.zpl"
+        # A name is only checked for an overwrite once its suffix is settled,
+        # so declining a replace comes back here rather than dropping the save.
+        while True:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save ZPL File", start, qt_dialogs.ZPL_FILTER)
+            if not path:
+                return False
+            start = workflow.save_filename(path)
+            chosen = workflow.confirm_save_path(
+                path, lambda p: qt_dialogs.ask_overwrite(self, p))
+            if chosen:
+                return self.save_zpl_file(chosen, content)
 
     def save_zpl_file(self, filepath: str, content: str) -> bool:
         try:

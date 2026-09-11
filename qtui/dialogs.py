@@ -757,6 +757,21 @@ class PrinterFontsDialog(QDialog):
 
 # --- prompts ----------------------------------------------------------------
 
+def ask_overwrite(parent, filepath) -> bool:
+    """Whether to replace a file the chooser never asked about."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Question)
+    box.setWindowTitle("Replace File")
+    box.setText(f"A file named \u201c{Path(filepath).name}\u201d already exists.")
+    box.setInformativeText("Replacing it will overwrite its contents.")
+    replace = box.addButton("Replace", QMessageBox.AcceptRole)
+    cancel = box.addButton("Cancel", QMessageBox.RejectRole)
+    box.setDefaultButton(cancel)
+    box.setEscapeButton(cancel)
+    box.exec_()
+    return box.clickedButton() is replace
+
+
 def ask_unsaved_changes(parent) -> str:
     """'save', 'discard' or 'cancel'. Escape and closing both mean cancel."""
     box = QMessageBox(parent)

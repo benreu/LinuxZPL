@@ -335,6 +335,32 @@ check("load clears the history", not w._undo_stack and not w._redo_stack)
 check("failed save reports and keeps the flag",
       w.save_zpl_file('/nonexistent-dir/x.zpl', '^XA^XZ') is False)
 
+# --- the name a save chooser hands back -------------------------------------
+from zplcore import workflow as _wf
+check("a bare name gets .zpl", _wf.save_filename('/t/label') == '/t/label.zpl')
+check("an extension is left alone", _wf.save_filename('/t/label.zpl') == '/t/label.zpl'
+      and _wf.save_filename('/t/label.ZPL') == '/t/label.ZPL'
+      and _wf.save_filename('/t/label.txt') == '/t/label.txt')
+check("a dotted directory is not an extension",
+      _wf.save_filename('/t.d/label') == '/t.d/label.zpl')
+
+# The reason the suffix is settled first: the chooser confirmed "label", but
+# the bytes land in "label.zpl", which nobody has been asked about yet.
+asked = []
+check("adding a suffix asks before clobbering",
+      _wf.confirm_save_path('/t/label', lambda p: asked.append(p) or True,
+                            exists=lambda p: True) == '/t/label.zpl'
+      and asked == ['/t/label.zpl'])
+check("declining returns to the chooser",
+      _wf.confirm_save_path('/t/label', lambda p: False,
+                            exists=lambda p: True) is None)
+check("a suffix over free ground does not ask",
+      _wf.confirm_save_path('/t/label', lambda p: 1 / 0,
+                            exists=lambda p: False) == '/t/label.zpl')
+check("a name the chooser already confirmed is not asked about twice",
+      _wf.confirm_save_path('/t/label.zpl', lambda p: 1 / 0,
+                            exists=lambda p: True) == '/t/label.zpl')
+
 # --- ZPL as other tools write it -------------------------------------------
 # Two real templates, kept verbatim. They are the regression test for a parser
 # that used to read line by line and know nine commands.

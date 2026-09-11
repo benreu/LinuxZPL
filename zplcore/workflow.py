@@ -8,6 +8,8 @@ not raise an error - it would print the wrong label - so they live here rather
 than being written twice.
 """
 
+import os.path
+
 from . import fonts
 
 # Distinguishes "the printer's resolution changed under an open document" from
@@ -121,6 +123,37 @@ def unsaved_changes_gate(is_dirty, ask, save):
     if answer == 'save':
         return bool(save())
     return False
+
+
+ZPL_SUFFIX = '.zpl'
+
+
+def save_filename(name: str) -> str:
+    """The path a save actually writes, given the one the chooser handed back.
+
+    A chooser returns exactly what was typed, so "label" would be written with
+    no extension and then be invisible to the *.zpl filter that has to find it
+    again. Only a missing extension is filled in: someone who typed .txt meant
+    it, and .ZPL is already one.
+
+    Callers must run this *before* deciding whether the file exists. Appending
+    afterwards would mean the toolkit confirmed one path and the save clobbered
+    a different one.
+    """
+    return name if os.path.splitext(name)[1] else name + ZPL_SUFFIX
+
+
+def confirm_save_path(chosen, ask, exists=os.path.exists):
+    """The path to write, or None to go back to the chooser.
+
+    `ask(path)` asks whether to replace an existing file. It is only asked when
+    a suffix was added, because then the file being overwritten is not the one
+    the chooser already confirmed - it never showed this name to anyone.
+    """
+    path = save_filename(chosen)
+    if path == chosen or not exists(path):
+        return path
+    return path if ask(path) else None
 
 
 # Commands whose effect the model actually keeps: it turns them into elements,
