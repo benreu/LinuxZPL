@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _isolate  # a throwaway settings file, before any frontend is imported
 
 import gi
 gi.require_version('Gtk', '3.0')

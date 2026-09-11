@@ -36,6 +36,11 @@ A feature is finished when:
 ./tests/run.sh
 ```
 
+Every suite runs against a throwaway config directory (`tests/_isolate.py`), so
+your own printer, label size and window geometry never change the result — a
+suite that needs a particular setting sets it explicitly. Import it before the
+frontend, or GTK will have cached the real directory already.
+
 `test_core.py` and `test_deviations.py` run offscreen and need no display.
 `test_conformance.py` drives both frontends, and `test_gtk_editors.py` covers
 the GTK element editors that nothing else reaches; both need a display, using
