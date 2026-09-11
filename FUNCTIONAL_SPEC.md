@@ -401,6 +401,29 @@ effect of building elements while parsing.
 
 ## 7. Dialogs
 
+The three element editors that are forms of fields — Edit Text, Edit Frame and
+Edit Barcode — are **non-modal child windows** of the designer. Each is
+transient for the designer, so it floats above it, follows it and closes with
+it rather than taking a window of its own, but it never blocks it: the canvas,
+the menus and the toolbar stay live while one is open. Edit Image is a file
+chooser rather than a form, and stays modal.
+
+- **One editor per element.** Two different elements may each have one open at
+  once; double-clicking an element that already has one raises that window
+  instead of opening a second onto the same element.
+- **The edit applies on OK**, never as it is typed. Cancel, Escape and the
+  window's close button all leave the document untouched, and OK records one
+  history entry (§12).
+- Because the designer stays live, an element can be moved or resized on the
+  canvas while its editor is open. The editor's fields still hold the values it
+  was opened with, so accepting it afterwards writes those back — the Frame
+  editor's Width and Height will undo a resize made behind it.
+- The font chooser opened from Edit Text is modal to that editor alone, not to
+  the application.
+
+The remaining dialogs — Label Size, Printer Settings, the file choosers and the
+prompts — are modal.
+
 | Dialog | Fields | Range / notes |
 |---|---|---|
 | **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. |
@@ -691,6 +714,11 @@ every element with all its properties, and which element is selected.
 - Loading a file clears the history — undo never crosses a file boundary.
 - Undo and redo both mark the document modified.
 - Undo and redo controls are disabled when their stack is empty.
+- **Undo, redo and loading a file close any open element editor** (§7).
+  Restoring a snapshot replaces every element object, so an editor left open
+  would hold one the document no longer has; accepting it would write the edit
+  into that detached copy, where it would be lost with no error to show for it.
+  Deleting an element closes the editor open on it for the same reason.
 
 Changes that are *not* part of the document — printer address, port, resolution
 — are not undoable.

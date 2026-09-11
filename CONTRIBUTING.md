@@ -37,8 +37,9 @@ A feature is finished when:
 ```
 
 `test_core.py` and `test_deviations.py` run offscreen and need no display.
-`test_conformance.py` drives both frontends and needs one: it uses `$DISPLAY`
-if set, otherwise `xvfb-run` (`apt install xvfb`).
+`test_conformance.py` drives both frontends, and `test_gtk_editors.py` covers
+the GTK element editors that nothing else reaches; both need a display, using
+`$DISPLAY` if set, otherwise `xvfb-run` (`apt install xvfb`).
 
 Each suite is also a VS Code launch configuration, so it can be run under the
 debugger with F5. Note that `test_conformance.py` runs each frontend in its own

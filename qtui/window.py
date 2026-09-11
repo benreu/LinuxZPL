@@ -63,6 +63,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.current_filepath = None
         self.unsaved_changes = False
         self.renderer = ZPLRenderer()
+        # The element editors are non-modal, so more than one can be on screen
+        # at once. One per element, keyed by id: an open editor holds its
+        # element, so the id cannot be reused while it is registered here.
+        self._editors = {}
 
         # A label is 4 x 6 inches at whatever resolution the printer is set to,
         # so its dot dimensions depend on that setting.
@@ -360,6 +364,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.update_status("Redo")
 
     def _apply_snapshot(self, snapshot):
+        self._close_element_editors()
         self.document.restore(snapshot)
         self.unsaved_changes = True
         self.canvas._sync_size()
@@ -368,6 +373,7 @@ class ZPLDesignerWindow(QMainWindow):
 
     def _reset_history(self):
         """Start a fresh history, so it never spans a file load."""
+        self._close_element_editors()
         self._undo_stack = []
         self._redo_stack = []
         self._current_snapshot = self.document.snapshot()
@@ -404,7 +410,9 @@ class ZPLDesignerWindow(QMainWindow):
         self.canvas.commit()
 
     def on_delete(self):
+        doomed = self.document.selected_element
         if self.document.remove_selected():
+            self._close_editor_for(doomed)
             self.canvas.commit()
 
     def _reorder(self, moved: bool):
@@ -424,24 +432,67 @@ class ZPLDesignerWindow(QMainWindow):
         self._reorder(self.document.send_to_back())
 
     def on_element_double_clicked(self, element):
-        """Open the edit dialog for whichever element was double-clicked."""
-        changed = False
+        """Open the editor for whichever element was double-clicked."""
+        open_editor = self._editors.get(id(element))
+        if open_editor is not None:
+            # Already being edited. Raising the window it is in beats opening a
+            # second one onto the same element, where whichever was accepted
+            # last would silently undo the other.
+            open_editor.raise_()
+            open_editor.activateWindow()
+            return
+
+        def committed():
+            self.canvas.commit()
+
+        def text_committed():
+            self._register_label_fonts()
+            self.canvas.commit()
+
         if isinstance(element, TextElement):
-            changed = qt_dialogs.edit_text_dialog(self, element, self.document)
-            if changed:
-                self._register_label_fonts()
+            editor = qt_dialogs.edit_text_dialog(self, element, self.document,
+                                                 on_accept=text_committed)
         elif isinstance(element, FrameElement):
-            changed = qt_dialogs.edit_frame_dialog(self, element)
+            editor = qt_dialogs.edit_frame_dialog(self, element,
+                                                  on_accept=committed)
         elif isinstance(element, BarcodeElement):
-            changed = qt_dialogs.edit_barcode_dialog(self, element)
+            editor = qt_dialogs.edit_barcode_dialog(self, element,
+                                                    on_accept=committed)
         elif isinstance(element, ImageElement):
+            # A file chooser rather than a form of fields, so it stays modal;
+            # there is nothing to leave open alongside the canvas.
             path = qt_dialogs.choose_image_file(self, "Replace Image")
             if path:
                 element.image_path = path
                 element.reload()
-                changed = True
-        if changed:
-            self.canvas.commit()
+                self.canvas.commit()
+            return
+        else:
+            return
+
+        self._editors[id(element)] = editor
+        editor.finished.connect(lambda _r, key=id(element):
+                                self._editors.pop(key, None))
+
+    def _close_editor_for(self, element):
+        """Close the editor open on one element, if there is one."""
+        editor = self._editors.pop(id(element), None) if element else None
+        if editor is not None:
+            # close() rather than reject(): both refuse the edit, but only
+            # close() honours WA_DeleteOnClose and actually frees the window.
+            editor.close()
+
+    def _close_element_editors(self):
+        """Close every open editor.
+
+        Undo, redo and loading a file all replace the element objects the open
+        editors hold, so an editor left up would write its fields into an
+        element the document no longer has - the edit would vanish with no
+        error to show for it.
+        """
+        for editor in list(self._editors.values()):
+            editor.close()
+        self._editors.clear()
 
     def _register_label_fonts(self):
         """Tell the preview renderer about every font this label uses."""

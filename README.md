@@ -143,8 +143,9 @@ the behaviour they implement.
 
 `test_core.py` and `test_deviations.py` run offscreen and need no display.
 `test_conformance.py` drives **both** frontends through the same scripted
-editing session and diffs the ZPL after every step - it needs a display, using
-`$DISPLAY` if set and otherwise `xvfb-run` (`apt install xvfb`).
+editing session and diffs the ZPL after every step, and `test_gtk_editors.py`
+covers the GTK element editors, which nothing else reaches. Those two need a
+display, using `$DISPLAY` if set and otherwise `xvfb-run` (`apt install xvfb`).
 
 ## ZPL Commands Supported
 

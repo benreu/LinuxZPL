@@ -348,6 +348,10 @@ class ZPLViewerWindow(Gtk.Window):
                                          label_width=self.label_width, 
                                          label_height=self.label_height)
         self.design_canvas.dpi = self.printer_dpi
+        # The element editors are non-modal, so more than one can be on screen
+        # at once. One per element, keyed by id: an open editor holds its
+        # element, so the id cannot be reused while it is registered here.
+        self._editors = {}
         self.design_canvas.connect("draw", self.on_canvas_draw)
         self.design_canvas.connect("element-double-clicked", self.on_element_double_clicked)
         self.design_canvas.connect("scale-changed", self._update_zoom_readout)
@@ -1245,6 +1249,7 @@ class ZPLViewerWindow(Gtk.Window):
 
     def _apply_snapshot(self, snapshot):
         """Put the canvas back to `snapshot` and follow it with the label size."""
+        self._close_element_editors()
         self.design_canvas.restore(snapshot)
         self.label_width = self.design_canvas.label_width
         self.label_height = self.design_canvas.label_height
@@ -1254,6 +1259,7 @@ class ZPLViewerWindow(Gtk.Window):
 
     def _reset_history(self):
         """Start a fresh history, so it never spans a file load."""
+        self._close_element_editors()
         self._undo_stack = []
         self._redo_stack = []
         self._current_snapshot = self.design_canvas.snapshot()
@@ -1323,7 +1329,9 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_delete_clicked(self, widget):
         """Handle delete selected element button click."""
+        doomed = self.design_canvas.document.selected_element
         self.design_canvas.remove_selected()
+        self._close_editor_for(doomed)
     
     def on_canvas_draw(self, widget, context):
         """Canvas draw event handler - re-render when canvas changes."""
@@ -1331,8 +1339,50 @@ class ZPLViewerWindow(Gtk.Window):
         # Actually, we'll trigger on button releases and element additions
         pass
     
+    def _open_editor(self, element, dialog, on_response):
+        """Show an element editor as a non-modal child of the designer.
+
+        Transient for the designer so it floats above it and closes with it,
+        but never blocking it - which rules out Gtk.Dialog.run(), whose
+        recursive main loop is what made these editors modal.
+        """
+        dialog.set_transient_for(self)
+        dialog.set_destroy_with_parent(True)
+        dialog.set_modal(False)
+        dialog.connect("response", on_response)
+        key = id(element)
+        self._editors[key] = dialog
+        dialog.connect("destroy", lambda *_a: self._editors.pop(key, None))
+        dialog.show_all()
+
+    def _close_editor_for(self, element):
+        """Close the editor open on one element, if there is one."""
+        editor = self._editors.pop(id(element), None) if element else None
+        if editor is not None:
+            editor.destroy()
+
+    def _close_element_editors(self):
+        """Close every open editor.
+
+        Undo, redo and loading a file all replace the element objects the open
+        editors hold, so an editor left up would write its fields into an
+        element the document no longer has - the edit would vanish with no
+        error to show for it.
+        """
+        for editor in list(self._editors.values()):
+            editor.destroy()
+        self._editors.clear()
+
     def on_element_double_clicked(self, widget, element):
         """Handle double-click on canvas element for editing."""
+        open_editor = self._editors.get(id(element))
+        if open_editor is not None:
+            # Already being edited. Raising the window it is in beats opening a
+            # second one onto the same element, where whichever was accepted
+            # last would silently undo the other.
+            open_editor.present()
+            return
+
         if isinstance(element, TextElement):
             # Show text edit dialog
             dialog = Gtk.Dialog(title="Edit Text", parent=self, flags=0)
@@ -1470,58 +1520,60 @@ class ZPLViewerWindow(Gtk.Window):
 
             content.show_all()
 
-            response = dialog.run()
-            if response == Gtk.ResponseType.OK:
-                buffer = text_view.get_buffer()
-                element.text = textraster.from_editor(buffer.get_text(
-                    buffer.get_start_iter(), buffer.get_end_iter(), False))
-                element.font_height = int(height_spin.get_value())
-                element.font_width = int(width_spin.get_value())
-                element.orientation = orientation_codes[
-                    orientation_combo.get_active()]
-                element.height = element.font_height
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    buffer = text_view.get_buffer()
+                    element.text = textraster.from_editor(buffer.get_text(
+                        buffer.get_start_iter(), buffer.get_end_iter(), False))
+                    element.font_height = int(height_spin.get_value())
+                    element.font_width = int(width_spin.get_value())
+                    element.orientation = orientation_codes[
+                        orientation_combo.get_active()]
+                    element.height = element.font_height
 
-                if wrap_check.get_active():
-                    # Assigned rather than mutated: the block on the element
-                    # may be the one an undo snapshot is holding.
-                    element.block = FieldBlock(
-                        int(block_width_spin.get_value()),
-                        int(max_lines_spin.get_value()),
-                        int(spacing_spin.get_value()),
-                        justify_codes[justify_combo.get_active()],
-                        int(indent_spin.get_value()))
-                elif element.block is not None:
-                    # Unticked. A forced break left behind would print as the
-                    # two characters it is written with, so the lines are
-                    # joined rather than abandoned to the printer.
-                    element.text = textraster.join_lines(element.text)
-                    element.block = None
-                elif textraster.FORCED_BREAK in element.text:
-                    # A break typed into an element that never had a block
-                    # still needs one, for the same reason. Sized to the
-                    # longest line, so nothing moves.
-                    element.block = element.default_block(document.font_path)
+                    if wrap_check.get_active():
+                        # Assigned rather than mutated: the block on the element
+                        # may be the one an undo snapshot is holding.
+                        element.block = FieldBlock(
+                            int(block_width_spin.get_value()),
+                            int(max_lines_spin.get_value()),
+                            int(spacing_spin.get_value()),
+                            justify_codes[justify_combo.get_active()],
+                            int(indent_spin.get_value()))
+                    elif element.block is not None:
+                        # Unticked. A forced break left behind would print as the
+                        # two characters it is written with, so the lines are
+                        # joined rather than abandoned to the printer.
+                        element.text = textraster.join_lines(element.text)
+                        element.block = None
+                    elif textraster.FORCED_BREAK in element.text:
+                        # A break typed into an element that never had a block
+                        # still needs one, for the same reason. Sized to the
+                        # longest line, so nothing moves.
+                        element.block = element.default_block(document.font_path)
 
-                self.design_canvas.sync_text_width(element)
+                    self.design_canvas.sync_text_width(element)
 
-                new_path, new_family = selected_font
-                if new_path != element.font_path:
-                    if new_path:
-                        # The font is only recorded here; it is uploaded at print
-                        # time, so choosing a font never blocks on the network.
-                        printer_name = zpl_fonts.printer_font_name(
-                            new_path, taken=self._printer_font_names(exclude=element))
-                        self.design_canvas.set_element_font(element, new_path, new_family, printer_name)
-                        self.renderer.register_font(printer_name, new_path)
-                    else:
-                        element.font_path = None
-                        element.font_family = None
-                        element.printer_font_name = None
-                        self.design_canvas.queue_draw()
+                    new_path, new_family = selected_font
+                    if new_path != element.font_path:
+                        if new_path:
+                            # The font is only recorded here; it is uploaded at print
+                            # time, so choosing a font never blocks on the network.
+                            printer_name = zpl_fonts.printer_font_name(
+                                new_path, taken=self._printer_font_names(exclude=element))
+                            self.design_canvas.set_element_font(element, new_path, new_family, printer_name)
+                            self.renderer.register_font(printer_name, new_path)
+                        else:
+                            element.font_path = None
+                            element.font_family = None
+                            element.printer_font_name = None
+                            self.design_canvas.queue_draw()
 
-                self.on_canvas_changed()
+                    self.on_canvas_changed()
 
-            dialog.destroy()
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
         
         elif isinstance(element, BarcodeElement):
             # Show barcode edit dialog
@@ -1574,27 +1626,29 @@ class ZPLViewerWindow(Gtk.Window):
 
             content.show_all()
 
-            response = dialog.run()
-            if response == Gtk.ResponseType.OK:
-                element.barcode_value = value_entry.get_text()
-                element.bar_height = int(height_spin.get_value())
-                element.module_width = int(module_spin.get_value())
-                element.orientation = orientation_codes[orientation_combo.get_active()]
-                element.show_text, element.text_above = text_codes[text_combo.get_active()]
-                element.check_digit = check_codes[check_combo.get_active()]
-                element.mode = mode_codes[mode_combo.get_active()]
-                if element.show_text:
-                    # With the line switched on, name the font it prints in
-                    # rather than leaving it to whatever the printer has
-                    # selected.
-                    code = (element.font or element.DEFAULT_FONT)[0]
-                    size = int(font_spin.get_value())
-                    element.font = (code, size, size)
-                element.sync_box()
-                self.design_canvas.queue_draw()
-                self.on_canvas_changed()
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.barcode_value = value_entry.get_text()
+                    element.bar_height = int(height_spin.get_value())
+                    element.module_width = int(module_spin.get_value())
+                    element.orientation = orientation_codes[orientation_combo.get_active()]
+                    element.show_text, element.text_above = text_codes[text_combo.get_active()]
+                    element.check_digit = check_codes[check_combo.get_active()]
+                    element.mode = mode_codes[mode_combo.get_active()]
+                    if element.show_text:
+                        # With the line switched on, name the font it prints in
+                        # rather than leaving it to whatever the printer has
+                        # selected.
+                        code = (element.font or element.DEFAULT_FONT)[0]
+                        size = int(font_spin.get_value())
+                        element.font = (code, size, size)
+                    element.sync_box()
+                    self.design_canvas.queue_draw()
+                    self.on_canvas_changed()
 
-            dialog.destroy()
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
         
         elif isinstance(element, ImageElement):
             dialog = Gtk.FileChooserDialog(
@@ -1687,17 +1741,19 @@ class ZPLViewerWindow(Gtk.Window):
 
             content.show_all()
             
-            response = dialog.run()
-            if response == Gtk.ResponseType.OK:
-                element.width = int(width_spin.get_value())
-                element.height = int(height_spin.get_value())
-                element.thickness = int(thickness_spin.get_value())
-                element.colour = colour_codes[colour_combo.get_active()]
-                element.rounding = int(rounding_spin.get_value())
-                self.design_canvas.queue_draw()
-                self.on_canvas_changed()
-            
-            dialog.destroy()
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.width = int(width_spin.get_value())
+                    element.height = int(height_spin.get_value())
+                    element.thickness = int(thickness_spin.get_value())
+                    element.colour = colour_codes[colour_combo.get_active()]
+                    element.rounding = int(rounding_spin.get_value())
+                    self.design_canvas.queue_draw()
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
     
     def update_status(self, message: str):
         """Update status bar message."""

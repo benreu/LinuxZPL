@@ -64,6 +64,29 @@ def _buttons(dialog, accept_text="OK"):
     return box
 
 
+def _show_editor(dialog, apply_edits, on_accept=None):
+    """Put an element editor on screen as a non-modal child of the designer.
+
+    The window is transient for the designer but never blocks it, so the
+    fields cannot be read back off a returned value the way a modal dialog
+    allowed. `finished` is the one signal that covers every way out - OK,
+    Cancel, Escape and the window-manager close button alike - so the edit is
+    applied there, and the caller hears about it through `on_accept`.
+    """
+    dialog.setAttribute(Qt.WA_DeleteOnClose)
+
+    def on_finished(result):
+        if result != QDialog.Accepted:
+            return
+        apply_edits()
+        if on_accept:
+            on_accept()
+
+    dialog.finished.connect(on_finished)
+    dialog.show()
+    return dialog
+
+
 # --- fonts ------------------------------------------------------------------
 
 class FontFamilyDialog(QDialog):
@@ -79,6 +102,10 @@ class FontFamilyDialog(QDialog):
                  title: str = "Choose Font"):
         super().__init__(parent)
         self.setWindowTitle(title)
+        # Opened from inside a text editor, which is itself a non-modal child
+        # of the designer. Window-modal rather than application-modal, so it
+        # blocks the one editor that raised it and nothing else.
+        self.setWindowModality(Qt.WindowModal)
         self.resize(380, 460)
         self._families = zpl_fonts.list_ttf_families()
 
@@ -156,8 +183,9 @@ def choose_font_family(parent, current_family=None, title="Choose Font"):
 
 # --- element editing --------------------------------------------------------
 
-def edit_text_dialog(parent, element: TextElement, document: Document) -> bool:
-    """Edit a text element. True when something changed."""
+def edit_text_dialog(parent, element: TextElement, document: Document,
+                     on_accept=None) -> QDialog:
+    """Edit a text element. `on_accept` runs once OK has changed it."""
     dialog = QDialog(parent)
     dialog.setWindowTitle("Edit Text")
     layout = QVBoxLayout(dialog)
@@ -277,50 +305,52 @@ def edit_text_dialog(parent, element: TextElement, document: Document) -> bool:
 
     layout.addWidget(_buttons(dialog))
 
-    if dialog.exec_() != QDialog.Accepted:
-        return False
+    def _apply():
+        element.text = textraster.from_editor(text_edit.toPlainText())
+        element.font_height = height_spin.value()
+        element.font_width = width_spin.value()
+        element.orientation = orientation_combo.currentData()
+        element.height = element.font_height
 
-    element.text = textraster.from_editor(text_edit.toPlainText())
-    element.font_height = height_spin.value()
-    element.font_width = width_spin.value()
-    element.orientation = orientation_combo.currentData()
-    element.height = element.font_height
+        if wrap_check.isChecked():
+            # Assigned rather than mutated: the block on the element may
+            # be the one an undo snapshot is holding.
+            element.block = FieldBlock(block_width.value(), max_lines.value(),
+                                       spacing_spin.value(),
+                                       justify_combo.currentData(),
+                                       indent_spin.value())
+        elif element.block is not None:
+            # Unticked. A forced break left behind would print as the two
+            # characters it is written with, so the lines are joined
+            # rather than abandoned to the printer.
+            element.text = textraster.join_lines(element.text)
+            element.block = None
+        elif textraster.FORCED_BREAK in element.text:
+            # A break typed into an element that never had a block still
+            # needs one, for the same reason. Sized to the longest line,
+            # so nothing moves.
+            element.block = element.default_block(document.font_path)
 
-    if wrap_check.isChecked():
-        # Assigned rather than mutated: the block on the element may be the one
-        # an undo snapshot is holding.
-        element.block = FieldBlock(block_width.value(), max_lines.value(),
-                                   spacing_spin.value(),
-                                   justify_combo.currentData(),
-                                   indent_spin.value())
-    elif element.block is not None:
-        # Unticked. A forced break left behind would print as the two
-        # characters it is written with, so the lines are joined rather than
-        # abandoned to the printer.
-        element.text = textraster.join_lines(element.text)
-        element.block = None
-    elif textraster.FORCED_BREAK in element.text:
-        # A break typed into an element that never had a block still needs one,
-        # for the same reason. Sized to the longest line, so nothing moves.
-        element.block = element.default_block(document.font_path)
+        if chosen['path'] != element.font_path:
+            if chosen['path']:
+                # The font is only recorded here; it is uploaded at print
+                # time, so choosing a font never blocks on the network.
+                name = zpl_fonts.printer_font_name(
+                    chosen['path'],
+                    taken=document.printer_font_names(exclude=element))
+                document.set_element_font(element, chosen['path'],
+                                          chosen['family'], name)
+            else:
+                element.font_path = None
+                element.font_family = None
+                element.printer_font_name = None
+        document.sync_text_width(element)
 
-    if chosen['path'] != element.font_path:
-        if chosen['path']:
-            # The font is only recorded here; it is uploaded at print time, so
-            # choosing a font never blocks on the network.
-            name = zpl_fonts.printer_font_name(
-                chosen['path'], taken=document.printer_font_names(exclude=element))
-            document.set_element_font(element, chosen['path'], chosen['family'], name)
-        else:
-            element.font_path = None
-            element.font_family = None
-            element.printer_font_name = None
-    document.sync_text_width(element)
-    return True
+    return _show_editor(dialog, _apply, on_accept)
 
 
-def edit_frame_dialog(parent, element) -> bool:
-    """Edit a frame. True when something changed."""
+def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
+    """Edit a frame. `on_accept` runs once OK has changed it."""
     dialog = QDialog(parent)
     dialog.setWindowTitle("Edit Frame")
     layout = QVBoxLayout(dialog)
@@ -371,19 +401,19 @@ def edit_frame_dialog(parent, element) -> bool:
     form.addRow("Corner Rounding:", rounding_spin)
 
     layout.addWidget(_buttons(dialog))
-    if dialog.exec_() != QDialog.Accepted:
-        return False
 
-    element.width = width_spin.value()
-    element.height = height_spin.value()
-    element.thickness = thickness_spin.value()
-    element.colour = colour_combo.currentData()
-    element.rounding = rounding_spin.value()
-    return True
+    def _apply():
+        element.width = width_spin.value()
+        element.height = height_spin.value()
+        element.thickness = thickness_spin.value()
+        element.colour = colour_combo.currentData()
+        element.rounding = rounding_spin.value()
+
+    return _show_editor(dialog, _apply, on_accept)
 
 
-def edit_barcode_dialog(parent, element) -> bool:
-    """Edit a barcode. True when something changed."""
+def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
+    """Edit a barcode. `on_accept` runs once OK has changed it."""
     dialog = QDialog(parent)
     dialog.setWindowTitle("Edit Barcode")
     layout = QVBoxLayout(dialog)
@@ -442,23 +472,23 @@ def edit_barcode_dialog(parent, element) -> bool:
     form.addRow("Mode:", mode_combo)
 
     layout.addWidget(_buttons(dialog))
-    if dialog.exec_() != QDialog.Accepted:
-        return False
 
-    element.barcode_value = value_edit.text()
-    element.bar_height = height_spin.value()
-    element.module_width = module_spin.value()
-    element.orientation = orientation_combo.currentData()
-    element.show_text, element.text_above = text_combo.currentData()
-    element.check_digit = check_combo.currentData()
-    element.mode = mode_combo.currentData()
-    if element.show_text:
-        # With the line switched on, name the font it prints in rather than
-        # leaving it to whatever the printer happens to have selected.
-        code = element.font[0] if element.font else element.DEFAULT_FONT[0]
-        element.font = (code, font_spin.value(), font_spin.value())
-    element.sync_box()
-    return True
+    def _apply():
+        element.barcode_value = value_edit.text()
+        element.bar_height = height_spin.value()
+        element.module_width = module_spin.value()
+        element.orientation = orientation_combo.currentData()
+        element.show_text, element.text_above = text_combo.currentData()
+        element.check_digit = check_combo.currentData()
+        element.mode = mode_combo.currentData()
+        if element.show_text:
+            # With the line switched on, name the font it prints in rather than
+            # leaving it to whatever the printer happens to have selected.
+            code = element.font[0] if element.font else element.DEFAULT_FONT[0]
+            element.font = (code, font_spin.value(), font_spin.value())
+        element.sync_box()
+
+    return _show_editor(dialog, _apply, on_accept)
 
 
 def choose_image_file(parent, title="Select Image") -> Optional[str]:

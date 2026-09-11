@@ -494,18 +494,17 @@ from PySide2.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QPlainTextEdit, QSpinBox)
 
 def _drive_text_dialog(element, document, fill):
-    """Open the text dialog, let `fill` set its fields, then accept it."""
-    def act():
-        dialog = next((widget for widget in app.topLevelWidgets()
-                       if isinstance(widget, QDialog) and widget.isVisible()), None)
-        if dialog is None:                      # not up yet, come back
-            QTimer.singleShot(50, act)
-            return
-        fill(dialog)
-        dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+    """Open the text editor, let `fill` set its fields, then accept it.
 
-    QTimer.singleShot(100, act)
-    return qt_dialogs.edit_text_dialog(None, element, document)
+    The editor is non-modal, so it can be filled in and accepted on this same
+    stack rather than through a timer that waits for a blocked call to yield.
+    """
+    accepted = []
+    dialog = qt_dialogs.edit_text_dialog(
+        None, element, document, on_accept=lambda: accepted.append(True))
+    fill(dialog)
+    dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+    return bool(accepted)
 
 ddoc = Document(812, 1218, dpi=203)
 de = ddoc.add_text_element('one two three four five six seven eight')
@@ -532,6 +531,47 @@ _drive_text_dialog(de, ddoc,
                    lambda dialog: dialog.findChild(QCheckBox, 'wrap').setChecked(False))
 check("unticking wrap joins the lines rather than leaving a break behind",
       de.block is None and de.text == "ACME Widget Model 4400", de.text)
+
+# --- the editors are non-modal child windows --------------------------------
+# Non-modal means an editor can still be up when the element under it is
+# replaced or removed, which is the one way an edit can be silently lost.
+
+ew = qt_main.ZPLDesignerWindow()
+etext = ew.document.add_text_element("editable")
+eframe = ew.document.add_frame_element()
+
+ew.on_element_double_clicked(etext)
+first = ew._editors[id(etext)]
+check("an element editor opens without blocking its caller", first.isVisible())
+ew.on_element_double_clicked(etext)
+check("a second double-click raises the open editor rather than opening another",
+      ew._editors[id(etext)] is first and len(ew._editors) == 1,
+      len(ew._editors))
+
+ew.on_element_double_clicked(eframe)
+check("a different element gets an editor of its own alongside",
+      len(ew._editors) == 2, len(ew._editors))
+
+ew._apply_snapshot(ew.document.snapshot())
+check("undo closes the editors, whose elements it has just replaced",
+      not ew._editors, len(ew._editors))
+
+# Closed, not merely forgotten: an editor still on screen over a replaced
+# element is exactly how an OK press writes into a detached copy.
+survivor = ew.document.elements[0]
+ew.on_element_double_clicked(survivor)
+stale = ew._editors[id(survivor)]
+ew._apply_snapshot(ew.document.snapshot())
+check("the editor is taken off screen, not just dropped from the register",
+      not stale.isVisible() and not ew._editors)
+check("restoring really did replace the element it was editing",
+      all(el is not survivor for el in ew.document.elements))
+
+ew.document.selected_element = ew.document.elements[0]
+ew.on_element_double_clicked(ew.document.selected_element)
+ew.on_delete()
+check("deleting an element closes the editor open on it",
+      not ew._editors, len(ew._editors))
 
 # --- commands that used to lose what they carried ---------------------------
 
@@ -910,6 +950,11 @@ inherited = zpl_parser.parse_zpl(
     "^XA^PW812^LL1218^CF0,40,20^FO50,50^A0N,40^FDHg^FS^XZ")[0].elements[0]
 check("and ^CF still wins when it set a width for a scalable font",
       inherited.font_width == 20, inherited.font_width)
+sizeless = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^CF0,30,30^FO50,50^A0N^FDHg^FS^XZ")[0].elements[0]
+check("^A naming no size at all takes both from ^CF",
+      (sizeless.font_height, sizeless.font_width) == (30, 30),
+      (sizeless.font_height, sizeless.font_width))
 
 # ^GB's width and height both default to the thickness and clamp up to it,
 # which is how ZPL spells a rule. Demanding two numbers dropped the element.
@@ -946,13 +991,30 @@ def _inside(ink, element, slack=2):
             and ink[0] + ink[2] <= element.x + element.width + slack
             and ink[1] + ink[3] <= element.y + element.height + slack)
 
+# Both are compared against the ^A that spells the same font out in full, not
+# merely checked for landing inside the box: ink far too small for a box is
+# inside it too, which is how a preview that had stopped reading ^CF at all
+# went on passing.
+spelled_out = _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,40^FDHg^FS^XZ", 400, 300)
 for name, source in (("a partial ^A", "^FO50,50^A0N,40^FDHg^FS"),
                      ("a ^CF default font", "^CF0,40,40^FO50,50^FDHg^FS")):
     page = f"^XA^PW400^LL300{source}^XZ"
     shown = zpl_parser.parse_zpl(page)[0].elements[0]
+    drawn = _preview_ink(page, 400, 300)
     check(f"the preview draws {name} inside the box the model gives it",
-          _inside(_preview_ink(page, 400, 300), shown),
-          (_preview_ink(page, 400, 300), (shown.x, shown.y, shown.width, shown.height)))
+          _inside(drawn, shown),
+          (drawn, (shown.x, shown.y, shown.width, shown.height)))
+    check(f"and draws {name} exactly as the ^A that spells it out",
+          drawn == spelled_out, (drawn, spelled_out))
+
+# The two read together: a partial ^A inheriting a width ^CF set. Reading ^A
+# against anything but the ^CF in force is a divergence only this combination
+# shows, since either command alone comes out right by accident.
+check("the preview reads a partial ^A against the ^CF in force",
+      _preview_ink("^XA^PW400^LL300^CF0,40,20^FO50,50^A0N,40^FDHg^FS^XZ", 400, 300)
+      == _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,20^FDHg^FS^XZ", 400, 300),
+      (_preview_ink("^XA^PW400^LL300^CF0,40,20^FO50,50^A0N,40^FDHg^FS^XZ", 400, 300),
+       _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,20^FDHg^FS^XZ", 400, 300)))
 
 # a rule is the case where a zero side used to leave nothing to draw at all
 check("the preview draws a ^GB rule at its full thickness",
