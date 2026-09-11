@@ -59,7 +59,7 @@ At startup the label is 4 × 6 inches at the configured printer resolution
 ### 3.2 Properties common to every element
 
 `x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`, and
-`print_enabled` (default true — see §6.5).
+`print_enabled` (default true — see §6.6).
 
 ### 3.3 Element types
 
@@ -302,7 +302,7 @@ pinned.
 - **Double click** (same element, within 500 ms) opens that element's edit
   dialog.
 - **Right click** selects the element under the pointer and opens a context menu
-  (§6.5).
+  (§6.6).
 
 ---
 
@@ -312,11 +312,16 @@ pinned.
 
 | Command | Behaviour |
 |---|---|
-| **Load ZPL File** | Prompts about unsaved changes (§6.6), then a file chooser filtered to `*.zpl`. The chooser previews the selected `.zpl` by rendering it to an image, scaled to at most 300 px wide. Loading replaces the whole document and resets the undo history. |
+| **New** | Prompts about unsaved changes (§6.7), then a blank 4 × 6 label at the printer's resolution. Clears the elements, the undo history and the current file, and resets the status to `Ready`. |
+| **Open…** | Prompts about unsaved changes (§6.7), then a file chooser filtered to `*.zpl`. The chooser previews the selected `.zpl` by rendering it to an image, scaled to at most 300 px wide. Opening replaces the whole document and resets the undo history. |
 | **Save** | Writes to the current path, or behaves as Save As if there is none. |
 | **Save as…** | File chooser, default name `untitled.zpl`. Adopts the chosen path as the current file. |
 | **Print** | §9. |
-| **Quit** | Prompts about unsaved changes (§6.6). |
+| **Quit** | Prompts about unsaved changes (§6.7). |
+
+**The menu is in four groups**, separated in this order: start a document
+(New, Open), persist it (Save, Save as), print it, leave. A port that runs them
+together is the thing this grouping exists to avoid.
 
 Saving refuses an empty document ("No content to save" — a document whose ZPL
 is empty or just `^XA` / `^XZ`). Save clears the modified flag; a failed save
@@ -330,7 +335,12 @@ selected; the raise pair is disabled when the selection is already on top and
 the lower pair when it is already at the bottom. Sensitivity is re-evaluated
 each time the menu opens.
 
-### 6.3 Settings
+### 6.3 View
+
+Zoom In, Zoom Out, then Fit Label, Fit Width, Actual Size — separated into
+those two groups. §5 describes what each does to the scale.
+
+### 6.4 Settings
 
 | Command | Behaviour |
 |---|---|
@@ -338,14 +348,14 @@ each time the menu opens.
 | **Printer Settings** | §7 |
 | **Printer Fonts…** | §10.4 |
 
-### 6.4 Toolbar
+### 6.5 Toolbar
 
 `+ Text`, `+ Frame`, `+ Barcode` add an element with the defaults from §3.3.
 `+ Image` opens a file chooser (JPEG/PNG) first. Each new element is placed at a
 staggered offset so successive additions do not stack exactly, and becomes the
 selection. `Delete` removes the selected element.
 
-### 6.5 Element context menu (right click)
+### 6.6 Element context menu (right click)
 
 - **Print This Element** — a checkbox, default on. Unticking keeps the element
   in the design and in the saved file but leaves it off the printed label. This
@@ -354,7 +364,7 @@ selection. `Delete` removes the selected element.
 - **Bring to Front / Bring Forward / Send Backward / Send to Back**, disabled at
   the ends of the z-order.
 
-### 6.6 The unsaved-changes prompt
+### 6.7 The unsaved-changes prompt
 
 Shown when loading a file or quitting with unsaved changes. Three choices:
 
@@ -640,7 +650,7 @@ above.
 
 | Shortcut | Action |
 |---|---|
-| Ctrl+O | Load |
+| Ctrl+O | Open |
 | Ctrl+S | Save |
 | Ctrl+Shift+S | Save As |
 | Ctrl+P | Print |
@@ -748,6 +758,5 @@ rather than requirements:
   and a printer would settle it.
 - **The interpretation line's leading is assumed** to be the font height plus
   two dots. ZPL does not document its own spacing.
-- **There is no "New" command.** A blank document exists only at startup.
 - **`^FB`'s indent is applied to every line**, where ZPL hangs it on the second
   and later ones. The parameter round-trips; only where it lands differs.

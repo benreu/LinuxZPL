@@ -109,72 +109,61 @@ class ZPLViewerWindow(Gtk.Window):
         # Keyboard shortcuts, shown in the menu and live window-wide
         accel_group = Gtk.AccelGroup()
         self.add_accel_group(accel_group)
+        # What each item is bound to, kept as it is bound. PyGObject offers no
+        # way to ask a menu item back: Gtk.AccelLabel.get_accel reports only
+        # what set_accel put there, and the accel group's contents are not
+        # enumerable. Recording at the one place bindings are made is simpler
+        # than scraping them out, and it is what lets the conformance suite
+        # compare this menu bar against the Qt one.
+        self.accelerators = {}
 
         def add_accel(item, accel, visible=True):
             key, mods = Gtk.accelerator_parse(accel)
             item.add_accelerator("activate", accel_group, key, mods,
                                  Gtk.AccelFlags.VISIBLE if visible else 0)
+            if visible:
+                self.accelerators[item] = accel
         
-        # File menu
+        # File menu. Four groups - start a document, persist it, print it,
+        # leave - matching the Qt frontend item for item. An ellipsis marks
+        # every command that asks something before it acts.
         file_menu = Gtk.Menu()
-        file_menu_item = Gtk.MenuItem(label="File")
+        file_menu_item = Gtk.MenuItem.new_with_mnemonic("_File")
         file_menu_item.set_submenu(file_menu)
         menu_bar.append(file_menu_item)
-        
-        # New menu item
-        new_item = Gtk.MenuItem(label="New")
-        new_item.connect("activate", self.on_new_clicked)
-        add_accel(new_item, "<Control>n")
-        file_menu.append(new_item)
 
-        # Load menu item
-        load_item = Gtk.MenuItem(label="Load ZPL File")
-        load_item.connect("activate", self.on_load_file_clicked)
-        add_accel(load_item, "<Control>o")
-        file_menu.append(load_item)
-        
-        # Save menu item
-        save_item = Gtk.MenuItem(label="Save")
-        save_item.connect("activate", self.on_save_clicked)
-        add_accel(save_item, "<Control>s")
-        file_menu.append(save_item)
-        
-        # Save menu item
-        save_item = Gtk.MenuItem(label="Save as...")
-        save_item.connect("activate", self.on_save_as_clicked)
-        add_accel(save_item, "<Control><Shift>s")
-        file_menu.append(save_item)
-        
-        # Print menu item
-        print_item = Gtk.MenuItem(label="Print")
-        print_item.connect("activate", self.on_print_clicked)
-        add_accel(print_item, "<Control>p")
-        file_menu.append(print_item)
-        
-        # Separator
-        separator = Gtk.SeparatorMenuItem()
-        file_menu.append(separator)
-        
-        # Quit menu item
-        quit_item = Gtk.MenuItem(label="Quit")
-        quit_item.connect("activate", self.close_app)
-        add_accel(quit_item, "<Control>q")
-        file_menu.append(quit_item)
-        
+        for label, action, accel in (
+                ("_New", self.on_new_clicked, "<Control>n"),
+                ("_Open\u2026", self.on_load_file_clicked, "<Control>o"),
+                (None, None, None),
+                ("_Save", self.on_save_clicked, "<Control>s"),
+                ("Save _as\u2026", self.on_save_as_clicked, "<Control><Shift>s"),
+                (None, None, None),
+                ("_Print", self.on_print_clicked, "<Control>p"),
+                (None, None, None),
+                ("_Quit", self.close_app, "<Control>q")):
+            if label is None:
+                file_menu.append(Gtk.SeparatorMenuItem())
+                continue
+            item = Gtk.MenuItem.new_with_mnemonic(label)
+            item.connect("activate", action)
+            add_accel(item, accel)
+            file_menu.append(item)
+
         file_menu.show_all()
 
         # Edit menu
         edit_menu = Gtk.Menu()
-        edit_menu_item = Gtk.MenuItem(label="Edit")
+        edit_menu_item = Gtk.MenuItem.new_with_mnemonic("_Edit")
         edit_menu_item.set_submenu(edit_menu)
         menu_bar.append(edit_menu_item)
 
-        self.undo_item = Gtk.MenuItem(label="Undo")
+        self.undo_item = Gtk.MenuItem.new_with_mnemonic("_Undo")
         self.undo_item.connect("activate", self.on_undo)
         add_accel(self.undo_item, "<Control>z")
         edit_menu.append(self.undo_item)
 
-        self.redo_item = Gtk.MenuItem(label="Redo")
+        self.redo_item = Gtk.MenuItem.new_with_mnemonic("_Redo")
         self.redo_item.connect("activate", self.on_redo)
         add_accel(self.redo_item, "<Control><Shift>z")
         # a second binding, unshown so the menu keeps one accelerator per item
@@ -183,7 +172,7 @@ class ZPLViewerWindow(Gtk.Window):
 
         edit_menu.append(Gtk.SeparatorMenuItem())
 
-        self.delete_item = Gtk.MenuItem(label="Delete")
+        self.delete_item = Gtk.MenuItem.new_with_mnemonic("_Delete")
         self.delete_item.connect("activate", self.on_delete_clicked)
         add_accel(self.delete_item, "Delete")
         edit_menu.append(self.delete_item)
@@ -221,23 +210,23 @@ class ZPLViewerWindow(Gtk.Window):
 
         # View menu
         view_menu = Gtk.Menu()
-        view_menu_item = Gtk.MenuItem(label="View")
+        view_menu_item = Gtk.MenuItem.new_with_mnemonic("_View")
         view_menu_item.set_submenu(view_menu)
         menu_bar.append(view_menu_item)
 
         # Ctrl++ needs Shift on most layouts, so the unshifted key is bound as
         # an unshown alias - the same trick the z-order items use.
         for label, action, accel, alias in (
-                ("Zoom In", self.on_zoom_in, "<Control>plus", "<Control>equal"),
-                ("Zoom Out", self.on_zoom_out, "<Control>minus", None),
+                ("Zoom _In", self.on_zoom_in, "<Control>plus", "<Control>equal"),
+                ("Zoom _Out", self.on_zoom_out, "<Control>minus", None),
                 (None, None, None, None),
-                ("Fit Label", self.on_fit_label, "<Control>0", None),
-                ("Fit Width", self.on_fit_width, "<Control>9", None),
-                ("Actual Size", self.on_actual_size, "<Control>1", None)):
+                ("Fit _Label", self.on_fit_label, "<Control>0", None),
+                ("Fit _Width", self.on_fit_width, "<Control>9", None),
+                ("_Actual Size", self.on_actual_size, "<Control>1", None)):
             if label is None:
                 view_menu.append(Gtk.SeparatorMenuItem())
                 continue
-            item = Gtk.MenuItem(label=label)
+            item = Gtk.MenuItem.new_with_mnemonic(label)
             item.connect("activate", action)
             add_accel(item, accel)
             if alias:
@@ -268,17 +257,17 @@ class ZPLViewerWindow(Gtk.Window):
 
         # Settings menu
         settings_menu = Gtk.Menu()
-        settings_menu_item = Gtk.MenuItem(label="Settings")
+        settings_menu_item = Gtk.MenuItem.new_with_mnemonic("_Settings")
         settings_menu_item.set_submenu(settings_menu)
         menu_bar.append(settings_menu_item)
         
         # Label settings menu item
-        label_settings_item = Gtk.MenuItem(label="Label Size")
+        label_settings_item = Gtk.MenuItem(label="Label Size\u2026")
         label_settings_item.connect("activate", self.on_label_settings_clicked)
         settings_menu.append(label_settings_item)
 
         # Printer settings menu item
-        printer_settings_item = Gtk.MenuItem(label="Printer Settings")
+        printer_settings_item = Gtk.MenuItem(label="Printer Settings\u2026")
         printer_settings_item.connect("activate", self.on_printer_settings_clicked)
         settings_menu.append(printer_settings_item)
 
@@ -540,7 +529,7 @@ class ZPLViewerWindow(Gtk.Window):
           return
             
         dialog = Gtk.FileChooserDialog(
-          title="Load ZPL File",
+          title="Open ZPL File",
           parent=self,
           action=Gtk.FileChooserAction.OPEN
         )

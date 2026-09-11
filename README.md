@@ -98,7 +98,7 @@ Identical in both frontends.
 | | | | |
 |---|---|---|---|
 | Ctrl+N | New | Ctrl+Z | Undo |
-| Ctrl+O | Load | Ctrl+Shift+Z, Ctrl+Y | Redo |
+| Ctrl+O | Open | Ctrl+Shift+Z, Ctrl+Y | Redo |
 | Ctrl+S | Save | Delete | Delete element |
 | Ctrl+Shift+S | Save As | Ctrl+] / Ctrl+Shift+] | Bring Forward / to Front |
 | Ctrl+P | Print | Ctrl+[ / Ctrl+Shift+[ | Send Backward / to Back |

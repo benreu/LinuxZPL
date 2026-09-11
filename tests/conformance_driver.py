@@ -16,6 +16,7 @@ this measures agreement rather than assuming it.
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -28,6 +29,48 @@ FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'
 # A font every step can rely on; text width is the most divergence-prone rule,
 # so the sequence exercises the measured path as well as the fixed-width one.
 FONT_FAMILY = 'DejaVu Sans'
+
+
+# --- comparing menu bars -----------------------------------------------------
+#
+# The menus are the other half of the two frontends being the same program, and
+# nothing checked them: the suite diffs the ZPL, and a menu produces none. What
+# follows spells both toolkits' menus the same way so that only real
+# differences survive.
+
+_MNEMONIC = re.compile(r'[&_](\w)')
+
+# GTK renders Shift+Ctrl+S and Delete where Qt renders Ctrl+Shift+S and Del -
+# a display convention on each side, not a difference in what is bound.
+MODIFIER_ORDER = ('Ctrl', 'Shift', 'Alt', 'Meta')
+KEY_ALIASES = {'Del': 'Delete', 'Return': 'Enter'}
+
+
+def menu_label(text):
+    """A label with its mnemonic marked the same way whichever toolkit wrote it.
+
+    `&New` and `_New` both become `[N]ew`, so the comparison ignores which
+    character a toolkit uses to mark one but still catches a mnemonic that has
+    moved to a different letter.
+    """
+    return _MNEMONIC.sub(lambda m: f'[{m.group(1)}]', text or '')
+
+
+def menu_accel(text):
+    """An accelerator spelled the same way whichever toolkit reported it."""
+    if not text:
+        return ''
+    mods, rest = [], text
+    stripping = True
+    while stripping:
+        stripping = False
+        for mod in MODIFIER_ORDER:
+            if rest.startswith(mod + '+') and len(rest) > len(mod) + 1:
+                mods.append(mod)
+                rest = rest[len(mod) + 1:]
+                stripping = True
+    ordered = sorted(set(mods), key=MODIFIER_ORDER.index)
+    return '+'.join(ordered + [KEY_ALIASES.get(rest, rest)])
 
 
 class GtkDriver:
@@ -146,6 +189,39 @@ class GtkDriver:
         from zplcore import workflow
         self.window.printer_dpi = dpi
         workflow.reconcile_dpi(self.canvas.document, dpi, lambda *a: answer)
+
+    def menus(self):
+        """The menu bar as text: titles, items, separators and accelerators."""
+        from gi.repository import Gtk
+
+        def find_bar(widget):
+            if isinstance(widget, Gtk.MenuBar):
+                return widget
+            if isinstance(widget, Gtk.Container):
+                for kid in widget.get_children():
+                    found = find_bar(kid)
+                    if found is not None:
+                        return found
+            return None
+
+        # The menu bar lives in the header bar, not directly under the window.
+        bar = find_bar(self.window.get_titlebar()) or find_bar(self.window)
+        lines = []
+        for top in bar.get_children():
+            lines.append(f'[{menu_label(top.get_label())}]')
+            submenu = top.get_submenu()
+            if submenu is None:
+                continue
+            for item in submenu.get_children():
+                if isinstance(item, Gtk.SeparatorMenuItem):
+                    lines.append('  ---')
+                    continue
+                accel = self.window.accelerators.get(item, '')
+                if accel:
+                    key, mods = Gtk.accelerator_parse(accel)
+                    accel = Gtk.accelerator_get_label(key, mods)
+                lines.append(f'  {menu_label(item.get_label())}\t{menu_accel(accel)}')
+        return '\n'.join(lines)
 
     def to_zpl(self):
         return self.canvas.to_zpl()
@@ -267,6 +343,22 @@ class QtDriver:
         self.window.printer_dpi = dpi
         workflow.reconcile_dpi(self.document, dpi, lambda *a: answer)
 
+    def menus(self):
+        """The menu bar as text: titles, items, separators and accelerators."""
+        lines = []
+        for top in self.window.menuBar().actions():
+            lines.append(f'[{menu_label(top.text())}]')
+            menu = top.menu()
+            if menu is None:
+                continue
+            for action in menu.actions():
+                if action.isSeparator():
+                    lines.append('  ---')
+                    continue
+                lines.append(f'  {menu_label(action.text())}\t'
+                             f'{menu_accel(action.shortcut().toString())}')
+        return '\n'.join(lines)
+
     def to_zpl(self):
         return self.document.to_zpl()
 
@@ -278,6 +370,11 @@ def sequence(driver, record):
     """The scripted session. Every frontend must produce the same ZPL for it."""
     from zplcore import fonts
     font_path = fonts.file_for_family(FONT_FAMILY)
+
+    # The menu bar first: it is a structural fact about the frontend rather
+    # than anything the document does, and it is the half of "the same program"
+    # that emits no ZPL and so went unchecked.
+    record('the menu bar', driver.menus())
 
     driver.set_label_size(812, 1218)
     record('empty 4x6 label')
@@ -454,8 +551,10 @@ def main():
     driver = GtkDriver() if args.frontend == 'gtk' else QtDriver()
     steps = []
 
-    def record(name):
-        steps.append({'step': name, 'zpl': driver.to_zpl()})
+    def record(name, text=None):
+        """Record what the design says now, or some other text to compare."""
+        steps.append({'step': name,
+                      'zpl': driver.to_zpl() if text is None else text})
 
     sequence(driver, record)
     json.dump({'frontend': driver.name, 'steps': steps}, sys.stdout)

@@ -211,7 +211,7 @@ class ZPLDesignerWindow(QMainWindow):
 
     def _build_actions(self):
         self.new_action = self._action("&New", self.on_new, QKeySequence.New)
-        self.load_action = self._action("&Load ZPL File…", self.on_load, QKeySequence.Open)
+        self.load_action = self._action("&Open…", self.on_load, QKeySequence.Open)
         self.save_action = self._action("&Save", self.on_save, QKeySequence.Save)
         self.save_as_action = self._action("Save &as…", self.on_save_as, "Ctrl+Shift+S")
         self.print_action = self._action("&Print", self.on_print, "Ctrl+P")
@@ -518,7 +518,7 @@ class ZPLDesignerWindow(QMainWindow):
 
     def _zpl_open_dialog(self):
         """A .zpl chooser that previews the selected file as a rendered label."""
-        dialog = QFileDialog(self, "Load ZPL File")
+        dialog = QFileDialog(self, "Open ZPL File")
         dialog.setNameFilter(qt_dialogs.ZPL_FILTER)
         dialog.setAcceptMode(QFileDialog.AcceptOpen)
         dialog.setFileMode(QFileDialog.ExistingFile)
