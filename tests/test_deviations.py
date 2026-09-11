@@ -2,6 +2,7 @@ import os, sys
 from pathlib import Path
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _isolate  # a throwaway settings file, before any frontend is imported
 from PySide2.QtWidgets import QApplication, QDialogButtonBox, QLineEdit
 app = QApplication([])
 from zplcore import fonts as zpl_fonts, textraster
@@ -61,9 +62,20 @@ check("18.5 New clears the elements", not w.document.elements)
 check("18.5 New clears the history", not w._undo_stack and not w._redo_stack)
 check("18.5 New clears the current file", w.current_filepath is None)
 check("18.5 New resets the status", w.statusBar().currentMessage() == "Ready")
-check("18.5 New restores a 4x6 label at the printer dpi",
+check("18.5 New restores a 4x6 label when no size has been chosen",
       w.document.label_width == 4 * w.printer_dpi and w.document.label_height == 6 * w.printer_dpi,
       f"{w.document.label_width}x{w.document.label_height} at {w.printer_dpi}dpi")
+
+# New opens at the size last chosen in Label Settings, not always 4x6 (§6, §13).
+# Asserted against a size nothing else would produce: checking 4x6 alone would
+# pass on the default whether or not New ever consulted the setting.
+w.label_inches = (2.0, 3.0)
+w.unsaved_changes = False
+w.on_new()
+check("18.5 New restores the remembered label size at the printer dpi",
+      w.document.label_width == 2 * w.printer_dpi and w.document.label_height == 3 * w.printer_dpi,
+      f"{w.document.label_width}x{w.document.label_height} at {w.printer_dpi}dpi")
+w.label_inches = qt_main.DEFAULT_LABEL_INCHES
 check("18.5 New has a Ctrl+N shortcut",
       w.new_action.shortcut().toString() == "Ctrl+N", w.new_action.shortcut().toString())
 

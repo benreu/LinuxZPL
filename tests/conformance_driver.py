@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+import _isolate  # a throwaway settings file, before any frontend is imported
 FIXTURE_300 = ROOT / 'tests' / 'fixtures' / 'sample_300dpi.zpl'
 # ZPL as another tool writes it: ^A0, ^FB and two commands on one line
 FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'

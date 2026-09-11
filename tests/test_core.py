@@ -2,6 +2,7 @@ import base64, math, os, re, sys, tempfile
 from pathlib import Path
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _isolate  # a throwaway settings file, before any frontend is imported
 
 from PySide2.QtWidgets import QApplication
 from PySide2.QtGui import QImage
@@ -1083,8 +1084,8 @@ finally:
 # size typed in the dialog then has to win over the one the rescale produced.
 lw = qt_main.ZPLDesignerWindow()
 lw._save_settings = lambda *a: None
-# Pinned rather than inherited: the window reads the real settings file, so a
-# machine already set to 300dpi would make this a visit that changed nothing.
+# Pinned rather than left at the default: this check is about a resolution
+# that changes, so the one it starts from has to be stated, not inherited.
 lw.printer_dpi = lw.document.dpi = 203
 lel = lw.document.add_text_element('scaled')
 lel.x, lel.y = 100, 200
