@@ -1010,6 +1010,19 @@ for name, source in (("a partial ^A", "^FO50,50^A0N,40^FDHg^FS"),
 # The two read together: a partial ^A inheriting a width ^CF set. Reading ^A
 # against anything but the ^CF in force is a divergence only this combination
 # shows, since either command alone comes out right by accident.
+# ^A names a character width, and the preview threw it away: ^A0N,40,10 and
+# ^A0N,40,80 drew the same 178 dots, where the design said 70 and 560. Compared
+# against the element rather than between themselves, so drawing all three
+# wrong by the same factor does not pass.
+for _cw in (10, 40, 80):
+    _page = f"^XA^PW700^LL200^FO50,50^A0N,40,{_cw}^FDHamburg^FS^XZ"
+    _modelled = zpl_parser.parse_zpl(_page)[0].elements[0].width
+    _drawn = _preview_ink(_page, 700, 200)[2]
+    # ink is measured, and a glyph does not reach the end of its own advance,
+    # so the last character's side bearing is the slack here
+    check(f"the preview draws ^A's character width of {_cw}",
+          abs(_drawn - _modelled) <= _modelled * 0.06, (_drawn, _modelled))
+
 check("the preview reads a partial ^A against the ^CF in force",
       _preview_ink("^XA^PW400^LL300^CF0,40,20^FO50,50^A0N,40^FDHg^FS^XZ", 400, 300)
       == _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,20^FDHg^FS^XZ", 400, 300),

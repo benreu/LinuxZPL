@@ -168,17 +168,33 @@ class ZPLRenderer:
         self.image.paste(panel, (self.current_x, self._top(offset)))
 
     def _render_text(self, text: str):
-        """A plain ^FD field, in the font and the direction ^A asked for."""
+        """A plain ^FD field, in the font and the direction ^A asked for.
+
+        Drawn to the width the same TextElement the canvas holds says it will
+        print at, rather than to whatever the screen face happens to measure.
+        ^A names a character width and this ignored it, so ^A0N,40,10 and
+        ^A0N,40,80 drew identically - the same 178 dots, where the design said
+        70 and 560.
+        """
+        element = TextElement(self.current_x, self.current_y, text,
+                              self.current_font_size,
+                              self.current_font_width or self.current_font_size,
+                              orientation=self.current_font_orientation)
+        element.font_path = self.current_field_font_path
+        run = element.printed_width(self.custom_font_path)
+
         font = self._get_font(self.current_font_size)
         try:
             box = self.draw.textbbox((0, 0), text, font=font)
         except Exception:
             box = (0, 0, max(1, len(text) * self.current_font_size),
                    self.current_font_size)
-        run = max(1, box[2] - box[0])
+        natural = max(1, box[2] - box[0])
         stack = max(1, box[3] - box[1])
-        panel = Image.new('L', (run, stack), 255)
+        panel = Image.new('L', (natural, stack), 255)
         ImageDraw.Draw(panel).text((-box[0], -box[1]), text, fill=0, font=font)
+        if run != natural:
+            panel = panel.resize((max(1, run), stack), Image.LANCZOS)
         self._turned(panel, run, stack)
 
     def _render_block(self, text: str):
