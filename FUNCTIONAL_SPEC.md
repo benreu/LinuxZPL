@@ -245,6 +245,14 @@ opposite end, disabled when their history stack is empty. The canvas is
 scrollable, with the vertical scrollbar always present so the width a fit is
 measured against cannot change when it appears.
 
+**Title.** The titlebar names the file being edited - its basename, not its
+path - and `LinuxZPL` when no file is open. It is set when the window opens and
+again wherever the current file changes: New, Open, and a save that adopts a new
+path. A failed save leaves it naming the file still being edited. Neither the
+toolkit nor any other name for the program appears in it, in either frontend;
+where the titlebar is a header bar the window's own title is set to match, so
+the task switcher says the same thing.
+
 **Opening size.** The window opens onto the monitor the pointer is on — not
 whichever is primary — at a comfortable fraction of that monitor's *work area*,
 never larger than it, capped at 1200 × 900, and centred. A window taller than

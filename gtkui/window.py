@@ -110,7 +110,7 @@ class ZPLViewerWindow(Gtk.Window):
     """Main GTK window for the ZPL Viewer application."""
     
     def __init__(self):
-        super().__init__(title="ZPL Viewer")
+        super().__init__(title=workflow.window_title(None))
         self.set_border_width(10)
         self.connect("delete-event", self.main_window_closed)
         
@@ -140,8 +140,12 @@ class ZPLViewerWindow(Gtk.Window):
         # Menu lives in the header bar rather than a separate row below it
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
-        header.set_title("ZPL Viewer")
         self.set_titlebar(header)
+        # A custom titlebar draws its own title, so the header's is what the
+        # user reads and the window's is what the task switcher reads. Both are
+        # set together, from here on.
+        self.header_bar = header
+        self._update_title()
 
         menu_bar = Gtk.MenuBar()
         header.pack_start(menu_bar)
@@ -591,6 +595,7 @@ class ZPLViewerWindow(Gtk.Window):
         self.current_filepath = None
         self.current_zpl_content = None
         self.unsaved_changes = False
+        self._update_title()
         self._reset_history()
         self.update_status("Ready")
 
@@ -770,6 +775,7 @@ class ZPLViewerWindow(Gtk.Window):
           f.write(content)
         
         self.current_filepath = filepath
+        self._update_title()
         filename = os.path.basename(filepath)
         self.update_status(f"Saved: {filename}")
         self.unsaved_changes = False
@@ -789,6 +795,7 @@ class ZPLViewerWindow(Gtk.Window):
             self.design_canvas.set_document(document)
             self.current_zpl_content = content
             self.current_filepath = filepath
+            self._update_title()
             self.label_width = document.label_width
             self.label_height = document.label_height
 
@@ -1931,6 +1938,12 @@ class ZPLViewerWindow(Gtk.Window):
 
             self._open_editor(element, dialog, on_response)
     
+    def _update_title(self):
+        """Name the file being edited in the titlebar."""
+        title = workflow.window_title(self.current_filepath)
+        self.set_title(title)
+        self.header_bar.set_title(title)
+
     def update_status(self, message: str):
         """Update status bar message."""
         self.status_bar.push(self.status_bar.get_context_id("main"), message)

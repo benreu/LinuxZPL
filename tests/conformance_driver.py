@@ -245,6 +245,10 @@ class GtkDriver:
         self.window.printer_dpi = dpi
         workflow.reconcile_dpi(self.canvas.document, dpi, lambda *a: answer)
 
+    def title(self):
+        """The titlebar, as the user reads it and as the task switcher does."""
+        return f'{self.window.header_bar.get_title()} | {self.window.get_title()}'
+
     def menus(self):
         """The menu bar as text: titles, items, separators and accelerators."""
         from gi.repository import Gtk
@@ -448,6 +452,10 @@ class QtDriver:
         self.window.printer_dpi = dpi
         workflow.reconcile_dpi(self.document, dpi, lambda *a: answer)
 
+    def title(self):
+        """The titlebar. Qt has one title, which serves as both."""
+        return f'{self.window.windowTitle()} | {self.window.windowTitle()}'
+
     def menus(self):
         """The menu bar as text: titles, items, separators and accelerators."""
         lines = []
@@ -488,6 +496,10 @@ def sequence(driver, record):
     # than anything the document does, and it is the half of "the same program"
     # that emits no ZPL and so went unchecked.
     record('the menu bar', driver.menus())
+    # The titlebar is the other thing the window says on its own. It named the
+    # toolkit in one frontend and an old name for the program in the other,
+    # and never the label in front of the user.
+    record('the titlebar with no file open', driver.title())
 
     driver.set_label_size(812, 1218)
     record('empty 4x6 label')
@@ -588,6 +600,7 @@ def sequence(driver, record):
 
     driver.load(FIXTURE_300)
     record('load a 300dpi file at 203dpi, rescaled')
+    record('the titlebar with that file open', driver.title())
 
     # The shared decisions: switching the printer's resolution under an open
     # design must offer the same choice in both frontends, not re-stamp it.

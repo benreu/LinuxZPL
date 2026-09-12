@@ -335,8 +335,28 @@ check("load clears the history", not w._undo_stack and not w._redo_stack)
 check("failed save reports and keeps the flag",
       w.save_zpl_file('/nonexistent-dir/x.zpl', '^XA^XZ') is False)
 
+# --- what the titlebar says --------------------------------------------------
+# The file being edited, or the program's name - not the toolkit, and not a
+# name from before the program had the one it has.
+check("a loaded file is named in the titlebar", w.windowTitle() == 'out.zpl',
+      w.windowTitle())
+w.unsaved_changes = False; w.on_new()
+check("New goes back to the program's name", w.windowTitle() == 'LinuxZPL',
+      w.windowTitle())
+w.document.add_text_element('titled')
+check("saving adopts the name it wrote",
+      w.save_zpl_file(os.path.join(tmp, 'adopted.zpl'), w.document.to_zpl())
+      and w.windowTitle() == 'adopted.zpl', w.windowTitle())
+check("a failed save leaves the title on the file still being edited",
+      w.save_zpl_file('/nonexistent-dir/x.zpl', '^XA^XZ') is False
+      and w.windowTitle() == 'adopted.zpl', w.windowTitle())
+
 # --- the name a save chooser hands back -------------------------------------
 from zplcore import workflow as _wf
+check("a title is the file's name, not its path",
+      _wf.window_title('/home/someone/labels/box.zpl') == 'box.zpl')
+check("no file means the program's name",
+      _wf.window_title(None) == 'LinuxZPL' and _wf.window_title('') == 'LinuxZPL')
 check("a bare name gets .zpl", _wf.save_filename('/t/label') == '/t/label.zpl')
 check("an extension is left alone", _wf.save_filename('/t/label.zpl') == '/t/label.zpl'
       and _wf.save_filename('/t/label.ZPL') == '/t/label.ZPL'

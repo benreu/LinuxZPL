@@ -10,7 +10,9 @@ children of the designer, one per element, applying on OK.
 Needs a display, like the conformance suite: run it under DISPLAY, or xvfb-run.
 """
 
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -207,6 +209,27 @@ check("a resolution change reads the design's own dpi, not an assumed 203",
 window.destroy()
 
 print()
+
+# --- what the titlebar says -------------------------------------------------
+# The header bar is the titlebar here, so it carries the title the user reads;
+# the window's own title is what the task switcher shows. Both name the file.
+_tmp = os.path.join(tempfile.mkdtemp(), 'titled.zpl')
+check("a new document shows the program's name",
+      window.get_title() == 'LinuxZPL' and window.header_bar.get_title() == 'LinuxZPL',
+      f'{window.get_title()!r} / {window.header_bar.get_title()!r}')
+window.save_zpl_file(_tmp, '^XA\n^FO10,10^A0N,30,30^FDtitled^FS\n^XZ')
+check("saving names the file in both titles",
+      window.get_title() == 'titled.zpl' and window.header_bar.get_title() == 'titled.zpl',
+      f'{window.get_title()!r} / {window.header_bar.get_title()!r}')
+window.load_zpl_file(_tmp)
+check("loading names the file it opened",
+      window.header_bar.get_title() == 'titled.zpl', window.header_bar.get_title())
+window.unsaved_changes = False
+window.on_new_clicked()
+check("New goes back to the program's name",
+      window.get_title() == 'LinuxZPL' and window.header_bar.get_title() == 'LinuxZPL',
+      f'{window.get_title()!r} / {window.header_bar.get_title()!r}')
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

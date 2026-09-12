@@ -42,7 +42,6 @@ ALIGN_ITEMS = (
     ('bottom', "Align &Bottom"),
 )
 
-APP_NAME = "LinuxZPL (Qt)"
 UNDO_LIMIT = 50
 DEFAULT_ADDRESS = "192.168.50.21"
 DEFAULT_PORT = 9100
@@ -61,7 +60,6 @@ class ZPLDesignerWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME)
 
         self.printer_address = DEFAULT_ADDRESS
         self.printer_port = DEFAULT_PORT
@@ -76,6 +74,7 @@ class ZPLDesignerWindow(QMainWindow):
 
         self.current_filepath = None
         self.unsaved_changes = False
+        self._update_title()
         self.renderer = ZPLRenderer()
         # The element editors are non-modal, so more than one can be on screen
         # at once. One per element, keyed by id: an open editor holds its
@@ -199,6 +198,10 @@ class ZPLDesignerWindow(QMainWindow):
     @property
     def document(self) -> Document:
         return self.canvas.document
+
+    def _update_title(self):
+        """Name the file being edited in the titlebar."""
+        self.setWindowTitle(workflow.window_title(self.current_filepath))
 
     def update_status(self, message: str):
         self.statusBar().showMessage(message)
@@ -636,6 +639,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.canvas.set_document(document)
         self.current_filepath = None
         self.unsaved_changes = False
+        self._update_title()
         self._reset_history()
         self.update_status("Ready")
 
@@ -745,6 +749,7 @@ class ZPLDesignerWindow(QMainWindow):
             return False
         self.current_filepath = filepath
         self.unsaved_changes = False
+        self._update_title()
         self.update_status(f"Saved: {os.path.basename(filepath)}")
         return True
 
@@ -755,6 +760,7 @@ class ZPLDesignerWindow(QMainWindow):
             document, loaded_dpi = zpl_parser.parse_zpl(content, self.renderer)
             self.canvas.set_document(document)
             self.current_filepath = filepath
+            self._update_title()
             rescaled = self._offer_dpi_rescale(loaded_dpi)
             self._register_label_fonts()
             self.canvas.update()
@@ -924,7 +930,7 @@ class ZPLDesignerWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName(APP_NAME)
+    app.setApplicationName(workflow.APP_TITLE)
     window = ZPLDesignerWindow()
     window.show()
     # Ask for the front. Started from an editor running full screen, a new

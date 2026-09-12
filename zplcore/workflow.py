@@ -125,6 +125,20 @@ def unsaved_changes_gate(is_dirty, ask, save):
     return False
 
 
+# The name the program goes by, shown whenever no file is open.
+APP_TITLE = 'LinuxZPL'
+
+
+def window_title(filepath) -> str:
+    """What the title bar says: the file being edited, or the program's name.
+
+    Both frontends ask here. Left to themselves they had drifted to "ZPL
+    Viewer" and "LinuxZPL (Qt)" - two names for one program, neither of which
+    said which of the user's labels was on screen.
+    """
+    return os.path.basename(filepath) if filepath else APP_TITLE
+
+
 ZPL_SUFFIX = '.zpl'
 
 
