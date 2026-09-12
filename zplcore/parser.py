@@ -15,6 +15,7 @@ from typing import Optional, Tuple
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
 from . import graphics
+from . import transforms as zpl_transforms
 from .model import (BarcodeElement, Document, FieldBlock, FrameElement,
                     ImageElement, TextElement)
 
@@ -211,6 +212,10 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     # the same kind of command for barcodes.
     default_font = dict(DEFAULT_FONT)
     default_barcode = dict(DEFAULT_BARCODE)
+    # The ^LH/^LS offset in force. Elements hold the absolute dot position, so
+    # the canvas, dragging and clamping never have to know these exist.
+    origin = (0, 0)
+    seen_home = False
 
     for cmd, params in tokens:
         if cmd == '^FX':
@@ -226,6 +231,43 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 field['preview'] = key[len(PREVIEW_PARAM):]
             elif field is not None and key.startswith(PATH_PARAM):
                 field['path'] = key[len(PATH_PARAM):]
+            continue
+
+        if cmd in ('^LH', '^LS', '^LT', '^PO', '^PM', '^LR'):
+            # What the format says about the label as a whole. ^LH is a running
+            # origin - "this command affects only fields that come after it" -
+            # so it is read wherever it appears, like ^CF and ^BY. The document
+            # keeps the first one to write back; later ones still land every
+            # field in the right absolute place.
+            if cmd == '^LH':
+                home = zpl_transforms.read_home(params)
+                if home is None:        # not a position; not an origin
+                    continue
+                if not seen_home:
+                    doc.transform.home, seen_home = home, True
+            elif cmd == '^LS':
+                shift = zpl_transforms.read_shift(params)
+                if shift is None:
+                    continue
+                doc.transform.shift = shift
+            elif cmd == '^LT':
+                top = zpl_transforms.read_top(params)
+                if top is None:
+                    continue
+                doc.transform.top = top
+            elif cmd == '^PO':
+                doc.transform.invert = zpl_transforms.read_flag(params, 'I')
+            elif cmd == '^PM':
+                doc.transform.mirror = zpl_transforms.read_flag(params)
+            else:
+                doc.transform.reverse = zpl_transforms.read_flag(params)
+            if cmd in ('^LH', '^LS'):
+                # ^LT is not in the offset: it registers the label against the
+                # media rather than laying fields out on it, so applying it
+                # would move the design on screen to describe a printer
+                # adjustment. See zplcore/transforms.py.
+                origin = (home if cmd == '^LH' else doc.transform.home)
+                origin = (origin[0] - doc.transform.shift, origin[1])
             continue
 
         if cmd == '^DF':
@@ -262,7 +304,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             # A field that never saw ^FS still ends here, at the next one
             pending_no_print = _flush(field, doc, renderer, pending_no_print)
             match = re.match(r'\s*(-?\d+),(-?\d+)', params)
-            field = _new_field(int(match.group(1)), int(match.group(2)),
+            field = _new_field(int(match.group(1)) + origin[0],
+                               int(match.group(2)) + origin[1],
                                default_font, default_barcode) if match else None
             # ^FT places a field exactly as ^FO does, but names its baseline
             # rather than its top. Opening no field on it did not degrade such

@@ -501,6 +501,11 @@ chooser rather than a form, and stays modal.
   editor's Width and Height will undo a resize made behind it.
 - The font chooser opened from Edit Text is modal to that editor alone, not to
   the application.
+- **Label Settings carries the label home and the three presentation flags** —
+  `^LH`'s x and y because preprinted stock is a design decision, and `^PO`,
+  `^PM` and `^LR` because they change the whole label. `^LS` and `^LT`
+  round-trip without being exposed: one is a dead Z-130 compatibility shim and
+  the other is printer calibration, and neither is a thing to design with.
 - **Edit Text and Edit Barcode both carry the same three `^FN` rows** — a tick
   for "data comes from a numbered field", the number, and the field name — built
   from one shared helper per frontend so the two editors cannot offer them
@@ -605,8 +610,8 @@ path are caret-free and are stored as-is.
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
 `^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
-the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), and the four metadata
-keys.
+the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the label transforms
+(`^LH`, `^LS`, `^LT`, `^PO`, `^PM`, `^LR`), and the four metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -889,6 +894,43 @@ references and the `^FN`/`^FD` pairs are re-emitted, and nothing is drawn,
 because the geometry it fills lives on the printer. Opening one used to empty
 the file.
 
+**`^LH` and `^LS` are folded into coordinates; `^LT` is not.** An element
+holds the **absolute** dot position it will print at, so the canvas, dragging,
+clamping and alignment need to know nothing about either command. A save
+subtracts the offset again, so a file carrying one comes back exactly as it went
+in.
+
+| Written | Element holds | Saves as |
+|---|---|---|
+| `^LH100,100` + `^FO50,50` | 150, 150 | `^LH100,100` + `^FO50,50` |
+| `^LS30` + `^FO50,50` | 20, 50 | `^LS30` + `^FO50,50` |
+| `^LT10` + `^FO50,50` | 50, 50 | `^LT10` + `^FO50,50` |
+
+`^LS` subtracts where `^LH` adds — it *"shifts all field positions to the
+left"*. **`^LT` is carried but never applied**: it is media registration, ±120
+dot rows of fine-tuning for print creeping up or down the roll, which modern
+printers set at the printer. It says nothing about where a field sits within the
+label, so folding it in would move the design on screen to describe a printer
+adjustment. It is read and written back so a save cannot delete it.
+
+`^LH` *"affects only fields that come after it"*, so it is read as a running
+origin, the way `^CF` and `^BY` are. The document keeps the first one to write
+back, fitted so that no element has to be written at a negative `^FO` — `^FO`'s
+range starts at 0, and a format that moves its home part-way through leaves the
+fields before it behind the new origin. Reducing the home costs nothing: printed
+position is `home + ^FO`, so re-splitting the same absolute coordinate a
+different way lands in exactly the same place.
+
+**A parameter that is not a position is not an origin.** `^FX` comments run only
+to the next caret, so prose naming a command becomes that command — a comment
+mentioning `^LH` arrives as `^LH` carrying words. Reading that as `(0, 0)` let it
+take the place of the format's real home, so the transform readers reject
+anything that is not wholly a number.
+
+**`^PO`, `^PM` and `^LR` describe how the finished label is laid down** and
+round-trip unchanged. They are editable from Label Settings (§7), because they
+apply to the whole label rather than to any field on it.
+
 **Barcodes cannot rescale exactly.** Module width is a whole number of dots, so
 a module of 2 becomes 3 rather than 2.96 going from 203 to 300 dpi — a width
 error of up to half a dot per module. Positions and heights scale exactly.
@@ -1093,6 +1135,17 @@ rather than requirements:
   two dots. ZPL does not document its own spacing.
 - **`^FB`'s indent is applied to every line**, where ZPL hangs it on the second
   and later ones. The parameter round-trips; only where it lands differs.
+- **The preview applies `^PO` and `^PM`; the editing canvas does not.** The
+  preview answers "what will print", so it turns the finished label end for end
+  and mirrors it. The canvas answers "what am I editing", and editing through a
+  mirror is hostile: every pointer event would have to be inverse-transformed,
+  and dragging right on an inverted label would move the element left. Pointer
+  input is therefore untouched by either flag.
+- **`^LR` round-trips but is not simulated.** ZPL defines it as *"identical to
+  placing an `^FR` command in all current and subsequent fields"* — a per-field
+  inversion against whatever is beneath — not a whole-image invert. Inverting
+  the finished image would turn the white background black, which is not what a
+  printer does, so nothing is drawn for it in either the canvas or the preview.
 - **The canvas shows a `^FN` placeholder; the preview does not.** The canvas
   answers "what am I editing", so an unfilled variable field draws its prompt or
   its number rather than becoming invisible. The preview answers "what will

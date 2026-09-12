@@ -7,7 +7,7 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
-from . import fields, geometry, graphics, parser, textraster
+from . import fields, geometry, graphics, parser, textraster, transforms
 from .model import BarcodeElement, FieldBlock, FrameElement, TextElement
 
 
@@ -300,10 +300,24 @@ class ZPLRenderer:
         # ^FN's data can be declared after the field that uses it, so the table
         # is built in a pass of its own before anything is drawn.
         self.fields = parser.read_field_table(parser.tokenise(zpl_content))
+        # ^LH and ^LS displace every field, so the preview has to apply them or
+        # it draws the label somewhere the printer will not.
+        self.origin = (0, 0)
+        self.transform = transforms.LabelTransform()
         
         # Parse and execute ZPL commands
         self._execute_zpl(zpl_content)
-        
+
+        # ^PO and ^PM describe how the finished label is laid down, so they
+        # apply to the whole image once every field is on it. ^LR is not here:
+        # it is "identical to placing an ^FR command in all current and
+        # subsequent fields", a per-field inversion against what is beneath,
+        # and inverting the finished image would turn the white background
+        # black - see FUNCTIONAL_SPEC.md section 18.
+        if self.transform.invert:
+            self.image = self.image.rotate(180)
+        if self.transform.mirror:
+            self.image = self.image.transpose(Image.FLIP_LEFT_RIGHT)
         return self.image
     
     def _execute_zpl(self, zpl_content: str):
@@ -372,11 +386,37 @@ class ZPLRenderer:
                 self.height = int(params)
             except ValueError:
                 pass
+        elif command in ('LH', 'LS', 'LT', 'PO', 'PM', 'LR'):
+            if command == 'LH':
+                home = transforms.read_home(params)
+                if home is None:        # prose in an ^FX comment, not an origin
+                    return
+                self.transform.home = home
+            elif command == 'LS':
+                shift = transforms.read_shift(params)
+                if shift is None:
+                    return
+                self.transform.shift = shift
+            elif command == 'LT':
+                top = transforms.read_top(params)
+                if top is None:
+                    return
+                self.transform.top = top
+            elif command == 'PO':
+                self.transform.invert = transforms.read_flag(params, 'I')
+            elif command == 'PM':
+                self.transform.mirror = transforms.read_flag(params)
+            else:
+                self.transform.reverse = transforms.read_flag(params)
+            # ^LH is a running origin - it affects only the fields after it.
+            self.origin = self.transform.field_offset()
         elif command in ('FO', 'FT'):
             # Field origin: ^FOx,y names the top-left, ^FTx,y the baseline.
             match = re.match(r'(-?\d+),(-?\d+)', params)
             if match:
                 self.current_x, self.current_y = self._parse_position(match.group(1), match.group(2))
+                self.current_x += self.origin[0]
+                self.current_y += self.origin[1]
                 self.typeset = (command == 'FT')
                 self.unsupported_field = False
                 # A field names its own font with ^A or inherits ^CF's, and a

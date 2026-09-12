@@ -1366,6 +1366,27 @@ class ZPLViewerWindow(Gtk.Window):
         dpi_combo = _dpi_combo(self.printer_dpi)
         dpi_box.pack_start(dpi_combo, True, True, 0)
 
+        # ^LH: the origin every field is placed from. Its use is preprinted
+        # stock - moving the printable area below a pre-printed header - so it
+        # belongs beside the size rather than among the printer settings.
+        transform = self.design_canvas.document.transform
+        home_x_spin = _make_spin(transform.home[0], 0, 32000)
+        _make_row(content, "Home X (dots):", home_x_spin)
+        home_y_spin = _make_spin(transform.home[1], 0, 32000)
+        _make_row(content, "Home Y (dots):", home_y_spin)
+
+        # How the finished label is laid down, rather than where a field sits
+        invert_check = Gtk.CheckButton(label="Print upside down (^PO)")
+        invert_check.set_active(transform.invert)
+        _make_row(content, "Orientation:", invert_check)
+        mirror_check = Gtk.CheckButton(label="Mirror left to right (^PM)")
+        mirror_check.set_active(transform.mirror)
+        _make_row(content, "Mirror:", mirror_check)
+        reverse_check = Gtk.CheckButton(
+            label="Reverse fields, white on black (^LR)")
+        reverse_check.set_active(transform.reverse)
+        _make_row(content, "Reverse:", reverse_check)
+
         # Info label
         info_label = Gtk.Label()
 
@@ -1406,10 +1427,20 @@ class ZPLViewerWindow(Gtk.Window):
         w_in, h_in = width_spin.get_value(), height_spin.get_value()
         # Destroyed before anything modal can be raised over it, as the printer
         # dialog does before its own rescale prompt.
+        # Copied, not mutated: the document's own transform is what an undo
+        # snapshot may still be holding.
+        chosen_transform = transform.copy()
+        chosen_transform.home = (int(home_x_spin.get_value()),
+                                 int(home_y_spin.get_value()))
+        chosen_transform.invert = invert_check.get_active()
+        chosen_transform.mirror = mirror_check.get_active()
+        chosen_transform.reverse = reverse_check.get_active()
         dialog.destroy()
-        self.apply_label_settings(new_width, new_height, new_dpi, w_in, h_in)
+        self.apply_label_settings(new_width, new_height, new_dpi, w_in, h_in,
+                                  chosen_transform)
 
-    def apply_label_settings(self, width, height, dpi, w_in, h_in):
+    def apply_label_settings(self, width, height, dpi, w_in, h_in,
+                             transform=None):
         """One accepted visit to Label Settings, whatever it changed.
 
         The resolution and the size can both have moved in the same visit, and
@@ -1423,6 +1454,8 @@ class ZPLViewerWindow(Gtk.Window):
         old_dpi = self.printer_dpi
         self.printer_dpi = dpi
         self.label_inches = (w_in, h_in)
+        if transform is not None:
+            self.design_canvas.document.transform = transform
         # Written before the prompt, as the printer dialog writes its own: the
         # prompt is modal and can be dismissed by the window manager, and the
         # choice the user already made should be on disk by then.

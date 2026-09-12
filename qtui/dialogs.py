@@ -572,7 +572,7 @@ def choose_image_file(parent, title="Select Image") -> Optional[str]:
 # --- label and printer ------------------------------------------------------
 
 def label_size_dialog(parent, document: Document, dpi: int):
-    """New (width, height, dpi, width_in, height_in), or None.
+    """New (width, height, dpi, width_in, height_in, transform), or None.
 
     The size is entered in inches and stored in dots, so the resolution belongs
     beside it: the dots are a consequence of both, and having to leave for
@@ -610,6 +610,37 @@ def label_size_dialog(parent, document: Document, dpi: int):
     dpi_combo = _dpi_combo(dpi)
     form.addRow("DPI:", dpi_combo)
 
+    # ^LH: the origin every field is placed from. Its use is preprinted stock -
+    # moving the printable area below a pre-printed header - so it belongs
+    # beside the size rather than among the printer settings.
+    home_x = QSpinBox()
+    home_x.setObjectName("home_x")
+    home_x.setRange(0, 32000)
+    home_x.setValue(document.transform.home[0])
+    form.addRow("Home X (dots):", home_x)
+
+    home_y = QSpinBox()
+    home_y.setObjectName("home_y")
+    home_y.setRange(0, 32000)
+    home_y.setValue(document.transform.home[1])
+    form.addRow("Home Y (dots):", home_y)
+
+    # How the finished label is laid down, rather than where a field sits on it
+    invert_check = QCheckBox("Print upside down (^PO)")
+    invert_check.setObjectName("invert")
+    invert_check.setChecked(document.transform.invert)
+    form.addRow("Orientation:", invert_check)
+
+    mirror_check = QCheckBox("Mirror left to right (^PM)")
+    mirror_check.setObjectName("mirror")
+    mirror_check.setChecked(document.transform.mirror)
+    form.addRow("Mirror:", mirror_check)
+
+    reverse_check = QCheckBox("Reverse fields, white on black (^LR)")
+    reverse_check.setObjectName("reverse")
+    reverse_check.setChecked(document.transform.reverse)
+    form.addRow("Reverse:", reverse_check)
+
     for text, w_in, h_in in PRESET_SIZES:
         btn = QPushButton(text)
         btn.clicked.connect(
@@ -644,7 +675,15 @@ def label_size_dialog(parent, document: Document, dpi: int):
     layout.addWidget(_buttons(dialog))
     if dialog.exec_() != QDialog.Accepted:
         return None
-    return to_dots() + (chosen_dpi(), width_spin.value(), height_spin.value())
+    # Copied, not mutated: the document's own transform is what an undo
+    # snapshot may still be holding.
+    transform = document.transform.copy()
+    transform.home = (home_x.value(), home_y.value())
+    transform.invert = invert_check.isChecked()
+    transform.mirror = mirror_check.isChecked()
+    transform.reverse = reverse_check.isChecked()
+    return to_dots() + (chosen_dpi(), width_spin.value(), height_spin.value(),
+                        transform)
 
 
 def printer_settings_dialog(parent, address: str, port: int, dpi: int):

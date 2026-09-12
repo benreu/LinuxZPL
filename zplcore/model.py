@@ -18,6 +18,7 @@ from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
 from . import code128
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
+from . import transforms as zpl_transforms
 from . import geometry
 
 
@@ -43,16 +44,23 @@ class DesignElement:
     # file written with ^FT is written back with ^FT, at the same y.
     typeset = None
 
-    def origin_zpl(self) -> str:
+    def origin_zpl(self, offset=(0, 0)) -> str:
         """The ^FO or ^FT that places this element.
 
         One method rather than an ^FO formatted into each element's to_zpl, so
         a label that came in typeset cannot go out typeset in some of its
         fields and not others.
+
+        `offset` is what ^LH and ^LS added on the way in. An element holds the
+        absolute dot position - so the canvas, dragging and clamping need to
+        know nothing about either command - and the offset comes back out here,
+        which is what lets a file carrying one be written back unchanged.
         """
+        x = self.x - offset[0]
+        y = self.y - offset[1]
         if self.typeset is None:
-            return f"^FO{self.x},{self.y}\n"
-        return f"^FT{self.x},{self.y + self.typeset}\n"
+            return f"^FO{x},{y}\n"
+        return f"^FT{x},{y + self.typeset}\n"
 
     # What a field's data is called on the subclasses that have any. ^FD and ^FN
     # are written the same way for text and for a barcode, so the rule lives
@@ -285,11 +293,12 @@ class TextElement(DesignElement):
         return FieldBlock(max(1, int(widest) + 1),
                           max(self.DEFAULT_MAX_LINES, len(lines)))
 
-    def to_zpl(self, printer_font_name: Optional[str] = None) -> str:
+    def to_zpl(self, printer_font_name: Optional[str] = None,
+               offset=(0, 0)) -> str:
         """Convert to ZPL commands."""
         effective_font = self.printer_font_name or printer_font_name
         turn = self.orientation or 'N'
-        zpl = self.origin_zpl()
+        zpl = self.origin_zpl(offset)
         if effective_font:
             zpl += f"^A@{turn},{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
         else:
@@ -352,9 +361,9 @@ class FrameElement(DesignElement):
                 keep = index + 1
         return ''.join(f",{value}" for value in given[:keep])
 
-    def to_zpl(self) -> str:
+    def to_zpl(self, offset=(0, 0)) -> str:
         """Convert to ZPL commands."""
-        return (self.origin_zpl() +
+        return (self.origin_zpl(offset) +
                 f"^GB{self.width},{self.height},{self.thickness}"
                 f"{self._options_zpl()}\n^FS\n")
 
@@ -501,7 +510,7 @@ class BarcodeElement(DesignElement):
         # One decimal place is how ZPL spells it: 2.0 to 3.0 in 0.1 increments.
         return f"^BY{width},{self.ratio:.1f}"
 
-    def to_zpl(self) -> str:
+    def to_zpl(self, offset=(0, 0)) -> str:
         """Convert to ZPL commands."""
         # ^BY sets the module width. Without it the printer uses its own default
         # of 2 dots, which pins the barcode's physical size to the head
@@ -509,7 +518,7 @@ class BarcodeElement(DesignElement):
         #
         # The height goes on ^BC explicitly, which is why ^BY's own h is read
         # but never written: there is nowhere for it to disagree.
-        return (self.origin_zpl() +
+        return (self.origin_zpl(offset) +
                 f"{self._by_zpl()}\n"
                 f"{self._font_zpl()}"
                 f"^BC{self.orientation},{self.bar_height}{self._options_zpl()}\n"
@@ -653,7 +662,7 @@ class ImageElement(DesignElement):
         """
         return self._render_cache[1] if self._render_cache is not None else None
 
-    def to_zpl(self) -> str:
+    def to_zpl(self, offset=(0, 0)) -> str:
         if not self.image_path and self._pil_image is None:
             return ""
         import numpy as np
@@ -687,7 +696,7 @@ class ImageElement(DesignElement):
         img_sized.convert('RGB').save(preview_bio, format='JPEG', quality=85, optimize=True)
         b64_preview = _b64.b64encode(preview_bio.getvalue()).decode('ascii')
 
-        zpl = self.origin_zpl()
+        zpl = self.origin_zpl(offset)
         zpl += f"^FXDESIGNER_PREVIEW:{b64_preview}\n"
         if self.image_path:
             zpl += f"^FXDESIGNER_PATH:{self.image_path}\n"
@@ -719,6 +728,10 @@ class Document:
         self.stored_format: Optional[str] = None
         self.recalls: List[str] = []
         self.fields = zpl_fields.FieldTable()
+
+        # ^LH, ^LS, ^LT, ^PO, ^PM and ^LR - what the format says about the
+        # label as a whole rather than about any one field on it.
+        self.transform = zpl_transforms.LabelTransform()
 
         # Document-wide font, used by any text element that has none of its own
         self.font_path: Optional[str] = None
@@ -918,11 +931,11 @@ class Document:
         # entry holding it.
         return (self.label_width, self.label_height,
                 [_copy_element(el) for el in self.elements], selected,
-                self.fields.copy())
+                self.fields.copy(), self.transform.copy())
 
     def restore(self, snap):
         """Put the design back to a snapshot taken earlier."""
-        label_width, label_height, elements, selected, table = snap
+        label_width, label_height, elements, selected, table, transform = snap
         # assigned directly rather than through set_label_size, which would
         # clamp elements that were already valid at this size
         self.label_width = label_width
@@ -932,6 +945,7 @@ class Document:
         self.elements = [_copy_element(el) for el in elements]
         self.selection = [self.elements[i] for i in selected]
         self.fields = table.copy()
+        self.transform = transform.copy()
 
     # --- geometry ------------------------------------------------------------
 
@@ -1089,16 +1103,27 @@ class Document:
         # would be left out of the format being saved.
         if self.stored_format:
             zpl += f"^DF{self.stored_format}^FS\n"
+        # Before the fields, because ^LH is the reference point every ^FO after
+        # it is measured from. Fitted to the elements first, so the offset it
+        # declares is one none of them has to be written above - the commands
+        # and the coordinates are then consistent by construction rather than
+        # by two places agreeing.
+        placed = self.transform.fitted(self._lowest_element())
+        zpl += placed.to_zpl()
         zpl += f"^PW{self.label_width}\n"
         zpl += f"^LL{self.label_height}\n"
         # ZPL carries no resolution, so record what the dots were drawn for.
         # Printers ignore ^FX, and the value has no caret to end the comment early.
         zpl += f"^FXDESIGNER_DPI:{self.dpi}\n"
+        offset = placed.field_offset()
         for element in self.elements:
             if self.printer_font_name and element.element_type == 'text':
-                body = element.to_zpl(printer_font_name=self.printer_font_name)
+                body = element.to_zpl(printer_font_name=self.printer_font_name,
+                                      offset=offset)
             else:
-                body = element.to_zpl()
+                # By keyword: a text element's first parameter is its printer
+                # font name, and a positional offset landed there instead.
+                body = element.to_zpl(offset=offset)
             if element.print_enabled:
                 zpl += body
             elif body:
@@ -1116,6 +1141,13 @@ class Document:
             zpl += self.fields.to_zpl()
         zpl += "^XZ"
         return zpl
+
+    def _lowest_element(self):
+        """The smallest (x, y) any element occupies, or None if there are none."""
+        if not self.elements:
+            return None
+        return (min(el.x for el in self.elements),
+                min(el.y for el in self.elements))
 
     def display_text(self, element) -> str:
         """What a canvas draws for an element, its ^FN placeholder included.

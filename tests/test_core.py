@@ -9,7 +9,8 @@ from PySide2.QtGui import QImage
 from PySide2.QtCore import Qt, QPoint, QEvent
 from PySide2.QtGui import QMouseEvent
 
-from zplcore import fonts as zpl_fonts, geometry, parser as zpl_parser, textraster, workflow
+from zplcore import (fonts as zpl_fonts, geometry, parser as zpl_parser,
+                     textraster, transforms as zpl_transforms, workflow)
 from zplcore import model as zpl_model
 from zplcore.model import Document, TextElement, BarcodeElement, FrameElement, ImageElement
 from zplcore.renderer import ZPLRenderer
@@ -637,7 +638,12 @@ check("nothing is reported for the templates",
       workflow.unsupported_commands(product) == []
       and workflow.unsupported_commands(serial) == [])
 check("unmodelled commands are reported",
-      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^LRY^XZ") == ['^BQ', '^LR'])
+      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^FH^XZ") == ['^BQ', '^FH'])
+check("and the label transforms are not, now that they survive a save",
+      workflow.unsupported_commands(
+          "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [],
+      workflow.unsupported_commands(
+          "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ"))
 
 # --- every ^BC parameter ----------------------------------------------------
 from zplcore.model import BARCODE_MODES, BARCODE_ORIENTATIONS
@@ -1253,7 +1259,9 @@ sized = _drive_label_size(Document(812, 1218, dpi=203), 203,
 check("a label size keeps two decimals rather than rounding to one",
       sized[:2] == (558, 863), f"{sized[:2]}, expected (558, 863)")
 check("and reports back the inches that were typed, for the settings file",
-      sized[2:] == (203, 2.75, 4.25), sized[2:])
+      sized[2:5] == (203, 2.75, 4.25), sized[2:5])
+check("and the label transform, which the dialog also carries",
+      sized[5] == zpl_transforms.LabelTransform(), sized[5])
 reopened = {}
 _drive_label_size(Document(*sized[:2], dpi=203), 203,
                   lambda d: reopened.update(w=round(_spins(d)[0].value(), 2),
@@ -1875,6 +1883,124 @@ _udoc.fields.set_value(7, 'CHANGED')
 _udoc.restore(_usnap)
 check("an undo snapshot does not share the field table",
       _udoc.fields.value(7) == 'A-1000', _udoc.fields.value(7))
+
+
+# --- the commands that move or flip a whole label ---------------------------
+# ^LH and ^LS displace every field: a label carrying one was drawn where its ^FO
+# said and printed somewhere else, and a save dropped the command, so it then
+# printed where the canvas had been showing it all along.
+
+def _saved_body(zpl):
+    out = zpl_parser.parse_zpl(zpl)[0].to_zpl().split('\n')
+    return ' '.join(l for l in out if l.strip() and not l.startswith('^FX')
+                    and l not in ('^XA', '^XZ', '^PW812', '^LL1218'))
+
+_lh = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^LH100,100^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("^LH lands the element where it will print",
+      (_lh.elements[0].x, _lh.elements[0].y) == (150, 150),
+      (_lh.elements[0].x, _lh.elements[0].y))
+check("and comes back out of a save unchanged",
+      _saved_body("^XA^PW812^LL1218^LH100,100^FO50,50^A0N,30,30^FDx^FS^XZ")
+      == '^LH100,100 ^FO50,50 ^A0N,30,30 ^FDx^FS',
+      _saved_body("^XA^PW812^LL1218^LH100,100^FO50,50^A0N,30,30^FDx^FS^XZ"))
+
+# ^LS shifts fields left, so it subtracts where ^LH adds
+_ls = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^LS30^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("^LS shifts a field to the left", _ls.elements[0].x == 20, _ls.elements[0].x)
+_both = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^LH100,100^LS30^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("and the two compose, ^LS against ^LH",
+      (_both.elements[0].x, _both.elements[0].y) == (120, 150),
+      (_both.elements[0].x, _both.elements[0].y))
+
+# ^LT registers the label against the media; it does not lay fields out on it
+_lt = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^LT10^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("^LT moves nothing on the label",
+      (_lt.elements[0].x, _lt.elements[0].y) == (50, 50),
+      (_lt.elements[0].x, _lt.elements[0].y))
+check("but is still written back rather than dropped",
+      '^LT10' in _saved_body("^XA^PW812^LL1218^LT10^FO50,50^A0N,30,30^FDx^FS^XZ"),
+      _saved_body("^XA^PW812^LL1218^LT10^FO50,50^A0N,30,30^FDx^FS^XZ"))
+
+# "This command affects only fields that come after it"
+_running = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO10,10^A0N,30,30^FDa^FS"
+    "^LH100,100^FO50,50^A0N,30,30^FDb^FS^XZ")[0]
+check("a ^LH part-way through leaves the fields before it alone",
+      [(e.x, e.y) for e in _running.elements] == [(10, 10), (150, 150)],
+      [(e.x, e.y) for e in _running.elements])
+check("and no ^FO is written back negative, which ZPL has no room for",
+      all(not part.startswith('-')
+          for line in _running.to_zpl().split('\n') if line.startswith('^FO')
+          for part in line[3:].split(',')),
+      [l for l in _running.to_zpl().split('\n') if l.startswith('^FO')])
+
+# The three flips round-trip, and the preview applies the two that are whole-
+# image operations.
+_flips = _saved_body("^XA^PW812^LL1218^POI^PMY^LRY^FO50,50^A0N,30,30^FDx^FS^XZ")
+check("^PO, ^PM and ^LR all survive a save",
+      '^POI' in _flips and '^PMY' in _flips and '^LRY' in _flips, _flips)
+check("and none of the six is reported as unsupported any more",
+      workflow.unsupported_commands(
+          "^XA^LH1,1^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [])
+
+_plain = _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+check("the preview moves the ink by ^LH",
+      _preview_ink("^XA^PW300^LL200^LH100,50^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == (_plain[0] + 100, _plain[1] + 50, _plain[2], _plain[3]),
+      _preview_ink("^XA^PW300^LL200^LH100,50^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
+check("^POI turns the finished label end for end",
+      _preview_ink("^XA^PW300^LL200^POI^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == (300 - _plain[0] - _plain[2], 200 - _plain[1] - _plain[3],
+          _plain[2], _plain[3]),
+      _preview_ink("^XA^PW300^LL200^POI^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
+check("and ^PMY mirrors it left to right",
+      _preview_ink("^XA^PW300^LL200^PMY^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == (300 - _plain[0] - _plain[2], _plain[1], _plain[2], _plain[3]),
+      _preview_ink("^XA^PW300^LL200^PMY^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
+check("^LT moves the preview no more than it moves the model",
+      _preview_ink("^XA^PW300^LL200^LT10^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == _plain)
+
+# ^FX runs only to the next caret, so prose naming a command becomes that
+# command. Junk parameters must not pass themselves off as an origin of 0,0.
+_prose = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FX see ^LH for details^LH20,100"
+    "^FO0,0^A0N,30,30^FDx^FS^XZ")[0]
+check("prose naming ^LH in a comment does not become the origin",
+      _prose.transform.home == (20, 100)
+      and (_prose.elements[0].x, _prose.elements[0].y) == (20, 100),
+      (_prose.transform.home, (_prose.elements[0].x, _prose.elements[0].y)))
+
+# The fixtures, as whole files
+_home_raw = (FIXTURES / 'label_home.zpl').read_text()
+_home_doc = zpl_parser.parse_zpl(_home_raw)[0]
+check("the preprinted-stock fixture places every field below the header",
+      [(e.x, e.y) for e in _home_doc.elements]
+      == [(20, 100), (20, 140), (20, 180), (20, 260)],
+      [(e.x, e.y) for e in _home_doc.elements])
+check("and writes its ^LH back with the ^FO it came in with",
+      '^LH20,100' in _home_doc.to_zpl() and '^FO0,0' in _home_doc.to_zpl(),
+      [l for l in _home_doc.to_zpl().split('\n') if l.startswith(('^LH', '^FO'))])
+_flip_raw = (FIXTURES / 'flipped_label.zpl').read_text()
+_flip_doc = zpl_parser.parse_zpl(_flip_raw)[0]
+check("the flipped fixture keeps both flips",
+      _flip_doc.transform.invert and _flip_doc.transform.mirror,
+      (_flip_doc.transform.invert, _flip_doc.transform.mirror))
+check("and neither fixture reports anything unsupported",
+      workflow.unsupported_commands(_home_raw) == []
+      and workflow.unsupported_commands(_flip_raw) == [])
+
+# Undo holds whole documents, so a shared transform would rewrite every entry
+_tdoc = zpl_parser.parse_zpl(_home_raw)[0]
+_tsnap = _tdoc.snapshot()
+_tdoc.transform.home = (999, 999)
+_tdoc.restore(_tsnap)
+check("an undo snapshot does not share the transform",
+      _tdoc.transform.home == (20, 100), _tdoc.transform.home)
 
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
