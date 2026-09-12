@@ -1233,6 +1233,7 @@ import configparser as _cfg
 geo_dir = tempfile.mkdtemp()
 geo_path = Path(geo_dir) / 'settings.ini'
 real_config_path = qt_main._config_path
+real_fallback_path = qt_main._fallback_config_path
 qt_main._config_path = lambda: geo_path
 try:
     zw.saved_geometry = (140, 60, 1000, 680)
@@ -1271,8 +1272,29 @@ try:
         zw._load_settings()
         check(f"a label width of {bad!r} falls back rather than being used",
               zw.label_inches == qt_main.DEFAULT_LABEL_INCHES, zw.label_inches)
+
+    # Some Linux environments refuse writes under the user config directory
+    # outright. Stand that in with a *file* where the settings directory
+    # needs to go, so mkdir(parents=True, exist_ok=True) fails deterministically
+    # without touching real permission bits.
+    blocked_dir = Path(tempfile.mkdtemp()) / 'blocked'
+    blocked_dir.write_text('')
+    fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+    qt_main._config_path = lambda: blocked_dir / 'settings.ini'
+    qt_main._fallback_config_path = lambda: fallback_path
+    zw.printer_address = '10.0.0.9'
+    zw._save_settings()
+    written = _cfg.ConfigParser(); written.read(fallback_path)
+    check("a settings file the user config directory won't take is written to the project fallback instead",
+          written.has_section('printer') and written.get('printer', 'address') == '10.0.0.9',
+          dict(written['printer']) if written.has_section('printer') else None)
+    zw.printer_address = qt_main.DEFAULT_ADDRESS
+    zw._load_settings()
+    check("and is read back from the fallback location",
+          zw.printer_address == '10.0.0.9', zw.printer_address)
 finally:
     qt_main._config_path = real_config_path
+    qt_main._fallback_config_path = real_fallback_path
 
 # --- one visit to Label Settings can move the resolution and the size -------
 # They interact: reconciling rescales the whole design, label included, and the

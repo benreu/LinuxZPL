@@ -56,6 +56,16 @@ def _config_path() -> Path:
     return Path(base) / 'linuxzpl' / 'settings.ini'
 
 
+def _fallback_config_path() -> Path:
+    """Where settings go if the user config directory can't be written to.
+
+    Some Linux environments (sandboxes, restricted containers) refuse writes
+    under the user config directory outright. The project's own directory is
+    always writable, since the interpreter had to read from it to get here.
+    """
+    return Path(__file__).resolve().parent.parent / 'settings.ini'
+
+
 class ZPLDesignerWindow(QMainWindow):
 
     def __init__(self):
@@ -857,7 +867,7 @@ class ZPLDesignerWindow(QMainWindow):
     def _load_settings(self):
         parser = configparser.ConfigParser()
         try:
-            parser.read(_config_path())
+            parser.read([_config_path(), _fallback_config_path()])
             self.printer_address = parser.get(
                 'printer', 'address', fallback=self.printer_address)
             self.printer_port = parser.getint(
@@ -883,35 +893,46 @@ class ZPLDesignerWindow(QMainWindow):
             pass
 
     def _save_settings(self):
-        path = _config_path()
-        parser = configparser.ConfigParser()
-        try:
-            # Read first so unrelated sections are preserved
-            parser.read(path)
-            if not parser.has_section('printer'):
-                parser.add_section('printer')
-            parser.set('printer', 'address', self.printer_address)
-            parser.set('printer', 'port', str(self.printer_port))
-            parser.set('printer', 'dpi', str(self.printer_dpi))
-            if not parser.has_section('label'):
-                parser.add_section('label')
-            # Inches, not dots: dots only mean a size once a resolution is
-            # fixed, and the resolution beside them is the very thing that can
-            # change between sessions. Two decimals is the dialog's own
-            # precision, so the file round-trips what was typed.
-            parser.set('label', 'width_in', f"{self.label_inches[0]:.2f}")
-            parser.set('label', 'height_in', f"{self.label_inches[1]:.2f}")
-            if self.saved_geometry is not None:
-                if not parser.has_section('window'):
-                    parser.add_section('window')
-                for key, value in zip(('x', 'y', 'width', 'height'),
-                                      self.saved_geometry):
-                    parser.set('window', key, str(int(value)))
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, 'w', encoding='utf-8') as f:
-                parser.write(f)
-        except (configparser.Error, OSError) as e:
-            self.show_error(f"Could not save settings: {e}")
+        # Two candidates: the user config directory, then the project's own
+        # directory if that one refuses the write (some Linux environments
+        # deny it outright). A fresh parser each time, so a stale value read
+        # back from the fallback file on a later attempt can't clobber a
+        # value already set for this save.
+        last_error = None
+        for path in (_config_path(), _fallback_config_path()):
+            parser = configparser.ConfigParser()
+            try:
+                # Read first so unrelated sections are preserved
+                parser.read(path)
+                if not parser.has_section('printer'):
+                    parser.add_section('printer')
+                parser.set('printer', 'address', self.printer_address)
+                parser.set('printer', 'port', str(self.printer_port))
+                parser.set('printer', 'dpi', str(self.printer_dpi))
+                if not parser.has_section('label'):
+                    parser.add_section('label')
+                # Inches, not dots: dots only mean a size once a resolution is
+                # fixed, and the resolution beside them is the very thing that can
+                # change between sessions. Two decimals is the dialog's own
+                # precision, so the file round-trips what was typed.
+                parser.set('label', 'width_in', f"{self.label_inches[0]:.2f}")
+                parser.set('label', 'height_in', f"{self.label_inches[1]:.2f}")
+                if self.saved_geometry is not None:
+                    if not parser.has_section('window'):
+                        parser.add_section('window')
+                    for key, value in zip(('x', 'y', 'width', 'height'),
+                                          self.saved_geometry):
+                        parser.set('window', key, str(int(value)))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with open(path, 'w', encoding='utf-8') as f:
+                    parser.write(f)
+                return
+            except configparser.Error as e:
+                self.show_error(f"Could not save settings: {e}")
+                return
+            except OSError as e:
+                last_error = e
+        self.show_error(f"Could not save settings: {last_error}")
 
     # --- window --------------------------------------------------------------
 

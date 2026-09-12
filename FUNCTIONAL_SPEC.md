@@ -862,7 +862,10 @@ document is stamped with.
 
 ## 13. Persisted settings
 
-An INI file at the platform's user config directory, `linuxzpl/settings.ini`:
+An INI file at the platform's user config directory, `linuxzpl/settings.ini`.
+Some Linux environments refuse writes there outright; when that happens the
+file is written to the project's own directory instead, as `settings.ini`,
+and read back from there the same way on the next start.
 
 ```ini
 [printer]

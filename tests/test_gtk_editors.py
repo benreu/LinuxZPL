@@ -10,6 +10,7 @@ children of the designer, one per element, applying on OK.
 Needs a display, like the conformance suite: run it under DISPLAY, or xvfb-run.
 """
 
+import configparser
 import os
 import sys
 import tempfile
@@ -22,6 +23,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
+from gtkui import window as gtk_main
 from gtkui.window import ZPLViewerWindow
 
 fails = []
@@ -229,6 +231,33 @@ window.on_new_clicked()
 check("New goes back to the program's name",
       window.get_title() == 'LinuxZPL' and window.header_bar.get_title() == 'LinuxZPL',
       f'{window.get_title()!r} / {window.header_bar.get_title()!r}')
+
+# --- printer config falls back to the project directory ---------------------
+# Some Linux environments refuse writes under the user config directory
+# outright. Stand that in with a *file* where the settings directory needs to
+# go, so mkdir(parents=True, exist_ok=True) fails deterministically without
+# touching real permission bits.
+real_config_path = gtk_main._config_path
+real_fallback_path = gtk_main._fallback_config_path
+blocked_dir = Path(tempfile.mkdtemp()) / 'blocked'
+blocked_dir.write_text('')
+fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: blocked_dir / 'settings.ini'
+gtk_main._fallback_config_path = lambda: fallback_path
+try:
+    window.printer_address = '10.0.0.9'
+    window._save_settings()
+    written = configparser.ConfigParser(); written.read(fallback_path)
+    check("a settings file the user config directory won't take is written to the project fallback instead",
+          written.has_section('printer') and written.get('printer', 'address') == '10.0.0.9',
+          dict(written['printer']) if written.has_section('printer') else None)
+    window.printer_address = gtk_main.DEFAULT_PRINTER_ADDRESS
+    window._load_settings()
+    check("and is read back from the fallback location",
+          window.printer_address == '10.0.0.9', window.printer_address)
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
 
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
