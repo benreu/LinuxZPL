@@ -1518,10 +1518,14 @@ check("rescaling carries the ^FT offset with the dots",
 
 # --- a symbology this designer cannot draw is not text ----------------------
 
+# ^GS draws a glyph from the symbol font. It is the same trap as an unsupported
+# symbology and was missed by the fix for those because it is not a ^B command:
+# ^GSN,50,50^FDA saved as ^AAN,9,5^FDA, a 50-dot symbol arriving as 9-dot text.
 for symbology, source in (("^B3", "^B3N,N,60,Y,N^FD123ABC^FS"),
                           ("^BQ", "^BQN,2,5^FDMM,AHELLO^FS"),
                           ("^BX", "^BXN,6,200^FDdata^FS"),
-                          ("^BE", "^BEN,80,Y,N^FD123456789012^FS")):
+                          ("^BE", "^BEN,80,Y,N^FD123456789012^FS"),
+                          ("^GS", "^GSN,50,50^FDA^FS")):
     page = f"^XA^PW812^LL1218^FO50,50{source}^XZ"
     read = zpl_parser.parse_zpl(page)[0]
     check(f"{symbology} is dropped, not turned into text",
@@ -1633,6 +1637,85 @@ for name, data in GF_FORMS.items():
 check("the preview draws every encoding the same",
       len(set(map(str, _gf_ink.values()))) == 1 and _gf_ink['plain hex'] is not None,
       _gf_ink)
+
+# --- ^BY is a default, and it applies across fields -------------------------
+# "It stays in effect until another ^BY command is encountered" - ZPL manual
+# p142, where ^BYw,r,h is also defined. The parser read it only inside an open
+# field and only its first parameter, so a ^BY at the top of a format - the
+# manual's own placement, and what most generators emit - was dropped outright.
+# Nothing was said either, because ^BY is listed in workflow.MODELLED.
+
+def _saved(zpl):
+    """The commands a load-then-save leaves, minus the frame every file has."""
+    out = zpl_parser.parse_zpl(zpl)[0].to_zpl().split('\n')
+    return ' '.join(l for l in out if l.strip() and not l.startswith('^FX')
+                    and l not in ('^XA', '^XZ', '^PW812', '^LL1218'))
+
+check("a ^BY inside the field still works",
+      '^BY3' in _saved("^XA^FO50,50^BY3^BCN,100^FD123^FS^XZ"),
+      _saved("^XA^FO50,50^BY3^BCN,100^FD123^FS^XZ"))
+
+# The case that was silently wrong: the barcode printed at half the width.
+leading = _saved("^XA^BY4^FO50,50^BCN,100^FD123456^FS^XZ")
+check("a ^BY before the first ^FO is not dropped", '^BY4' in leading, leading)
+before = zpl_parser.parse_zpl("^XA^BY4^FO50,50^BCN,100^FD123456^FS^XZ")[0].elements[0]
+inside = zpl_parser.parse_zpl("^XA^FO50,50^BY4^BCN,100^FD123456^FS^XZ")[0].elements[0]
+check("and the two spellings print the same width",
+      before.printed_width() == inside.printed_width() == 404,
+      (before.printed_width(), inside.printed_width()))
+
+two = _saved("^XA^BY4^FO50,50^BCN,100^FD1^FS^FO50,300^BCN,100^FD2^FS^XZ")
+check("one ^BY reaches every barcode after it", two.count('^BY4') == 2, two)
+carried = _saved("^XA^FO50,50^BY4^BCN,100^FD1^FS^FO50,300^BCN,100^FD2^FS^XZ")
+check("including from inside an earlier field", carried.count('^BY4') == 2, carried)
+overridden = _saved("^XA^BY4^FO50,50^BCN,100^FD1^FS^BY2^FO50,300^BCN,100^FD2^FS^XZ")
+check("and a later ^BY changes only what follows it",
+      overridden.count('^BY4') == 1 and overridden.count('^BY2') == 1, overridden)
+
+# ^BY's third parameter is the height a ^BC that gives none inherits
+check("^BY's h supplies a ^BC with no height of its own",
+      '^BCN,150' in _saved("^XA^FO50,50^BY3,3.0,150^BCN^FD12345^FS^XZ"),
+      _saved("^XA^FO50,50^BY3,3.0,150^BCN^FD12345^FS^XZ"))
+check("a ^BC's own height still wins over it",
+      '^BCN,80' in _saved("^XA^BY3,3.0,150^FO50,50^BCN,80^FD12345^FS^XZ"),
+      _saved("^XA^BY3,3.0,150^FO50,50^BCN,80^FD12345^FS^XZ"))
+check("and with no ^BY anywhere the designer's own height is used",
+      f"^BCN,{zpl_parser.DESIGNER_BAR_HEIGHT}" in _saved("^XA^FO50,50^BCN^FD1^FS^XZ"),
+      _saved("^XA^FO50,50^BCN^FD1^FS^XZ"))
+
+# Each parameter is optional and keeps its previous value, the ^CF rule
+kept = _saved("^XA^BY2,2.5,150^FO50,50^BY3^BCN^FD1^FS^XZ")
+check("a bare ^BY3 keeps the ratio and height already set",
+      '^BY3,2.5' in kept and '^BCN,150' in kept, kept)
+
+# The ratio has no effect on a fixed-ratio symbology, so it is carried, not
+# modelled - but carried means a save does not quietly drop it.
+check("a ratio a file gave comes back",
+      '^BY2,2.5' in _saved("^XA^FO50,50^BY2,2.5^BCN,80^FD1^FS^XZ"),
+      _saved("^XA^FO50,50^BY2,2.5^BCN,80^FD1^FS^XZ"))
+check("and the default ratio is trimmed, so existing files do not move",
+      _saved("^XA^FO50,50^BY2,3.0^BCN,80^FD1^FS^XZ").count('^BY2 ') == 1,
+      _saved("^XA^FO50,50^BY2,3.0^BCN,80^FD1^FS^XZ"))
+
+# The fixture: ^BY at the top, two barcodes, neither giving a height.
+shared = (FIXTURES / 'shared_barcode.zpl').read_text()
+bars = zpl_parser.parse_zpl(shared)[0].elements
+check("the fixture's two barcodes both inherit the leading ^BY",
+      len(bars) == 2 and all(b.module_width == 3 and b.bar_height == 120
+                             and abs(b.ratio - 2.5) < 1e-9 for b in bars),
+      [(b.module_width, b.bar_height, b.ratio) for b in bars])
+check("which is 402 dots wide, not the 268 a dropped ^BY drew",
+      bars[0].printed_width() == 402, bars[0].printed_width())
+check("and nothing in it is reported as unsupported",
+      workflow.unsupported_commands(shared) == [],
+      workflow.unsupported_commands(shared))
+
+# The preview has to agree, or the canvas and the printer part company
+ink = _preview_ink(shared.replace('^PW406', '^PW500').replace('^LL406', '^LL500'),
+                   500, 500)
+check("the preview draws the inherited width too",
+      ink is not None and ink[2] >= 400, ink)
+
 
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))

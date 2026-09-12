@@ -613,6 +613,8 @@ one the model holds:
 | `^A0N` | both sizes from `^CF` |
 | `^GB300` | a 300 x 1 rule: `w` and `h` both default to the thickness |
 | `^GB300,0,4` | a 300 x 4 rule: `w` and `h` are also **clamped up** to the thickness, so neither can be thinner than the border drawing it |
+| `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
+| `^BY3,3.0,150` | and a `^BC` that gives no height of its own is 150 dots tall |
 
 `^A0N,40` came back as `^A0N,36,20`, losing the height it did give, while the
 preview - which required nothing - drew it at 40. `^GB300` and `^GB,,4` were
@@ -629,6 +631,25 @@ canvas, the preview and the next save.
 
 The default applies to text only. A barcode that named no font of its own must
 go on naming none, or a file that had no `^A` before its `^BC` grows one.
+
+**`^BY` is the same kind of command for barcodes, and it is read wherever it
+appears.** `^BYw,r,h` sets the module width, the wide-to-narrow ratio and the
+bar height that every later barcode inherits, and it stays in effect until
+another `^BY` replaces it. Each of its three parameters keeps its previous value
+when omitted.
+
+Reading it only inside an open field — below the point that needs a `^FO` —
+dropped every `^BY` written at the top of a format, which is where the manual's
+own examples put it and where most generators emit it. The barcode came back at
+the power-up module width of 2 and **printed at half the width the file asked
+for** (404 dots to 202), and a save wrote that back. Nothing was said either,
+because `^BY` is a command the model holds.
+
+The ratio is carried but not modelled: ZPL states it has no effect on
+fixed-ratio symbologies, and Code 128 is one, so it changes nothing this
+designer draws. It round-trips so that a file which gave one does not lose it.
+`^BY`'s `h` is read but never written, because the height always goes on `^BC`
+explicitly and there is nowhere for the two to disagree.
 
 **`^FT` places a field from its baseline, and `^FO` from its top.** `^FT`
 opens a field exactly as `^FO` does; ignoring it does not misplace such a field
@@ -1023,3 +1044,8 @@ rather than requirements:
   two dots. ZPL does not document its own spacing.
 - **`^FB`'s indent is applied to every line**, where ZPL hangs it on the second
   and later ones. The parameter round-trips; only where it lands differs.
+- **A `^BC` with no height and no `^BY` to inherit one from is drawn 100 dots
+  tall.** ZPL's power-up default is 10, which a printer would honour and which
+  would make such a barcode a hairline on the canvas. A `^BY` that does give a
+  height is always obeyed; this is the fallback when nothing in the file has
+  said anything at all.

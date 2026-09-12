@@ -50,6 +50,17 @@ DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None,
 # the ones an omitted ^A width leaves proportional.
 SCALABLE_FONTS = ('0', '@')
 
+# ^BY's running defaults, which every later barcode inherits unless it is
+# followed by another ^BY. `height` is None rather than a number to record that
+# no ^BY has given one, which is a different thing from one having given 100.
+DEFAULT_BARCODE = {'module_width': 2, 'ratio': 3.0, 'height': None}
+
+# What a ^BC with no height of its own draws when no ^BY supplied one either.
+# ZPL's power-up default is 10 dots, which a printer honours and which would
+# make such a barcode a hairline on the canvas, so this is deliberately not it.
+# Recorded as a deviation in FUNCTIONAL_SPEC.md section 18.
+DESIGNER_BAR_HEIGHT = 100
+
 # Commands the parser can skip without choking. Whether skipping one is worth
 # telling the user about is a separate question, answered by workflow.MODELLED.
 STRUCTURAL = {'^XA', '^XZ', '^FS', '^FX', '^CI', '^CF', '^LH', '^PR', '^MD',
@@ -167,8 +178,10 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     pending_no_print = False
     field = None            # commands gathered since the last ^FO
     # ^CF sets the font for every field that does not name one of its own, so
-    # it has to be carried between fields rather than gathered into one.
+    # it has to be carried between fields rather than gathered into one. ^BY is
+    # the same kind of command for barcodes.
     default_font = dict(DEFAULT_FONT)
+    default_barcode = dict(DEFAULT_BARCODE)
 
     for cmd, params in tokens:
         if cmd == '^FX':
@@ -190,12 +203,24 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             default_font = _read_default_font(params, default_font)
             continue
 
+        if cmd == '^BY':
+            # Read whether or not a field is open, because it is a running
+            # default: one written before the first ^FO belongs to every
+            # barcode after it. An open field also takes it immediately, so a
+            # ^BY between the ^FO and the ^BC still applies to that barcode.
+            default_barcode = _read_barcode_default(params, default_barcode)
+            if field is not None:
+                field['module_width'] = default_barcode['module_width']
+                field['ratio'] = default_barcode['ratio']
+                field['bar_height'] = default_barcode['height']
+            continue
+
         if cmd in ('^FO', '^FT'):
             # A field that never saw ^FS still ends here, at the next one
             pending_no_print = _flush(field, doc, renderer, pending_no_print)
             match = re.match(r'\s*(-?\d+),(-?\d+)', params)
             field = _new_field(int(match.group(1)), int(match.group(2)),
-                               default_font) if match else None
+                               default_font, default_barcode) if match else None
             # ^FT places a field exactly as ^FO does, but names its baseline
             # rather than its top. Opening no field on it did not degrade such
             # a label - it dropped every field in it, so a file from another
@@ -212,21 +237,22 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
         if field is None:
             continue
 
-        if cmd == '^BY':
-            match = re.match(r'\s*(\d+)', params)
-            if match:
-                field['module_width'] = int(match.group(1))
-        elif cmd.startswith('^A'):
+        if cmd.startswith('^A'):
             field['font'] = read_font(cmd[2], params, field['default_font'])
         elif cmd == '^FB':
             field['block'] = FieldBlock.from_zpl(params)
         elif cmd == '^BC':
-            field['barcode'] = _read_barcode(params)
-        elif cmd.startswith('^B'):
+            field['barcode'] = _read_barcode(params, field['bar_height'])
+        elif cmd.startswith('^B') or cmd == '^GS':
             # Code 39, QR, Data Matrix, EAN - a symbology this designer cannot
             # draw. Recorded so the field is dropped, because falling through
             # to the text branch did not merely lose the barcode: it put a text
             # element holding the barcode's data on the label in its place.
+            #
+            # ^GS draws a glyph from the symbol font and is the same trap for
+            # the same reason. It is not a ^B command, so it went on falling
+            # through: ^GSN,50,50^FDA arrived as a nine-dot text element
+            # reading "A".
             field['symbology'] = cmd
         elif cmd == '^GB':
             field['frame'] = params
@@ -241,15 +267,22 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     return doc, loaded_dpi
 
 
-def _new_field(x: int, y: int, default_font=None) -> dict:
+def _new_field(x: int, y: int, default_font=None, default_barcode=None) -> dict:
     """The state gathered between a ^FO and the ^FS that ends it.
 
     `font` stays None until an ^A names one, because "this field named a font"
     and "this field inherits the default" are different things: a barcode with
     no ^A of its own must go on writing none, while text with no ^A prints in
     whatever ^CF last set.
+
+    The three ^BY values are not like that: ZPL has a default for each, so a
+    field always has one, whether from the last ^BY or from the power-up value.
     """
-    return {'x': x, 'y': y, 'module_width': 2, 'block': None, 'font': None,
+    inherited = dict(default_barcode or DEFAULT_BARCODE)
+    return {'x': x, 'y': y, 'block': None, 'font': None,
+            'module_width': inherited['module_width'],
+            'ratio': inherited['ratio'],
+            'bar_height': inherited['height'],
             'default_font': dict(default_font or DEFAULT_FONT),
             'barcode': None, 'frame': None, 'graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'symbology': None}
@@ -274,6 +307,36 @@ def _read_default_font(params: str, current: dict) -> dict:
             except ValueError:
                 pass
     return font
+
+
+def _read_barcode_default(params: str, current: dict) -> dict:
+    """^BYw,r,h - the module width, ratio and bar height later fields inherit.
+
+    Each parameter is optional and keeps its previous value when omitted, the
+    same rule ^CF follows, which is what makes a bare ^BY3 mean "module width 3,
+    ratio and height unchanged".
+
+    ZPL calls this a default and means it across fields: "it stays in effect
+    until another ^BY command is encountered". Reading it only inside an open
+    field dropped every ^BY written at the top of a format - which is where the
+    manual's own examples put it, and where most generators emit it - so a
+    barcode came back at the power-up module width of 2 and printed at half the
+    width it was written at. Nothing was said, because ^BY is modelled.
+    """
+    parts = [p.strip() for p in params.split(',')]
+    default = dict(current)
+
+    def number(index, key, cast):
+        if len(parts) > index and parts[index]:
+            try:
+                default[key] = cast(parts[index])
+            except ValueError:
+                pass
+
+    number(0, 'module_width', int)
+    number(1, 'ratio', float)
+    number(2, 'height', int)
+    return default
 
 
 def read_font(code: str, params: str, default_font=None) -> dict:
@@ -351,22 +414,27 @@ def _read_frame(params: str):
             thickness, colour, number(4, 0))
 
 
-def _read_barcode(params: str) -> dict:
+def _read_barcode(params: str, default_height=None) -> dict:
     """^BC<orientation>,<height>,<interpretation line>,<above>,<check>,<mode>.
 
     Everything after the height is carried through untouched: those flags
     decide whether the digits print under the bars and which Code 128 subsets
     the printer may use, and re-emitting a barcode without them would change
     the label.
+
+    An omitted height is ^BY's, which is what its third parameter is for.
+    Hard-coding 100 here turned ^BY3,3.0,150^BCN into a barcode a third shorter
+    than the file asked for.
     """
     parts = [p.strip() for p in params.split(',')]
     orientation = ''
     if parts and parts[0][:1].isalpha():
         orientation = parts[0][:1].upper()
+    fallback = DESIGNER_BAR_HEIGHT if default_height is None else default_height
     try:
-        height = int(parts[1]) if len(parts) > 1 and parts[1] else 100
+        height = int(parts[1]) if len(parts) > 1 and parts[1] else fallback
     except ValueError:
-        height = 100
+        height = fallback
     return {'orientation': orientation, 'height': height,
             'options': tuple(p for p in parts[2:])}
 
@@ -435,6 +503,7 @@ def _build_element(field, doc, renderer):
         return BarcodeElement(x, y, height=bc['height'],
                               barcode_value=field['data'] or "123456789",
                               module_width=field['module_width'],
+                              ratio=field['ratio'],
                               orientation=bc['orientation'],
                               options=bc['options'],
                               font=(font['code'], font['height'], font['width'])

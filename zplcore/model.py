@@ -311,6 +311,13 @@ class BarcodeElement(DesignElement):
     ORIENTATIONS = ('', 'N', 'R', 'I', 'B')
     MODES = ('N', 'U', 'A', 'D')
 
+    # ^BY's wide-to-narrow ratio. Carried rather than modelled: the manual is
+    # explicit that it "has no effect on fixed-ratio bar codes", and Code 128 -
+    # the only symbology this designer draws - is one of them. So it changes
+    # nothing that prints here, and is kept only so that a file which gave one
+    # does not quietly lose it on the next save.
+    DEFAULT_RATIO = 3.0
+
     # Gap between the bars and the interpretation line, in dots
     TEXT_GAP = 2
     # The font used for the interpretation line when the line is switched on
@@ -320,12 +327,14 @@ class BarcodeElement(DesignElement):
     def __init__(self, x: int = 50, y: int = 200, height: int = 100,
                  barcode_value: str = "123456789", module_width: int = 2,
                  orientation: str = '', options: tuple = (),
-                 font: Optional[tuple] = None):
+                 font: Optional[tuple] = None,
+                 ratio: float = DEFAULT_RATIO):
         self.x = x
         self.y = y
         self.bar_height = height
         self.barcode_value = barcode_value
         self.module_width = module_width
+        self.ratio = float(ratio)
         self.orientation = orientation
         # The font a ^A before the ^BC selected, as (code, height, width). It
         # sets the interpretation line, so losing it would change the label
@@ -406,13 +415,29 @@ class BarcodeElement(DesignElement):
         code, height, width = self.font
         return f"^A{code}N,{height},{width}\n"
 
+    def _by_zpl(self) -> str:
+        """^BY, with the ratio only when it is not ZPL's default.
+
+        Trimmed the way _options_zpl trims ^BC's tail, so a barcode this
+        designer created serialises exactly as it always did and only a file
+        that actually carried a ratio gets one written back.
+        """
+        width = max(1, self.module_width)
+        if abs(self.ratio - self.DEFAULT_RATIO) < 1e-9:
+            return f"^BY{width}"
+        # One decimal place is how ZPL spells it: 2.0 to 3.0 in 0.1 increments.
+        return f"^BY{width},{self.ratio:.1f}"
+
     def to_zpl(self) -> str:
         """Convert to ZPL commands."""
         # ^BY sets the module width. Without it the printer uses its own default
         # of 2 dots, which pins the barcode's physical size to the head
         # resolution and makes it the one element that cannot be rescaled.
+        #
+        # The height goes on ^BC explicitly, which is why ^BY's own h is read
+        # but never written: there is nowhere for it to disagree.
         return (self.origin_zpl() +
-                f"^BY{max(1, self.module_width)}\n"
+                f"{self._by_zpl()}\n"
                 f"{self._font_zpl()}"
                 f"^BC{self.orientation},{self.bar_height}{self._options_zpl()}\n"
                 f"^FD{self.barcode_value}^FS\n")
