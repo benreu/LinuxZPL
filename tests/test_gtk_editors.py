@@ -208,6 +208,37 @@ check("a resolution change reads the design's own dpi, not an assumed 203",
       asked == [(300, 600, False)],
       f"{asked}, expected [(300, 600, False)]")
 
+# A rescale on load moves every element, so it is an unsaved change. Clearing
+# the flag for it threw the user's answer away on close and asked again on the
+# next open - and the two frontends cleared it in the same place, which is why
+# comparing their emitted ZPL could not see it.
+import os as _os, tempfile as _tempfile
+_tmp = _tempfile.mkdtemp()
+_src = _os.path.join(_tmp, 'other_dpi.zpl')
+open(_src, 'w').write(
+    "^XA^PW600^LL400\n^FXDESIGNER_DPI:300\n^FO50,50^A0N,40,40^FDscaled^FS\n^XZ")
+window.printer_dpi = 203
+
+def _answer(reply):
+    def patched(document, printer_dpi, ask, file_dpi=_wf._FROM_DOCUMENT):
+        return real_reconcile(document, printer_dpi, lambda *a: reply,
+                              file_dpi=file_dpi)
+    return patched
+
+try:
+    _wf.reconcile_dpi = _answer('rescale')
+    window.load_zpl_file(_src)
+    check("gtk: a rescale on load is an unsaved change", window.unsaved_changes)
+    _wf.reconcile_dpi = _answer('keep')
+    window.load_zpl_file(_src)
+    check("gtk: keeping the dots is not", not window.unsaved_changes)
+finally:
+    _wf.reconcile_dpi = real_reconcile
+# Back to a blank document, which is what the checks after this one are about
+window.printer_dpi = 203
+window.unsaved_changes = False
+window.on_new_clicked()
+
 window.destroy()
 
 print()

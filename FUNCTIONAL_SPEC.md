@@ -840,6 +840,15 @@ so it wins over the one a rescale produced. The resolution is settled first, so
 the prompt describes the design on the canvas rather than the one about to
 replace it, and is skipped entirely when the resolution did not change.
 
+**A rescale on load is an unsaved change.** Parsing a file is not an edit, but
+a rescale is an answer the user gave, and it moves every element away from what
+the file holds. Clearing the unsaved flag after it discarded that answer on
+close without a word, and because the file went on recording the resolution it
+was drawn for, **the same prompt returned on every subsequent open** — there
+was no way to make it stop other than noticing that a save was needed. Keeping
+the dots leaves the elements exactly as the file has them, so that answer
+leaves nothing unsaved.
+
 **Barcodes cannot rescale exactly.** Module width is a whole number of dots, so
 a module of 2 becomes 3 rather than 2.96 going from 203 to 300 dpi — a width
 error of up to half a dot per module. Positions and heights scale exactly.

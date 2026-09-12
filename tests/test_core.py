@@ -9,7 +9,7 @@ from PySide2.QtGui import QImage
 from PySide2.QtCore import Qt, QPoint, QEvent
 from PySide2.QtGui import QMouseEvent
 
-from zplcore import fonts as zpl_fonts, geometry, parser as zpl_parser, textraster
+from zplcore import fonts as zpl_fonts, geometry, parser as zpl_parser, textraster, workflow
 from zplcore import model as zpl_model
 from zplcore.model import Document, TextElement, BarcodeElement, FrameElement, ImageElement
 from zplcore.renderer import ZPLRenderer
@@ -482,6 +482,51 @@ check("load restores the element",
       any(getattr(e, 'text', '') == 'persisted' for e in w.document.elements))
 check("load clears the unsaved flag", not w.unsaved_changes)
 check("load clears the history", not w._undo_stack and not w._redo_stack)
+
+# A rescale on load is not parsing - it is an answer the user gave, and it moves
+# every element. Clearing the flag for it discarded that answer on close without
+# a word, and the file went on recording the resolution it was drawn for, so the
+# same prompt came back on the next open, and the next.
+_rescale_src = os.path.join(tmp, 'other_dpi.zpl')
+open(_rescale_src, 'w').write(
+    "^XA^PW600^LL400\n^FXDESIGNER_DPI:300\n^FO50,50^A0N,40,40^FDscaled^FS\n^XZ")
+_real_reconcile = workflow.reconcile_dpi
+def _answer(reply):
+    def patched(document, printer_dpi, ask, file_dpi=workflow._FROM_DOCUMENT):
+        return _real_reconcile(document, printer_dpi, lambda *a: reply,
+                               file_dpi=file_dpi)
+    return patched
+w.printer_dpi = 203
+try:
+    workflow.reconcile_dpi = _answer('rescale')
+    w.load_zpl_file(_rescale_src)
+    check("a rescale on load is an unsaved change", w.unsaved_changes)
+    _moved = [(e.x, e.y) for e in w.document.elements]
+    # Saving is what settles it: the stamp moves to the printer's resolution,
+    # so reopening asks nothing and the loop ends.
+    _settled = os.path.join(tmp, 'settled.zpl')
+    w.save_zpl_file(_settled, w._document_zpl())
+    _asked = []
+    def _counting(document, printer_dpi, ask, file_dpi=workflow._FROM_DOCUMENT):
+        return _real_reconcile(document, printer_dpi,
+                               lambda *a: _asked.append(a) or 'keep',
+                               file_dpi=file_dpi)
+    workflow.reconcile_dpi = _counting
+    w.load_zpl_file(_settled)
+    check("and once saved the prompt does not come back", not _asked, _asked)
+    check("the rescaled positions are what got saved",
+          [(e.x, e.y) for e in w.document.elements] == _moved,
+          ([(e.x, e.y) for e in w.document.elements], _moved))
+    # Keeping the dots leaves every element exactly as the file has them, so
+    # there is nothing unsaved to report.
+    workflow.reconcile_dpi = _answer('keep')
+    w.load_zpl_file(_rescale_src)
+    check("keeping the dots is not", not w.unsaved_changes)
+finally:
+    workflow.reconcile_dpi = _real_reconcile
+w.printer_dpi = zpl_fonts.DEFAULT_DPI
+# Put the window back on the file the checks after this one are about
+w.load_zpl_file(path)
 check("failed save reports and keeps the flag",
       w.save_zpl_file('/nonexistent-dir/x.zpl', '^XA^XZ') is False)
 

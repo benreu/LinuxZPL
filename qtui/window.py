@@ -778,8 +778,13 @@ class ZPLDesignerWindow(QMainWindow):
             # otherwise overwrite the rescale one the instant it appeared.
             loaded = f"Loaded: {os.path.basename(filepath)}"
             self.update_status(f"{loaded} - {rescaled}" if rescaled else loaded)
-            # Building elements while parsing does not count as an edit.
-            self.unsaved_changes = False
+            # Building elements while parsing does not count as an edit, but a
+            # rescale does: the user was asked and answered, and the elements no
+            # longer match the file on disk. Clearing the flag here threw that
+            # answer away on close without a word, and the same question came
+            # back on the very next open - every open, for as long as the file
+            # went on recording the resolution it was drawn for.
+            self.unsaved_changes = bool(rescaled)
             self._reset_history()
             workflow.warn_unsupported(
                 content, lambda cmds: qt_dialogs.warn_unsupported(self, cmds))
