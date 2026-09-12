@@ -1703,6 +1703,10 @@ class ZPLViewerWindow(Gtk.Window):
                 ORIENTATIONS, element.orientation)
             make_row("Orientation:", orientation_combo)
 
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+
             # Font chooser (installed families only)
             selected_font = [element.font_path, element.font_family]
 
@@ -1812,6 +1816,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.font_width = int(width_spin.get_value())
                     element.orientation = orientation_codes[
                         orientation_combo.get_active()]
+                    element.reverse_print = fr_check.get_active()
 
                     if wrap_check.get_active():
                         # Assigned rather than mutated: the block on the element
@@ -1912,6 +1917,10 @@ class ZPLViewerWindow(Gtk.Window):
                                                 element.mode)
             make_row("Mode:", mode_combo)
 
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+
             apply_field_number = _make_field_number_rows(content, element)
 
             content.show_all()
@@ -1926,6 +1935,7 @@ class ZPLViewerWindow(Gtk.Window):
                     apply_field_number(element)
                     element.check_digit = check_codes[check_combo.get_active()]
                     element.mode = mode_codes[mode_combo.get_active()]
+                    element.reverse_print = fr_check.get_active()
                     if element.show_text:
                         # With the line switched on, name the font it prints in
                         # rather than leaving it to whatever the printer has
@@ -2030,8 +2040,12 @@ class ZPLViewerWindow(Gtk.Window):
                                        FrameElement.MAX_ROUNDING)
             content.pack_start(rounding_spin, False, False, 0)
 
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            content.pack_start(fr_check, False, False, 0)
+
             content.show_all()
-            
+
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
                     element.width = int(width_spin.get_value())
@@ -2039,6 +2053,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.thickness = int(thickness_spin.get_value())
                     element.colour = colour_codes[colour_combo.get_active()]
                     element.rounding = int(rounding_spin.get_value())
+                    element.reverse_print = fr_check.get_active()
                     self.design_canvas.queue_draw()
                     self.on_canvas_changed()
 

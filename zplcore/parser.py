@@ -332,6 +332,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['font'] = read_font(cmd[2], params, field['default_font'])
         elif cmd == '^FB':
             field['block'] = FieldBlock.from_zpl(params)
+        elif cmd == '^FR':
+            field['reverse'] = True
         elif cmd == '^BC':
             field['barcode'] = _read_barcode(params, field['bar_height'])
         elif cmd.startswith('^B') or cmd == '^GS':
@@ -385,7 +387,8 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None) -> dict:
             'bar_height': inherited['height'],
             'default_font': dict(default_font or DEFAULT_FONT),
             'barcode': None, 'frame': None, 'graphic': None, 'data': None,
-            'preview': None, 'path': None, 'typeset': False, 'symbology': None}
+            'preview': None, 'path': None, 'typeset': False, 'symbology': None,
+            'reverse': False}
 
 
 def _read_default_font(params: str, current: dict) -> dict:
@@ -549,6 +552,7 @@ def _flush(field, doc, renderer, pending_no_print: bool) -> bool:
     if element is not None:
         if field['typeset']:
             _apply_typeset(element, doc)
+        element.reverse_print = field['reverse']
         doc.elements.append(element)
     if pending_no_print and len(doc.elements) > before:
         for el in doc.elements[before:]:

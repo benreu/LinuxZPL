@@ -59,8 +59,9 @@ until one is (§13) — at the configured printer resolution (4 × 6 inches is
 
 ### 3.2 Properties common to every element
 
-`x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`, and
-`print_enabled` (default true — see §6.6).
+`x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`,
+`print_enabled` (default true — see §6.6), and `reverse_print` (`^FR`, default
+false — a checkbox in the Edit Text, Edit Frame and Edit Barcode dialogs, §7).
 
 ### 3.3 Element types
 
@@ -518,9 +519,9 @@ prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
-| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. |
-| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). |
-| **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
+| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across all three of these dialogs. |
+| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) flips Colour's effect a second time (§18). |
+| **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode; Reverse | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Printer Settings and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Printer Settings** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). |
@@ -1156,3 +1157,10 @@ rather than requirements:
   would make such a barcode a hairline on the canvas. A `^BY` that does give a
   height is always obeyed; this is the fallback when nothing in the file has
   said anything at all.
+- **`^FR` is approximated as an ink/background swap on the field's own
+  footprint, not a true sample-and-invert of whatever is already on the label
+  underneath it.** Both canvases and the preview draw the field's background
+  solid and its ink in the opposite colour, which reproduces the common case —
+  a field reversed against a solid `^GB` box already there — without any new
+  compositing machinery. The cost: a field reversed with nothing solid beneath
+  it shows as a filled box, where a real printer would show nothing at all.

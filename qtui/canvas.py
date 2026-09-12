@@ -243,10 +243,18 @@ class DesignCanvas(QWidget):
     # --- text ----------------------------------------------------------------
 
     def _draw_text_element(self, painter, element, selected: bool):
-        # Translucent background: a designer affordance must not hide anything
-        # underneath it that will still print.
-        painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
-                         QColor(242, 242, 255, 89))
+        reverse = element.reverse_print
+        if reverse:
+            # ^FR: this field prints in reverse, so the box is drawn solid
+            # rather than as the usual translucent editing affordance - a
+            # reversed field with nothing under it would otherwise vanish.
+            painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
+                             QColor(0, 0, 0))
+        else:
+            # Translucent background: a designer affordance must not hide
+            # anything underneath it that will still print.
+            painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
+                             QColor(242, 242, 255, 89))
 
         painter.setPen(QPen(QColor(0, 0, 255), 2) if selected
                        else QPen(QColor(128, 128, 255), 1))
@@ -255,6 +263,7 @@ class DesignCanvas(QWidget):
 
         font_path = element.font_path or self.document.font_path
         block = getattr(element, 'block', None)
+        ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
 
         # Everything below draws the text in its own upright frame; the frame
         # is what turns. The footprint stays axis-aligned, so the outline and
@@ -272,11 +281,11 @@ class DesignCanvas(QWidget):
             # justified, so nothing further is scaled here.
             wrapped = to_qimage(textraster.raster_block(
                 self.document.display_text(element), font_path, element.font_height,
-                element.font_width, block)) if font_path else None
+                element.font_width, block, ink)) if font_path else None
             if wrapped is not None:
                 painter.drawImage(QPointF(0, 0), wrapped)
             else:
-                self._draw_text_block(painter, element, font_path, block)
+                self._draw_text_block(painter, element, font_path, block, reverse)
             painter.restore()
             if selected:
                 self._draw_handles(painter, element)
@@ -284,7 +293,7 @@ class DesignCanvas(QWidget):
         if font_path:
             raster = to_qimage(
                 textraster.raster(self.document.display_text(element),
-                                  font_path, element.font_height))
+                                  font_path, element.font_height, ink))
 
         if raster is not None:
             # The printer scales the em square to font_width x font_height.
@@ -298,14 +307,14 @@ class DesignCanvas(QWidget):
             painter.drawImage(QPointF(0, 0), raster)
             painter.restore()
         else:
-            self._draw_text_fallback(painter, element, font_path)
+            self._draw_text_fallback(painter, element, font_path, reverse)
 
         painter.restore()
 
         if selected:
             self._draw_handles(painter, element)
 
-    def _draw_text_block(self, painter, element, font_path, block):
+    def _draw_text_block(self, painter, element, font_path, block, reverse=False):
         """Wrap with a Qt face when the block cannot be rasterised.
 
         Which is the ordinary case for a new element: nothing has a font file
@@ -318,7 +327,7 @@ class DesignCanvas(QWidget):
         font = QFont(family)
         font.setPixelSize(max(1, element.font_height))
         painter.setFont(font)
-        painter.setPen(QColor(0, 0, 0))
+        painter.setPen(QColor(255, 255, 255) if reverse else QColor(0, 0, 0))
         metrics = QFontMetricsF(font)
         measure, _font = textraster.measurer(font_path, element.font_height,
                                              element.font_width)
@@ -335,7 +344,7 @@ class DesignCanvas(QWidget):
                 painter.drawText(QPointF(0, 0), piece)
                 painter.restore()
 
-    def _draw_text_fallback(self, painter, element, font_path):
+    def _draw_text_fallback(self, painter, element, font_path, reverse=False):
         """Draw with a Qt face when the font file cannot be rasterised."""
         family = element.font_family or self.document.font_family or "monospace"
         font = QFont(family)
@@ -355,7 +364,7 @@ class DesignCanvas(QWidget):
             h_scale = element.width / measured
 
         painter.save()
-        painter.setPen(QColor(0, 0, 0))
+        painter.setPen(QColor(255, 255, 255) if reverse else QColor(0, 0, 0))
         painter.translate(2, element.font_height - 2)
         painter.scale(h_scale, 1.0)
         painter.drawText(QPointF(0, 0), shown)
@@ -380,8 +389,9 @@ class DesignCanvas(QWidget):
         # ^GB's colour: white is what the printer leaves unburnt, so it shows
         # only over something already black - drawing it black instead was the
         # one case where the canvas showed the opposite of what prints.
-        ink = QColor(255, 255, 255) if getattr(element, 'colour', 'B') == 'W' \
-            else QColor(0, 0, 0)
+        # ^FR flips it again, on top of whichever colour was chosen.
+        white = (getattr(element, 'colour', 'B') == 'W') != element.reverse_print
+        ink = QColor(255, 255, 255) if white else QColor(0, 0, 0)
         radius = element.corner_radius() if hasattr(element, 'corner_radius') else 0
 
         if 2 * t >= min(element.width, element.height):
@@ -435,13 +445,17 @@ class DesignCanvas(QWidget):
 
         # White behind the symbol: a barcode the printer cannot read is worse
         # than one that covers something, so it is deliberately opaque.
-        painter.fillRect(QRectF(0, 0, run, stack), QColor(255, 255, 255))
+        # ^FR swaps it for black-behind-white, same as everywhere else.
+        reverse = element.reverse_print
+        bg, fg = (QColor(0, 0, 0), QColor(255, 255, 255)) if reverse \
+            else (QColor(255, 255, 255), QColor(0, 0, 0))
+        painter.fillRect(QRectF(0, 0, run, stack), bg)
 
         bar_x, bar_y, bar_w, bar_h = layout['bars']
         mods = element.modules()
         mod_w = bar_w / max(1, sum(mods))
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(0, 0, 0))
+        painter.setBrush(fg)
         cx = float(bar_x)
         for i, m in enumerate(mods):
             if i % 2 == 0:  # bars are at even indices
@@ -450,7 +464,7 @@ class DesignCanvas(QWidget):
         painter.setBrush(Qt.NoBrush)
 
         if layout['text']:
-            self._draw_barcode_text(painter, layout)
+            self._draw_barcode_text(painter, layout, reverse)
         painter.restore()
 
         # The selection border follows the footprint, which is axis-aligned at
@@ -465,7 +479,7 @@ class DesignCanvas(QWidget):
         if selected:
             self._draw_handles(painter, element)
 
-    def _draw_barcode_text(self, painter, layout):
+    def _draw_barcode_text(self, painter, layout, reverse=False):
         """The interpretation line, in dots - not at a constant screen size.
 
         It is what the printer puts under the bars, so it is measured and
@@ -473,7 +487,8 @@ class DesignCanvas(QWidget):
         """
         text, font_height = layout['text'], max(1, int(layout['font'][1]))
         font_path = self.document.font_path
-        raster = (to_qimage(textraster.raster(text, font_path, font_height))
+        ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
+        raster = (to_qimage(textraster.raster(text, font_path, font_height, ink))
                   if font_path else None)
         if raster is not None:
             painter.drawImage(
@@ -484,7 +499,7 @@ class DesignCanvas(QWidget):
         font = QFont("sans-serif")
         font.setPixelSize(font_height)
         painter.setFont(font)
-        painter.setPen(QColor(0, 0, 0))
+        painter.setPen(QColor(255, 255, 255) if reverse else QColor(0, 0, 0))
         metrics = QFontMetricsF(font)
         painter.drawText(
             QPointF(max(0, (layout['run'] - metrics.horizontalAdvance(text)) / 2),

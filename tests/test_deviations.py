@@ -124,6 +124,16 @@ w.load_zpl_file(p)
 check("a file with no recorded dpi is assumed 203, and says so",
       answers == [(203, 300, True)], answers)
 
+# --- 18.x  ^FR is approximated as an ink/background swap ---------------------
+from zplcore.renderer import ZPLRenderer
+
+reversed_field = ZPLRenderer(200, 150).render(
+    "^XA^PW200^LL150^FO20,20^FR^A0N,40,40^FDHi^FS^XZ").convert('L')
+check("18.x a ^FR field with nothing behind it draws a solid dark box, "
+      "rather than the nothing a real printer would show there",
+      reversed_field.getpixel((25, 25)) < 100,
+      reversed_field.getpixel((25, 25)))
+
 print()
 print("ALL DEVIATION CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

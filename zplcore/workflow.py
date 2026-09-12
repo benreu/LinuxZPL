@@ -187,7 +187,7 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # offsets became real coordinates and the flips round-trip. ^LR is modelled in
 # the sense that matters here - it survives a save - though the preview does not
 # simulate it; see FUNCTIONAL_SPEC.md section 18.
-MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^FB',
+MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
             '^FN', '^FV', '^DF', '^XF',
             '^LH', '^LS', '^LT', '^PO', '^PM', '^LR'}

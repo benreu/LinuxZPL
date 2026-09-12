@@ -43,6 +43,9 @@ class DesignElement:
     # or None when it was placed by ^FO. Kept rather than normalised away so a
     # file written with ^FT is written back with ^FT, at the same y.
     typeset = None
+    # ^FR: this field prints in reverse - white where the label would
+    # otherwise be black, and vice versa.
+    reverse_print = False
 
     def origin_zpl(self, offset=(0, 0)) -> str:
         """The ^FO or ^FT that places this element.
@@ -61,6 +64,10 @@ class DesignElement:
         if self.typeset is None:
             return f"^FO{x},{y}\n"
         return f"^FT{x},{y + self.typeset}\n"
+
+    def reverse_zpl(self) -> str:
+        """^FR, if this field reverses its own print."""
+        return "^FR\n" if self.reverse_print else ""
 
     # What a field's data is called on the subclasses that have any. ^FD and ^FN
     # are written the same way for text and for a barcode, so the rule lives
@@ -298,7 +305,7 @@ class TextElement(DesignElement):
         """Convert to ZPL commands."""
         effective_font = self.printer_font_name or printer_font_name
         turn = self.orientation or 'N'
-        zpl = self.origin_zpl(offset)
+        zpl = self.origin_zpl(offset) + self.reverse_zpl()
         if effective_font:
             zpl += f"^A@{turn},{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
         else:
@@ -363,7 +370,7 @@ class FrameElement(DesignElement):
 
     def to_zpl(self, offset=(0, 0)) -> str:
         """Convert to ZPL commands."""
-        return (self.origin_zpl(offset) +
+        return (self.origin_zpl(offset) + self.reverse_zpl() +
                 f"^GB{self.width},{self.height},{self.thickness}"
                 f"{self._options_zpl()}\n^FS\n")
 
@@ -518,7 +525,7 @@ class BarcodeElement(DesignElement):
         #
         # The height goes on ^BC explicitly, which is why ^BY's own h is read
         # but never written: there is nowhere for it to disagree.
-        return (self.origin_zpl(offset) +
+        return (self.origin_zpl(offset) + self.reverse_zpl() +
                 f"{self._by_zpl()}\n"
                 f"{self._font_zpl()}"
                 f"^BC{self.orientation},{self.bar_height}{self._options_zpl()}\n"
@@ -696,7 +703,7 @@ class ImageElement(DesignElement):
         img_sized.convert('RGB').save(preview_bio, format='JPEG', quality=85, optimize=True)
         b64_preview = _b64.b64encode(preview_bio.getvalue()).decode('ascii')
 
-        zpl = self.origin_zpl(offset)
+        zpl = self.origin_zpl(offset) + self.reverse_zpl()
         zpl += f"^FXDESIGNER_PREVIEW:{b64_preview}\n"
         if self.image_path:
             zpl += f"^FXDESIGNER_PATH:{self.image_path}\n"

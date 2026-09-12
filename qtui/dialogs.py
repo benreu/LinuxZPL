@@ -283,6 +283,11 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+
     chosen = {'path': element.font_path, 'family': element.font_family}
 
     def font_display():
@@ -378,6 +383,7 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
         element.font_width = width_spin.value()
         element.orientation = orientation_combo.currentData()
         element.height = element.font_height
+        element.reverse_print = fr_check.isChecked()
 
         if wrap_check.isChecked():
             # Assigned rather than mutated: the block on the element may
@@ -470,6 +476,11 @@ def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
     rounding_spin.setValue(element.rounding)
     form.addRow("Corner Rounding:", rounding_spin)
 
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
@@ -478,6 +489,7 @@ def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
         element.thickness = thickness_spin.value()
         element.colour = colour_combo.currentData()
         element.rounding = rounding_spin.value()
+        element.reverse_print = fr_check.isChecked()
 
     return _show_editor(dialog, _apply, on_accept)
 
@@ -541,6 +553,11 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         if element.mode in [c for _l, c in BARCODE_MODES] else 0)
     form.addRow("Mode:", mode_combo)
 
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+
     apply_field_number = _field_number_rows(form, element)
 
     layout.addWidget(_buttons(dialog))
@@ -553,6 +570,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         element.show_text, element.text_above = text_combo.currentData()
         element.check_digit = check_combo.currentData()
         element.mode = mode_combo.currentData()
+        element.reverse_print = fr_check.isChecked()
         apply_field_number(element)
         if element.show_text:
             # With the line switched on, name the font it prints in rather than

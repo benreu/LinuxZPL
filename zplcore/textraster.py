@@ -22,15 +22,16 @@ _cache = {}
 MARGIN = 2
 
 
-def raster(text: str, font_path: str, font_height: int):
+def raster(text: str, font_path: str, font_height: int, ink=(0, 0, 0, 255)):
     """The text as a PIL RGBA image with transparent background, or None.
 
-    Cached by (text, font, height) - not by the element - so two elements
-    sharing a string and a face share the raster.
+    Cached by (text, font, height, ink) - not by the element - so two elements
+    sharing a string, a face and an ink colour share the raster. `ink` is what
+    a ^FR field draws with, white instead of black.
     """
     text = text or " "
     height = max(1, int(font_height))
-    key = (text, font_path, height)
+    key = (text, font_path, height, ink)
     hit = _cache.get(key)
     if hit is not None:
         return hit
@@ -47,7 +48,7 @@ def raster(text: str, font_path: str, font_height: int):
 
     image = PILImage.new('RGBA', (width + 2 * MARGIN, tall + 2 * MARGIN), (0, 0, 0, 0))
     PILImageDraw.Draw(image).text((MARGIN - bbox[0], MARGIN - bbox[1]), text,
-                                  fill=(0, 0, 0, 255), font=font)
+                                  fill=ink, font=font)
 
     if len(_cache) >= _CACHE_LIMIT:
         _cache.clear()
@@ -198,7 +199,7 @@ def pitch(font_height, block) -> int:
     return max(1, int(font_height) + block.line_spacing)
 
 
-def raster_block(text, font_path, font_height, font_width, block):
+def raster_block(text, font_path, font_height, font_width, block, ink=(0, 0, 0, 255)):
     """A wrapped block as a PIL RGBA image, already at its printed size.
 
     Unlike raster(), nothing further is scaled by the caller: the block width
@@ -218,7 +219,7 @@ def raster_block(text, font_path, font_height, font_width, block):
         if not line:
             continue
         for piece, x in placements(line, measure, block, last):
-            drawn = raster(piece, font_path, max(1, int(font_height)))
+            drawn = raster(piece, font_path, max(1, int(font_height)), ink)
             if drawn is None:
                 continue
             printed = max(1, int(round(measure(piece))))

@@ -782,6 +782,17 @@ def sequence(driver, record):
     frame.colour, frame.rounding = 'B', 3
     record('a black frame, less rounded')
 
+    # ^FR: a per-field flag, not a parameter of any of the other three, so it
+    # gets its own step for each element type that has one in scope.
+    if bars is not None:
+        bars.reverse_print = True
+        record('a reversed barcode')
+    frame.reverse_print = True
+    record('a reversed frame')
+    if block is not None:
+        block.reverse_print = True
+        record('a reversed text field')
+
     # ZPL as other tools leave it: a ^CF default font rather than an ^A on
     # every field, and a ^GB carrying its colour and rounding. Last, because
     # loading replaces the document every earlier step built up.

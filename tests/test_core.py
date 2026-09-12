@@ -706,6 +706,26 @@ check("both frontends are offered the same modes",
 check("both frontends are offered the same orientations",
       [c for _l, c in BARCODE_ORIENTATIONS] == ['N', 'R', 'I', 'B'])
 
+# --- ^FR (reverse print) -----------------------------------------------------
+for make, describe in (
+        (lambda: TextElement(0, 0, 'Reversed'), 'text'),
+        (lambda: FrameElement(0, 0, 100, 50), 'frame'),
+        (lambda: BarcodeElement(0, 0, 80, '12345'), 'barcode')):
+    plain = make()
+    check(f"an untouched {describe} element writes no ^FR",
+          '^FR' not in plain.to_zpl(), plain.to_zpl())
+
+    was_reversed = make()
+    was_reversed.reverse_print = True
+    check(f"a reversed {describe} element writes ^FR",
+          '^FR' in was_reversed.to_zpl(), was_reversed.to_zpl())
+    reparsed = zpl_parser.parse_zpl(f"^XA{was_reversed.to_zpl()}^XZ")[0].elements[0]
+    check(f"^FR survives a round trip on a {describe} element",
+          reparsed.reverse_print is True, reparsed.to_zpl())
+
+check("^FR is modelled, not reported as an unsupported command",
+      '^FR' not in workflow.unsupported_commands(was_reversed.to_zpl()))
+
 # --- wrapped text (^FB) -----------------------------------------------------
 
 # the editor's line breaks and ZPL's are the same thing, spelled differently
@@ -907,6 +927,14 @@ _drive_text_dialog(de, ddoc,
 check("unticking wrap joins the lines rather than leaving a break behind",
       de.block is None and de.text == "ACME Widget Model 4400", de.text)
 
+_drive_text_dialog(
+    de, ddoc,
+    lambda dialog: dialog.findChild(QCheckBox, 'reverse_print').setChecked(True))
+check("reverse print set in the text dialog reaches the element",
+      de.reverse_print is True)
+check("a reversed field written from the dialog carries ^FR",
+      '^FR' in de.to_zpl(), de.to_zpl())
+
 # --- the editors are non-modal child windows --------------------------------
 # Non-modal means an editor can still be up when the element under it is
 # replaced or removed, which is the one way an edit can be silently lost.
@@ -1004,6 +1032,16 @@ rounded = ZPLRenderer(400, 300).render(
 check("the preview rounds a rounded frame's corners",
       rounded.getpixel((22, 22)) > 200 and rounded.getpixel((200, 21)) < 100,
       (rounded.getpixel((22, 22)), rounded.getpixel((200, 21))))
+
+# ^FR flips a frame's own colour, in the preview as on the canvas
+fr_frame = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO20,20^FR^GB360,260,4^FS^XZ").convert('L')
+check("the preview draws a ^FR frame's border inverted",
+      fr_frame.getpixel((200, 21)) > 200, fr_frame.getpixel((200, 21)))
+check("^FR reversed on a foreign file writes back after ^GB and still renders",
+      ZPLRenderer(400, 300).render(
+          "^XA^PW400^LL300^FO20,20^GB360,260,4^FR^FS^XZ"
+      ).convert('L').getpixel((200, 21)) > 200)
 
 # --- text turns the way barcodes already do ---------------------------------
 

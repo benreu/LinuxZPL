@@ -77,6 +77,37 @@ window._editors[id(frame)].response(Gtk.ResponseType.CANCEL)
 check("Cancel leaves the document untouched and records no history",
       len(window._undo_stack) == before and id(frame) not in window._editors)
 
+# --- the reverse print (^FR) checkbox reaches the element -------------------
+# Only the model layer is exercised elsewhere - this is what would catch a
+# dialog that adds the checkbox but forgets to read it back in on_response.
+
+
+def _find_checkbutton(container, label):
+    for child in container.get_children():
+        if isinstance(child, Gtk.CheckButton) and child.get_label() == label:
+            return child
+        if isinstance(child, Gtk.Container):
+            found = _find_checkbutton(child, label)
+            if found is not None:
+                return found
+    return None
+
+
+for build, describe in ((lambda: document.add_text_element('reversible'), 'text'),
+                        (lambda: document.add_frame_element(), 'frame'),
+                        (lambda: document.add_barcode_element(), 'barcode')):
+    element = build()
+    window.on_element_double_clicked(None, element)
+    dialog = window._editors[id(element)]
+    fr_check = _find_checkbutton(dialog.get_content_area(), "Reverse print (^FR)")
+    check(f"the {describe} editor offers a reverse print checkbox",
+          fr_check is not None)
+    fr_check.set_active(True)
+    dialog.response(Gtk.ResponseType.OK)
+    check(f"ticking it in the {describe} dialog reaches the element",
+          element.reverse_print is True)
+    document.elements.remove(element)
+
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen
 # over one would write its fields into a copy the document no longer has, and

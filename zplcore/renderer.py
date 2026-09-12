@@ -48,6 +48,11 @@ class ZPLRenderer:
         self.typeset = False
         # Whether the current field is a symbology this designer cannot draw
         self.unsupported_field = False
+        # ^FR: the current field prints in reverse
+        self.current_reverse = False
+        # A ^GB's params, held until ^FS so a ^FR that comes after it in the
+        # same field is already known by the time it is drawn.
+        self.pending_frame = None
         self.barcode_orientation = ''
         self.barcode_options = ()
         self.module_width = 2
@@ -123,7 +128,10 @@ class ZPLRenderer:
         # into its own image and turned as a whole.
         run = layout['run']
         stack = max(1, element.bar_height) + element.text_height()
-        panel = Image.new('L', (max(1, run), max(1, stack)), 255)
+        # ^FR swaps the panel's background and ink, white-on-black instead of
+        # black-on-white.
+        bg, ink = (0, 255) if self.current_reverse else (255, 0)
+        panel = Image.new('L', (max(1, run), max(1, stack)), bg)
         draw = ImageDraw.Draw(panel)
 
         bar_x, bar_y, bar_w, bar_h = layout['bars']
@@ -133,7 +141,7 @@ class ZPLRenderer:
         for i, m in enumerate(mods):
             if i % 2 == 0:  # bars are at even indices
                 draw.rectangle([(round(cx), bar_y),
-                                (round(cx + m * mod_w), bar_y + bar_h)], fill=0)
+                                (round(cx + m * mod_w), bar_y + bar_h)], fill=ink)
             cx += m * mod_w
 
         if layout['text']:
@@ -143,7 +151,7 @@ class ZPLRenderer:
             except Exception:
                 width = len(layout['text']) * layout['font'][1] * 0.6
             draw.text((max(0, (run - width) / 2), layout['text_y']),
-                      layout['text'], fill=0, font=font)
+                      layout['text'], fill=ink, font=font)
 
         if layout['angle']:
             panel = panel.rotate(-layout['angle'], expand=True)
@@ -191,8 +199,11 @@ class ZPLRenderer:
                    self.current_font_size)
         natural = max(1, box[2] - box[0])
         stack = max(1, box[3] - box[1])
-        panel = Image.new('L', (natural, stack), 255)
-        ImageDraw.Draw(panel).text((-box[0], -box[1]), text, fill=0, font=font)
+        # ^FR swaps the panel's background and ink, white-on-black instead of
+        # black-on-white.
+        bg, ink = (0, 255) if self.current_reverse else (255, 0)
+        panel = Image.new('L', (natural, stack), bg)
+        ImageDraw.Draw(panel).text((-box[0], -box[1]), text, fill=ink, font=font)
         if run != natural:
             panel = panel.resize((max(1, run), stack), Image.LANCZOS)
         self._turned(panel, run, stack)
@@ -208,10 +219,14 @@ class ZPLRenderer:
         block = self.current_block
         font_path = self._font_path()
         font_width = self.current_font_width or self.current_font_size
+        # ^FR swaps the panel's background and ink, white-on-black instead of
+        # black-on-white.
+        bg, ink = (0, (255, 255, 255, 255)) if self.current_reverse \
+            else (255, (0, 0, 0, 255))
         drawn = textraster.raster_block(text, font_path, self.current_font_size,
-                                        font_width, block)
+                                        font_width, block, ink)
         if drawn is not None:
-            panel = Image.new('L', drawn.size, 255)
+            panel = Image.new('L', drawn.size, bg)
             panel.paste(drawn.convert('L'), (0, 0), drawn)
             self._turned(panel, drawn.width, drawn.height)
             return
@@ -222,8 +237,13 @@ class ZPLRenderer:
         step = textraster.pitch(self.current_font_size, block)
         for row, line in enumerate(textraster.wrap(
                 text, font_path, self.current_font_size, font_width, block)):
-            self.draw.text((self.current_x + block.indent,
-                            self.current_y + row * step), line, fill='black',
+            y = self.current_y + row * step
+            if self.current_reverse:
+                box = self.draw.textbbox(
+                    (self.current_x + block.indent, y), line, font=font)
+                self.draw.rectangle(box, fill='black')
+            self.draw.text((self.current_x + block.indent, y), line,
+                           fill='white' if self.current_reverse else 'black',
                            font=font)
 
     def _render_frame(self, params: str):
@@ -239,7 +259,12 @@ class ZPLRenderer:
         element = FrameElement(self.current_x, self.current_y,
                                *parser._read_frame(params))
         element.y = self._top(element.height)
-        ink = 255 if element.colour == 'W' else 0
+        # ^FR flips the colour again, on top of whichever colour was chosen.
+        # An RGB tuple, not a bare int: PIL packs a lone int into an RGB
+        # image's first channel rather than broadcasting it, which drew white
+        # as red.
+        white = (element.colour == 'W') != self.current_reverse
+        ink = (255, 255, 255) if white else (0, 0, 0)
         thickness = max(1, element.thickness)
         # PIL's rectangle includes both corners, so the far edge is one dot
         # short of the width - otherwise every ^GB drew a dot wider and a dot
@@ -297,6 +322,8 @@ class ZPLRenderer:
         self.default_font = dict(parser.DEFAULT_FONT)
         self.typeset = False
         self.unsupported_field = False
+        self.current_reverse = False
+        self.pending_frame = None
         # ^FN's data can be declared after the field that uses it, so the table
         # is built in a pass of its own before anything is drawn.
         self.fields = parser.read_field_table(parser.tokenise(zpl_content))
@@ -419,6 +446,8 @@ class ZPLRenderer:
                 self.current_y += self.origin[1]
                 self.typeset = (command == 'FT')
                 self.unsupported_field = False
+                self.current_reverse = False
+                self.pending_frame = None
                 # A field names its own font with ^A or inherits ^CF's, and a
                 # printer starts every field from the latter.
                 self._use_default_font()
@@ -446,8 +475,15 @@ class ZPLRenderer:
             self.current_font_width = font['width']
             self.current_field_font_path = (self.font_registry.get(font['name'])
                                             if font['name'] else None)
+        elif command == 'FR':
+            # Reverse print: applies to whatever this field draws, so it has
+            # to be known before ^GB (drawn eagerly, below) or ^FS (which
+            # draws everything else) is reached.
+            self.current_reverse = True
         elif command == 'GB':
-            self._render_frame(params)
+            # Held until ^FS rather than drawn here, so a ^FR that comes
+            # after ^GB in the same field is still seen before it is drawn.
+            self.pending_frame = params
         elif command == 'BY':
             # Module width, which sets how wide the bars are
             match = re.match(r'\s*(\d+)', params)
@@ -458,6 +494,9 @@ class ZPLRenderer:
             self.current_block = FieldBlock.from_zpl(params)
         elif command == 'FS':
             # End field: render current field data
+            if self.pending_frame is not None:
+                self._render_frame(self.pending_frame)
+                self.pending_frame = None
             if self.unsupported_field:
                 # Drawing the ^FD would put the barcode's data on the label as
                 # text, which is exactly what the parser no longer does.
