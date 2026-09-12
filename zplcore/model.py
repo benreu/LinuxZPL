@@ -841,9 +841,28 @@ class Document:
         return self._append(ImageElement(50 + offset, 50 + offset, 200, 200, image_path))
 
     def _append(self, element: DesignElement) -> DesignElement:
+        self._fit_new_element_to_bounds(element)
         self.elements.append(element)
         self.selected_element = element
         return element
+
+    def _fit_new_element_to_bounds(self, element) -> None:
+        """Bring a freshly placed element fully onto the label.
+
+        Repositioned first and only shrunk if it is bigger than the label
+        itself, so an element whose default offset overshot the label - the
+        common case on a small label - is moved back onto it at full size
+        rather than trimmed down to a sliver at the edge, which the
+        resize-driven `_clamp_element_to_bounds` would do instead.
+        """
+        element.width = min(element.width, self.label_width)
+        element.height = min(element.height, self.label_height)
+        element.x = max(0, min(element.x, self.label_width - element.width))
+        element.y = max(0, min(element.y, self.label_height - element.height))
+        block = getattr(element, 'block', None)
+        if block is not None:
+            block.width = max(1, element.width)
+            self.sync_text_width(element)
 
     def remove_selected(self) -> bool:
         """Delete every selected element.
@@ -975,17 +994,20 @@ class Document:
     def _clamp_elements_to_bounds(self):
         """Ensure all elements stay within label bounds."""
         for element in self.elements:
-            element.x = max(0, min(element.x, self.label_width - 1))
-            element.y = max(0, min(element.y, self.label_height - 1))
-            element.width = min(element.width, self.label_width - element.x)
-            element.height = min(element.height, self.label_height - element.y)
-            block = getattr(element, 'block', None)
-            if block is not None:
-                # A wrapped element's box is its block, so a box clamped to the
-                # label is a narrower wrap - not a box that merely claims to be
-                # narrower while the text still runs to the old width.
-                block.width = max(1, element.width)
-                self.sync_text_width(element)
+            self._clamp_element_to_bounds(element)
+
+    def _clamp_element_to_bounds(self, element) -> None:
+        element.x = max(0, min(element.x, self.label_width - 1))
+        element.y = max(0, min(element.y, self.label_height - 1))
+        element.width = min(element.width, self.label_width - element.x)
+        element.height = min(element.height, self.label_height - element.y)
+        block = getattr(element, 'block', None)
+        if block is not None:
+            # A wrapped element's box is its block, so a box clamped to the
+            # label is a narrower wrap - not a box that merely claims to be
+            # narrower while the text still runs to the old width.
+            block.width = max(1, element.width)
+            self.sync_text_width(element)
 
     def rescale(self, factor: float) -> None:
         """Scale the whole design by `factor`, keeping its physical size.

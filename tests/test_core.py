@@ -99,6 +99,27 @@ check("hidden element survives round trip",
       and back.elements[0].print_enabled and back.elements[2].element_type == 'frame',
       [(e.element_type, e.print_enabled) for e in back.elements])
 
+# --- new elements land on the label even when it's too small for their
+#     default offset, rather than off the edge where nothing can reach them
+small = Document(60, 60)
+added = [small.add_text_element('hi'), small.add_frame_element(),
+         small.add_barcode_element(), small.add_image_element('unused.png')]
+on_label = [(0 <= el.x and 0 <= el.y
+             and el.x + el.width <= small.label_width
+             and el.y + el.height <= small.label_height) for el in added]
+check("a new element on a small label stays within its bounds",
+      all(on_label), [(el.x, el.y, el.width, el.height) for el in added])
+
+# the barcode's default y (250) overshoots a label this short; it should be
+# moved up to fit at full size, not trimmed down to a sliver at the bottom
+natural_barcode_height = BarcodeElement(50, 250).height
+roomy = Document(400, 300)
+placed_barcode = roomy.add_barcode_element()
+check("a barcode that overshoots a short label is repositioned, not trimmed",
+      placed_barcode.height == natural_barcode_height
+      and placed_barcode.y + placed_barcode.height == roomy.label_height,
+      (placed_barcode.y, placed_barcode.height, natural_barcode_height))
+
 # --- full round trip against the reference sample ---------------------------
 orig = open(str(Path(__file__).resolve().parent / 'fixtures' / 'sample_300dpi.zpl')).read()
 d1, dpi1 = zpl_parser.parse_zpl(orig); d1.dpi = dpi1
