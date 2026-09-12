@@ -126,6 +126,50 @@ canvas.on_draw(canvas, cairo.Context(surface))
 canvas.band_origin = canvas.band_now = None
 check("a group selection and a rubber band paint without raising", True)
 
+# --- a wrapped block paints its lines where it wraps them -------------------
+# The conformance suite compares ZPL, and the ZPL for a block is right whether
+# or not the canvas draws it wrapped - which is how a block came to print
+# wrapped while the designer showed it as one line running off the label. So
+# this measures the ink: it has to stay inside the block the element claims.
+
+from zplcore.model import FieldBlock
+
+block_el = document.add_text_element(
+    "The quick brown fox jumps over the lazy dog again and again")
+block_el.x, block_el.y = 20, 20
+block_el.font_height, block_el.font_width = 30, 30
+block_el.font_path, block_el.font_family = None, None   # the toy-font fallback
+block_el.block = FieldBlock(300, 6, 0, 'L', 0)
+document.sync_text_width(block_el)
+
+surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 812, 400)
+context = cairo.Context(surface)
+context.set_source_rgb(1, 1, 1)
+context.paint()
+canvas._draw_text_element(context, block_el, False)
+
+data, stride = surface.get_data(), surface.get_stride()
+right = bottom = -1
+for y in range(400):
+    row = data[y * stride:(y + 1) * stride]
+    for x in range(812):
+        if row[4 * x] < 100 and row[4 * x + 1] < 100 and row[4 * x + 2] < 100:
+            right, bottom = max(right, x), max(bottom, y)
+
+# The glyphs may overhang the block slightly - the fallback face is stretched
+# to the width the printer will use, not measured at it - but a line that did
+# not wrap runs to the edge of the label, and a block drawn as one line is one
+# line tall rather than six.
+check("a block's ink stays within the wrap width",
+      0 < right <= block_el.x + block_el.block.width + 20,
+      f"ink reaches x={right}, block ends at {block_el.x + block_el.block.width}")
+check("and fills the lines it wraps into, rather than drawing one of them",
+      bottom > block_el.y + 3 * block_el.font_height,
+      f"ink reaches y={bottom}, six lines end at "
+      f"{block_el.y + 6 * block_el.font_height}")
+
+document.elements.remove(block_el)
+
 # --- the resolution a rescale is measured against ---------------------------
 # Called with no argument, _offer_dpi_rescale is settling the open design
 # against a resolution that changed underneath it, so the design's own dpi is

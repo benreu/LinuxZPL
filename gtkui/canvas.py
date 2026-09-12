@@ -488,6 +488,7 @@ class DesignCanvas(Gtk.DrawingArea):
             context.save()
             context.translate(2, element.font_height - 2)
             context.scale(horizontal_scale, 1.0)
+            context.move_to(0, 0)      # draw from here, not from a stale point
             context.show_text(element.text[:20])
             context.restore()
 
@@ -519,6 +520,12 @@ class DesignCanvas(Gtk.DrawingArea):
                 context.save()
                 context.translate(x, row * step + element.font_height - 2)
                 context.scale(max(1.0, measure(piece)) / drawn, 1.0)
+                # show_text() draws from the current point, and the current
+                # point is part of the path, which save/restore does not carry.
+                # Without this every line after the first carried on from the
+                # end of the one before, so a block drew as one long line off
+                # the side of the label while the print wrapped.
+                context.move_to(0, 0)
                 context.show_text(piece)
                 context.restore()
 
