@@ -20,7 +20,7 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QPushButton, QSpinBox, QDoubleSpinBox,
                                QVBoxLayout, QWidget)
 
-from zplcore import fonts as zpl_fonts, textraster
+from zplcore import fields as zpl_fields, fonts as zpl_fonts, textraster
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
                            BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
                            FRAME_COLOURS, ORIENTATIONS,
@@ -207,6 +207,47 @@ def choose_font_family(parent, current_family=None, title="Choose Font"):
 
 # --- element editing --------------------------------------------------------
 
+def _field_number_rows(form, element):
+    """The ^FN controls, identical for text and for a barcode.
+
+    A field either prints a literal or takes its data from a numbered field the
+    printer fills in, so this is a tick rather than a number that has to mean
+    "none" - 0 is a field number ZPL allows.
+    """
+    check = QCheckBox("Data comes from a numbered field (^FN)")
+    check.setObjectName("variable")
+    check.setChecked(element.field_number is not None)
+    form.addRow("Variable:", check)
+
+    number = QSpinBox()
+    number.setObjectName("field_number")
+    number.setRange(0, zpl_fields.MAX_NUMBER)
+    number.setValue(element.field_number or 0)
+    form.addRow("Field Number:", number)
+
+    prompt = QLineEdit(element.field_prompt or '')
+    prompt.setObjectName("field_prompt")
+    prompt.setPlaceholderText("shown on the canvas and on a printer keypad")
+    form.addRow("Field Name:", prompt)
+
+    def sync():
+        number.setEnabled(check.isChecked())
+        prompt.setEnabled(check.isChecked())
+
+    sync()
+    check.stateChanged.connect(sync)
+
+    def apply_to(target):
+        if check.isChecked():
+            target.field_number = number.value()
+            target.field_prompt = prompt.text() or None
+        else:
+            target.field_number = None
+            target.field_prompt = None
+
+    return apply_to
+
+
 def edit_text_dialog(parent, element: TextElement, document: Document,
                      on_accept=None) -> QDialog:
     """Edit a text element. `on_accept` runs once OK has changed it."""
@@ -317,6 +358,8 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     indent_spin.setValue(block.indent)
     form.addRow("Indent:", indent_spin)
 
+    apply_field_number = _field_number_rows(form, element)
+
     block_fields = (block_width, max_lines, spacing_spin, justify_combo,
                     indent_spin)
 
@@ -368,6 +411,9 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
                 element.font_path = None
                 element.font_family = None
                 element.printer_font_name = None
+        apply_field_number(element)
+        # Last, because the box is measured from what the canvas will draw, and
+        # that is the placeholder once the field is a numbered one.
         document.sync_text_width(element)
 
     return _show_editor(dialog, _apply, on_accept)
@@ -495,6 +541,8 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         if element.mode in [c for _l, c in BARCODE_MODES] else 0)
     form.addRow("Mode:", mode_combo)
 
+    apply_field_number = _field_number_rows(form, element)
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
@@ -505,6 +553,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         element.show_text, element.text_above = text_combo.currentData()
         element.check_digit = check_combo.currentData()
         element.mode = mode_combo.currentData()
+        apply_field_number(element)
         if element.show_text:
             # With the line switched on, name the font it prints in rather than
             # leaving it to whatever the printer happens to have selected.

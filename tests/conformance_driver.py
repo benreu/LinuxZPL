@@ -37,6 +37,11 @@ FIXTURE_PARTIAL = ROOT / 'tests' / 'fixtures' / 'partial_font.zpl'
 # A logo in the encoding label software actually sends: :Z64: rather than the
 # uncompressed hex this designer writes
 FIXTURE_COMPRESSED = ROOT / 'tests' / 'fixtures' / 'compressed_logo.zpl'
+# A stored format and the recall call that fills it in - the manual's own p51
+# example, plus one whose fields name themselves and share a number.
+FIXTURE_STORED = ROOT / 'tests' / 'fixtures' / 'stored_format.zpl'
+FIXTURE_RECALL = ROOT / 'tests' / 'fixtures' / 'recall_format.zpl'
+FIXTURE_NAMED = ROOT / 'tests' / 'fixtures' / 'named_fields.zpl'
 
 # A font every step can rely on; text width is the most divergence-prone rule,
 # so the sequence exercises the measured path as well as the fixed-width one.
@@ -144,6 +149,11 @@ class GtkDriver:
         self.canvas.sync_text_width(element)
 
     def resync(self, element):
+        self.canvas.sync_text_width(element)
+
+    def set_field_number(self, element, number, prompt=None):
+        element.field_number = number
+        element.field_prompt = prompt
         self.canvas.sync_text_width(element)
 
     def resync_barcode(self, element):
@@ -360,6 +370,11 @@ class QtDriver:
         self.document.sync_text_width(element)
 
     def resync(self, element):
+        self.document.sync_text_width(element)
+
+    def set_field_number(self, element, number, prompt=None):
+        element.field_number = number
+        element.field_prompt = prompt
         self.document.sync_text_width(element)
 
     def resync_barcode(self, element):
@@ -781,6 +796,25 @@ def sequence(driver, record):
     record('load a file whose ^A leaves its sizes off')
     driver.load(FIXTURE_COMPRESSED)
     record('load a file whose logo is :Z64: compressed')
+
+    # A stored format and its recall call. The template's ^FN fields carry no
+    # data of their own, and the recall call carries nothing but data, so
+    # between them they cover both halves of what ^FN means.
+    driver.load(FIXTURE_STORED)
+    record('load the manual\'s own ^DF stored format')
+    driver.load(FIXTURE_NAMED)
+    record('load a stored format whose fields name themselves')
+    driver.load(FIXTURE_RECALL)
+    record('load an ^XF recall call, which is data and no geometry')
+
+    # Turning a literal field into a variable one has to reach the file the same
+    # way in both frontends: a ^FN where the ^FD used to be.
+    driver.load(FIXTURE_NAMED)
+    _variable = driver.add_text('becomes variable')
+    driver.set_field_number(_variable, 12, 'Batch')
+    record('make a field variable')
+    driver.set_field_number(_variable, None, None)
+    record('and back to a literal')
 
 
 def main():

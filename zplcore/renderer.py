@@ -7,7 +7,7 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
-from . import geometry, graphics, parser, textraster
+from . import fields, geometry, graphics, parser, textraster
 from .model import BarcodeElement, FieldBlock, FrameElement, TextElement
 
 
@@ -297,6 +297,9 @@ class ZPLRenderer:
         self.default_font = dict(parser.DEFAULT_FONT)
         self.typeset = False
         self.unsupported_field = False
+        # ^FN's data can be declared after the field that uses it, so the table
+        # is built in a pass of its own before anything is drawn.
+        self.fields = parser.read_field_table(parser.tokenise(zpl_content))
         
         # Parse and execute ZPL commands
         self._execute_zpl(zpl_content)
@@ -382,6 +385,15 @@ class ZPLRenderer:
         elif command == 'FD':
             # Field data: ^FD<data>
             self.field_data = params
+        elif command == 'FN':
+            # A numbered field prints whatever its ^FN#^FD pair gave it, and
+            # nothing at all when no pair did - the printer substitutes at print
+            # time, so there is nothing to preview yet. That is the one place
+            # the preview and the canvas differ on purpose: the canvas shows the
+            # placeholder because it answers "what am I editing".
+            read = fields.read(params)
+            if read is not None:
+                self.field_data = self.fields.value(read[0]) or ''
         elif command[0] == 'A':
             # ^A<font><orientation>,h,w - ^A0 is the scalable font most other
             # tools use, ^AF one of the bitmap fonts, ^A@ one downloaded to the

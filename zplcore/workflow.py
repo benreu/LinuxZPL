@@ -180,8 +180,12 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # encoding was dropped without a word.
 # ^GF is absent deliberately: whether one can be read depends on how its data
 # is encoded, so unsupported_commands() asks zplcore.graphics per field.
+# ^FN, ^FV, ^DF and ^XF are the stored-format family, modelled since a
+# template's variable fields became real placeholders rather than either
+# vanishing or being handed an invented value.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^FB',
-            '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF'}
+            '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
+            '^FN', '^FV', '^DF', '^XF'}
 
 
 def unsupported_commands(zpl_content: str) -> list:

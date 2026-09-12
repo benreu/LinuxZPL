@@ -13,6 +13,7 @@ import base64
 import configparser
 import socket
 from pathlib import Path
+from zplcore import fields as zpl_fields
 from zplcore import fonts as zpl_fonts
 from zplcore import model
 from zplcore import parser as zpl_parser
@@ -65,6 +66,44 @@ def _make_spin(value, lower, upper):
                                        upper=upper, step_increment=1))
     spin.set_numeric(True)
     return spin
+
+
+def _make_field_number_rows(content, element, label_width: int = 130):
+    """The ^FN controls, identical for text and for a barcode.
+
+    A field either prints a literal or takes its data from a numbered field the
+    printer fills in, so this is a tick rather than a number that has to mean
+    "none" - 0 is a field number ZPL allows. Returns the function that applies
+    them, so the two editors cannot disagree about what OK does.
+    """
+    check = Gtk.CheckButton(label="Data comes from a numbered field (^FN)")
+    check.set_active(element.field_number is not None)
+    _make_row(content, "Variable:", check, label_width)
+
+    number = _make_spin(element.field_number or 0, 0, zpl_fields.MAX_NUMBER)
+    _make_row(content, "Field Number:", number, label_width)
+
+    prompt = Gtk.Entry()
+    prompt.set_text(element.field_prompt or '')
+    prompt.set_placeholder_text("shown on the canvas and on a printer keypad")
+    _make_row(content, "Field Name:", prompt, label_width)
+
+    def on_toggled(button):
+        number.set_sensitive(button.get_active())
+        prompt.set_sensitive(button.get_active())
+
+    on_toggled(check)
+    check.connect("toggled", on_toggled)
+
+    def apply_to(target):
+        if check.get_active():
+            target.field_number = int(number.get_value())
+            target.field_prompt = prompt.get_text() or None
+        else:
+            target.field_number = None
+            target.field_prompt = None
+
+    return apply_to
 
 
 def _make_combo(choices, current):
@@ -1717,6 +1756,8 @@ class ZPLViewerWindow(Gtk.Window):
             indent_spin = _make_spin(block.indent, 0, 2000)
             make_row("Indent:", indent_spin)
 
+            apply_field_number = _make_field_number_rows(content, element)
+
             block_fields = (block_width_spin, max_lines_spin, spacing_spin,
                             justify_combo, indent_spin)
 
@@ -1777,6 +1818,12 @@ class ZPLViewerWindow(Gtk.Window):
                             element.printer_font_name = None
                             self.design_canvas.queue_draw()
 
+                    apply_field_number(element)
+                    # Last, because the box is measured from what the canvas will
+                    # draw, and that is the placeholder once the field is a
+                    # numbered one.
+                    self.design_canvas.document.sync_text_width(element)
+
                     self.on_canvas_changed()
 
                 _dialog.destroy()
@@ -1832,6 +1879,8 @@ class ZPLViewerWindow(Gtk.Window):
                                                 element.mode)
             make_row("Mode:", mode_combo)
 
+            apply_field_number = _make_field_number_rows(content, element)
+
             content.show_all()
 
             def on_response(_dialog, response):
@@ -1841,6 +1890,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.module_width = int(module_spin.get_value())
                     element.orientation = orientation_codes[orientation_combo.get_active()]
                     element.show_text, element.text_above = text_codes[text_combo.get_active()]
+                    apply_field_number(element)
                     element.check_digit = check_codes[check_combo.get_active()]
                     element.mode = mode_codes[mode_combo.get_active()]
                     if element.show_text:

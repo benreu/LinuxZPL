@@ -1,0 +1,8 @@
+^XA
+^XFR:SAMPLE.GRF
+^FN1^FDAcme Printing^FS
+^FN2^FD14042^FS
+^FN3^FDScrew^FS
+^FN4^FD12345678^FS
+^FN5^FDMacks Fabricating^FS
+^XZ

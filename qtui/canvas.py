@@ -271,7 +271,7 @@ class DesignCanvas(QWidget):
             # A ^FB block is rasterised at its printed size, wrapped and
             # justified, so nothing further is scaled here.
             wrapped = to_qimage(textraster.raster_block(
-                element.text, font_path, element.font_height,
+                self.document.display_text(element), font_path, element.font_height,
                 element.font_width, block)) if font_path else None
             if wrapped is not None:
                 painter.drawImage(QPointF(0, 0), wrapped)
@@ -283,7 +283,8 @@ class DesignCanvas(QWidget):
             return
         if font_path:
             raster = to_qimage(
-                textraster.raster(element.text, font_path, element.font_height))
+                textraster.raster(self.document.display_text(element),
+                                  font_path, element.font_height))
 
         if raster is not None:
             # The printer scales the em square to font_width x font_height.
@@ -322,7 +323,7 @@ class DesignCanvas(QWidget):
         measure, _font = textraster.measurer(font_path, element.font_height,
                                              element.font_width)
         step = textraster.pitch(element.font_height, block)
-        marked = textraster.wrap_marked(element.text, font_path,
+        marked = textraster.wrap_marked(self.document.display_text(element), font_path,
                                         element.font_height, element.font_width,
                                         block)
         for row, (line, last) in enumerate(marked):
@@ -341,7 +342,8 @@ class DesignCanvas(QWidget):
         font.setPixelSize(max(1, element.font_height))
         painter.setFont(font)
         metrics = QFontMetricsF(font)
-        measured = metrics.horizontalAdvance(element.text) or 1.0
+        shown = self.document.display_text(element)
+        measured = metrics.horizontalAdvance(shown) or 1.0
 
         if font_path:
             h_scale = element.font_width / max(1, element.font_height)
@@ -356,7 +358,7 @@ class DesignCanvas(QWidget):
         painter.setPen(QColor(0, 0, 0))
         painter.translate(2, element.font_height - 2)
         painter.scale(h_scale, 1.0)
-        painter.drawText(QPointF(0, 0), element.text)
+        painter.drawText(QPointF(0, 0), shown)
         painter.restore()
 
     # --- frame ---------------------------------------------------------------

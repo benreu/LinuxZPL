@@ -363,7 +363,7 @@ class DesignCanvas(Gtk.DrawingArea):
             # A ^FB block is rasterised at its printed size, wrapped and
             # justified, so nothing further is scaled here.
             pixbuf = to_pixbuf(textraster.raster_block(
-                element.text, font_path, element.font_height,
+                self.document.display_text(element), font_path, element.font_height,
                 element.font_width, block))
             if not pixbuf:
                 return False
@@ -374,7 +374,8 @@ class DesignCanvas(Gtk.DrawingArea):
             return True
 
         pixbuf = to_pixbuf(
-            textraster.raster(element.text, font_path, element.font_height))
+            textraster.raster(self.document.display_text(element),
+                              font_path, element.font_height))
         if not pixbuf:
             return False
 
@@ -481,7 +482,8 @@ class DesignCanvas(Gtk.DrawingArea):
         elif not pil_rendered:
             context.select_font_face(element.font_family or self.font_family or "monospace")
             context.set_font_size(element.font_height)
-            extents = context.text_extents(element.text[:20])
+            shown = self.document.display_text(element)[:20]
+            extents = context.text_extents(shown)
             if font_path:
                 horizontal_scale = element.font_width / max(1, element.font_height)
             else:
@@ -495,7 +497,7 @@ class DesignCanvas(Gtk.DrawingArea):
             context.translate(2, element.font_height - 2)
             context.scale(horizontal_scale, 1.0)
             context.move_to(0, 0)      # draw from here, not from a stale point
-            context.show_text(element.text[:20])
+            context.show_text(shown)
             context.restore()
 
         context.restore()
@@ -517,7 +519,7 @@ class DesignCanvas(Gtk.DrawingArea):
         measure, _font = textraster.measurer(font_path, element.font_height,
                                              element.font_width)
         step = textraster.pitch(element.font_height, block)
-        marked = textraster.wrap_marked(element.text, font_path,
+        marked = textraster.wrap_marked(self.document.display_text(element), font_path,
                                         element.font_height, element.font_width,
                                         block)
         for row, (line, last) in enumerate(marked):

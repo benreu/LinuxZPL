@@ -1762,6 +1762,120 @@ check("the preview draws the inherited width too",
       ink is not None and ink[2] >= 400, ink)
 
 
+
+# --- stored formats: ^FN as a real variable field ---------------------------
+# A ^DF template is a normal design whose variable fields carry ^FN instead of
+# ^FD. Those fields used to vanish, and a ^FN barcode field was handed the
+# string "123456789" by a fallback meant for newly created barcodes - so the
+# designer invented label content and wrote it to disk.
+
+from zplcore import fields as zpl_fields
+
+# The manual's canonical example, p51, kept verbatim: it is ground truth for
+# what a stored format is, published rather than inferred.
+_stored = (FIXTURES / 'stored_format.zpl').read_text()
+_doc = zpl_parser.parse_zpl(_stored)[0]
+check("a ^DF names the format the file describes",
+      _doc.stored_format == 'R:SAMPLE.GRF', _doc.stored_format)
+check("the manual's template opens as all thirteen of its fields",
+      len(_doc.elements) == 13, len(_doc.elements))
+check("and its four ^FN text fields are numbered, not dropped",
+      [e.field_number for e in _doc.elements
+       if getattr(e, 'field_number', None) is not None] == [1, 2, 3, 5],
+      [getattr(e, 'field_number', None) for e in _doc.elements])
+_saved = _doc.to_zpl()
+check("every ^FN is written back",
+      [l for l in _saved.split('\n') if '^FN' in l]
+      == ['^FN1^FS', '^FN2^FS', '^FN3^FS', '^FN5^FS'],
+      [l for l in _saved.split('\n') if '^FN' in l])
+check("and the ^DF comes straight after the ^XA, as ZPL requires",
+      _saved.split('\n')[:2] == ['^XA', '^DFR:SAMPLE.GRF^FS'],
+      _saved.split('\n')[:2])
+
+# The defect that mattered most: a value that appears nowhere in the source.
+check("no ^FN field is handed an invented value",
+      '123456789' not in _saved, 
+      [l for l in _saved.split('\n') if '123456789' in l])
+_bc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^BY3^BCN,100^FN4^FS^XZ")[0].elements[0]
+check("a ^FN barcode field is a barcode with no value of its own",
+      _bc.element_type == 'barcode' and _bc.barcode_value == ''
+      and _bc.field_number == 4,
+      (_bc.element_type, _bc.barcode_value, _bc.field_number))
+
+# A recall call is data, not geometry. Opening one used to empty the file.
+_recall = (FIXTURES / 'recall_format.zpl').read_text()
+_rdoc = zpl_parser.parse_zpl(_recall)[0]
+check("an ^XF is recorded", _rdoc.recalls == ['R:SAMPLE.GRF'], _rdoc.recalls)
+check("nothing is drawn for it, because the geometry is on the printer",
+      not _rdoc.elements, [e.element_type for e in _rdoc.elements])
+check("all five of its values are read",
+      _rdoc.fields.pairs() == [(1, 'Acme Printing'), (2, '14042'),
+                               (3, 'Screw'), (4, '12345678'),
+                               (5, 'Macks Fabricating')],
+      _rdoc.fields.pairs())
+_rsaved = _rdoc.to_zpl()
+check("and the whole call is written back rather than emptied",
+      '^XFR:SAMPLE.GRF' in _rsaved
+      and all(f'^FN{n}^FD' in _rsaved for n in (1, 2, 3, 4, 5)),
+      _rsaved)
+
+# ZPL's sharing rule: "the data in that field prints for any other field
+# containing the same ^FN value."
+_named = (FIXTURES / 'named_fields.zpl').read_text()
+_ndoc = zpl_parser.parse_zpl(_named)[0]
+_shown = [_ndoc.display_text(e) for e in _ndoc.elements]
+check("a field with no value shows the name it gave itself",
+      _shown[0] == '\u00abCustomer\u00bb', _shown)
+check("one ^FN value reaches every field sharing the number",
+      _shown[1] == 'A-1000' and _shown[2] == 'A-1000', _shown)
+check("an unnamed, unvalued field still shows its number",
+      zpl_fields.FieldTable().display(4) == '\u00abFN4\u00bb',
+      zpl_fields.FieldTable().display(4))
+check("and none of the four is reported as unsupported",
+      workflow.unsupported_commands(_named) == [],
+      workflow.unsupported_commands(_named))
+check("the prompt round-trips in the quotes that make it a prompt",
+      '^FN1"Customer"^FS' in _ndoc.to_zpl(),
+      [l for l in _ndoc.to_zpl().split('\n') if '^FN1' in l])
+
+# ^FV is ^FD for a field the printer clears after printing. Its text used to
+# disappear entirely, element and all.
+_fv = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FVvariable^FS^XZ")[0].elements
+check("^FV no longer loses the field it carries",
+      len(_fv) == 1 and _fv[0].text == 'variable',
+      [(e.element_type, getattr(e, 'text', None)) for e in _fv])
+
+# The box has to match what is drawn, or a visible placeholder cannot be
+# clicked on the element it belongs to.
+_ph = zpl_parser.parse_zpl(
+    "^XA^PW406^LL203^FO20,20^A0N,30,30^FN2\"Part number\"^FS^XZ")[0]
+check("a placeholder's box is measured from what the canvas shows",
+      _ph.elements[0].width > 100, _ph.elements[0].width)
+
+# The one deliberate divergence: the canvas shows the placeholder because it
+# answers "what am I editing"; the preview draws nothing because it answers
+# "what will print", and an unfilled ^FN prints nothing.
+_unfilled = "^XA^PW300^LL200^FO20,20^A0N,30,30^FN2\"Part number\"^FS^XZ"
+check("the preview draws no ink for an unfilled ^FN",
+      _preview_ink(_unfilled, 300, 200) is None,
+      _preview_ink(_unfilled, 300, 200))
+_filled = ("^XA^PW300^LL200^FO20,20^A0N,30,30^FN2\"Part number\"^FS"
+           "^FN2^FDFilled^FS^XZ")
+check("and draws the value once something supplies one",
+      _preview_ink(_filled, 300, 200) is not None,
+      _preview_ink(_filled, 300, 200))
+
+# Undo holds whole documents, so a shared field table would rewrite every entry
+# on the stack - the trap a text element's block already avoids.
+_udoc = zpl_parser.parse_zpl(_named)[0]
+_usnap = _udoc.snapshot()
+_udoc.fields.set_value(7, 'CHANGED')
+_udoc.restore(_usnap)
+check("an undo snapshot does not share the field table",
+      _udoc.fields.value(7) == 'A-1000', _udoc.fields.value(7))
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

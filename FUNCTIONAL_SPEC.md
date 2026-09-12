@@ -501,6 +501,12 @@ chooser rather than a form, and stays modal.
   editor's Width and Height will undo a resize made behind it.
 - The font chooser opened from Edit Text is modal to that editor alone, not to
   the application.
+- **Edit Text and Edit Barcode both carry the same three `^FN` rows** — a tick
+  for "data comes from a numbered field", the number, and the field name — built
+  from one shared helper per frontend so the two editors cannot offer them
+  differently. A tick rather than a number meaning "none", because 0 is a field
+  number ZPL allows. The box is re-measured after they are applied, since what
+  the canvas draws changes with them (§8.3).
 
 The remaining dialogs — Label Size, Printer Settings, the file choosers and the
 prompts — are modal.
@@ -599,7 +605,8 @@ path are caret-free and are stored as-is.
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
 `^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
-and the four metadata keys.
+the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), and the four metadata
+keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -849,6 +856,39 @@ was no way to make it stop other than noticing that a save was needed. Keeping
 the dots leaves the elements exactly as the file has them, so that answer
 leaves nothing unsaved.
 
+**A `^FN` field is a variable field, not an empty one.** `^FN#"a"` numbers a
+field whose data the printer supplies at print time, optionally naming it with a
+prompt in double quotes. In a stored format `^FN` stands where `^FD` would; in
+the call that recalls one, `^FN` and `^FD` appear together to supply the data.
+Field numbers are **document-scoped and shared** — ZPL's rule is that a field
+carrying both `^FN` and `^FD` supplies its data to every other field with the
+same number — so the values live on the document rather than on the elements.
+
+Because that data can be declared *after* the field that uses it, the values are
+collected in a pass of their own before any element is built. A recall call is
+nothing but such declarations.
+
+| Written | Opens as | Saves as |
+|---|---|---|
+| `^FN1^FS` | a field showing `«FN1»` | `^FN1^FS` |
+| `^FN1"Ship to"^FS` | a field showing `«Ship to»` | `^FN1"Ship to"^FS` |
+| `^FN1"Ship to"^FDAcme^FS` | a field showing `Acme` | `^FN1"Ship to"^FDAcme^FS` |
+| `^FVtext^FS` | a field showing `text` | `^FDtext^FS` |
+
+Requiring `^FD` before building an element discarded **every text field in a
+stored format**, and a `^FN` barcode field was handed the value `123456789` — a
+string that appears nowhere in the file — by a fallback meant for a barcode the
+user has just created. The designer invented label content and then wrote it to
+disk. An element's own text holds only a literal the file actually gave; what
+the canvas draws is derived, so a prompt can never be written back as data.
+
+**`^DF` is written immediately after `^XA`**, because ZPL stores everything
+following it rather than printing it — anything emitted in between would be left
+out of the format being saved. **An `^XF` recall call round-trips as data**: the
+references and the `^FN`/`^FD` pairs are re-emitted, and nothing is drawn,
+because the geometry it fills lives on the printer. Opening one used to empty
+the file.
+
 **Barcodes cannot rescale exactly.** Module width is a whole number of dots, so
 a module of 2 becomes 3 rather than 2.96 going from 203 to 300 dpi — a width
 error of up to half a dot per module. Positions and heights scale exactly.
@@ -1053,6 +1093,11 @@ rather than requirements:
   two dots. ZPL does not document its own spacing.
 - **`^FB`'s indent is applied to every line**, where ZPL hangs it on the second
   and later ones. The parameter round-trips; only where it lands differs.
+- **The canvas shows a `^FN` placeholder; the preview does not.** The canvas
+  answers "what am I editing", so an unfilled variable field draws its prompt or
+  its number rather than becoming invisible. The preview answers "what will
+  print", and an unfilled `^FN` prints nothing until the printer substitutes for
+  it, so it draws no ink. This is the one place the two deliberately disagree.
 - **A `^BC` with no height and no `^BY` to inherit one from is drawn 100 dots
   tall.** ZPL's power-up default is 10, which a printer would honour and which
   would make such a barcode a hairline on the canvas. A `^BY` that does give a
