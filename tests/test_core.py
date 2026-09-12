@@ -9,7 +9,7 @@ from PySide2.QtGui import QImage
 from PySide2.QtCore import Qt, QPoint, QEvent
 from PySide2.QtGui import QMouseEvent
 
-from zplcore import fonts as zpl_fonts, geometry, parser as zpl_parser, geometry
+from zplcore import fonts as zpl_fonts, geometry, parser as zpl_parser, textraster
 from zplcore import model as zpl_model
 from zplcore.model import Document, TextElement, BarcodeElement, FrameElement, ImageElement
 from zplcore.renderer import ZPLRenderer
@@ -318,6 +318,156 @@ geometry.resize_by_handle(w.document, big, 'br', 99999, 99999)
 check("resize clamps to the label",
       big.x + big.width <= w.document.label_width and big.y + big.height <= w.document.label_height)
 
+# A drag arrives as a stream of small deltas, and a resize snaps the box back to
+# what it will print. Measured from the previous event, every delta smaller than
+# that snap is discarded and a slow drag moves nothing at all - which is what a
+# pointer produces and what a single scripted resize can never show. So the same
+# distance is dragged both ways and the two must land in the same place.
+def drag_slowly(document, element, handle, dx, dy, steps=20):
+    """The same gesture a pointer makes: one press, then many small motions."""
+    origin = geometry.resize_origin(element)
+    for step in range(1, steps + 1):
+        geometry.resize_by_handle(document, element, handle,
+                                  dx * step // steps, dy * step // steps,
+                                  origin=origin)
+
+def box_of(element):
+    return (element.x, element.y, element.width, element.height)
+
+def dragged_both_ways(build, handle, dx, dy):
+    """The same drag delivered both ways, on two copies of the one element."""
+    slow_doc, slow_el = build()
+    drag_slowly(slow_doc, slow_el, handle, dx, dy)
+    fast_doc, fast_el = build()
+    geometry.resize_by_handle(fast_doc, fast_el, handle, dx, dy)
+    return (slow_el, fast_el)
+
+def plain_text():
+    document = Document(812, 1218, dpi=203)
+    element = document.add_text_element('Stretch')
+    element.font_path = FONT
+    document.sync_text_width(element)
+    return document, element
+
+def wrapped_text():
+    document = Document(812, 1218, dpi=203)
+    element = document.add_text_element(
+        'one two three four five six seven eight nine ten eleven twelve')
+    element.font_path = FONT
+    # Long enough at this width to fill the allowance, so the block is showing
+    # every line it is allowed and a drag upward has one to cut.
+    element.block = zpl_model.FieldBlock(300, 4)
+    document.sync_text_width(element)
+    return document, element
+
+def a_barcode():
+    document = Document(812, 1218, dpi=203)
+    return document, document.add_barcode_element()
+
+for name, build, handle, dx, dy in (
+        ("a text element's width", plain_text, 'mr', 120, 0),
+        ("a text element's corner", plain_text, 'br', 90, 40),
+        ("a barcode's width", a_barcode, 'mr', 200, 0),
+        ("a block's line count", wrapped_text, 'bm', 0, -80)):
+    slow, fast = dragged_both_ways(build, handle, dx, dy)
+    check(f"dragging {name} slowly lands where dragging it fast does",
+          box_of(slow) == box_of(fast), (box_of(slow), box_of(fast)))
+
+# Landing in the same place is only worth something if the place moved: two
+# drags that both did nothing would agree perfectly.
+_unmoved_doc, unmoved = plain_text()
+widened, _fast = dragged_both_ways(plain_text, 'mr', 120, 0)
+check("a slow drag of a text element's width actually widens it",
+      widened.width > unmoved.width, (unmoved.width, widened.width))
+
+# The bottom handle of a block asks for a line count, and the block keeps every
+# line it is left with. Recomputed from a height that had already snapped back,
+# it collapsed to one line on the first motion event of any drag at all.
+doc_block, block_el = wrapped_text()
+pitch = textraster.pitch(block_el.font_height, block_el.block)
+lines_before = block_el.height // pitch
+drag_slowly(doc_block, block_el, 'bm', 0, -pitch)
+check("a slow drag of the bottom handle cuts one line, not all of them",
+      block_el.height // pitch == lines_before - 1
+      and block_el.block.max_lines == lines_before - 1,
+      (lines_before, block_el.height // pitch, block_el.block.max_lines))
+
+# A block's box is its wrap, so the height snaps back after every event. The top
+# handle has to resize against that, not carry the element along with it.
+doc_top, top_el = wrapped_text()
+bottom_before = top_el.y + top_el.height
+drag_slowly(doc_top, top_el, 'tm', 0, top_el.font_height)
+check("the top handle of a block resizes it rather than moving it",
+      top_el.y + top_el.height == bottom_before and top_el.y > 0,
+      (top_el.y, top_el.height, bottom_before))
+
+# At a quarter turn the height is the run of the text, not its font height. The
+# barcode branch transposes; the text branch used to read the height either way,
+# which set the font to the length of the string the moment a rotated element
+# was dragged.
+rot_doc = Document(812, 1218, dpi=203)
+rot = rot_doc.add_text_element('Turned'); rot.font_path = FONT
+rot.orientation = 'R'; rot_doc.sync_text_width(rot)
+was_height, was_width = rot.font_height, rot.font_width
+geometry.resize_by_handle(rot_doc, rot, 'br', 10, 40)
+check("a rotated text element takes its font height across the text, not along it",
+      rot.font_height == was_height + 10 and rot.font_width > was_width,
+      (was_height, rot.font_height, was_width, rot.font_width))
+check("a rotated text box stays transposed after a resize",
+      rot.height == rot.printed_width(rot_doc.font_path)
+      and rot.width == rot.font_height, (rot.width, rot.height))
+
+# The canvas has to hand the geometry the box from the press. Everything above
+# proves the geometry is right when it is given one; this drives the real
+# press/motion/release path, because a canvas that went back to measuring from
+# the previous event would pass every check above and still lose the drag.
+def pointer_drag(canvas, from_x, from_y, dx, dy, steps=8):
+    """Press, move in steps and release, in label dots."""
+    scale = canvas._scale()
+    def at(lx, ly, kind):
+        return QMouseEvent(kind, QPoint(int(lx * scale), int(ly * scale)),
+                           Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    canvas.last_click_time = 0
+    canvas.last_click_element = None
+    canvas.mousePressEvent(at(from_x, from_y, QEvent.MouseButtonPress))
+    for step in range(1, steps + 1):
+        canvas.mouseMoveEvent(at(from_x + dx * step / steps,
+                                 from_y + dy * step / steps, QEvent.MouseMove))
+    canvas.mouseReleaseEvent(at(from_x + dx, from_y + dy,
+                                QEvent.MouseButtonRelease))
+
+pdoc = Document(812, 1218, dpi=203)
+ptext = pdoc.add_text_element('Stretch'); ptext.font_path = FONT
+pdoc.sync_text_width(ptext)
+pcanvas = qt_canvas.DesignCanvas(pdoc)
+pcanvas.set_view_size(812, 1218)
+pcanvas.set_zoom(1.0)
+pdoc.select(ptext)
+expected_doc = Document(812, 1218, dpi=203)
+expected = expected_doc.add_text_element('Stretch'); expected.font_path = FONT
+expected_doc.sync_text_width(expected)
+geometry.resize_by_handle(expected_doc, expected, 'br', 60, 24)
+corner = geometry.handles(ptext)['br']
+pointer_drag(pcanvas, corner[0], corner[1], 60, 24)
+check("a handle dragged with the pointer lands where the geometry says",
+      (ptext.width, ptext.height, ptext.font_height, ptext.font_width) ==
+      (expected.width, expected.height, expected.font_height, expected.font_width),
+      ((ptext.width, ptext.height, ptext.font_height, ptext.font_width),
+       (expected.width, expected.height, expected.font_height, expected.font_width)))
+
+# Zoomed out the hit radius grows past half a text element's height - its height
+# being its font height - so the hit squares overlap. The nearest handle has to
+# win, or the bottom corners answer for the side handles and the user grabs one
+# edge while another moves.
+short = TextElement(50, 50, 'Label')
+short.width, short.height = 100, 36
+for zoom in (1.0, 0.5, 0.25, 0.2):
+    misrouted = {name: geometry.handle_at_point(hx, hy, short, zoom)
+                 for name, (hx, hy) in geometry.handles(short).items()
+                 if geometry.handle_at_point(hx, hy, short, zoom) != name}
+    check(f"at {zoom:g}x every handle of a short element answers for itself",
+          not misrouted, misrouted)
+
 # --- save/load through the window ------------------------------------------
 tmp = tempfile.mkdtemp()
 path = os.path.join(tmp, 'out.zpl')
@@ -422,7 +572,6 @@ for name, source in (('product', product), ('serial', serial)):
           f"{original} != {written}")
 
 # ^FB wrapping, measured with the metrics the box is derived from
-from zplcore import textraster
 from zplcore.model import FieldBlock
 block = FieldBlock(182, 4, 1, 'C', 0)
 lines = textraster.wrap("Stainless Steel Hex Head Bolt 10mm", FONT, 40, 40, block)

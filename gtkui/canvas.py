@@ -109,6 +109,11 @@ class DesignCanvas(Gtk.DrawingArea):
         self.last_click_time = 0
         self.last_click_element = None
         self.active_handle: Optional[str] = None  # which handle is being dragged
+        # The box the element had when a resize started. A resize is measured
+        # from here rather than from the previous motion event, because the box
+        # snaps back to what the text or the symbol will print and a delta
+        # smaller than that snap would be thrown away every event.
+        self.resize_origin: Optional[dict] = None
         # A rubber band being dragged over empty canvas: where it started and
         # where the pointer is now, both in dots, and whether it adds to the
         # selection rather than replacing it.
@@ -190,6 +195,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self.document = document
         self.drag_start = None
         self.active_handle = None
+        self.resize_origin = None
         self.last_click_element = None
         self.band_origin = self.band_now = None
         self.sync_size()
@@ -808,6 +814,7 @@ class DesignCanvas(Gtk.DrawingArea):
                                              self._scale())
             if handle:
                 self.active_handle = handle
+                self.resize_origin = geometry.resize_origin(self.selected_element)
                 self.drag_start = (lx, ly)
                 return
 
@@ -862,6 +869,7 @@ class DesignCanvas(Gtk.DrawingArea):
                 return
             self.drag_start = None
             self.active_handle = None
+            self.resize_origin = None
             # a drag is one change, reported once it finishes, so that it is
             # one undo step rather than one per motion event
             if self._drag_changed:
@@ -947,14 +955,17 @@ class DesignCanvas(Gtk.DrawingArea):
         
         # If a handle is active, resize instead of move
         if self.active_handle:
+            # Measured from the press, so the whole drag is still in the delta
+            # after the box has snapped back to its printed size.
             geometry.resize_by_handle(self.document, self.selected_element,
-                                      self.active_handle, dx, dy)
+                                      self.active_handle, dx, dy,
+                                      origin=self.resize_origin)
         else:
             # The whole selection moves together, clamped as one box.
             geometry.move_selection(self.document, self.document.selection, dx, dy)
-        
-        # Update drag start for next movement (always update)
-        self.drag_start = (lx, ly)
+            # A move carries on from where the pointer is now; a resize keeps
+            # its press point, which is what its delta is measured from.
+            self.drag_start = (lx, ly)
         
         self._drag_changed = True
         self.queue_draw()

@@ -78,6 +78,11 @@ class DesignCanvas(QWidget):
         self.drag_start = None
         self._drag_changed = False               # a drag moved something
         self.active_handle: Optional[str] = None
+        # The box the element had when a resize started. A resize is measured
+        # from here rather than from the previous motion event, because the box
+        # snaps back to what the text or the symbol will print and a delta
+        # smaller than that snap would be thrown away every event.
+        self.resize_origin: Optional[dict] = None
         # A rubber band being dragged over empty canvas: where it started and
         # where the pointer is now, both in dots, and whether it adds to the
         # selection rather than replacing it.
@@ -95,6 +100,7 @@ class DesignCanvas(QWidget):
         self.document = document
         self.drag_start = None
         self.active_handle = None
+        self.resize_origin = None
         self.last_click_element = None
         self.band_origin = self.band_now = None
         self._sync_size()
@@ -539,6 +545,7 @@ class DesignCanvas(QWidget):
                                              self._scale())
             if handle:
                 self.active_handle = handle
+                self.resize_origin = geometry.resize_origin(doc.selected_element)
                 self.drag_start = (lx, ly)
                 return
 
@@ -601,13 +608,18 @@ class DesignCanvas(QWidget):
         dy = ly - self.drag_start[1]
 
         if self.active_handle:
+            # Measured from the press, so the whole drag is still in the delta
+            # after the box has snapped back to its printed size.
             geometry.resize_by_handle(doc, doc.selected_element,
-                                      self.active_handle, dx, dy)
+                                      self.active_handle, dx, dy,
+                                      origin=self.resize_origin)
         else:
             # The whole selection moves together, clamped as one box.
             geometry.move_selection(doc, doc.selection, dx, dy)
+            # A move carries on from where the pointer is now; a resize keeps
+            # its press point, which is what its delta is measured from.
+            self.drag_start = (lx, ly)
 
-        self.drag_start = (lx, ly)
         self._drag_changed = True
         self.update()
 
@@ -630,6 +642,7 @@ class DesignCanvas(QWidget):
             return
         self.drag_start = None
         self.active_handle = None
+        self.resize_origin = None
         if self._drag_changed:
             # A drag is one change, reported once it finishes, so it is one undo
             # entry rather than one per motion event.

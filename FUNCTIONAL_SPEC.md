@@ -336,16 +336,39 @@ pinned.
   single box to resize, and a handle on each member would offer a drag with
   nowhere to go. A handle is **8 screen pixels**, drawn and hit-tested at
   `8 / scale` dots, so it is the same size to the pointer at every zoom. A handle
-  is hit if the pointer is within that of its centre. While hovering one, the
-  pointer changes to the matching directional resize cursor (`nw-resize`,
+  is hit if the pointer is within that of its centre, and where two are in reach
+  the **nearer one wins**. That radius is wider than the drawn square on purpose,
+  so zoomed out the handles of a short element overlap — and a text element is
+  short by nature, its height being its font height. Answering with the first
+  handle in order would then hand back one the pointer is further from, and the
+  user who grabbed the bottom edge would watch the side move. While hovering one,
+  the pointer changes to the matching directional resize cursor (`nw-resize`,
   `n-resize`, `ne-resize`, `w-resize`, `e-resize`, `sw-resize`, `s-resize`,
   `se-resize`).
-- Resizing enforces a **minimum of 20 × 20 dots**, clamps the element to the
-  label bounds, and then applies per-type rules:
+- **A resize is measured from the press**, not from the previous motion event.
+  The rules below do not store the rectangle they are given: they read a font
+  width, a line count or a module width out of it and snap the box back to what
+  that will print. Against the previous event that snap eats the drag — every
+  motion smaller than one unit of the derived property is computed, snapped away
+  and forgotten, so a slow drag moves nothing while a fast one jumps. Against the
+  press the same snap is harmless, because the next event starts from the box the
+  drag began with. A move is the opposite: it has nothing to snap back to and
+  carries on from wherever the pointer is now.
+- **A box that snaps back grows from the edge the drag left alone.** The derived
+  size is rarely the dragged one, so a top or left handle anchors the opposite
+  edge of the box as it was at the press. Growing from the dragged corner instead
+  walks the element up or along the label, a step per motion event.
+- Resizing enforces a **minimum of 20 × 20 dots** and clamps the element to the
+  label bounds — origin first, then the size against the room left beyond it, so
+  a box dragged larger than the label is cut down rather than pushed off the left
+  edge — and then applies per-type rules:
   - frame: thickness clamped to `min(width, height) / 2`
   - text: `font_height` is set to the new height, `font_width` is solved so the
     text prints at the new width, and the box is then snapped to that printed
-    width — the outline the user drags is the outline that prints
+    width — the outline the user drags is the outline that prints. At a quarter
+    turn the box is transposed, so the font height comes from the side across the
+    text and the font width is solved along it, exactly as a rotated barcode
+    takes its module width from its run
 - **Double click** (same element, within 500 ms) opens that element's edit
   dialog. A modified click is a selection gesture and never a double click.
 - **Right click** selects the element under the pointer and opens a context menu
@@ -947,7 +970,8 @@ message — never a swallowed exception or a placeholder.
 | Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200 |
 | Image | 200 × 200 dots, JPEG/PNG source |
 | Minimum element size when resizing | 20 × 20 dots |
-| Resize handle size and hit radius | 8 **screen pixels** — `8 / scale` dots, so it neither shrinks out of reach when zoomed out nor covers the element when zoomed in |
+| Resize handle size and hit radius | 8 **screen pixels** — `8 / scale` dots, so it neither shrinks out of reach when zoomed out nor covers the element when zoomed in; where the radius puts two handles in reach, the nearer wins |
+| Resize drag origin | the box the element had at the press — a resize snaps to a derived size, so a delta measured from the previous motion event would be lost |
 | Zoom range | 5% to 800%, along a fixed ladder of steps |
 | Window opening size | the monitor's work area × 0.9, capped at 1200 × 900, minimum 480 × 360 |
 | Double-click interval | 500 ms |

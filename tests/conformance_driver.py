@@ -58,6 +58,17 @@ MODIFIER_ORDER = ('Ctrl', 'Shift', 'Alt', 'Meta')
 KEY_ALIASES = {'Del': 'Delete', 'Return': 'Enter'}
 
 
+# A pointer crosses a distance in steps, not in one jump, and a drag that is
+# only ever delivered whole cannot catch a handler that loses the small deltas.
+DRAG_STEPS = 8
+
+
+def _drag_path(from_x, from_y, dx, dy):
+    """The pointer positions a drag passes through, ending exactly on target."""
+    return [(from_x + dx * step / DRAG_STEPS, from_y + dy * step / DRAG_STEPS)
+            for step in range(1, DRAG_STEPS + 1)]
+
+
 def menu_label(text):
     """A label with its mnemonic marked the same way whichever toolkit wrote it.
 
@@ -192,11 +203,17 @@ class GtkDriver:
         return [document.elements.index(el) for el in document.selection]
 
     def drag_pointer(self, from_x, from_y, dx, dy):
-        """Press, move and release - the path a user's drag actually takes."""
+        """Press, move and release - the path a user's drag actually takes.
+
+        In steps, because a pointer arrives in steps. One motion event carrying
+        the whole delta is the one case a resize never had trouble with: the
+        box snaps back to what it will print, so a drag delivered in small
+        pieces used to lose every piece smaller than that snap.
+        """
         scale = self.canvas._scale()
         self.click(from_x, from_y)
-        self.canvas.on_motion(self.canvas,
-                              self._Event((from_x + dx) * scale, (from_y + dy) * scale))
+        for x, y in _drag_path(from_x, from_y, dx, dy):
+            self.canvas.on_motion(self.canvas, self._Event(x * scale, y * scale))
         self.canvas.on_button_release(self.canvas,
                                       self._Event((from_x + dx) * scale,
                                                   (from_y + dy) * scale))
@@ -400,11 +417,14 @@ class QtDriver:
                 for el in self.document.selection]
 
     def drag_pointer(self, from_x, from_y, dx, dy):
-        """Press, move and release - the path a user's drag actually takes."""
+        """Press, move and release - the path a user's drag actually takes.
+
+        In steps, for the reason the GTK driver's does.
+        """
         from PySide2.QtCore import QEvent
         self.click(from_x, from_y)
-        self.canvas.mouseMoveEvent(
-            self._event(QEvent.MouseMove, from_x + dx, from_y + dy))
+        for x, y in _drag_path(from_x, from_y, dx, dy):
+            self.canvas.mouseMoveEvent(self._event(QEvent.MouseMove, x, y))
         self.canvas.mouseReleaseEvent(
             self._event(QEvent.MouseButtonRelease, from_x + dx, from_y + dy))
 
@@ -650,6 +670,19 @@ def sequence(driver, record):
                             picked.y + picked.height // 2, 20, 12)
         record(f'drag with the pointer at {zoom:g}x')
     driver.set_zoom(1.0)
+
+    # A handle drag through the canvas's own press/motion/release path, rather
+    # than straight into the geometry the way the resize steps above do. A
+    # pointer delivers the distance in pieces, and a text box snaps back to the
+    # width it will print at after every one of them, so this is where a resize
+    # that measures from the last event instead of from the press loses the
+    # whole drag. At 1:1, where both frontends agree which dot a pointer is on.
+    stretched = driver.add_text('Stretch')
+    driver.select(stretched)
+    driver.fresh_gesture()
+    corner = driver.handles(stretched)['br']
+    driver.drag_pointer(corner[0], corner[1], 48, 16)
+    record('stretch text by its corner handle, a pointer step at a time')
 
     # Every ^BC parameter, since each one changes the label and each frontend
     # has its own dialog and its own drawing code for them.

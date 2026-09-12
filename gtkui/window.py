@@ -1712,7 +1712,6 @@ class ZPLViewerWindow(Gtk.Window):
                     element.font_width = int(width_spin.get_value())
                     element.orientation = orientation_codes[
                         orientation_combo.get_active()]
-                    element.height = element.font_height
 
                     if wrap_check.get_active():
                         # Assigned rather than mutated: the block on the element

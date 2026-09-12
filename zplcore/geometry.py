@@ -49,12 +49,25 @@ def handle_size(scale: float = 1.0) -> float:
 
 
 def handle_at_point(x: int, y: int, element, scale: float = 1.0):
-    """Which handle, if any, is within the hit radius of the point."""
+    """Which handle, if any, the point grabs: the nearest one within reach.
+
+    The hit radius is deliberately wider than the drawn square, so a handle can
+    still be grabbed zoomed out. On a short element that makes neighbouring hit
+    squares overlap, and a text element is short by nature - its height is its
+    font height. Answering with the first handle in order then hands back one
+    the pointer is further from: at a quarter scale the bottom corners of a text
+    element were answering 'ml' and 'mr', so the user grabbed the bottom edge
+    and the side moved. The nearest centre wins instead, a tie going to the
+    earlier handle.
+    """
     radius = handle_size(scale)
+    nearest, shortest = None, None
     for name, (hx, hy) in handles(element).items():
         if abs(x - hx) <= radius and abs(y - hy) <= radius:
-            return name
-    return None
+            distance = (x - hx) ** 2 + (y - hy) ** 2
+            if shortest is None or distance < shortest:
+                nearest, shortest = name, distance
+    return nearest
 
 
 def scale_factor(view_width: int, label_width: int) -> float:
@@ -184,30 +197,71 @@ def align_elements(document, elements, edge: str) -> bool:
     return moved
 
 
-def resize_by_handle(document, element, handle: str, dx: int, dy: int) -> None:
-    """Resize an element by dragging one of its handles."""
-    if handle in ('tl', 'tm', 'tr'):    # Top handles - adjust y and height
-        element.y += dy
-        element.height -= dy
-    if handle in ('bl', 'bm', 'br'):    # Bottom handles - adjust height
-        element.height += dy
-    if handle in ('tl', 'ml', 'bl'):    # Left handles - adjust x and width
-        element.x += dx
-        element.width -= dx
-    if handle in ('tr', 'mr', 'br'):    # Right handles - adjust width
-        element.width += dx
+def resize_origin(element) -> dict:
+    """The box a resize is measured from: the element as the drag started.
 
-    element.width = max(MIN_SIZE, element.width)
-    element.height = max(MIN_SIZE, element.height)
+    A resize does not keep the rectangle it is handed. It reads a font width, a
+    line count or a module width out of it and then snaps the box back to what
+    that will actually print, so the outline on the canvas is the printed one.
+    Measured from the previous motion event, that snap eats the drag: an event
+    smaller than one unit of the derived property - and a unit of font_width is
+    several dots, a line a whole pitch - is computed, snapped away and
+    forgotten, so a slow drag moves nothing while a fast one jumps. Measured
+    from the press the same snap is harmless, because the next event starts from
+    this box again rather than from the snapped one.
+    """
+    return {'x': element.x, 'y': element.y,
+            'width': element.width, 'height': element.height}
 
+
+def _clamp_resized(document, element) -> None:
+    """Hold a resized element to the minimum size and inside the label.
+
+    The origin comes first, then the size against the room left beyond it, then
+    the origin again now that the size is known. Clamping the origin against a
+    size larger than the label - which is what a drag of a few thousand dots
+    asks for - works out as a large negative x, and an element that starts far
+    off the left edge satisfies "ends inside the label" without ever having been
+    cut down. It was the drag being one event long that hid it.
+    """
     element.x = max(0, element.x)
     element.y = max(0, element.y)
+
+    element.width = max(MIN_SIZE,
+                        min(element.width, document.label_width - element.x))
+    element.height = max(MIN_SIZE,
+                         min(element.height, document.label_height - element.y))
+
     element.x = min(element.x, document.label_width - element.width)
     element.y = min(element.y, document.label_height - element.height)
-    if element.x + element.width > document.label_width:
-        element.width = document.label_width - element.x
-    if element.y + element.height > document.label_height:
-        element.height = document.label_height - element.y
+
+
+def resize_by_handle(document, element, handle: str, dx: int, dy: int,
+                     origin: dict = None) -> None:
+    """Resize an element by dragging one of its handles.
+
+    `dx` and `dy` are measured from `origin` - the box the element had when the
+    button went down, from resize_origin(). Given none they are measured from
+    where the element is now, which is what a single scripted resize wants.
+    """
+    box = origin if origin is not None else resize_origin(element)
+    x, y = box['x'], box['y']
+    width, height = box['width'], box['height']
+
+    if handle in ('tl', 'tm', 'tr'):    # Top handles - adjust y and height
+        y += dy
+        height -= dy
+    if handle in ('bl', 'bm', 'br'):    # Bottom handles - adjust height
+        height += dy
+    if handle in ('tl', 'ml', 'bl'):    # Left handles - adjust x and width
+        x += dx
+        width -= dx
+    if handle in ('tr', 'mr', 'br'):    # Right handles - adjust width
+        width += dx
+
+    element.x, element.y = x, y
+    element.width, element.height = width, height
+    _clamp_resized(document, element)
 
     if element.element_type == 'frame':
         element.thickness = max(1, min(element.thickness, element.max_thickness()))
@@ -226,12 +280,18 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int) -> None:
             block.max_lines = max(1, int(round(element.height / pitch)))
             document.sync_text_width(element)
         else:
-            element.font_height = element.height
-            element.font_width = element.font_width_for(element.width,
-                                                        document.font_path)
+            # The run is along the text and the stack across it, so a quarter
+            # turn swaps which side of the box is the font height - the same
+            # transposition the barcode below makes. Reading the height as a
+            # font height at every orientation set the font to the length of
+            # the string as soon as a rotated element was dragged.
+            run, stack = ((element.height, element.width) if element.rotated()
+                          else (element.width, element.height))
+            element.font_height = stack
+            element.font_width = element.font_width_for(run, document.font_path)
             # Snap the box to what will actually print, so the outline the user
             # drags is the outline that comes out of the printer.
-            element.width = element.printed_width(document.font_path)
+            document.sync_text_width(element)
 
     if element.element_type == 'barcode':
         # A barcode is not free to be any size: its width is a whole number of
@@ -244,6 +304,18 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int) -> None:
         element.module_width = max(1, round(run / max(1, modules)))
         element.bar_height = max(MIN_SIZE, stack - element.text_height())
         element.sync_box()
+
+    # A box that snapped back to a derived size is rarely the one that was
+    # dragged, so it has to grow from somewhere: the edge opposite the handle,
+    # which is the one the user left alone. Growing from the origin instead let
+    # a top handle walk a wrapped block up the label a line at a time, its
+    # height snapping back after every event while the y it had moved stayed.
+    if handle in ('tl', 'tm', 'tr'):
+        element.y = box['y'] + box['height'] - element.height
+    if handle in ('tl', 'ml', 'bl'):
+        element.x = box['x'] + box['width'] - element.width
+    element.x = max(0, min(element.x, document.label_width - element.width))
+    element.y = max(0, min(element.y, document.label_height - element.height))
 
 
 def turn(element) -> dict:
