@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import _isolate  # a throwaway settings file, before any frontend is imported
 
 from PySide2.QtWidgets import QApplication
-from PySide2.QtGui import QImage
+from PySide2.QtGui import QImage, QPainter
 from PySide2.QtCore import Qt, QPoint, QEvent
 from PySide2.QtGui import QMouseEvent
 
@@ -417,6 +417,37 @@ check("a rotated text element takes its font height across the text, not along i
 check("a rotated text box stays transposed after a resize",
       rot.height == rot.printed_width(rot_doc.font_path)
       and rot.width == rot.font_height, (rot.width, rot.height))
+
+# The toy-font fallback (^AF, i.e. no downloaded font) used to scale a field
+# by its on-screen footprint width - which sync_text_width transposes with
+# height at a quarter turn - instead of the run along the text. A rotated
+# field's ink therefore stopped growing with font_width and tracked its
+# (untouched) footprint width, itself just font_height, instead.
+def fallback_ink_span(font_width, orientation):
+    fb_doc = Document(300, 300, dpi=203)
+    fb_el = fb_doc.add_text_element('IIIIIIIIII')
+    fb_el.font_path = fb_el.font_family = None
+    fb_el.orientation = orientation
+    fb_el.font_height, fb_el.font_width = 30, font_width
+    fb_doc.sync_text_width(fb_el)
+    image = QImage(300, 60, QImage.Format_ARGB32); image.fill(Qt.white)
+    painter = QPainter(image)
+    qt_canvas.DesignCanvas(fb_doc)._draw_text_fallback(painter, fb_el, None)
+    painter.end()
+    left = right = -1
+    for x in range(image.width()):
+        for y in range(image.height()):
+            c = image.pixelColor(x, y)
+            if c.red() < 100 and c.green() < 100 and c.blue() < 100:
+                if left == -1: left = x
+                right = x
+                break
+    return (right - left) if left != -1 else 0
+
+narrow_span = fallback_ink_span(10, 'R')
+wide_span = fallback_ink_span(60, 'R')
+check("a rotated fallback field still stretches with font_width",
+      wide_span > narrow_span * 1.5, (narrow_span, wide_span))
 
 # The canvas has to hand the geometry the box from the press. Everything above
 # proves the geometry is right when it is given one; this drives the real

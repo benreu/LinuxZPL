@@ -501,8 +501,17 @@ class DesignCanvas(Gtk.DrawingArea):
                 # which is fixed width: every character occupies font_width dots
                 # so the text spans the whole box. Stretch the proportional
                 # screen face to match rather than leaving a gap.
+                #
+                # printed_width(), not element.width: a 90/270-degree ^A
+                # orientation has element.width/height already transposed to
+                # the on-screen footprint (sync_text_width), so element.width
+                # is the run along the text only when the field is upright.
+                # printed_width() measures along the text itself, so font_width
+                # still stretches the preview once the field is rotated.
                 measured = extents.width if extents.width > 0 else 1.0
-                horizontal_scale = element.width / measured
+                target_width = element.printed_width(
+                    font_path, self.document.display_text(element))
+                horizontal_scale = target_width / measured
             context.save()
             context.translate(2, element.font_height - 2)
             context.scale(horizontal_scale, 1.0)

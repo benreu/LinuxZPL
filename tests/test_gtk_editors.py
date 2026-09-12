@@ -205,6 +205,42 @@ check("and fills the lines it wraps into, rather than drawing one of them",
 
 document.elements.remove(block_el)
 
+# --- a rotated fallback field still honours font_width -----------------------
+# The toy-font fallback (^AF, i.e. no downloaded font) used to scale a field
+# by its on-screen footprint width, which sync_text_width transposes with
+# height at a quarter turn - so a rotated field's ink stopped growing with
+# font_width and tracked its (untouched) footprint width, itself just
+# font_height, instead.
+
+def fallback_ink_height(font_width):
+    fb_el = document.add_text_element("IIIIIIIIII")
+    fb_el.font_path = fb_el.font_family = None
+    fb_el.orientation = 'R'
+    fb_el.font_height, fb_el.font_width = 30, font_width
+    fb_el.x, fb_el.y = 20, 20
+    document.sync_text_width(fb_el)
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 300, 300)
+    ctx = cairo.Context(surface)
+    ctx.set_source_rgb(1, 1, 1); ctx.paint()
+    canvas._draw_text_element(ctx, fb_el, False)
+    document.elements.remove(fb_el)
+    data, stride = surface.get_data(), surface.get_stride()
+    top = bottom = -1
+    for y in range(300):
+        row = data[y * stride:(y + 1) * stride]
+        for x in range(300):
+            if row[4 * x] < 100 and row[4 * x + 1] < 100 and row[4 * x + 2] < 100:
+                if top == -1:
+                    top = y
+                bottom = y
+                break
+    return (bottom - top) if top != -1 else 0
+
+narrow_height = fallback_ink_height(10)
+wide_height = fallback_ink_height(60)
+check("a rotated fallback field still stretches with font_width",
+      wide_height > narrow_height * 1.5, (narrow_height, wide_height))
+
 # --- the resolution a rescale is measured against ---------------------------
 # Called with no argument, _offer_dpi_rescale is settling the open design
 # against a resolution that changed underneath it, so the design's own dpi is
