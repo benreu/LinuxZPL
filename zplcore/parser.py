@@ -215,6 +215,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     # The ^LH/^LS offset in force. Elements hold the absolute dot position, so
     # the canvas, dragging and clamping never have to know these exist.
     origin = (0, 0)
+    home = (0, 0)           # the ^LH in force, which is not always the first
     seen_home = False
 
     for cmd, params in tokens:
@@ -266,8 +267,12 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 # media rather than laying fields out on it, so applying it
                 # would move the design on screen to describe a printer
                 # adjustment. See zplcore/transforms.py.
-                origin = (home if cmd == '^LH' else doc.transform.home)
-                origin = (origin[0] - doc.transform.shift, origin[1])
+                # Through the shared function, not spelled again here: the
+                # running home and the document's differ, but a second copy of
+                # the arithmetic could have a sign wrong and the round-trip
+                # would still look right, since folding in and taking back out
+                # would make the same mistake.
+                origin = zpl_transforms.field_offset(home, doc.transform.shift)
             continue
 
         if cmd == '^DF':

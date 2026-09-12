@@ -68,6 +68,23 @@ def read_flag(params, on='Y'):
     return letter == on.upper()
 
 
+def field_offset(home, shift) -> tuple:
+    """What a ^LH origin and a ^LS shift add to every ^FO, as (dx, dy).
+
+    A function as well as a method because the parser tracks a *running* home -
+    ^LH affects only the fields after it - while the document keeps the first
+    one to write back, so the two cannot share one stored value. They must share
+    the arithmetic: spelled twice, a sign could be wrong in one of them and the
+    round-trip would still look right, because the same mistake would be made
+    folding in and taking back out. Re-breaking the method proved exactly that,
+    and caught nothing.
+
+    ^LT is not in it. It registers the label against the media rather than
+    laying fields out on it - see the module docstring.
+    """
+    return (home[0] - shift, home[1])
+
+
 class LabelTransform:
     """What a format says about the label as a whole.
 
@@ -91,12 +108,8 @@ class LabelTransform:
         return f"LabelTransform({self.to_zpl()!r})"
 
     def field_offset(self):
-        """What ^LH and ^LS add to every ^FO, as (dx, dy).
-
-        ^LT is not in it. See the module docstring: it registers the label
-        against the media, it does not lay fields out on the label.
-        """
-        return (self.home[0] - self.shift, self.home[1])
+        """What this transform's ^LH and ^LS add to every ^FO, as (dx, dy)."""
+        return field_offset(self.home, self.shift)
 
     def moves_fields(self) -> bool:
         """Whether anything here displaces a field at all."""
