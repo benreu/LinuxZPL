@@ -357,6 +357,63 @@ finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
 
+# --- Set Printer for This Session never touches the persisted default ------
+# The DPI is held fixed across both dialogs below so neither one takes the
+# rescale-prompt path, which would otherwise open a real (blocking) dialog.
+session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: session_path
+gtk_main._fallback_config_path = lambda: session_path
+try:
+    window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.50', 9100, 203
+    window._save_settings()
+    window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+
+    real_dialog = gtk_main._printer_picker_dialog
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    try:
+        window.on_session_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+
+    check("Set Printer for This Session changes the printer in effect",
+          (window.printer_address, window.printer_port) == ('10.0.0.5', 9200),
+          (window.printer_address, window.printer_port))
+
+    written = configparser.ConfigParser(); written.read(session_path)
+    check("but never writes it to the settings file",
+          written.get('printer', 'address', fallback=None) == '192.168.1.50',
+          dict(written['printer']) if written.has_section('printer') else None)
+
+    # Default Printer must open on the persisted default, not the session
+    # override just applied above - otherwise clicking OK on an unedited
+    # dialog would silently promote the override into the new default.
+    seen = {}
+    def capture_dialog(parent, title, address, port, dpi, default=None):
+        seen['address'], seen['port'], seen['dpi'] = address, port, dpi
+        return None  # cancel, so nothing else about window state changes
+    gtk_main._printer_picker_dialog = capture_dialog
+    try:
+        window.on_default_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+    check("Default Printer opens pre-filled with the persisted default, not the session override",
+          (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
+
+    # Contrast: Default Printer, given the same dialog result, does persist.
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    try:
+        window.on_default_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+
+    written = configparser.ConfigParser(); written.read(session_path)
+    check("while Default Printer does persist the new address",
+          written.get('printer', 'address', fallback=None) == '10.0.0.5',
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

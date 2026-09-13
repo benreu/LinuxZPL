@@ -704,10 +704,16 @@ def label_size_dialog(parent, document: Document, dpi: int):
                         transform)
 
 
-def printer_settings_dialog(parent, address: str, port: int, dpi: int):
-    """New (address, port, dpi), or None if cancelled."""
+def printer_settings_dialog(parent, address: str, port: int, dpi: int,
+                            title: str = "Printer Settings", default=None):
+    """New (address, port, dpi), or None if cancelled.
+
+    `default`, when given, is the persisted (address, port, dpi) to offer via
+    a "Use Default" button - for the session-only picker, which is opened
+    with whatever printer is currently in effect rather than the default.
+    """
     dialog = QDialog(parent)
-    dialog.setWindowTitle("Printer Settings")
+    dialog.setWindowTitle(title)
     layout = QVBoxLayout(dialog)
     form = QFormLayout()
     layout.addLayout(form)
@@ -769,6 +775,26 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int):
                                  f"the designer does not support.")
 
     test_btn.clicked.connect(on_test)
+
+    if default is not None:
+        default_btn = QPushButton("Use Default")
+        layout.addWidget(default_btn)
+
+        def on_use_default():
+            def_address, def_port, def_dpi = default
+            address_edit.setText(def_address)
+            port_spin.setValue(def_port)
+            if def_dpi in zpl_fonts.SUPPORTED_DPI:
+                dpi_combo.setCurrentIndex(list(zpl_fonts.SUPPORTED_DPI).index(def_dpi))
+            else:
+                idx = dpi_combo.findText(str(def_dpi))
+                if idx < 0:
+                    dpi_combo.addItem(str(def_dpi))
+                    idx = dpi_combo.count() - 1
+                dpi_combo.setCurrentIndex(idx)
+
+        default_btn.clicked.connect(on_use_default)
+
     layout.addWidget(_buttons(dialog))
 
     if dialog.exec_() != QDialog.Accepted:

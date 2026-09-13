@@ -1439,6 +1439,63 @@ finally:
     qt_main._config_path = real_config_path
     qt_main._fallback_config_path = real_fallback_path
 
+# --- Set Printer for This Session never touches the persisted default ------
+# The DPI is held fixed across both dialogs below so neither one takes the
+# rescale-prompt path, which would otherwise open a real (blocking) dialog.
+session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+qt_main._config_path = lambda: session_path
+qt_main._fallback_config_path = lambda: session_path
+try:
+    zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.50', 9100, 203
+    zw._save_settings()
+    zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+
+    real_dialog = qt_dialogs.printer_settings_dialog
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    try:
+        zw.on_session_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+
+    check("Set Printer for This Session changes the printer in effect",
+          (zw.printer_address, zw.printer_port) == ('10.0.0.5', 9200),
+          (zw.printer_address, zw.printer_port))
+
+    written = _cfg.ConfigParser(); written.read(session_path)
+    check("but never writes it to the settings file",
+          written.get('printer', 'address', fallback=None) == '192.168.1.50',
+          dict(written['printer']) if written.has_section('printer') else None)
+
+    # Default Printer must open on the persisted default, not the session
+    # override just applied above - otherwise clicking OK on an unedited
+    # dialog would silently promote the override into the new default.
+    seen = {}
+    def capture_dialog(parent, address, port, dpi, **kwargs):
+        seen['address'], seen['port'], seen['dpi'] = address, port, dpi
+        return None  # cancel, so nothing else about window state changes
+    qt_dialogs.printer_settings_dialog = capture_dialog
+    try:
+        zw.on_default_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+    check("Default Printer opens pre-filled with the persisted default, not the session override",
+          (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
+
+    # Contrast: Default Printer, given the same dialog result, does persist.
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    try:
+        zw.on_default_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+
+    written = _cfg.ConfigParser(); written.read(session_path)
+    check("while Default Printer does persist the new address",
+          written.get('printer', 'address', fallback=None) == '10.0.0.5',
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    qt_main._config_path = real_config_path
+    qt_main._fallback_config_path = real_fallback_path
+
 # --- one visit to Label Settings can move the resolution and the size -------
 # They interact: reconciling rescales the whole design, label included, and the
 # size typed in the dialog then has to win over the one the rescale produced.

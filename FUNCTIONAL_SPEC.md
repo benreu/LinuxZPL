@@ -391,11 +391,13 @@ pinned.
 | **Save** | Writes to the current path, or behaves as Save As if there is none. |
 | **Save as…** | File chooser, default name `untitled.zpl`. A name typed with no extension gets `.zpl`; one that already has an extension is left alone. Confirms before overwriting an existing file, and declining returns to the chooser. Adopts the chosen path as the current file. |
 | **Print** | §9. |
+| **Printer Settings ▸ Set Printer for This Session…** | §9. A submenu rather than a flat item, so further printer-related actions can join it later. |
 | **Quit** | Prompts about unsaved changes (§6.7). |
 
 **The menu is in four groups**, separated in this order: start a document
-(New, Open), persist it (Save, Save as), print it, leave. A port that runs them
-together is the thing this grouping exists to avoid.
+(New, Open), persist it (Save, Save as), print it (Print, Printer Settings),
+leave. A port that runs them together is the thing this grouping exists to
+avoid.
 
 Saving refuses an empty document ("No content to save" — a document whose ZPL
 is empty or just `^XA` / `^XZ`). Save clears the modified flag; a failed save
@@ -442,7 +444,7 @@ those two groups. §5 describes what each does to the scale.
 | Command | Behaviour |
 |---|---|
 | **Label Size** | §7 |
-| **Printer Settings** | §7 |
+| **Default Printer** | §7 |
 | **Printer Fonts…** | §10.4 |
 
 ### 6.5 Toolbar
@@ -514,8 +516,8 @@ chooser rather than a form, and stays modal.
   number ZPL allows. The box is re-measured after they are applied, since what
   the canvas draws changes with them (§8.3).
 
-The remaining dialogs — Label Size, Printer Settings, the file choosers and the
-prompts — are modal.
+The remaining dialogs — Label Size, Default Printer, Printer Settings, the
+file choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
@@ -523,8 +525,9 @@ prompts — are modal.
 | **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) flips Colour's effect a second time (§18). |
 | **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode; Reverse | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
-| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Printer Settings and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
-| **Printer Settings** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). |
+| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
+| **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
+| **Printer Settings** | Address; Port; DPI; Test Connection; Use Default | Same fields and ranges as Default Printer, pre-filled with whichever printer is currently in effect. Use Default re-fills the fields from the persisted default printer, for comparing against or reverting to it. Accepting changes only which printer `Print` uses for the rest of this session (§9) — it never writes to settings.ini (§13). |
 
 ---
 
@@ -726,6 +729,13 @@ their z-order position.
 
 Elements with `print_enabled` false are sent as `^FXDESIGNER_NOPRINT` comments
 rather than as fields, so the printer ignores them.
+
+**File → Printer Settings ▸ Set Printer for This Session…** changes the
+address, port and DPI that step 2 above uses, for every `Print` from then on,
+without writing them to settings.ini (§13) — the next launch starts back on
+the persisted default. If the DPI changes, it runs the same rescale prompt as
+Default Printer (§11), since a label's dot geometry has to stay consistent
+with whichever printer will render it.
 
 ### Printer wire formats
 
@@ -999,9 +1009,12 @@ height = 844
 
 | Section | Written | Used by |
 |---|---|---|
-| `[printer]` | when Printer Settings or Label Size is accepted | printing, font queries, every inch↔dot conversion |
+| `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion |
 | `[label]` | when Label Size is accepted | the label at startup and on File > New |
 | `[window]` | on quit | where the window opens (§2) |
+
+**File → Printer Settings ▸ Set Printer for This Session…** (§9) deliberately
+never writes `[printer]` — only Default Printer and Label Size do.
 
 Writing re-reads the file first, so a section another version wrote survives.
 
