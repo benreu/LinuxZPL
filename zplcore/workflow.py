@@ -190,6 +190,7 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
             '^FN', '^FV', '^DF', '^XF',
+            '^SN', '^SF', '^FC',
             '^LH', '^LS', '^LT', '^PO', '^PM', '^LR'}
 
 

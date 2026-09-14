@@ -76,6 +76,25 @@ class DesignElement:
     field_number = None
     field_prompt = None
 
+    # ^SN: the printer increments this field's value each time it prints.
+    # `serial_start` is kept apart from the field's own literal because ^SN
+    # can appear with no ^FD at all, in which case it is the only value the
+    # file gives this field.
+    serial_start = None
+    serial_increment = None
+    serial_leading_zero = False
+
+    # ^FC: the printer splices its real-time clock into this field's literal
+    # at print time. `clock_chars` is the (a, b, c) trigger-character triple
+    # ^FC names, or None to mean the file left it at the ZPL default.
+    clock_format = False
+    clock_chars = None
+
+    # ^SF (deprecated): kept only as opaque, unparsed params so a file that
+    # carries one round-trips unchanged - its mask-character semantics are
+    # not modelled.
+    serial_field_raw = None
+
     def data_literal(self) -> str:
         """The literal this field prints, as the file gave it."""
         if not self.data_attribute:
@@ -90,8 +109,17 @@ class DesignElement:
         its number instead. The preview does not use this - it answers "what
         will print", and an unfilled ^FN prints nothing until the printer
         substitutes for it.
+
+        ^SN and ^FC are different: the literal they carry is real content (a
+        starting serial value, a clock-format string), not a stand-in, so it
+        is shown with a marker rather than replaced by one.
         """
         literal = self.data_literal()
+        if self.serial_increment is not None:
+            base = literal or self.serial_start or ''
+            return zpl_fields.serial_display(base, self.serial_increment)
+        if self.clock_format:
+            return zpl_fields.clock_display(literal)
         if literal or self.field_number is None:
             return literal
         if table is not None:
@@ -99,20 +127,32 @@ class DesignElement:
         return zpl_fields.placeholder(self.field_number, self.field_prompt)
 
     def data_zpl(self) -> str:
-        """^FN and/or ^FD, then the ^FS that ends the field.
+        """^FC/^FD/^SN/^SF/^FN as this field carries them, then the closing ^FS.
 
         A plain field writes ^FD exactly as it always did, which is what keeps
-        every existing file byte-identical. A numbered one writes its ^FN, and
-        its ^FD only when it really has a literal - ZPL allows both together,
-        and means by it that this field's data also fills every other field
-        sharing the number.
+        every existing file byte-identical. ^FC has to precede the ^FD it
+        modifies; ^SN and ^SF follow it, matching how a printer-generated
+        field is conventionally written. A numbered field's ^FN/^FD pairing is
+        unchanged from before - ZPL allows both together, and means by it that
+        this field's data also fills every other field sharing the number.
         """
         literal = self.data_literal()
+        zpl = ''
+        if self.clock_format:
+            a, b, c = self.clock_chars or zpl_fields.read_clock_chars('')
+            zpl += f"^FC{a},{b},{c}"
         if self.field_number is None:
-            return f"^FD{literal}^FS\n"
-        name = f'"{self.field_prompt}"' if self.field_prompt is not None else ''
-        data = f"^FD{literal}" if literal else ''
-        return f"^FN{self.field_number}{name}{data}^FS\n"
+            zpl += f"^FD{literal}"
+        else:
+            name = f'"{self.field_prompt}"' if self.field_prompt is not None else ''
+            data = f"^FD{literal}" if literal else ''
+            zpl += f"^FN{self.field_number}{name}{data}"
+        if self.serial_increment is not None:
+            leading_zero = 'Y' if self.serial_leading_zero else 'N'
+            zpl += f"^SN{self.serial_start},{self.serial_increment},{leading_zero}"
+        if self.serial_field_raw is not None:
+            zpl += f"^SF{self.serial_field_raw}"
+        return f"{zpl}^FS\n"
 
     def contains_point(self, x: int, y: int) -> bool:
         """Check if point is within element bounds."""
@@ -202,7 +242,11 @@ class TextElement(DesignElement):
     def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
                  font_height: int = 36, font_width: int = 20,
                  font_code: str = 'F', orientation: str = 'N',
-                 field_number=None, field_prompt=None):
+                 field_number=None, field_prompt=None,
+                 serial_start=None, serial_increment=None,
+                 serial_leading_zero=False,
+                 clock_format=False, clock_chars=None,
+                 serial_field_raw=None):
         self.x = x
         self.y = y
         self.text = text
@@ -212,6 +256,14 @@ class TextElement(DesignElement):
         # as if it were data.
         self.field_number = field_number
         self.field_prompt = field_prompt
+        # ^SN, ^FC, ^SF: the other ways a printer supplies this field's value
+        # instead of the design - see DesignElement for what each one means.
+        self.serial_start = serial_start
+        self.serial_increment = serial_increment
+        self.serial_leading_zero = serial_leading_zero
+        self.clock_format = clock_format
+        self.clock_chars = clock_chars
+        self.serial_field_raw = serial_field_raw
         self.font_height = font_height
         self.font_width = font_width
         self.width = len(text) * font_width
@@ -415,13 +467,23 @@ class BarcodeElement(DesignElement):
                  orientation: str = '', options: tuple = (),
                  font: Optional[tuple] = None,
                  ratio: float = DEFAULT_RATIO,
-                 field_number=None, field_prompt=None):
+                 field_number=None, field_prompt=None,
+                 serial_start=None, serial_increment=None,
+                 serial_leading_zero=False,
+                 clock_format=False, clock_chars=None,
+                 serial_field_raw=None):
         self.x = x
         self.y = y
         self.bar_height = height
         self.barcode_value = barcode_value
         self.field_number = field_number
         self.field_prompt = field_prompt
+        self.serial_start = serial_start
+        self.serial_increment = serial_increment
+        self.serial_leading_zero = serial_leading_zero
+        self.clock_format = clock_format
+        self.clock_chars = clock_chars
+        self.serial_field_raw = serial_field_raw
         self.module_width = module_width
         self.ratio = float(ratio)
         self.orientation = orientation

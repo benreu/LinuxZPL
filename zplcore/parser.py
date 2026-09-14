@@ -41,7 +41,8 @@ def parse_label_size(zpl_content: str) -> Tuple[Optional[int], Optional[int]]:
             int(ll.group(1)) if ll else None)
 
 
-COMMAND = re.compile(r'([\^~])([A-Za-z0-9@]{2})([^\^~]*)', re.S)
+COMMAND = re.compile(
+    r'([\^~])([A-Za-z0-9@]{2})((?:(?!\^|~[A-Za-z0-9@]{2})[\s\S])*)', re.S)
 
 # ZPL's own factory default font, used by any field that carries neither an ^A
 # of its own nor a ^CF before it.
@@ -355,6 +356,16 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             read = zpl_fields.read(params)
             if read is not None:
                 field['field_number'], field['field_prompt'] = read
+        elif cmd == '^SN':
+            read = zpl_fields.read_serial(params)
+            if read is not None:
+                (field['serial_start'], field['serial_increment'],
+                 field['serial_leading_zero']) = read
+        elif cmd == '^SF':
+            field['serial_field_raw'] = params
+        elif cmd == '^FC':
+            field['clock_format'] = True
+            field['clock_chars'] = zpl_fields.read_clock_chars(params)
         elif cmd == '^FD':
             field['data'] = params
         elif cmd == '^FV':
@@ -382,6 +393,10 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None) -> dict:
     inherited = dict(default_barcode or DEFAULT_BARCODE)
     return {'x': x, 'y': y, 'block': None, 'font': None,
             'field_number': None, 'field_prompt': None,
+            'serial_start': None, 'serial_increment': None,
+            'serial_leading_zero': False,
+            'clock_format': False, 'clock_chars': None,
+            'serial_field_raw': None,
             'module_width': inherited['module_width'],
             'ratio': inherited['ratio'],
             'bar_height': inherited['height'],
@@ -589,6 +604,16 @@ def _build_element(field, doc, renderer):
     """
     x, y = field['x'], field['y']
 
+    # True for any field whose value the printer supplies rather than the
+    # file - a recalled ^FN, an incrementing ^SN, or a clock-substituted ^FC.
+    # Such a field carries no ^FD of its own, so treating it the same as one
+    # with none written at all is what stops it from either vanishing (the
+    # text branch below) or being handed an invented value (the barcode
+    # branch), the same trap ^FN alone used to fall into.
+    printer_generated = (field['field_number'] is not None
+                        or field['serial_increment'] is not None
+                        or field['clock_format'])
+
     if field['graphic'] is not None:
         # Every format reaches the decoder, so one that cannot be read fails
         # where it can be reported rather than at a regex that matched only
@@ -604,13 +629,13 @@ def _build_element(field, doc, renderer):
         # A ^A before the ^BC selects the interpretation line's font, not a
         # text element's, so it belongs to the barcode.
         font = field['font']
-        # A numbered field's data comes from the printer, so it has none of
-        # its own and must not be given any: `or "123456789"` is a default for a
-        # barcode the user has just created, and applying it here invented a
-        # value that appeared nowhere in the file and then wrote it to disk.
+        # A field whose data the printer supplies has none of its own and
+        # must not be given any: `or "123456789"` is a default for a barcode
+        # the user has just created, and applying it here invented a value
+        # that appeared nowhere in the file and then wrote it to disk.
         value = field['data']
         if value is None:
-            value = '' if field['field_number'] is not None else "123456789"
+            value = '' if printer_generated else "123456789"
         return BarcodeElement(x, y, height=bc['height'],
                               barcode_value=value,
                               module_width=field['module_width'],
@@ -619,6 +644,12 @@ def _build_element(field, doc, renderer):
                               options=bc['options'],
                               field_number=field['field_number'],
                               field_prompt=field['field_prompt'],
+                              serial_start=field['serial_start'],
+                              serial_increment=field['serial_increment'],
+                              serial_leading_zero=field['serial_leading_zero'],
+                              clock_format=field['clock_format'],
+                              clock_chars=field['clock_chars'],
+                              serial_field_raw=field['serial_field_raw'],
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
 
@@ -627,9 +658,10 @@ def _build_element(field, doc, renderer):
         # Code 39 sixty dots tall from arriving as nine-dot text.
         return None
 
-    # A ^FN field carries no ^FD of its own - that is what ^FN is for - so
-    # requiring data discarded every text field in a stored format.
-    if field['data'] is not None or field['field_number'] is not None:
+    # A field whose data the printer supplies carries no ^FD of its own -
+    # that is the point of ^FN/^SN/^FC - so requiring data discarded every
+    # such field in a stored format.
+    if field['data'] is not None or printer_generated:
         return _build_text(x, y, field, doc, renderer)
 
     return None
@@ -643,7 +675,13 @@ def _build_text(x, y, field, doc, renderer):
     element = TextElement(x, y, field['data'] or '', font['height'],
                           font['width'], font_code=font['code'],
                           field_number=field['field_number'],
-                          field_prompt=field['field_prompt'])
+                          field_prompt=field['field_prompt'],
+                          serial_start=field['serial_start'],
+                          serial_increment=field['serial_increment'],
+                          serial_leading_zero=field['serial_leading_zero'],
+                          clock_format=field['clock_format'],
+                          clock_chars=field['clock_chars'],
+                          serial_field_raw=field['serial_field_raw'])
     element.orientation = font.get('orientation', 'N')
     element.height = font['height']
     element.printer_font_name = font['name']

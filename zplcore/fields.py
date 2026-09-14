@@ -61,6 +61,63 @@ def placeholder(number, prompt=None) -> str:
     return f"{OPEN}FN{int(number)}{CLOSE}"
 
 
+# ^FC<a>,<b>,<c> - the characters that trigger a substitution in a later ^FD.
+# ZPL's own defaults, used whenever a part is left blank.
+_CLOCK_DEFAULTS = ('%', '#', '~')
+
+
+def read_serial(params: str):
+    """^SN<start>,<increment>,<leading zeros> as (start, increment, leading
+    zero), or None when there is no start value to serialize.
+
+    `increment` defaults to 1 and the leading-zero flag to False when the
+    file leaves them out, matching how a printer treats an omitted ^SN
+    parameter.
+    """
+    parts = (params or '').split(',')
+    start = parts[0].strip()
+    if not start:
+        return None
+    try:
+        increment = int(parts[1]) if len(parts) > 1 and parts[1].strip() else 1
+    except ValueError:
+        increment = 1
+    leading_zero = len(parts) > 2 and parts[2].strip().upper() == 'Y'
+    return start, increment, leading_zero
+
+
+def read_clock_chars(params: str):
+    """^FC<a>,<b>,<c> as a 3-tuple, defaulting any blank part.
+
+    A field can leave any of the three trigger characters unspecified - the
+    manual's own defaults (%, #, ~) still apply to that position.
+    """
+    parts = [p.strip() for p in (params or '').split(',')]
+    parts += [''] * (3 - len(parts))
+    return tuple(p or default for p, default in zip(parts, _CLOCK_DEFAULTS))
+
+
+def serial_display(base: str, increment) -> str:
+    """What a canvas draws for a field the printer increments each label.
+
+    The starting value is real content - unlike a bare ^FN, there is always
+    something to show - so it is kept, with a marker appended rather than
+    replacing it, the way ^FN's brackets mark a field the canvas would
+    otherwise draw as if it were fixed text.
+    """
+    sign = '+' if increment >= 0 else ''
+    return f"{base}{OPEN}{sign}{increment}{CLOSE}"
+
+
+def clock_display(base: str) -> str:
+    """What a canvas draws for a field the printer's clock fills in.
+
+    The literal format codes (e.g. %m/%d/%y) are real content too, so they
+    are wrapped rather than hidden - the same reasoning as `serial_display`.
+    """
+    return f"{OPEN}{base}{CLOSE}"
+
+
 class FieldTable:
     """The data and prompts belonging to a format's numbered fields.
 

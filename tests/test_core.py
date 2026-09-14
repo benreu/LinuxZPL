@@ -2032,6 +2032,95 @@ check("an undo snapshot does not share the field table",
       _udoc.fields.value(7) == 'A-1000', _udoc.fields.value(7))
 
 
+# --- ^SN, ^SF, ^FC: the other ways a printer supplies a field's value -------
+# ^SN (serialization) and ^FC (real-time clock) used to be dropped entirely,
+# silently, with nothing on screen suggesting a field was ever dynamic - the
+# same "vanishes or invents data" trap ^FN alone used to fall into. ^SF, the
+# deprecated predecessor to ^SN, is kept only as an opaque, unparsed
+# passthrough so a file carrying one still round-trips.
+
+# The finding's own example: a literal '001' the printer increments by 1 each
+# label, with leading zeros restored.
+_sn = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FD001^SN001,1,Y^FS^XZ")[0]
+_sne = _sn.elements[0]
+check("^SN's start, increment and leading-zero flag are all read",
+      (_sne.serial_start, _sne.serial_increment, _sne.serial_leading_zero)
+      == ('001', 1, True),
+      (_sne.serial_start, _sne.serial_increment, _sne.serial_leading_zero))
+check("the canvas shows the real value plus a marker it auto-increments",
+      _sn.display_text(_sne) == '001«+1»', _sn.display_text(_sne))
+check("^SN round-trips byte-identical",
+      '^FD001^SN001,1,Y^FS' in _sn.to_zpl(), _sn.to_zpl())
+check("^SN is no longer reported as unsupported",
+      workflow.unsupported_commands(_sn.to_zpl()) == [],
+      workflow.unsupported_commands(_sn.to_zpl()))
+
+# ^SN with no ^FD of its own - its first parameter is the only value the file
+# gives this field, so it must not vanish for want of a literal.
+_sn_bare = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,90^A0N,20,20^SN5,2,N^FS^XZ")[0]
+check("a bare ^SN with no ^FD still produces a visible element",
+      len(_sn_bare.elements) == 1 and _sn_bare.elements[0].text == '',
+      [(e.element_type, getattr(e, 'text', None)) for e in _sn_bare.elements])
+check("and shows its own start value, not an empty box",
+      _sn_bare.display_text(_sn_bare.elements[0]) == '5«+2»',
+      _sn_bare.display_text(_sn_bare.elements[0]))
+
+# The same "don't invent data" rule ^FN already enforces for a barcode.
+_sn_bc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^BY3^BCN,100^SN1,1,Y^FS^XZ")[0].elements[0]
+check("a ^SN barcode field is a barcode with no invented value",
+      _sn_bc.element_type == 'barcode' and _sn_bc.barcode_value == ''
+      and _sn_bc.serial_start == '1',
+      (_sn_bc.element_type, _sn_bc.barcode_value, _sn_bc.serial_start))
+
+# ^FC, with the manual's own default trigger characters - the third of which,
+# a bare ~, the tokenizer used to swallow because it looks like the start of a
+# tilde command.
+_fc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FC%,#,~^FD%m/%d/%y^FS^XZ")[0]
+_fce = _fc.elements[0]
+check("^FC's three trigger characters all survive, tilde included",
+      _fce.clock_chars == ('%', '#', '~'), _fce.clock_chars)
+check("the canvas wraps the format string rather than showing it as fixed text",
+      _fc.display_text(_fce) == '«%m/%d/%y»', _fc.display_text(_fce))
+check("^FC round-trips byte-identical, tilde and all",
+      '^FC%,#,~^FD%m/%d/%y^FS' in _fc.to_zpl(), _fc.to_zpl())
+check("^FC is no longer reported as unsupported",
+      workflow.unsupported_commands(_fc.to_zpl()) == [],
+      workflow.unsupported_commands(_fc.to_zpl()))
+
+# Custom trigger characters, none of which happen to be the tilde that catches
+# the default set.
+_fc_custom = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FC*,&,!^FDtest^FS^XZ")[0].elements[0]
+check("custom ^FC trigger characters are read as given",
+      _fc_custom.clock_chars == ('*', '&', '!'), _fc_custom.clock_chars)
+
+# The tokenizer fix, checked directly: a lone ~ inside ^FC's own params must
+# not be mistaken for the start of a genuine tilde command, and a genuine
+# tilde command right after must still split out on its own.
+_tokens = zpl_parser.tokenise("^FC%,#,~^FD%m/%d/%y^FS~JR")
+check("^FC keeps its trailing tilde parameter",
+      ('^FC', '%,#,~') in _tokens, _tokens)
+check("a real tilde command straight after still tokenises on its own",
+      ('~JR', '') in _tokens, _tokens)
+
+# ^SF is deprecated and not modelled - only preserved, so a file carrying one
+# does not lose it on the next save.
+_sf = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FDABC^SF1,999^FS^XZ")[0]
+_sfe = _sf.elements[0]
+check("^SF's params are kept, unparsed",
+      _sfe.serial_field_raw == '1,999', _sfe.serial_field_raw)
+check("^SF round-trips byte-identical",
+      '^FDABC^SF1,999^FS' in _sf.to_zpl(), _sf.to_zpl())
+check("^SF is no longer reported as unsupported either",
+      workflow.unsupported_commands(_sf.to_zpl()) == [],
+      workflow.unsupported_commands(_sf.to_zpl()))
+
+
 # --- the commands that move or flip a whole label ---------------------------
 # ^LH and ^LS displace every field: a label carrying one was drawn where its ^FO
 # said and printed somewhere else, and a save dropped the command, so it then

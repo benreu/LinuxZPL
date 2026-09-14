@@ -207,17 +207,39 @@ def choose_font_family(parent, current_family=None, title="Choose Font"):
 
 # --- element editing --------------------------------------------------------
 
-def _field_number_rows(form, element):
-    """The ^FN controls, identical for text and for a barcode.
+# A field's data is fixed text, or one of three things the printer supplies
+# at print time instead: a numbered field it recalls (^FN), a value it
+# increments each label (^SN), or its own real-time clock spliced in (^FC).
+_SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall'),
+                   ("Auto-serial (^SN)", 'serial'),
+                   ("Clock substitution (^FC)", 'clock')]
 
-    A field either prints a literal or takes its data from a numbered field the
-    printer fills in, so this is a tick rather than a number that has to mean
-    "none" - 0 is a field number ZPL allows.
+
+def _field_source_rows(form, element):
+    """The ^FN/^SN/^FC controls, identical for text and for a barcode.
+
+    One selector rather than a checkbox per command, since a field has
+    exactly one of these at a time - three independent ticks could disagree
+    about which. ^SF is left alone entirely: it has no row here and this
+    function's `apply_to` never touches `serial_field_raw`, so a field
+    carrying one keeps it no matter which of these four is chosen.
     """
-    check = QCheckBox("Data comes from a numbered field (^FN)")
-    check.setObjectName("variable")
-    check.setChecked(element.field_number is not None)
-    form.addRow("Variable:", check)
+    if element.serial_increment is not None:
+        current = 'serial'
+    elif element.clock_format:
+        current = 'clock'
+    elif element.field_number is not None:
+        current = 'recall'
+    else:
+        current = 'static'
+
+    source = QComboBox()
+    source.setObjectName("field_source")
+    for label, code in _SOURCE_CHOICES:
+        source.addItem(label, code)
+    codes = [code for _l, code in _SOURCE_CHOICES]
+    source.setCurrentIndex(codes.index(current))
+    form.addRow("Data Source:", source)
 
     number = QSpinBox()
     number.setObjectName("field_number")
@@ -230,20 +252,47 @@ def _field_number_rows(form, element):
     prompt.setPlaceholderText("shown on the canvas and on a printer keypad")
     form.addRow("Field Name:", prompt)
 
+    increment = QSpinBox()
+    increment.setObjectName("serial_increment")
+    increment.setRange(-999999, 999999)
+    increment.setValue(element.serial_increment
+                       if element.serial_increment is not None else 1)
+    form.addRow("Serial Increment:", increment)
+
+    leading_zero = QCheckBox("Add leading zeros")
+    leading_zero.setObjectName("serial_leading_zero")
+    leading_zero.setChecked(element.serial_leading_zero)
+    form.addRow("", leading_zero)
+
     def sync():
-        number.setEnabled(check.isChecked())
-        prompt.setEnabled(check.isChecked())
+        code = source.currentData()
+        number.setEnabled(code == 'recall')
+        prompt.setEnabled(code == 'recall')
+        increment.setEnabled(code == 'serial')
+        leading_zero.setEnabled(code == 'serial')
 
     sync()
-    check.stateChanged.connect(sync)
+    source.currentIndexChanged.connect(sync)
 
     def apply_to(target):
-        if check.isChecked():
-            target.field_number = number.value()
-            target.field_prompt = prompt.text() or None
+        code = source.currentData()
+        target.field_number = number.value() if code == 'recall' else None
+        target.field_prompt = ((prompt.text() or None) if code == 'recall'
+                               else None)
+        if code == 'serial':
+            # The starting value is whatever the field's own literal already
+            # is (set by the caller before apply_to runs) - there is no
+            # separate "starting value" box to keep in sync with it.
+            target.serial_start = target.data_literal() or target.serial_start or '0'
+            target.serial_increment = increment.value()
+            target.serial_leading_zero = leading_zero.isChecked()
         else:
-            target.field_number = None
-            target.field_prompt = None
+            target.serial_start = None
+            target.serial_increment = None
+            target.serial_leading_zero = False
+        target.clock_format = (code == 'clock')
+        if code != 'clock':
+            target.clock_chars = None
 
     return apply_to
 
@@ -363,7 +412,7 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     indent_spin.setValue(block.indent)
     form.addRow("Indent:", indent_spin)
 
-    apply_field_number = _field_number_rows(form, element)
+    apply_field_source = _field_source_rows(form, element)
 
     block_fields = (block_width, max_lines, spacing_spin, justify_combo,
                     indent_spin)
@@ -417,7 +466,7 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
                 element.font_path = None
                 element.font_family = None
                 element.printer_font_name = None
-        apply_field_number(element)
+        apply_field_source(element)
         # Last, because the box is measured from what the canvas will draw, and
         # that is the placeholder once the field is a numbered one.
         document.sync_text_width(element)
@@ -558,7 +607,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
 
-    apply_field_number = _field_number_rows(form, element)
+    apply_field_source = _field_source_rows(form, element)
 
     layout.addWidget(_buttons(dialog))
 
@@ -571,7 +620,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         element.check_digit = check_combo.currentData()
         element.mode = mode_combo.currentData()
         element.reverse_print = fr_check.isChecked()
-        apply_field_number(element)
+        apply_field_source(element)
         if element.show_text:
             # With the line switched on, name the font it prints in rather than
             # leaving it to whatever the printer happens to have selected.

@@ -68,17 +68,36 @@ def _make_spin(value, lower, upper):
     return spin
 
 
-def _make_field_number_rows(content, element, label_width: int = 130):
-    """The ^FN controls, identical for text and for a barcode.
+# A field's data is fixed text, or one of three things the printer supplies
+# at print time instead: a numbered field it recalls (^FN), a value it
+# increments each label (^SN), or its own real-time clock spliced in (^FC).
+_SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall'),
+                   ("Auto-serial (^SN)", 'serial'),
+                   ("Clock substitution (^FC)", 'clock')]
 
-    A field either prints a literal or takes its data from a numbered field the
-    printer fills in, so this is a tick rather than a number that has to mean
-    "none" - 0 is a field number ZPL allows. Returns the function that applies
-    them, so the two editors cannot disagree about what OK does.
+
+def _make_field_source_rows(content, element, label_width: int = 130):
+    """The ^FN/^SN/^FC controls, identical for text and for a barcode.
+
+    One selector rather than a checkbox per command, since a field has
+    exactly one of these at a time - three independent ticks could disagree
+    about which. ^SF is left alone entirely: it has no row here and this
+    function's `apply_to` never touches `serial_field_raw`, so a field
+    carrying one keeps it no matter which of these four is chosen. Returns
+    the function that applies the choice, so the two editors cannot disagree
+    about what OK does.
     """
-    check = Gtk.CheckButton(label="Data comes from a numbered field (^FN)")
-    check.set_active(element.field_number is not None)
-    _make_row(content, "Variable:", check, label_width)
+    if element.serial_increment is not None:
+        current = 'serial'
+    elif element.clock_format:
+        current = 'clock'
+    elif element.field_number is not None:
+        current = 'recall'
+    else:
+        current = 'static'
+
+    source, source_codes = _make_combo(_SOURCE_CHOICES, current)
+    _make_row(content, "Data Source:", source, label_width)
 
     number = _make_spin(element.field_number or 0, 0, zpl_fields.MAX_NUMBER)
     _make_row(content, "Field Number:", number, label_width)
@@ -88,20 +107,44 @@ def _make_field_number_rows(content, element, label_width: int = 130):
     prompt.set_placeholder_text("shown on the canvas and on a printer keypad")
     _make_row(content, "Field Name:", prompt, label_width)
 
-    def on_toggled(button):
-        number.set_sensitive(button.get_active())
-        prompt.set_sensitive(button.get_active())
+    increment = _make_spin(
+        element.serial_increment if element.serial_increment is not None else 1,
+        -999999, 999999)
+    _make_row(content, "Serial Increment:", increment, label_width)
 
-    on_toggled(check)
-    check.connect("toggled", on_toggled)
+    leading_zero = Gtk.CheckButton(label="Add leading zeros")
+    leading_zero.set_active(element.serial_leading_zero)
+    _make_row(content, "", leading_zero, label_width)
+
+    def sync(*_args):
+        code = source_codes[source.get_active()]
+        number.set_sensitive(code == 'recall')
+        prompt.set_sensitive(code == 'recall')
+        increment.set_sensitive(code == 'serial')
+        leading_zero.set_sensitive(code == 'serial')
+
+    sync()
+    source.connect("changed", sync)
 
     def apply_to(target):
-        if check.get_active():
-            target.field_number = int(number.get_value())
-            target.field_prompt = prompt.get_text() or None
+        code = source_codes[source.get_active()]
+        target.field_number = int(number.get_value()) if code == 'recall' else None
+        target.field_prompt = ((prompt.get_text() or None) if code == 'recall'
+                               else None)
+        if code == 'serial':
+            # The starting value is whatever the field's own literal already
+            # is (set by the caller before apply_to runs) - there is no
+            # separate "starting value" box to keep in sync with it.
+            target.serial_start = target.data_literal() or target.serial_start or '0'
+            target.serial_increment = int(increment.get_value())
+            target.serial_leading_zero = leading_zero.get_active()
         else:
-            target.field_number = None
-            target.field_prompt = None
+            target.serial_start = None
+            target.serial_increment = None
+            target.serial_leading_zero = False
+        target.clock_format = (code == 'clock')
+        if code != 'clock':
+            target.clock_chars = None
 
     return apply_to
 
@@ -554,7 +597,7 @@ class ZPLViewerWindow(Gtk.Window):
         add_text_btn = Gtk.Button(label="+ Text")
         add_text_btn.connect("clicked", self.on_add_text_clicked)
         toolbar_box.pack_start(add_text_btn, False, False, 0)
-        
+
         # Add frame button
         add_frame_btn = Gtk.Button(label="+ Frame")
         add_frame_btn.connect("clicked", self.on_add_frame_clicked)
@@ -1648,7 +1691,7 @@ class ZPLViewerWindow(Gtk.Window):
     def on_add_text_clicked(self, widget):
         """Handle add text element button click."""
         self.design_canvas.add_text_element("New Text")
-    
+
     def on_add_frame_clicked(self, widget):
         """Handle add frame element button click."""
         self.design_canvas.add_frame_element()
@@ -1874,7 +1917,7 @@ class ZPLViewerWindow(Gtk.Window):
             indent_spin = _make_spin(block.indent, 0, 2000)
             make_row("Indent:", indent_spin)
 
-            apply_field_number = _make_field_number_rows(content, element)
+            apply_field_source = _make_field_source_rows(content, element)
 
             block_fields = (block_width_spin, max_lines_spin, spacing_spin,
                             justify_combo, indent_spin)
@@ -1937,7 +1980,7 @@ class ZPLViewerWindow(Gtk.Window):
                             element.printer_font_name = None
                             self.design_canvas.queue_draw()
 
-                    apply_field_number(element)
+                    apply_field_source(element)
                     # Last, because the box is measured from what the canvas will
                     # draw, and that is the placeholder once the field is a
                     # numbered one.
@@ -2002,7 +2045,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
 
-            apply_field_number = _make_field_number_rows(content, element)
+            apply_field_source = _make_field_source_rows(content, element)
 
             content.show_all()
 
@@ -2013,7 +2056,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.module_width = int(module_spin.get_value())
                     element.orientation = orientation_codes[orientation_combo.get_active()]
                     element.show_text, element.text_above = text_codes[text_combo.get_active()]
-                    apply_field_number(element)
+                    apply_field_source(element)
                     element.check_digit = check_codes[check_combo.get_active()]
                     element.mode = mode_codes[mode_combo.get_active()]
                     element.reverse_print = fr_check.get_active()
