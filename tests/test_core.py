@@ -2091,6 +2091,36 @@ check("^FC is no longer reported as unsupported",
       workflow.unsupported_commands(_fc.to_zpl()) == [],
       workflow.unsupported_commands(_fc.to_zpl()))
 
+# Only the primary trigger character has a default - the manual gives b and c
+# "Default: none". Defaulting them to characters registered two indicators
+# the file never asked for, so "Part number #" (the manual's own ^DF example)
+# printed its # as a clock substitution instead of a literal character.
+_fc_one = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO20,20^A0N,20,20^FC%^FDPart number #%d^FS^XZ")[0]
+_fc_one_out = _fc_one.to_zpl()
+check("a file registering only the primary indicator keeps # a plain character",
+      '^FC%^FD' in _fc_one_out and '^FC%,#' not in _fc_one_out,
+      _fc_one_out)
+check("a single indicator round-trips as one, not padded to three",
+      '^FC%^FD' in _fc_one_out, _fc_one_out)
+
+_fc_two = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO20,20^A0N,20,20^FC%,{^FDx^FS^XZ")[0]
+check("two indicators round-trip as two",
+      '^FC%,{^FD' in _fc_two.to_zpl(), _fc_two.to_zpl())
+
+_fc_gap = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO20,20^A0N,20,20^FC%,,#^FDx^FS^XZ")[0]
+check("a gap between indicators stays a gap, proving the trim is trailing-only",
+      '^FC%,,#^FD' in _fc_gap.to_zpl(), _fc_gap.to_zpl())
+
+# The designer's own path: neither editor ever sets clock_chars, so a
+# newly-created clock field must not inherit the two absent indicators either.
+_fc_new = TextElement(50, 50, "%m/%d/%y")
+_fc_new.clock_format = True
+check("a clock field created in the designer writes one indicator, not three",
+      _fc_new.data_zpl().startswith('^FC%^FD'), _fc_new.data_zpl())
+
 # Custom trigger characters, none of which happen to be the tilde that catches
 # the default set.
 _fc_custom = zpl_parser.parse_zpl(

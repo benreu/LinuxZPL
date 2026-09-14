@@ -62,8 +62,11 @@ def placeholder(number, prompt=None) -> str:
 
 
 # ^FC<a>,<b>,<c> - the characters that trigger a substitution in a later ^FD.
-# ZPL's own defaults, used whenever a part is left blank.
-_CLOCK_DEFAULTS = ('%', '#', '~')
+# Only the primary has a default: the manual gives b and c "Default: none -
+# this value cannot be the same as a or c". Defaulting them to characters
+# instead registered two indicators the file never asked for, so data
+# containing them was clock-substituted rather than printed.
+_CLOCK_DEFAULTS = ('%', None, None)
 
 
 def read_serial(params: str):
@@ -87,14 +90,24 @@ def read_serial(params: str):
 
 
 def read_clock_chars(params: str):
-    """^FC<a>,<b>,<c> as a 3-tuple, defaulting any blank part.
-
-    A field can leave any of the three trigger characters unspecified - the
-    manual's own defaults (%, #, ~) still apply to that position.
-    """
+    """^FC<a>,<b>,<c> as a 3-tuple, None for a part the file left out."""
     parts = [p.strip() for p in (params or '').split(',')]
     parts += [''] * (3 - len(parts))
     return tuple(p or default for p, default in zip(parts, _CLOCK_DEFAULTS))
+
+
+def clock_chars_zpl(chars) -> str:
+    """^FC's parameters, trimmed after the last one that is actually set.
+
+    Positional, so a gap has to stay a gap: ('%', None, '#') is "%,,#", not
+    "%,#". Only trailing absences come off.
+    """
+    given = list(chars)
+    keep = 0
+    for index, value in enumerate(given):
+        if value is not None:
+            keep = index + 1
+    return ','.join('' if v is None else v for v in given[:keep])
 
 
 def serial_display(base: str, increment) -> str:

@@ -139,8 +139,8 @@ class DesignElement:
         literal = self.data_literal()
         zpl = ''
         if self.clock_format:
-            a, b, c = self.clock_chars or zpl_fields.read_clock_chars('')
-            zpl += f"^FC{a},{b},{c}"
+            chars = self.clock_chars or zpl_fields._CLOCK_DEFAULTS
+            zpl += f"^FC{zpl_fields.clock_chars_zpl(chars)}"
         if self.field_number is None:
             zpl += f"^FD{literal}"
         else:
