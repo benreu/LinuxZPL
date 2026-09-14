@@ -145,6 +145,9 @@ class GtkDriver:
     def add_time(self, text):
         return self.canvas.add_time_element(text)
 
+    def add_serial(self, text):
+        return self.canvas.add_serial_element(text)
+
     def add_frame(self):
         return self.canvas.add_frame_element()
 
@@ -368,6 +371,9 @@ class QtDriver:
 
     def add_time(self, text):
         return self.document.add_time_element(text)
+
+    def add_serial(self, text):
+        return self.document.add_serial_element(text)
 
     def add_frame(self):
         return self.document.add_frame_element()
@@ -872,6 +878,11 @@ def sequence(driver, record):
     # frontends.
     driver.add_time('%m/%d/%y')
     record('add a time field')
+
+    # Likewise for a serial field - add_serial_element, not a mode of the
+    # text editor's Data Source selector.
+    driver.add_serial('1')
+    record('add a serial field')
 
 
 def main():

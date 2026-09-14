@@ -68,35 +68,27 @@ def _make_spin(value, lower, upper):
     return spin
 
 
-# A field's data is fixed text, or one of two things the printer supplies at
-# print time instead: a numbered field it recalls (^FN), or a value it
-# increments each label (^SN). ^FC has its own "+ Time" creation button and
-# its own dedicated editor instead of living here - see
-# on_element_double_clicked's clock_format branch.
-_SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall'),
-                   ("Auto-serial (^SN)", 'serial')]
+# A field's data is fixed text, or the printer recalls it into a numbered
+# field (^FN). ^SN and ^FC each have their own "+ Serial"/"+ Time" creation
+# button and their own dedicated editor instead of living here - see
+# on_element_double_clicked's serial_increment/clock_format branches.
+_SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall')]
 
 
 def _make_field_source_rows(content, element, label_width: int = 130):
-    """The ^FN/^SN controls, identical for text and for a barcode.
+    """The ^FN controls, identical for text and for a barcode.
 
-    One selector rather than a checkbox per command, since a field has
-    exactly one of these at a time - two independent ticks could disagree
-    about which. ^SF and ^FC are both left alone entirely: neither has a row
-    here, and `apply_to` never touches `serial_field_raw`, `clock_format` or
-    `clock_chars`, so a field carrying either keeps it no matter which of
-    these choices is picked. (A plain text field with `clock_format` set
-    never reaches this dialog in the first place - it opens the dedicated
-    time editor instead - so in practice that only matters for a barcode.)
-    Returns the function that applies the choice, so the two editors cannot
-    disagree about what OK does.
+    ^SF, ^SN and ^FC are all left alone entirely: none has a row here, and
+    `apply_to` never touches `serial_start`, `serial_increment`,
+    `serial_leading_zero`, `serial_field_raw`, `clock_format` or
+    `clock_chars`, so a field carrying any of them keeps it no matter which
+    of these choices is picked. (A plain text field with `serial_increment`
+    or `clock_format` set never reaches this dialog in the first place - it
+    opens the dedicated serial or time editor instead - so in practice that
+    only matters for a barcode.) Returns the function that applies the
+    choice, so the two editors cannot disagree about what OK does.
     """
-    if element.serial_increment is not None:
-        current = 'serial'
-    elif element.field_number is not None:
-        current = 'recall'
-    else:
-        current = 'static'
+    current = 'recall' if element.field_number is not None else 'static'
 
     source, source_codes = _make_combo(_SOURCE_CHOICES, current)
     _make_row(content, "Data Source:", source, label_width)
@@ -109,21 +101,10 @@ def _make_field_source_rows(content, element, label_width: int = 130):
     prompt.set_placeholder_text("shown on the canvas and on a printer keypad")
     _make_row(content, "Field Name:", prompt, label_width)
 
-    increment = _make_spin(
-        element.serial_increment if element.serial_increment is not None else 1,
-        -999999, 999999)
-    _make_row(content, "Serial Increment:", increment, label_width)
-
-    leading_zero = Gtk.CheckButton(label="Add leading zeros")
-    leading_zero.set_active(element.serial_leading_zero)
-    _make_row(content, "", leading_zero, label_width)
-
     def sync(*_args):
         code = source_codes[source.get_active()]
         number.set_sensitive(code == 'recall')
         prompt.set_sensitive(code == 'recall')
-        increment.set_sensitive(code == 'serial')
-        leading_zero.set_sensitive(code == 'serial')
 
     sync()
     source.connect("changed", sync)
@@ -133,17 +114,6 @@ def _make_field_source_rows(content, element, label_width: int = 130):
         target.field_number = int(number.get_value()) if code == 'recall' else None
         target.field_prompt = ((prompt.get_text() or None) if code == 'recall'
                                else None)
-        if code == 'serial':
-            # The starting value is whatever the field's own literal already
-            # is (set by the caller before apply_to runs) - there is no
-            # separate "starting value" box to keep in sync with it.
-            target.serial_start = target.data_literal() or target.serial_start or '0'
-            target.serial_increment = int(increment.get_value())
-            target.serial_leading_zero = leading_zero.get_active()
-        else:
-            target.serial_start = None
-            target.serial_increment = None
-            target.serial_leading_zero = False
 
     return apply_to
 
@@ -601,6 +571,11 @@ class ZPLViewerWindow(Gtk.Window):
         add_time_btn = Gtk.Button(label="+ Time")
         add_time_btn.connect("clicked", self.on_add_time_clicked)
         toolbar_box.pack_start(add_time_btn, False, False, 0)
+
+        # Add serial button
+        add_serial_btn = Gtk.Button(label="+ Serial")
+        add_serial_btn.connect("clicked", self.on_add_serial_clicked)
+        toolbar_box.pack_start(add_serial_btn, False, False, 0)
 
         # Add frame button
         add_frame_btn = Gtk.Button(label="+ Frame")
@@ -1700,6 +1675,10 @@ class ZPLViewerWindow(Gtk.Window):
         """Handle add time element button click."""
         self.design_canvas.add_time_element()
 
+    def on_add_serial_clicked(self, widget):
+        """Handle add serial element button click."""
+        self.design_canvas.add_serial_element()
+
     def on_add_frame_clicked(self, widget):
         """Handle add frame element button click."""
         self.design_canvas.add_frame_element()
@@ -1866,6 +1845,91 @@ class ZPLViewerWindow(Gtk.Window):
                     # Last, because the box is measured from what the canvas
                     # will draw, and that is the wrapped marker for as long
                     # as this stays a clock field.
+                    self.design_canvas.document.sync_text_width(element)
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
+
+        elif isinstance(element, TextElement) and element.serial_increment is not None:
+            # Show serial (^SN) edit dialog - deliberately smaller than the
+            # text editor below: no wrap/block section, no Data Source
+            # selector, since this dialog *is* the ^SN source (see
+            # _make_field_source_rows, which no longer offers it as a
+            # choice). Unticking the serial checkbox turns the element back
+            # into a plain static text field, and the next double-click then
+            # falls through to the regular text editor instead of here.
+            dialog = Gtk.Dialog(title="Edit Serial Field", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                              Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                _make_row(content, label_text, widget)
+
+            text_entry = Gtk.Entry()
+            text_entry.set_text(element.text)
+            make_row("Start Value:", text_entry)
+
+            increment_spin = _make_spin(
+                element.serial_increment if element.serial_increment is not None
+                else 1, -999999, 999999)
+            make_row("Increment:", increment_spin)
+
+            leading_zero_check = Gtk.CheckButton(label="Add leading zeros")
+            leading_zero_check.set_active(element.serial_leading_zero)
+            make_row("", leading_zero_check)
+
+            height_spin = _make_spin(element.font_height, 8, 500)
+            make_row("Font Height:", height_spin)
+
+            width_spin = _make_spin(element.font_width, 8, 500)
+            make_row("Font Width:", width_spin)
+
+            orientation_combo, orientation_codes = _make_combo(
+                ORIENTATIONS, element.orientation)
+            make_row("Orientation:", orientation_combo)
+
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+
+            serial_check = Gtk.CheckButton(
+                label="Auto-increments each print (^SN)")
+            serial_check.set_active(element.serial_increment is not None)
+            make_row("Serial:", serial_check)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.text = text_entry.get_text()
+                    element.font_height = int(height_spin.get_value())
+                    element.font_width = int(width_spin.get_value())
+                    element.orientation = orientation_codes[
+                        orientation_combo.get_active()]
+                    element.height = element.font_height
+                    element.reverse_print = fr_check.get_active()
+                    if serial_check.get_active():
+                        element.serial_start = element.text
+                        element.serial_increment = int(increment_spin.get_value())
+                        element.serial_leading_zero = leading_zero_check.get_active()
+                    else:
+                        # Off - the field is plain static text now, showing
+                        # whatever value it last had.
+                        element.serial_start = None
+                        element.serial_increment = None
+                        element.serial_leading_zero = False
+                    # Last, because the box is measured from what the canvas
+                    # will draw, and that is the wrapped marker for as long
+                    # as this stays a serial field.
                     self.design_canvas.document.sync_text_width(element)
                     self.on_canvas_changed()
 

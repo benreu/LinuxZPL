@@ -2132,6 +2132,18 @@ check("its box is measured from the wrapped marker, not the bare format string",
       _time_el.width > _time_el.printed_width(None, _time_el.text),
       (_time_el.width, _time_el.printed_width(None, _time_el.text)))
 
+# Likewise, add_serial_element is its own creation path - the "+ Serial"
+# button - rather than a mode of add_text_element.
+_serial_doc = Document()
+_serial_el = _serial_doc.add_serial_element()
+check("add_serial_element makes a serial field, not a mode of a text one",
+      (_serial_el.serial_increment, _serial_el.serial_start, _serial_el.text)
+      == (1, '1', '1'),
+      (_serial_el.serial_increment, _serial_el.serial_start, _serial_el.text))
+check("its box is measured from the wrapped marker, not the bare start value",
+      _serial_el.width > _serial_el.printed_width(None, _serial_el.text),
+      (_serial_el.width, _serial_el.printed_width(None, _serial_el.text)))
+
 
 # --- the commands that move or flip a whole label ---------------------------
 # ^LH and ^LS displace every field: a label carrying one was drawn where its ^FO

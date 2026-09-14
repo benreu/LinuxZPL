@@ -904,6 +904,23 @@ class Document:
         self.sync_text_width(element)
         return self._append(element)
 
+    def add_serial_element(self, text: str = "1") -> TextElement:
+        """A field the printer increments or decrements each label (^SN).
+
+        Its own creation button and element state rather than a mode of a
+        plain text field - see qtui/dialogs.py's edit_serial_dialog. The
+        starting value doubles as ^SN's own first parameter (`serial_start`),
+        matching how `_field_source_rows.apply_to` already keeps the two in
+        sync whenever a field switches into serial mode.
+        """
+        offset = self._stagger(10)
+        element = TextElement(50 + offset, 50 + offset, text)
+        element.serial_start = text
+        element.serial_increment = 1
+        element.serial_leading_zero = False
+        self.sync_text_width(element)
+        return self._append(element)
+
     def add_frame_element(self) -> FrameElement:
         offset = self._stagger(20)
         return self._append(FrameElement(100 + offset, 100 + offset))

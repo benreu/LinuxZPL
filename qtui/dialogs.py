@@ -207,32 +207,26 @@ def choose_font_family(parent, current_family=None, title="Choose Font"):
 
 # --- element editing --------------------------------------------------------
 
-# A field's data is fixed text, or one of two things the printer supplies at
-# print time instead: a numbered field it recalls (^FN), or a value it
-# increments each label (^SN). ^FC has its own creation button and its own
-# edit_time_dialog instead of living here - see that function's docstring.
-_SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall'),
-                   ("Auto-serial (^SN)", 'serial')]
+# A field's data is fixed text, or the printer recalls it into a numbered
+# field (^FN). ^SN and ^FC each have their own creation button and their own
+# dedicated dialog instead of living here - see edit_serial_dialog and
+# edit_time_dialog.
+_SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall')]
 
 
 def _field_source_rows(form, element):
-    """The ^FN/^SN controls, identical for text and for a barcode.
+    """The ^FN controls, identical for text and for a barcode.
 
-    One selector rather than a checkbox per command, since a field has
-    exactly one of these at a time - two independent ticks could disagree
-    about which. ^SF and ^FC are both left alone entirely: neither has a row
-    here, and `apply_to` never touches `serial_field_raw`, `clock_format` or
-    `clock_chars`, so a field carrying either keeps it no matter which of
-    these choices is picked. (A plain text field with `clock_format` set
-    never reaches this dialog in the first place - it opens edit_time_dialog
-    instead - so in practice that only matters for a barcode.)
+    ^SF, ^SN and ^FC are all left alone entirely: none has a row here, and
+    `apply_to` never touches `serial_start`, `serial_increment`,
+    `serial_leading_zero`, `serial_field_raw`, `clock_format` or
+    `clock_chars`, so a field carrying any of them keeps it no matter which
+    of these choices is picked. (A plain text field with `serial_increment`
+    or `clock_format` set never reaches this dialog in the first place - it
+    opens edit_serial_dialog or edit_time_dialog instead - so in practice
+    that only matters for a barcode.)
     """
-    if element.serial_increment is not None:
-        current = 'serial'
-    elif element.field_number is not None:
-        current = 'recall'
-    else:
-        current = 'static'
+    current = 'recall' if element.field_number is not None else 'static'
 
     source = QComboBox()
     source.setObjectName("field_source")
@@ -253,24 +247,9 @@ def _field_source_rows(form, element):
     prompt.setPlaceholderText("shown on the canvas and on a printer keypad")
     form.addRow("Field Name:", prompt)
 
-    increment = QSpinBox()
-    increment.setObjectName("serial_increment")
-    increment.setRange(-999999, 999999)
-    increment.setValue(element.serial_increment
-                       if element.serial_increment is not None else 1)
-    form.addRow("Serial Increment:", increment)
-
-    leading_zero = QCheckBox("Add leading zeros")
-    leading_zero.setObjectName("serial_leading_zero")
-    leading_zero.setChecked(element.serial_leading_zero)
-    form.addRow("", leading_zero)
-
     def sync():
-        code = source.currentData()
-        number.setEnabled(code == 'recall')
-        prompt.setEnabled(code == 'recall')
-        increment.setEnabled(code == 'serial')
-        leading_zero.setEnabled(code == 'serial')
+        number.setEnabled(source.currentData() == 'recall')
+        prompt.setEnabled(source.currentData() == 'recall')
 
     sync()
     source.currentIndexChanged.connect(sync)
@@ -280,17 +259,6 @@ def _field_source_rows(form, element):
         target.field_number = number.value() if code == 'recall' else None
         target.field_prompt = ((prompt.text() or None) if code == 'recall'
                                else None)
-        if code == 'serial':
-            # The starting value is whatever the field's own literal already
-            # is (set by the caller before apply_to runs) - there is no
-            # separate "starting value" box to keep in sync with it.
-            target.serial_start = target.data_literal() or target.serial_start or '0'
-            target.serial_increment = increment.value()
-            target.serial_leading_zero = leading_zero.isChecked()
-        else:
-            target.serial_start = None
-            target.serial_increment = None
-            target.serial_leading_zero = False
 
     return apply_to
 
@@ -545,6 +513,96 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
             element.clock_chars = None
         # Last, because the box is measured from what the canvas will draw,
         # and that is the wrapped marker for as long as this stays a clock
+        # field.
+        document.sync_text_width(element)
+
+    return _show_editor(dialog, _apply, on_accept)
+
+
+def edit_serial_dialog(parent, element: TextElement, document: Document,
+                       on_accept=None) -> QDialog:
+    """Edit a serialized field (^SN). `on_accept` runs once OK has changed it.
+
+    Deliberately smaller than edit_text_dialog: no wrap/block section (a
+    serial number is one short line, not a paragraph) and no Data Source
+    selector - this dialog *is* the ^SN source, which is why
+    `_field_source_rows` no longer offers it as one of its choices. The one
+    on/off control is the checkbox at the bottom: unticking it turns the
+    element back into a plain static text field, and the next double-click
+    opens the regular Text editor instead of this one.
+    """
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Edit Serial Field")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    text_edit = QLineEdit(element.text)
+    text_edit.setObjectName("text")
+    form.addRow("Start Value:", text_edit)
+
+    increment = QSpinBox()
+    increment.setObjectName("serial_increment")
+    increment.setRange(-999999, 999999)
+    increment.setValue(element.serial_increment
+                       if element.serial_increment is not None else 1)
+    form.addRow("Increment:", increment)
+
+    leading_zero = QCheckBox("Add leading zeros")
+    leading_zero.setObjectName("serial_leading_zero")
+    leading_zero.setChecked(element.serial_leading_zero)
+    form.addRow("", leading_zero)
+
+    height_spin = QSpinBox()
+    height_spin.setRange(8, 500)
+    height_spin.setValue(element.font_height)
+    form.addRow("Font Height:", height_spin)
+
+    width_spin = QSpinBox()
+    width_spin.setRange(8, 500)
+    width_spin.setValue(element.font_width)
+    form.addRow("Font Width:", width_spin)
+
+    orientation_combo = QComboBox()
+    orientation_combo.setObjectName("orientation")
+    for label, code in ORIENTATIONS:
+        orientation_combo.addItem(label, code)
+    turns = [code for _label, code in ORIENTATIONS]
+    orientation_combo.setCurrentIndex(turns.index(element.orientation)
+                                      if element.orientation in turns else 0)
+    form.addRow("Orientation:", orientation_combo)
+
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+
+    serial_check = QCheckBox("Auto-increments each print (^SN)")
+    serial_check.setObjectName("serial_format")
+    serial_check.setChecked(element.serial_increment is not None)
+    form.addRow("Serial:", serial_check)
+
+    layout.addWidget(_buttons(dialog))
+
+    def _apply():
+        element.text = text_edit.text()
+        element.font_height = height_spin.value()
+        element.font_width = width_spin.value()
+        element.orientation = orientation_combo.currentData()
+        element.height = element.font_height
+        element.reverse_print = fr_check.isChecked()
+        if serial_check.isChecked():
+            element.serial_start = element.text
+            element.serial_increment = increment.value()
+            element.serial_leading_zero = leading_zero.isChecked()
+        else:
+            # Off - the field is plain static text now, showing whatever
+            # value it last had.
+            element.serial_start = None
+            element.serial_increment = None
+            element.serial_leading_zero = False
+        # Last, because the box is measured from what the canvas will draw,
+        # and that is the wrapped marker for as long as this stays a serial
         # field.
         document.sync_text_width(element)
 
