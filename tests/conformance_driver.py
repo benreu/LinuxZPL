@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import _isolate  # a throwaway settings file, before any frontend is imported
+from zplcore import transforms
 FIXTURE_300 = ROOT / 'tests' / 'fixtures' / 'sample_300dpi.zpl'
 # ZPL as another tool writes it: ^A0, ^FB and two commands on one line
 FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'
@@ -37,6 +38,14 @@ FIXTURE_PARTIAL = ROOT / 'tests' / 'fixtures' / 'partial_font.zpl'
 # A logo in the encoding label software actually sends: :Z64: rather than the
 # uncompressed hex this designer writes
 FIXTURE_COMPRESSED = ROOT / 'tests' / 'fixtures' / 'compressed_logo.zpl'
+# A stored format and the recall call that fills it in - the manual's own p51
+# example, plus one whose fields name themselves and share a number.
+FIXTURE_STORED = ROOT / 'tests' / 'fixtures' / 'stored_format.zpl'
+FIXTURE_RECALL = ROOT / 'tests' / 'fixtures' / 'recall_format.zpl'
+FIXTURE_NAMED = ROOT / 'tests' / 'fixtures' / 'named_fields.zpl'
+# The commands that move or flip a whole label
+FIXTURE_HOME = ROOT / 'tests' / 'fixtures' / 'label_home.zpl'
+FIXTURE_FLIPPED = ROOT / 'tests' / 'fixtures' / 'flipped_label.zpl'
 
 # A font every step can rely on; text width is the most divergence-prone rule,
 # so the sequence exercises the measured path as well as the fixed-width one.
@@ -146,6 +155,11 @@ class GtkDriver:
     def resync(self, element):
         self.canvas.sync_text_width(element)
 
+    def set_field_number(self, element, number, prompt=None):
+        element.field_number = number
+        element.field_prompt = prompt
+        self.canvas.sync_text_width(element)
+
     def resync_barcode(self, element):
         element.sync_box()
 
@@ -246,9 +260,9 @@ class GtkDriver:
     def set_label_size(self, w, h):
         self.canvas.set_label_size(w, h)
 
-    def label_settings(self, w, h, dpi, w_in, h_in):
+    def label_settings(self, w, h, dpi, w_in, h_in, transform=None):
         """One accepted Label Settings visit, through the frontend's handler."""
-        self.window.apply_label_settings(w, h, dpi, w_in, h_in)
+        self.window.apply_label_settings(w, h, dpi, w_in, h_in, transform)
 
     def label_size(self):
         return (self.canvas.label_width, self.canvas.label_height)
@@ -362,6 +376,11 @@ class QtDriver:
     def resync(self, element):
         self.document.sync_text_width(element)
 
+    def set_field_number(self, element, number, prompt=None):
+        element.field_number = number
+        element.field_prompt = prompt
+        self.document.sync_text_width(element)
+
     def resync_barcode(self, element):
         element.sync_box()
 
@@ -456,9 +475,9 @@ class QtDriver:
     def set_label_size(self, w, h):
         self.document.set_label_size(w, h)
 
-    def label_settings(self, w, h, dpi, w_in, h_in):
+    def label_settings(self, w, h, dpi, w_in, h_in, transform=None):
         """One accepted Label Settings visit, through the frontend's handler."""
-        self.window.apply_label_settings(w, h, dpi, w_in, h_in)
+        self.window.apply_label_settings(w, h, dpi, w_in, h_in, transform)
 
     def label_size(self):
         return (self.document.label_width, self.document.label_height)
@@ -763,6 +782,17 @@ def sequence(driver, record):
     frame.colour, frame.rounding = 'B', 3
     record('a black frame, less rounded')
 
+    # ^FR: a per-field flag, not a parameter of any of the other three, so it
+    # gets its own step for each element type that has one in scope.
+    if bars is not None:
+        bars.reverse_print = True
+        record('a reversed barcode')
+    frame.reverse_print = True
+    record('a reversed frame')
+    if block is not None:
+        block.reverse_print = True
+        record('a reversed text field')
+
     # ZPL as other tools leave it: a ^CF default font rather than an ^A on
     # every field, and a ^GB carrying its colour and rounding. Last, because
     # loading replaces the document every earlier step built up.
@@ -781,6 +811,54 @@ def sequence(driver, record):
     record('load a file whose ^A leaves its sizes off')
     driver.load(FIXTURE_COMPRESSED)
     record('load a file whose logo is :Z64: compressed')
+
+    # A stored format and its recall call. The template's ^FN fields carry no
+    # data of their own, and the recall call carries nothing but data, so
+    # between them they cover both halves of what ^FN means.
+    driver.load(FIXTURE_STORED)
+    record('load the manual\'s own ^DF stored format')
+    driver.load(FIXTURE_NAMED)
+    record('load a stored format whose fields name themselves')
+    driver.load(FIXTURE_RECALL)
+    record('load an ^XF recall call, which is data and no geometry')
+
+    # ^LH moves every field, so a frontend that read it differently would place
+    # the whole design somewhere else; the flips have to survive a save in both.
+    driver.load(FIXTURE_HOME)
+    record('load a format placed from a ^LH origin')
+    driver.load(FIXTURE_FLIPPED)
+    record('load a format that is inverted and mirrored')
+
+    # The editing canvas is not flipped, so a click lands on the element where
+    # the canvas draws it - not where the printer will lay it down. If either
+    # frontend transformed pointer input, this drag would miss and write
+    # different ZPL.
+    driver.set_zoom(1.0)
+    driver.fresh_gesture()
+    _flipped = driver.elements[0]
+    driver.click(_flipped.x + 3, _flipped.y + 3)
+    record('click an element on an inverted label')
+    driver.fresh_gesture()
+    driver.drag_pointer(_flipped.x + 3, _flipped.y + 3, 20, 10)
+    record('and drag it, which a flipped canvas would send the other way')
+
+    # Setting a home and a flip from Label Settings has to reach the file the
+    # same way in both, including the ^FO each element is written back at.
+    driver.load(FIXTURE_HOME)
+    _moved = transforms.LabelTransform()
+    _moved.home = (40, 60)
+    _moved.invert = True
+    driver.label_settings(406, 406, 203, 2.0, 2.0, _moved)
+    record('move the label home and invert it')
+
+    # Turning a literal field into a variable one has to reach the file the same
+    # way in both frontends: a ^FN where the ^FD used to be.
+    driver.load(FIXTURE_NAMED)
+    _variable = driver.add_text('becomes variable')
+    driver.set_field_number(_variable, 12, 'Batch')
+    record('make a field variable')
+    driver.set_field_number(_variable, None, None)
+    record('and back to a literal')
 
 
 def main():

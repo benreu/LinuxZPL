@@ -16,7 +16,9 @@ from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
                  ImageFont as PILImageFont)
 
 from . import code128
+from . import fields as zpl_fields
 from . import fonts as zpl_fonts
+from . import transforms as zpl_transforms
 from . import geometry
 
 
@@ -41,17 +43,76 @@ class DesignElement:
     # or None when it was placed by ^FO. Kept rather than normalised away so a
     # file written with ^FT is written back with ^FT, at the same y.
     typeset = None
+    # ^FR: this field prints in reverse - white where the label would
+    # otherwise be black, and vice versa.
+    reverse_print = False
 
-    def origin_zpl(self) -> str:
+    def origin_zpl(self, offset=(0, 0)) -> str:
         """The ^FO or ^FT that places this element.
 
         One method rather than an ^FO formatted into each element's to_zpl, so
         a label that came in typeset cannot go out typeset in some of its
         fields and not others.
+
+        `offset` is what ^LH and ^LS added on the way in. An element holds the
+        absolute dot position - so the canvas, dragging and clamping need to
+        know nothing about either command - and the offset comes back out here,
+        which is what lets a file carrying one be written back unchanged.
         """
+        x = self.x - offset[0]
+        y = self.y - offset[1]
         if self.typeset is None:
-            return f"^FO{self.x},{self.y}\n"
-        return f"^FT{self.x},{self.y + self.typeset}\n"
+            return f"^FO{x},{y}\n"
+        return f"^FT{x},{y + self.typeset}\n"
+
+    def reverse_zpl(self) -> str:
+        """^FR, if this field reverses its own print."""
+        return "^FR\n" if self.reverse_print else ""
+
+    # What a field's data is called on the subclasses that have any. ^FD and ^FN
+    # are written the same way for text and for a barcode, so the rule lives
+    # here rather than being spelled twice and drifting.
+    data_attribute = None
+    field_number = None
+    field_prompt = None
+
+    def data_literal(self) -> str:
+        """The literal this field prints, as the file gave it."""
+        if not self.data_attribute:
+            return ''
+        return getattr(self, self.data_attribute, '') or ''
+
+    def display_text(self, table=None) -> str:
+        """What a canvas draws for this field.
+
+        A numbered field with no literal of its own has nothing to draw and
+        would be an invisible element on the design, so it shows its prompt or
+        its number instead. The preview does not use this - it answers "what
+        will print", and an unfilled ^FN prints nothing until the printer
+        substitutes for it.
+        """
+        literal = self.data_literal()
+        if literal or self.field_number is None:
+            return literal
+        if table is not None:
+            return table.display(self.field_number, self.field_prompt)
+        return zpl_fields.placeholder(self.field_number, self.field_prompt)
+
+    def data_zpl(self) -> str:
+        """^FN and/or ^FD, then the ^FS that ends the field.
+
+        A plain field writes ^FD exactly as it always did, which is what keeps
+        every existing file byte-identical. A numbered one writes its ^FN, and
+        its ^FD only when it really has a literal - ZPL allows both together,
+        and means by it that this field's data also fills every other field
+        sharing the number.
+        """
+        literal = self.data_literal()
+        if self.field_number is None:
+            return f"^FD{literal}^FS\n"
+        name = f'"{self.field_prompt}"' if self.field_prompt is not None else ''
+        data = f"^FD{literal}" if literal else ''
+        return f"^FN{self.field_number}{name}{data}^FS\n"
 
     def contains_point(self, x: int, y: int) -> bool:
         """Check if point is within element bounds."""
@@ -131,6 +192,8 @@ def _copy_element(element):
 class TextElement(DesignElement):
     """Text element for the designer."""
 
+    data_attribute = 'text'
+
     # Lines a block gets when wrapping is first switched on. The text is not
     # wrapping yet at that width, so this is only how much room it has to grow
     # into before the printer starts dropping lines.
@@ -138,10 +201,17 @@ class TextElement(DesignElement):
 
     def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
                  font_height: int = 36, font_width: int = 20,
-                 font_code: str = 'F', orientation: str = 'N'):
+                 font_code: str = 'F', orientation: str = 'N',
+                 field_number=None, field_prompt=None):
         self.x = x
         self.y = y
         self.text = text
+        # ^FN: this field's data comes from the printer at print time, and
+        # `text` holds only a literal the file actually gave. Keeping the
+        # placeholder out of `text` is what stops a prompt being written back
+        # as if it were data.
+        self.field_number = field_number
+        self.field_prompt = field_prompt
         self.font_height = font_height
         self.font_width = font_width
         self.width = len(text) * font_width
@@ -161,16 +231,24 @@ class TextElement(DesignElement):
         # ^FB, when the text is a wrapped block rather than a single line
         self.block: Optional['FieldBlock'] = None
 
-    def _measure(self, font_path: str) -> float:
-        """Advance width of the text at em = font_height, or 0 if unmeasurable."""
+    def _measure(self, font_path: str, text=None) -> float:
+        """Advance width of the text at em = font_height, or 0 if unmeasurable.
+
+        `text` overrides the literal, so a ^FN placeholder is measured by what
+        the canvas actually draws for it. Measuring the empty literal instead
+        gave a one-dot box under a visible placeholder, which could not be
+        clicked on the element it belonged to.
+        """
+        shown = self.text if text is None else text
         try:
             font = PILImageFont.truetype(font_path, max(1, self.font_height))
             draw = PILImageDraw.Draw(PILImage.new('RGBA', (1, 1)))
-            return draw.textlength(self.text or " ", font=font)
+            return draw.textlength(shown or " ", font=font)
         except Exception:
             return 0.0
 
-    def printed_width(self, default_font_path: Optional[str] = None) -> int:
+    def printed_width(self, default_font_path: Optional[str] = None,
+                      text=None) -> int:
         """Width in dots this text will actually occupy on the printer.
 
         ^AF selects Zebra's built-in font A, which is fixed width, so
@@ -179,21 +257,26 @@ class TextElement(DesignElement):
         to be measured. Assuming fixed width there is what made "IIII" print
         far narrower and "WWWW" far wider than the designer showed.
         """
+        shown = self.text if text is None else text
         font_path = self.font_path or default_font_path
-        natural = self._measure(font_path) if font_path else 0.0
+        natural = self._measure(font_path, shown) if font_path else 0.0
         if natural <= 0:
-            return max(1, len(self.text) * self.font_width)
+            return max(1, len(shown) * self.font_width)
         # The printer scales the em square to font_width x font_height, so an
         # advance measured at font_height scales by font_width / font_height.
         return max(1, round(natural * self.font_width / max(1, self.font_height)))
 
     def font_width_for(self, target_width: int,
-                       default_font_path: Optional[str] = None) -> int:
+                       default_font_path: Optional[str] = None,
+                       text=None) -> int:
         """The font_width that makes this text print target_width dots wide."""
+        shown = self.text if text is None else text
         font_path = self.font_path or default_font_path
-        natural = self._measure(font_path) if font_path else 0.0
+        natural = self._measure(font_path, shown) if font_path else 0.0
         if natural <= 0:
-            return max(1, round(target_width / max(1, len(self.text))))
+            # An empty literal - a ^FN placeholder has one - would divide by a
+            # clamped 1 and ask for a font as wide as the whole box.
+            return max(1, round(target_width / max(1, len(shown))))
         return max(1, round(target_width * max(1, self.font_height) / natural))
 
     def rotated(self) -> bool:
@@ -217,18 +300,19 @@ class TextElement(DesignElement):
         return FieldBlock(max(1, int(widest) + 1),
                           max(self.DEFAULT_MAX_LINES, len(lines)))
 
-    def to_zpl(self, printer_font_name: Optional[str] = None) -> str:
+    def to_zpl(self, printer_font_name: Optional[str] = None,
+               offset=(0, 0)) -> str:
         """Convert to ZPL commands."""
         effective_font = self.printer_font_name or printer_font_name
         turn = self.orientation or 'N'
-        zpl = self.origin_zpl()
+        zpl = self.origin_zpl(offset) + self.reverse_zpl()
         if effective_font:
             zpl += f"^A@{turn},{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
         else:
             zpl += f"^A{self.font_code}{turn},{self.font_height},{self.font_width}\n"
         if self.block is not None:
             zpl += self.block.to_zpl() + "\n"
-        zpl += f"^FD{self.text}^FS\n"
+        zpl += self.data_zpl()
         return zpl
 
 
@@ -284,9 +368,9 @@ class FrameElement(DesignElement):
                 keep = index + 1
         return ''.join(f",{value}" for value in given[:keep])
 
-    def to_zpl(self) -> str:
+    def to_zpl(self, offset=(0, 0)) -> str:
         """Convert to ZPL commands."""
-        return (self.origin_zpl() +
+        return (self.origin_zpl(offset) + self.reverse_zpl() +
                 f"^GB{self.width},{self.height},{self.thickness}"
                 f"{self._options_zpl()}\n^FS\n")
 
@@ -318,6 +402,8 @@ class BarcodeElement(DesignElement):
     # does not quietly lose it on the next save.
     DEFAULT_RATIO = 3.0
 
+    data_attribute = 'barcode_value'
+
     # Gap between the bars and the interpretation line, in dots
     TEXT_GAP = 2
     # The font used for the interpretation line when the line is switched on
@@ -328,11 +414,14 @@ class BarcodeElement(DesignElement):
                  barcode_value: str = "123456789", module_width: int = 2,
                  orientation: str = '', options: tuple = (),
                  font: Optional[tuple] = None,
-                 ratio: float = DEFAULT_RATIO):
+                 ratio: float = DEFAULT_RATIO,
+                 field_number=None, field_prompt=None):
         self.x = x
         self.y = y
         self.bar_height = height
         self.barcode_value = barcode_value
+        self.field_number = field_number
+        self.field_prompt = field_prompt
         self.module_width = module_width
         self.ratio = float(ratio)
         self.orientation = orientation
@@ -428,7 +517,7 @@ class BarcodeElement(DesignElement):
         # One decimal place is how ZPL spells it: 2.0 to 3.0 in 0.1 increments.
         return f"^BY{width},{self.ratio:.1f}"
 
-    def to_zpl(self) -> str:
+    def to_zpl(self, offset=(0, 0)) -> str:
         """Convert to ZPL commands."""
         # ^BY sets the module width. Without it the printer uses its own default
         # of 2 dots, which pins the barcode's physical size to the head
@@ -436,11 +525,11 @@ class BarcodeElement(DesignElement):
         #
         # The height goes on ^BC explicitly, which is why ^BY's own h is read
         # but never written: there is nowhere for it to disagree.
-        return (self.origin_zpl() +
+        return (self.origin_zpl(offset) + self.reverse_zpl() +
                 f"{self._by_zpl()}\n"
                 f"{self._font_zpl()}"
                 f"^BC{self.orientation},{self.bar_height}{self._options_zpl()}\n"
-                f"^FD{self.barcode_value}^FS\n")
+                + self.data_zpl())
 
 
 # The choices both frontends offer for a barcode, as (label, value). Here
@@ -580,7 +669,7 @@ class ImageElement(DesignElement):
         """
         return self._render_cache[1] if self._render_cache is not None else None
 
-    def to_zpl(self) -> str:
+    def to_zpl(self, offset=(0, 0)) -> str:
         if not self.image_path and self._pil_image is None:
             return ""
         import numpy as np
@@ -614,7 +703,7 @@ class ImageElement(DesignElement):
         img_sized.convert('RGB').save(preview_bio, format='JPEG', quality=85, optimize=True)
         b64_preview = _b64.b64encode(preview_bio.getvalue()).decode('ascii')
 
-        zpl = self.origin_zpl()
+        zpl = self.origin_zpl(offset) + self.reverse_zpl()
         zpl += f"^FXDESIGNER_PREVIEW:{b64_preview}\n"
         if self.image_path:
             zpl += f"^FXDESIGNER_PATH:{self.image_path}\n"
@@ -638,6 +727,18 @@ class Document:
         self.label_width = label_width
         self.label_height = label_height
         self.dpi = dpi
+
+        # A stored format (^DF) names where the printer keeps it; a recall
+        # (^XF) names one to merge data into. A file can be either, and the
+        # values its numbered fields carry are shared by number, so they live
+        # here rather than on the elements.
+        self.stored_format: Optional[str] = None
+        self.recalls: List[str] = []
+        self.fields = zpl_fields.FieldTable()
+
+        # ^LH, ^LS, ^LT, ^PO, ^PM and ^LR - what the format says about the
+        # label as a whole rather than about any one field on it.
+        self.transform = zpl_transforms.LabelTransform()
 
         # Document-wide font, used by any text element that has none of its own
         self.font_path: Optional[str] = None
@@ -740,9 +841,28 @@ class Document:
         return self._append(ImageElement(50 + offset, 50 + offset, 200, 200, image_path))
 
     def _append(self, element: DesignElement) -> DesignElement:
+        self._fit_new_element_to_bounds(element)
         self.elements.append(element)
         self.selected_element = element
         return element
+
+    def _fit_new_element_to_bounds(self, element) -> None:
+        """Bring a freshly placed element fully onto the label.
+
+        Repositioned first and only shrunk if it is bigger than the label
+        itself, so an element whose default offset overshot the label - the
+        common case on a small label - is moved back onto it at full size
+        rather than trimmed down to a sliver at the edge, which the
+        resize-driven `_clamp_element_to_bounds` would do instead.
+        """
+        element.width = min(element.width, self.label_width)
+        element.height = min(element.height, self.label_height)
+        element.x = max(0, min(element.x, self.label_width - element.width))
+        element.y = max(0, min(element.y, self.label_height - element.height))
+        block = getattr(element, 'block', None)
+        if block is not None:
+            block.width = max(1, element.width)
+            self.sync_text_width(element)
 
     def remove_selected(self) -> bool:
         """Delete every selected element.
@@ -832,12 +952,16 @@ class Document:
         """
         selected = [self.elements.index(el) for el in self.selection
                     if el in self.elements]
+        # The field table is an object, so it is copied like a text element's
+        # block: shared between snapshots, one edit would rewrite every undo
+        # entry holding it.
         return (self.label_width, self.label_height,
-                [_copy_element(el) for el in self.elements], selected)
+                [_copy_element(el) for el in self.elements], selected,
+                self.fields.copy(), self.transform.copy())
 
     def restore(self, snap):
         """Put the design back to a snapshot taken earlier."""
-        label_width, label_height, elements, selected = snap
+        label_width, label_height, elements, selected, table, transform = snap
         # assigned directly rather than through set_label_size, which would
         # clamp elements that were already valid at this size
         self.label_width = label_width
@@ -846,6 +970,8 @@ class Document:
         # snapshot still sitting on the undo stack
         self.elements = [_copy_element(el) for el in elements]
         self.selection = [self.elements[i] for i in selected]
+        self.fields = table.copy()
+        self.transform = transform.copy()
 
     # --- geometry ------------------------------------------------------------
 
@@ -868,17 +994,20 @@ class Document:
     def _clamp_elements_to_bounds(self):
         """Ensure all elements stay within label bounds."""
         for element in self.elements:
-            element.x = max(0, min(element.x, self.label_width - 1))
-            element.y = max(0, min(element.y, self.label_height - 1))
-            element.width = min(element.width, self.label_width - element.x)
-            element.height = min(element.height, self.label_height - element.y)
-            block = getattr(element, 'block', None)
-            if block is not None:
-                # A wrapped element's box is its block, so a box clamped to the
-                # label is a narrower wrap - not a box that merely claims to be
-                # narrower while the text still runs to the old width.
-                block.width = max(1, element.width)
-                self.sync_text_width(element)
+            self._clamp_element_to_bounds(element)
+
+    def _clamp_element_to_bounds(self, element) -> None:
+        element.x = max(0, min(element.x, self.label_width - 1))
+        element.y = max(0, min(element.y, self.label_height - 1))
+        element.width = min(element.width, self.label_width - element.x)
+        element.height = min(element.height, self.label_height - element.y)
+        block = getattr(element, 'block', None)
+        if block is not None:
+            # A wrapped element's box is its block, so a box clamped to the
+            # label is a narrower wrap - not a box that merely claims to be
+            # narrower while the text still runs to the old width.
+            block.width = max(1, element.width)
+            self.sync_text_width(element)
 
     def rescale(self, factor: float) -> None:
         """Scale the whole design by `factor`, keeping its physical size.
@@ -945,10 +1074,12 @@ class Document:
             # and its height follows however many lines the text wraps into.
             from . import textraster
             run, stack = textraster.block_size(
-                element.text, element.font_path or self.font_path,
+                self.display_text(element), element.font_path or self.font_path,
                 element.font_height, element.font_width, block)
         else:
-            run, stack = element.printed_width(self.font_path), element.font_height
+            run, stack = (element.printed_width(self.font_path,
+                                                self.display_text(element)),
+                          element.font_height)
         # The run is along the text, so a quarter turn swaps it with the stack.
         element.width, element.height = ((stack, run) if element.rotated()
                                          else (run, stack))
@@ -996,16 +1127,32 @@ class Document:
     def to_zpl(self) -> str:
         """Generate ZPL code from the elements, with the label size settings."""
         zpl = "^XA\n"
+        # ZPL requires ^DF immediately after ^XA: everything following it is
+        # stored as text rather than printed, so anything written in between
+        # would be left out of the format being saved.
+        if self.stored_format:
+            zpl += f"^DF{self.stored_format}^FS\n"
+        # Before the fields, because ^LH is the reference point every ^FO after
+        # it is measured from. Fitted to the elements first, so the offset it
+        # declares is one none of them has to be written above - the commands
+        # and the coordinates are then consistent by construction rather than
+        # by two places agreeing.
+        placed = self.transform.fitted(self._lowest_element())
+        zpl += placed.to_zpl()
         zpl += f"^PW{self.label_width}\n"
         zpl += f"^LL{self.label_height}\n"
         # ZPL carries no resolution, so record what the dots were drawn for.
         # Printers ignore ^FX, and the value has no caret to end the comment early.
         zpl += f"^FXDESIGNER_DPI:{self.dpi}\n"
+        offset = placed.field_offset()
         for element in self.elements:
             if self.printer_font_name and element.element_type == 'text':
-                body = element.to_zpl(printer_font_name=self.printer_font_name)
+                body = element.to_zpl(printer_font_name=self.printer_font_name,
+                                      offset=offset)
             else:
-                body = element.to_zpl()
+                # By keyword: a text element's first parameter is its printer
+                # font name, and a positional offset landed there instead.
+                body = element.to_zpl(offset=offset)
             if element.print_enabled:
                 zpl += body
             elif body:
@@ -1014,8 +1161,35 @@ class Document:
                 # and print anyway, which is the whole point of hiding it.
                 blob = _b64.b64encode(body.encode('utf-8')).decode('ascii')
                 zpl += f"^FXDESIGNER_NOPRINT:{blob}\n"
+        # A recall call is data, not geometry: the design it fills lives on
+        # the printer. Re-emitting the ^XF and the pairs is the whole of it, and
+        # is what stops opening such a file and saving it from emptying it.
+        for recalled in self.recalls:
+            zpl += f"^XF{recalled}^FS\n"
+        if not self.elements:
+            zpl += self.fields.to_zpl()
         zpl += "^XZ"
         return zpl
+
+    def _lowest_element(self):
+        """The smallest (x, y) any element occupies, or None if there are none."""
+        if not self.elements:
+            return None
+        return (min(el.x for el in self.elements),
+                min(el.y for el in self.elements))
+
+    def display_text(self, element) -> str:
+        """What a canvas draws for an element, its ^FN placeholder included.
+
+        Here rather than in each frontend because a placeholder shown two
+        different ways in two canvases is a divergence nothing would raise an
+        error about - the reason ^FB's wrapping and ^GB's rounding live in the
+        core too.
+        """
+        getter = getattr(element, 'display_text', None)
+        if getter is None:
+            return getattr(element, 'text', '') or ''
+        return getter(self.fields)
 
     def is_empty(self) -> bool:
         """True when the ZPL carries no fields, only the format wrapper.

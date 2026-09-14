@@ -351,20 +351,22 @@ class DesignCanvas(Gtk.DrawingArea):
 
     # --- text ----------------------------------------------------------------
 
-    def _render_text_pil(self, context, element, font_path: str) -> bool:
+    def _render_text_pil(self, context, element, font_path: str,
+                        ink=(0, 0, 0, 255)) -> bool:
         """Draw the element's text with the shared raster. True on success.
 
         Rasterised by zplcore.textraster, with the same library that measures
         the string for printed_width(), so the glyphs and the box that claims
-        to contain them cannot disagree.
+        to contain them cannot disagree. `ink` is white instead of black for a
+        ^FR field.
         """
         block = getattr(element, 'block', None)
         if block is not None:
             # A ^FB block is rasterised at its printed size, wrapped and
             # justified, so nothing further is scaled here.
             pixbuf = to_pixbuf(textraster.raster_block(
-                element.text, font_path, element.font_height,
-                element.font_width, block))
+                self.document.display_text(element), font_path, element.font_height,
+                element.font_width, block, ink))
             if not pixbuf:
                 return False
             context.save()
@@ -374,7 +376,8 @@ class DesignCanvas(Gtk.DrawingArea):
             return True
 
         pixbuf = to_pixbuf(
-            textraster.raster(element.text, font_path, element.font_height))
+            textraster.raster(self.document.display_text(element),
+                              font_path, element.font_height, ink))
         if not pixbuf:
             return False
 
@@ -441,12 +444,19 @@ class DesignCanvas(Gtk.DrawingArea):
     
     def _draw_text_element(self, context, element, selected: bool):
         """Draw a text element."""
-        # Draw text background (translucent: it is a designer affordance, and
-        # must not hide anything underneath that will still print)
-        context.set_source_rgba(0.95, 0.95, 1, 0.35)
+        reverse = element.reverse_print
+        if reverse:
+            # ^FR: this field prints in reverse, so the box is drawn solid
+            # rather than as the usual translucent editing affordance - a
+            # reversed field with nothing under it would otherwise vanish.
+            context.set_source_rgb(0, 0, 0)
+        else:
+            # Translucent background: it is a designer affordance, and must
+            # not hide anything underneath that will still print.
+            context.set_source_rgba(0.95, 0.95, 1, 0.35)
         context.rectangle(element.x, element.y, element.width, element.height)
         context.fill()
-        
+
         # Draw border
         if selected:
             context.set_source_rgb(0, 0, 1)
@@ -456,9 +466,10 @@ class DesignCanvas(Gtk.DrawingArea):
             context.set_line_width(1)
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
-        
+
         # Draw text using PIL when a custom font is set, otherwise Cairo toy font
-        context.set_source_rgb(0, 0, 0)
+        ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
+        context.set_source_rgb(*(c / 255 for c in ink[:3]))
         font_path = element.font_path or self.font_path
         block = getattr(element, 'block', None)
 
@@ -474,14 +485,15 @@ class DesignCanvas(Gtk.DrawingArea):
 
         pil_rendered = False
         if font_path:
-            pil_rendered = self._render_text_pil(context, element, font_path)
+            pil_rendered = self._render_text_pil(context, element, font_path, ink)
 
         if not pil_rendered and block is not None:
             self._draw_text_block(context, element, font_path, block)
         elif not pil_rendered:
             context.select_font_face(element.font_family or self.font_family or "monospace")
             context.set_font_size(element.font_height)
-            extents = context.text_extents(element.text[:20])
+            shown = self.document.display_text(element)[:20]
+            extents = context.text_extents(shown)
             if font_path:
                 horizontal_scale = element.font_width / max(1, element.font_height)
             else:
@@ -489,13 +501,22 @@ class DesignCanvas(Gtk.DrawingArea):
                 # which is fixed width: every character occupies font_width dots
                 # so the text spans the whole box. Stretch the proportional
                 # screen face to match rather than leaving a gap.
+                #
+                # printed_width(), not element.width: a 90/270-degree ^A
+                # orientation has element.width/height already transposed to
+                # the on-screen footprint (sync_text_width), so element.width
+                # is the run along the text only when the field is upright.
+                # printed_width() measures along the text itself, so font_width
+                # still stretches the preview once the field is rotated.
                 measured = extents.width if extents.width > 0 else 1.0
-                horizontal_scale = element.width / measured
+                target_width = element.printed_width(
+                    font_path, self.document.display_text(element))
+                horizontal_scale = target_width / measured
             context.save()
             context.translate(2, element.font_height - 2)
             context.scale(horizontal_scale, 1.0)
             context.move_to(0, 0)      # draw from here, not from a stale point
-            context.show_text(element.text[:20])
+            context.show_text(shown)
             context.restore()
 
         context.restore()
@@ -517,7 +538,7 @@ class DesignCanvas(Gtk.DrawingArea):
         measure, _font = textraster.measurer(font_path, element.font_height,
                                              element.font_width)
         step = textraster.pitch(element.font_height, block)
-        marked = textraster.wrap_marked(element.text, font_path,
+        marked = textraster.wrap_marked(self.document.display_text(element), font_path,
                                         element.font_height, element.font_width,
                                         block)
         for row, (line, last) in enumerate(marked):
@@ -554,7 +575,8 @@ class DesignCanvas(Gtk.DrawingArea):
         # ^GB's colour: white is what the printer leaves unburnt, so it shows
         # only over something already black - drawing it black instead was the
         # one case where the canvas showed the opposite of what prints.
-        white = getattr(element, 'colour', 'B') == 'W'
+        # ^FR flips it again, on top of whichever colour was chosen.
+        white = (getattr(element, 'colour', 'B') == 'W') != element.reverse_print
         context.set_source_rgb(1, 1, 1) if white else context.set_source_rgb(0, 0, 0)
         radius = element.corner_radius() if hasattr(element, 'corner_radius') else 0
 
@@ -633,14 +655,17 @@ class DesignCanvas(Gtk.DrawingArea):
 
         # White behind the symbol: a barcode the printer cannot read is worse
         # than one that covers something, so it is deliberately opaque.
-        context.set_source_rgb(1, 1, 1)
+        # ^FR swaps it for black-behind-white, same as everywhere else.
+        reverse = element.reverse_print
+        bg, fg = ((0, 0, 0), (1, 1, 1)) if reverse else ((1, 1, 1), (0, 0, 0))
+        context.set_source_rgb(*bg)
         context.rectangle(0, 0, run, stack)
         context.fill()
 
         bar_x, bar_y, bar_w, bar_h = layout['bars']
         mods = element.modules()
         mod_w = bar_w / max(1, sum(mods))
-        context.set_source_rgb(0, 0, 0)
+        context.set_source_rgb(*fg)
         cx = float(bar_x)
         for i, m in enumerate(mods):
             if i % 2 == 0:  # bars are at even indices
@@ -649,7 +674,7 @@ class DesignCanvas(Gtk.DrawingArea):
             cx += m * mod_w
 
         if layout['text']:
-            self._draw_barcode_text(context, layout)
+            self._draw_barcode_text(context, layout, reverse)
         context.restore()
 
         # The selection border follows the footprint, which is axis-aligned at
@@ -667,7 +692,7 @@ class DesignCanvas(Gtk.DrawingArea):
         if selected:
             self._draw_handles(context, element)
 
-    def _draw_barcode_text(self, context, layout):
+    def _draw_barcode_text(self, context, layout, reverse=False):
         """The interpretation line, in dots - not at a constant screen size.
 
         It is what the printer puts under the bars, so it is measured and
@@ -675,7 +700,8 @@ class DesignCanvas(Gtk.DrawingArea):
         """
         text, font_height = layout['text'], max(1, int(layout['font'][1]))
         font_path = self.document.font_path
-        pixbuf = (to_pixbuf(textraster.raster(text, font_path, font_height))
+        ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
+        pixbuf = (to_pixbuf(textraster.raster(text, font_path, font_height, ink))
                   if font_path else None)
         if pixbuf:
             context.save()
@@ -686,7 +712,7 @@ class DesignCanvas(Gtk.DrawingArea):
             context.restore()
             return
 
-        context.set_source_rgb(0, 0, 0)
+        context.set_source_rgb(*((1, 1, 1) if reverse else (0, 0, 0)))
         context.select_font_face("sans-serif", 0, 0)
         context.set_font_size(font_height)
         extents = context.text_extents(text)

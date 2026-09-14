@@ -12,8 +12,10 @@ import os
 import re
 from typing import Optional, Tuple
 
+from . import fields as zpl_fields
 from . import fonts as zpl_fonts
 from . import graphics
+from . import transforms as zpl_transforms
 from .model import (BarcodeElement, Document, FieldBlock, FrameElement,
                     ImageElement, TextElement)
 
@@ -159,6 +161,33 @@ def _decode_gfa_image(x: int, y: int, params: str, preview_b64, path_hint):
     return None
 
 
+def read_field_table(tokens):
+    """The values and prompts a format's ^FN#^FD pairs give its fields.
+
+    Read in a pass of its own because a pair can appear *after* the field that
+    needs its value - that is exactly what a recall call is, a list of pairs for
+    geometry declared earlier - and because one value fills every field sharing
+    the number. Gathering them field by field in the main loop could only ever
+    see the ones already passed.
+    """
+    table = zpl_fields.FieldTable()
+    pending = None
+    for cmd, params in tokens:
+        if cmd == '^FN':
+            read = zpl_fields.read(params)
+            pending = None
+            if read is not None:
+                number, prompt = read
+                table.set_prompt(number, prompt)
+                pending = number
+        elif cmd in ('^FD', '^FV') and pending is not None:
+            table.set_value(pending, params)
+            pending = None
+        elif cmd in ('^FS', '^FO', '^FT', '^XZ'):
+            pending = None
+    return table
+
+
 def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]:
     """Build a Document from ZPL text.
 
@@ -174,6 +203,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
         doc.label_height = height
 
     tokens = tokenise(_expand_hidden(zpl_content))
+    doc.fields = read_field_table(tokens)
     loaded_dpi = None
     pending_no_print = False
     field = None            # commands gathered since the last ^FO
@@ -182,6 +212,11 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     # the same kind of command for barcodes.
     default_font = dict(DEFAULT_FONT)
     default_barcode = dict(DEFAULT_BARCODE)
+    # The ^LH/^LS offset in force. Elements hold the absolute dot position, so
+    # the canvas, dragging and clamping never have to know these exist.
+    origin = (0, 0)
+    home = (0, 0)           # the ^LH in force, which is not always the first
+    seen_home = False
 
     for cmd, params in tokens:
         if cmd == '^FX':
@@ -197,6 +232,61 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 field['preview'] = key[len(PREVIEW_PARAM):]
             elif field is not None and key.startswith(PATH_PARAM):
                 field['path'] = key[len(PATH_PARAM):]
+            continue
+
+        if cmd in ('^LH', '^LS', '^LT', '^PO', '^PM', '^LR'):
+            # What the format says about the label as a whole. ^LH is a running
+            # origin - "this command affects only fields that come after it" -
+            # so it is read wherever it appears, like ^CF and ^BY. The document
+            # keeps the first one to write back; later ones still land every
+            # field in the right absolute place.
+            if cmd == '^LH':
+                home = zpl_transforms.read_home(params)
+                if home is None:        # not a position; not an origin
+                    continue
+                if not seen_home:
+                    doc.transform.home, seen_home = home, True
+            elif cmd == '^LS':
+                shift = zpl_transforms.read_shift(params)
+                if shift is None:
+                    continue
+                doc.transform.shift = shift
+            elif cmd == '^LT':
+                top = zpl_transforms.read_top(params)
+                if top is None:
+                    continue
+                doc.transform.top = top
+            elif cmd == '^PO':
+                doc.transform.invert = zpl_transforms.read_flag(params, 'I')
+            elif cmd == '^PM':
+                doc.transform.mirror = zpl_transforms.read_flag(params)
+            else:
+                doc.transform.reverse = zpl_transforms.read_flag(params)
+            if cmd in ('^LH', '^LS'):
+                # ^LT is not in the offset: it registers the label against the
+                # media rather than laying fields out on it, so applying it
+                # would move the design on screen to describe a printer
+                # adjustment. See zplcore/transforms.py.
+                # Through the shared function, not spelled again here: the
+                # running home and the document's differ, but a second copy of
+                # the arithmetic could have a sign wrong and the round-trip
+                # would still look right, since folding in and taking back out
+                # would make the same mistake.
+                origin = zpl_transforms.field_offset(home, doc.transform.shift)
+            continue
+
+        if cmd == '^DF':
+            # Stored format: everything after it is saved on the printer rather
+            # than printed, so the design this file describes *is* the template.
+            doc.stored_format = params.strip() or None
+            continue
+
+        if cmd == '^XF':
+            # A recall merges data into geometry held on the printer. Recorded
+            # so a save writes it back: opening one used to empty the file.
+            recalled = params.strip()
+            if recalled:
+                doc.recalls.append(recalled)
             continue
 
         if cmd == '^CF':
@@ -219,7 +309,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             # A field that never saw ^FS still ends here, at the next one
             pending_no_print = _flush(field, doc, renderer, pending_no_print)
             match = re.match(r'\s*(-?\d+),(-?\d+)', params)
-            field = _new_field(int(match.group(1)), int(match.group(2)),
+            field = _new_field(int(match.group(1)) + origin[0],
+                               int(match.group(2)) + origin[1],
                                default_font, default_barcode) if match else None
             # ^FT places a field exactly as ^FO does, but names its baseline
             # rather than its top. Opening no field on it did not degrade such
@@ -241,6 +332,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['font'] = read_font(cmd[2], params, field['default_font'])
         elif cmd == '^FB':
             field['block'] = FieldBlock.from_zpl(params)
+        elif cmd == '^FR':
+            field['reverse'] = True
         elif cmd == '^BC':
             field['barcode'] = _read_barcode(params, field['bar_height'])
         elif cmd.startswith('^B') or cmd == '^GS':
@@ -258,7 +351,15 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['frame'] = params
         elif cmd == '^GF':
             field['graphic'] = params
+        elif cmd == '^FN':
+            read = zpl_fields.read(params)
+            if read is not None:
+                field['field_number'], field['field_prompt'] = read
         elif cmd == '^FD':
+            field['data'] = params
+        elif cmd == '^FV':
+            # ^FV is ^FD for a field the printer clears after printing. Reading
+            # it as data is what stops such a field vanishing outright.
             field['data'] = params
 
     _flush(field, doc, renderer, pending_no_print)
@@ -280,12 +381,14 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None) -> dict:
     """
     inherited = dict(default_barcode or DEFAULT_BARCODE)
     return {'x': x, 'y': y, 'block': None, 'font': None,
+            'field_number': None, 'field_prompt': None,
             'module_width': inherited['module_width'],
             'ratio': inherited['ratio'],
             'bar_height': inherited['height'],
             'default_font': dict(default_font or DEFAULT_FONT),
             'barcode': None, 'frame': None, 'graphic': None, 'data': None,
-            'preview': None, 'path': None, 'typeset': False, 'symbology': None}
+            'preview': None, 'path': None, 'typeset': False, 'symbology': None,
+            'reverse': False}
 
 
 def _read_default_font(params: str, current: dict) -> dict:
@@ -449,6 +552,7 @@ def _flush(field, doc, renderer, pending_no_print: bool) -> bool:
     if element is not None:
         if field['typeset']:
             _apply_typeset(element, doc)
+        element.reverse_print = field['reverse']
         doc.elements.append(element)
     if pending_no_print and len(doc.elements) > before:
         for el in doc.elements[before:]:
@@ -500,12 +604,21 @@ def _build_element(field, doc, renderer):
         # A ^A before the ^BC selects the interpretation line's font, not a
         # text element's, so it belongs to the barcode.
         font = field['font']
+        # A numbered field's data comes from the printer, so it has none of
+        # its own and must not be given any: `or "123456789"` is a default for a
+        # barcode the user has just created, and applying it here invented a
+        # value that appeared nowhere in the file and then wrote it to disk.
+        value = field['data']
+        if value is None:
+            value = '' if field['field_number'] is not None else "123456789"
         return BarcodeElement(x, y, height=bc['height'],
-                              barcode_value=field['data'] or "123456789",
+                              barcode_value=value,
                               module_width=field['module_width'],
                               ratio=field['ratio'],
                               orientation=bc['orientation'],
                               options=bc['options'],
+                              field_number=field['field_number'],
+                              field_prompt=field['field_prompt'],
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
 
@@ -514,7 +627,9 @@ def _build_element(field, doc, renderer):
         # Code 39 sixty dots tall from arriving as nine-dot text.
         return None
 
-    if field['data'] is not None:
+    # A ^FN field carries no ^FD of its own - that is what ^FN is for - so
+    # requiring data discarded every text field in a stored format.
+    if field['data'] is not None or field['field_number'] is not None:
         return _build_text(x, y, field, doc, renderer)
 
     return None
@@ -525,8 +640,10 @@ def _build_text(x, y, field, doc, renderer):
     # No ^A in the field means whatever ^CF last set, which is what the printer
     # would use. Discarding the field for want of an ^A lost it altogether.
     font = field['font'] or field['default_font']
-    element = TextElement(x, y, field['data'], font['height'], font['width'],
-                          font_code=font['code'])
+    element = TextElement(x, y, field['data'] or '', font['height'],
+                          font['width'], font_code=font['code'],
+                          field_number=field['field_number'],
+                          field_prompt=field['field_prompt'])
     element.orientation = font.get('orientation', 'N')
     element.height = font['height']
     element.printer_font_name = font['name']

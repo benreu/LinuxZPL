@@ -5,11 +5,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import _isolate  # a throwaway settings file, before any frontend is imported
 
 from PySide2.QtWidgets import QApplication
-from PySide2.QtGui import QImage
+from PySide2.QtGui import QImage, QPainter
 from PySide2.QtCore import Qt, QPoint, QEvent
 from PySide2.QtGui import QMouseEvent
 
-from zplcore import fonts as zpl_fonts, geometry, parser as zpl_parser, textraster, workflow
+from zplcore import (fonts as zpl_fonts, geometry, parser as zpl_parser,
+                     textraster, transforms as zpl_transforms, workflow)
 from zplcore import model as zpl_model
 from zplcore.model import Document, TextElement, BarcodeElement, FrameElement, ImageElement
 from zplcore.renderer import ZPLRenderer
@@ -97,6 +98,27 @@ check("hidden element survives round trip",
       and back.elements[1].text == 'hidden'
       and back.elements[0].print_enabled and back.elements[2].element_type == 'frame',
       [(e.element_type, e.print_enabled) for e in back.elements])
+
+# --- new elements land on the label even when it's too small for their
+#     default offset, rather than off the edge where nothing can reach them
+small = Document(60, 60)
+added = [small.add_text_element('hi'), small.add_frame_element(),
+         small.add_barcode_element(), small.add_image_element('unused.png')]
+on_label = [(0 <= el.x and 0 <= el.y
+             and el.x + el.width <= small.label_width
+             and el.y + el.height <= small.label_height) for el in added]
+check("a new element on a small label stays within its bounds",
+      all(on_label), [(el.x, el.y, el.width, el.height) for el in added])
+
+# the barcode's default y (250) overshoots a label this short; it should be
+# moved up to fit at full size, not trimmed down to a sliver at the bottom
+natural_barcode_height = BarcodeElement(50, 250).height
+roomy = Document(400, 300)
+placed_barcode = roomy.add_barcode_element()
+check("a barcode that overshoots a short label is repositioned, not trimmed",
+      placed_barcode.height == natural_barcode_height
+      and placed_barcode.y + placed_barcode.height == roomy.label_height,
+      (placed_barcode.y, placed_barcode.height, natural_barcode_height))
 
 # --- full round trip against the reference sample ---------------------------
 orig = open(str(Path(__file__).resolve().parent / 'fixtures' / 'sample_300dpi.zpl')).read()
@@ -417,6 +439,37 @@ check("a rotated text box stays transposed after a resize",
       rot.height == rot.printed_width(rot_doc.font_path)
       and rot.width == rot.font_height, (rot.width, rot.height))
 
+# The toy-font fallback (^AF, i.e. no downloaded font) used to scale a field
+# by its on-screen footprint width - which sync_text_width transposes with
+# height at a quarter turn - instead of the run along the text. A rotated
+# field's ink therefore stopped growing with font_width and tracked its
+# (untouched) footprint width, itself just font_height, instead.
+def fallback_ink_span(font_width, orientation):
+    fb_doc = Document(300, 300, dpi=203)
+    fb_el = fb_doc.add_text_element('IIIIIIIIII')
+    fb_el.font_path = fb_el.font_family = None
+    fb_el.orientation = orientation
+    fb_el.font_height, fb_el.font_width = 30, font_width
+    fb_doc.sync_text_width(fb_el)
+    image = QImage(300, 60, QImage.Format_ARGB32); image.fill(Qt.white)
+    painter = QPainter(image)
+    qt_canvas.DesignCanvas(fb_doc)._draw_text_fallback(painter, fb_el, None)
+    painter.end()
+    left = right = -1
+    for x in range(image.width()):
+        for y in range(image.height()):
+            c = image.pixelColor(x, y)
+            if c.red() < 100 and c.green() < 100 and c.blue() < 100:
+                if left == -1: left = x
+                right = x
+                break
+    return (right - left) if left != -1 else 0
+
+narrow_span = fallback_ink_span(10, 'R')
+wide_span = fallback_ink_span(60, 'R')
+check("a rotated fallback field still stretches with font_width",
+      wide_span > narrow_span * 1.5, (narrow_span, wide_span))
+
 # The canvas has to hand the geometry the box from the press. Everything above
 # proves the geometry is right when it is given one; this drives the real
 # press/motion/release path, because a canvas that went back to measuring from
@@ -637,7 +690,12 @@ check("nothing is reported for the templates",
       workflow.unsupported_commands(product) == []
       and workflow.unsupported_commands(serial) == [])
 check("unmodelled commands are reported",
-      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^LRY^XZ") == ['^BQ', '^LR'])
+      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^FH^XZ") == ['^BQ', '^FH'])
+check("and the label transforms are not, now that they survive a save",
+      workflow.unsupported_commands(
+          "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [],
+      workflow.unsupported_commands(
+          "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ"))
 
 # --- every ^BC parameter ----------------------------------------------------
 from zplcore.model import BARCODE_MODES, BARCODE_ORIENTATIONS
@@ -699,6 +757,26 @@ check("both frontends are offered the same modes",
       [c for _l, c in BARCODE_MODES] == ['N', 'A', 'U', 'D'])
 check("both frontends are offered the same orientations",
       [c for _l, c in BARCODE_ORIENTATIONS] == ['N', 'R', 'I', 'B'])
+
+# --- ^FR (reverse print) -----------------------------------------------------
+for make, describe in (
+        (lambda: TextElement(0, 0, 'Reversed'), 'text'),
+        (lambda: FrameElement(0, 0, 100, 50), 'frame'),
+        (lambda: BarcodeElement(0, 0, 80, '12345'), 'barcode')):
+    plain = make()
+    check(f"an untouched {describe} element writes no ^FR",
+          '^FR' not in plain.to_zpl(), plain.to_zpl())
+
+    was_reversed = make()
+    was_reversed.reverse_print = True
+    check(f"a reversed {describe} element writes ^FR",
+          '^FR' in was_reversed.to_zpl(), was_reversed.to_zpl())
+    reparsed = zpl_parser.parse_zpl(f"^XA{was_reversed.to_zpl()}^XZ")[0].elements[0]
+    check(f"^FR survives a round trip on a {describe} element",
+          reparsed.reverse_print is True, reparsed.to_zpl())
+
+check("^FR is modelled, not reported as an unsupported command",
+      '^FR' not in workflow.unsupported_commands(was_reversed.to_zpl()))
 
 # --- wrapped text (^FB) -----------------------------------------------------
 
@@ -901,6 +979,14 @@ _drive_text_dialog(de, ddoc,
 check("unticking wrap joins the lines rather than leaving a break behind",
       de.block is None and de.text == "ACME Widget Model 4400", de.text)
 
+_drive_text_dialog(
+    de, ddoc,
+    lambda dialog: dialog.findChild(QCheckBox, 'reverse_print').setChecked(True))
+check("reverse print set in the text dialog reaches the element",
+      de.reverse_print is True)
+check("a reversed field written from the dialog carries ^FR",
+      '^FR' in de.to_zpl(), de.to_zpl())
+
 # --- the editors are non-modal child windows --------------------------------
 # Non-modal means an editor can still be up when the element under it is
 # replaced or removed, which is the one way an edit can be silently lost.
@@ -998,6 +1084,16 @@ rounded = ZPLRenderer(400, 300).render(
 check("the preview rounds a rounded frame's corners",
       rounded.getpixel((22, 22)) > 200 and rounded.getpixel((200, 21)) < 100,
       (rounded.getpixel((22, 22)), rounded.getpixel((200, 21))))
+
+# ^FR flips a frame's own colour, in the preview as on the canvas
+fr_frame = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO20,20^FR^GB360,260,4^FS^XZ").convert('L')
+check("the preview draws a ^FR frame's border inverted",
+      fr_frame.getpixel((200, 21)) > 200, fr_frame.getpixel((200, 21)))
+check("^FR reversed on a foreign file writes back after ^GB and still renders",
+      ZPLRenderer(400, 300).render(
+          "^XA^PW400^LL300^FO20,20^GB360,260,4^FR^FS^XZ"
+      ).convert('L').getpixel((200, 21)) > 200)
 
 # --- text turns the way barcodes already do ---------------------------------
 
@@ -1253,7 +1349,9 @@ sized = _drive_label_size(Document(812, 1218, dpi=203), 203,
 check("a label size keeps two decimals rather than rounding to one",
       sized[:2] == (558, 863), f"{sized[:2]}, expected (558, 863)")
 check("and reports back the inches that were typed, for the settings file",
-      sized[2:] == (203, 2.75, 4.25), sized[2:])
+      sized[2:5] == (203, 2.75, 4.25), sized[2:5])
+check("and the label transform, which the dialog also carries",
+      sized[5] == zpl_transforms.LabelTransform(), sized[5])
 reopened = {}
 _drive_label_size(Document(*sized[:2], dpi=203), 203,
                   lambda d: reopened.update(w=round(_spins(d)[0].value(), 2),
@@ -1337,6 +1435,63 @@ try:
     zw._load_settings()
     check("and is read back from the fallback location",
           zw.printer_address == '10.0.0.9', zw.printer_address)
+finally:
+    qt_main._config_path = real_config_path
+    qt_main._fallback_config_path = real_fallback_path
+
+# --- Set Printer for This Session never touches the persisted default ------
+# The DPI is held fixed across both dialogs below so neither one takes the
+# rescale-prompt path, which would otherwise open a real (blocking) dialog.
+session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+qt_main._config_path = lambda: session_path
+qt_main._fallback_config_path = lambda: session_path
+try:
+    zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.50', 9100, 203
+    zw._save_settings()
+    zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+
+    real_dialog = qt_dialogs.printer_settings_dialog
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    try:
+        zw.on_session_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+
+    check("Set Printer for This Session changes the printer in effect",
+          (zw.printer_address, zw.printer_port) == ('10.0.0.5', 9200),
+          (zw.printer_address, zw.printer_port))
+
+    written = _cfg.ConfigParser(); written.read(session_path)
+    check("but never writes it to the settings file",
+          written.get('printer', 'address', fallback=None) == '192.168.1.50',
+          dict(written['printer']) if written.has_section('printer') else None)
+
+    # Default Printer must open on the persisted default, not the session
+    # override just applied above - otherwise clicking OK on an unedited
+    # dialog would silently promote the override into the new default.
+    seen = {}
+    def capture_dialog(parent, address, port, dpi, **kwargs):
+        seen['address'], seen['port'], seen['dpi'] = address, port, dpi
+        return None  # cancel, so nothing else about window state changes
+    qt_dialogs.printer_settings_dialog = capture_dialog
+    try:
+        zw.on_default_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+    check("Default Printer opens pre-filled with the persisted default, not the session override",
+          (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
+
+    # Contrast: Default Printer, given the same dialog result, does persist.
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    try:
+        zw.on_default_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+
+    written = _cfg.ConfigParser(); written.read(session_path)
+    check("while Default Printer does persist the new address",
+          written.get('printer', 'address', fallback=None) == '10.0.0.5',
+          dict(written['printer']) if written.has_section('printer') else None)
 finally:
     qt_main._config_path = real_config_path
     qt_main._fallback_config_path = real_fallback_path
@@ -1761,6 +1916,238 @@ ink = _preview_ink(shared.replace('^PW406', '^PW500').replace('^LL406', '^LL500'
 check("the preview draws the inherited width too",
       ink is not None and ink[2] >= 400, ink)
 
+
+
+# --- stored formats: ^FN as a real variable field ---------------------------
+# A ^DF template is a normal design whose variable fields carry ^FN instead of
+# ^FD. Those fields used to vanish, and a ^FN barcode field was handed the
+# string "123456789" by a fallback meant for newly created barcodes - so the
+# designer invented label content and wrote it to disk.
+
+from zplcore import fields as zpl_fields
+
+# The manual's canonical example, p51, kept verbatim: it is ground truth for
+# what a stored format is, published rather than inferred.
+_stored = (FIXTURES / 'stored_format.zpl').read_text()
+_doc = zpl_parser.parse_zpl(_stored)[0]
+check("a ^DF names the format the file describes",
+      _doc.stored_format == 'R:SAMPLE.GRF', _doc.stored_format)
+check("the manual's template opens as all thirteen of its fields",
+      len(_doc.elements) == 13, len(_doc.elements))
+check("and its four ^FN text fields are numbered, not dropped",
+      [e.field_number for e in _doc.elements
+       if getattr(e, 'field_number', None) is not None] == [1, 2, 3, 5],
+      [getattr(e, 'field_number', None) for e in _doc.elements])
+_saved = _doc.to_zpl()
+check("every ^FN is written back",
+      [l for l in _saved.split('\n') if '^FN' in l]
+      == ['^FN1^FS', '^FN2^FS', '^FN3^FS', '^FN5^FS'],
+      [l for l in _saved.split('\n') if '^FN' in l])
+check("and the ^DF comes straight after the ^XA, as ZPL requires",
+      _saved.split('\n')[:2] == ['^XA', '^DFR:SAMPLE.GRF^FS'],
+      _saved.split('\n')[:2])
+
+# The defect that mattered most: a value that appears nowhere in the source.
+check("no ^FN field is handed an invented value",
+      '123456789' not in _saved, 
+      [l for l in _saved.split('\n') if '123456789' in l])
+_bc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^BY3^BCN,100^FN4^FS^XZ")[0].elements[0]
+check("a ^FN barcode field is a barcode with no value of its own",
+      _bc.element_type == 'barcode' and _bc.barcode_value == ''
+      and _bc.field_number == 4,
+      (_bc.element_type, _bc.barcode_value, _bc.field_number))
+
+# A recall call is data, not geometry. Opening one used to empty the file.
+_recall = (FIXTURES / 'recall_format.zpl').read_text()
+_rdoc = zpl_parser.parse_zpl(_recall)[0]
+check("an ^XF is recorded", _rdoc.recalls == ['R:SAMPLE.GRF'], _rdoc.recalls)
+check("nothing is drawn for it, because the geometry is on the printer",
+      not _rdoc.elements, [e.element_type for e in _rdoc.elements])
+check("all five of its values are read",
+      _rdoc.fields.pairs() == [(1, 'Acme Printing'), (2, '14042'),
+                               (3, 'Screw'), (4, '12345678'),
+                               (5, 'Macks Fabricating')],
+      _rdoc.fields.pairs())
+_rsaved = _rdoc.to_zpl()
+check("and the whole call is written back rather than emptied",
+      '^XFR:SAMPLE.GRF' in _rsaved
+      and all(f'^FN{n}^FD' in _rsaved for n in (1, 2, 3, 4, 5)),
+      _rsaved)
+
+# ZPL's sharing rule: "the data in that field prints for any other field
+# containing the same ^FN value."
+_named = (FIXTURES / 'named_fields.zpl').read_text()
+_ndoc = zpl_parser.parse_zpl(_named)[0]
+_shown = [_ndoc.display_text(e) for e in _ndoc.elements]
+check("a field with no value shows the name it gave itself",
+      _shown[0] == '\u00abCustomer\u00bb', _shown)
+check("one ^FN value reaches every field sharing the number",
+      _shown[1] == 'A-1000' and _shown[2] == 'A-1000', _shown)
+check("an unnamed, unvalued field still shows its number",
+      zpl_fields.FieldTable().display(4) == '\u00abFN4\u00bb',
+      zpl_fields.FieldTable().display(4))
+check("and none of the four is reported as unsupported",
+      workflow.unsupported_commands(_named) == [],
+      workflow.unsupported_commands(_named))
+check("the prompt round-trips in the quotes that make it a prompt",
+      '^FN1"Customer"^FS' in _ndoc.to_zpl(),
+      [l for l in _ndoc.to_zpl().split('\n') if '^FN1' in l])
+
+# ^FV is ^FD for a field the printer clears after printing. Its text used to
+# disappear entirely, element and all.
+_fv = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FVvariable^FS^XZ")[0].elements
+check("^FV no longer loses the field it carries",
+      len(_fv) == 1 and _fv[0].text == 'variable',
+      [(e.element_type, getattr(e, 'text', None)) for e in _fv])
+
+# The box has to match what is drawn, or a visible placeholder cannot be
+# clicked on the element it belongs to.
+_ph = zpl_parser.parse_zpl(
+    "^XA^PW406^LL203^FO20,20^A0N,30,30^FN2\"Part number\"^FS^XZ")[0]
+check("a placeholder's box is measured from what the canvas shows",
+      _ph.elements[0].width > 100, _ph.elements[0].width)
+
+# The one deliberate divergence: the canvas shows the placeholder because it
+# answers "what am I editing"; the preview draws nothing because it answers
+# "what will print", and an unfilled ^FN prints nothing.
+_unfilled = "^XA^PW300^LL200^FO20,20^A0N,30,30^FN2\"Part number\"^FS^XZ"
+check("the preview draws no ink for an unfilled ^FN",
+      _preview_ink(_unfilled, 300, 200) is None,
+      _preview_ink(_unfilled, 300, 200))
+_filled = ("^XA^PW300^LL200^FO20,20^A0N,30,30^FN2\"Part number\"^FS"
+           "^FN2^FDFilled^FS^XZ")
+check("and draws the value once something supplies one",
+      _preview_ink(_filled, 300, 200) is not None,
+      _preview_ink(_filled, 300, 200))
+
+# Undo holds whole documents, so a shared field table would rewrite every entry
+# on the stack - the trap a text element's block already avoids.
+_udoc = zpl_parser.parse_zpl(_named)[0]
+_usnap = _udoc.snapshot()
+_udoc.fields.set_value(7, 'CHANGED')
+_udoc.restore(_usnap)
+check("an undo snapshot does not share the field table",
+      _udoc.fields.value(7) == 'A-1000', _udoc.fields.value(7))
+
+
+# --- the commands that move or flip a whole label ---------------------------
+# ^LH and ^LS displace every field: a label carrying one was drawn where its ^FO
+# said and printed somewhere else, and a save dropped the command, so it then
+# printed where the canvas had been showing it all along.
+
+def _saved_body(zpl):
+    out = zpl_parser.parse_zpl(zpl)[0].to_zpl().split('\n')
+    return ' '.join(l for l in out if l.strip() and not l.startswith('^FX')
+                    and l not in ('^XA', '^XZ', '^PW812', '^LL1218'))
+
+_lh = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^LH100,100^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("^LH lands the element where it will print",
+      (_lh.elements[0].x, _lh.elements[0].y) == (150, 150),
+      (_lh.elements[0].x, _lh.elements[0].y))
+check("and comes back out of a save unchanged",
+      _saved_body("^XA^PW812^LL1218^LH100,100^FO50,50^A0N,30,30^FDx^FS^XZ")
+      == '^LH100,100 ^FO50,50 ^A0N,30,30 ^FDx^FS',
+      _saved_body("^XA^PW812^LL1218^LH100,100^FO50,50^A0N,30,30^FDx^FS^XZ"))
+
+# ^LS shifts fields left, so it subtracts where ^LH adds
+_ls = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^LS30^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("^LS shifts a field to the left", _ls.elements[0].x == 20, _ls.elements[0].x)
+_both = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^LH100,100^LS30^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("and the two compose, ^LS against ^LH",
+      (_both.elements[0].x, _both.elements[0].y) == (120, 150),
+      (_both.elements[0].x, _both.elements[0].y))
+
+# ^LT registers the label against the media; it does not lay fields out on it
+_lt = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^LT10^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("^LT moves nothing on the label",
+      (_lt.elements[0].x, _lt.elements[0].y) == (50, 50),
+      (_lt.elements[0].x, _lt.elements[0].y))
+check("but is still written back rather than dropped",
+      '^LT10' in _saved_body("^XA^PW812^LL1218^LT10^FO50,50^A0N,30,30^FDx^FS^XZ"),
+      _saved_body("^XA^PW812^LL1218^LT10^FO50,50^A0N,30,30^FDx^FS^XZ"))
+
+# "This command affects only fields that come after it"
+_running = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO10,10^A0N,30,30^FDa^FS"
+    "^LH100,100^FO50,50^A0N,30,30^FDb^FS^XZ")[0]
+check("a ^LH part-way through leaves the fields before it alone",
+      [(e.x, e.y) for e in _running.elements] == [(10, 10), (150, 150)],
+      [(e.x, e.y) for e in _running.elements])
+check("and no ^FO is written back negative, which ZPL has no room for",
+      all(not part.startswith('-')
+          for line in _running.to_zpl().split('\n') if line.startswith('^FO')
+          for part in line[3:].split(',')),
+      [l for l in _running.to_zpl().split('\n') if l.startswith('^FO')])
+
+# The three flips round-trip, and the preview applies the two that are whole-
+# image operations.
+_flips = _saved_body("^XA^PW812^LL1218^POI^PMY^LRY^FO50,50^A0N,30,30^FDx^FS^XZ")
+check("^PO, ^PM and ^LR all survive a save",
+      '^POI' in _flips and '^PMY' in _flips and '^LRY' in _flips, _flips)
+check("and none of the six is reported as unsupported any more",
+      workflow.unsupported_commands(
+          "^XA^LH1,1^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [])
+
+_plain = _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+check("the preview moves the ink by ^LH",
+      _preview_ink("^XA^PW300^LL200^LH100,50^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == (_plain[0] + 100, _plain[1] + 50, _plain[2], _plain[3]),
+      _preview_ink("^XA^PW300^LL200^LH100,50^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
+check("^POI turns the finished label end for end",
+      _preview_ink("^XA^PW300^LL200^POI^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == (300 - _plain[0] - _plain[2], 200 - _plain[1] - _plain[3],
+          _plain[2], _plain[3]),
+      _preview_ink("^XA^PW300^LL200^POI^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
+check("and ^PMY mirrors it left to right",
+      _preview_ink("^XA^PW300^LL200^PMY^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == (300 - _plain[0] - _plain[2], _plain[1], _plain[2], _plain[3]),
+      _preview_ink("^XA^PW300^LL200^PMY^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
+check("^LT moves the preview no more than it moves the model",
+      _preview_ink("^XA^PW300^LL200^LT10^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == _plain)
+
+# ^FX runs only to the next caret, so prose naming a command becomes that
+# command. Junk parameters must not pass themselves off as an origin of 0,0.
+_prose = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FX see ^LH for details^LH20,100"
+    "^FO0,0^A0N,30,30^FDx^FS^XZ")[0]
+check("prose naming ^LH in a comment does not become the origin",
+      _prose.transform.home == (20, 100)
+      and (_prose.elements[0].x, _prose.elements[0].y) == (20, 100),
+      (_prose.transform.home, (_prose.elements[0].x, _prose.elements[0].y)))
+
+# The fixtures, as whole files
+_home_raw = (FIXTURES / 'label_home.zpl').read_text()
+_home_doc = zpl_parser.parse_zpl(_home_raw)[0]
+check("the preprinted-stock fixture places every field below the header",
+      [(e.x, e.y) for e in _home_doc.elements]
+      == [(20, 100), (20, 140), (20, 180), (20, 260)],
+      [(e.x, e.y) for e in _home_doc.elements])
+check("and writes its ^LH back with the ^FO it came in with",
+      '^LH20,100' in _home_doc.to_zpl() and '^FO0,0' in _home_doc.to_zpl(),
+      [l for l in _home_doc.to_zpl().split('\n') if l.startswith(('^LH', '^FO'))])
+_flip_raw = (FIXTURES / 'flipped_label.zpl').read_text()
+_flip_doc = zpl_parser.parse_zpl(_flip_raw)[0]
+check("the flipped fixture keeps both flips",
+      _flip_doc.transform.invert and _flip_doc.transform.mirror,
+      (_flip_doc.transform.invert, _flip_doc.transform.mirror))
+check("and neither fixture reports anything unsupported",
+      workflow.unsupported_commands(_home_raw) == []
+      and workflow.unsupported_commands(_flip_raw) == [])
+
+# Undo holds whole documents, so a shared transform would rewrite every entry
+_tdoc = zpl_parser.parse_zpl(_home_raw)[0]
+_tsnap = _tdoc.snapshot()
+_tdoc.transform.home = (999, 999)
+_tdoc.restore(_tsnap)
+check("an undo snapshot does not share the transform",
+      _tdoc.transform.home == (20, 100), _tdoc.transform.home)
 
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))

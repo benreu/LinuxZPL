@@ -77,6 +77,9 @@ class ZPLDesignerWindow(QMainWindow):
         self.label_inches = DEFAULT_LABEL_INCHES
         self.saved_geometry = None
         self._load_settings()
+        # The persisted printer, snapshotted so a session-only override (Print
+        # To) can offer "Use Default" without re-reading the settings file.
+        self._default_printer = (self.printer_address, self.printer_port, self.printer_dpi)
         self._place_on_screen()
         # Fonts registered before the application existed could not be handed to
         # Qt then; now there is one, so flush them.
@@ -291,8 +294,11 @@ class ZPLDesignerWindow(QMainWindow):
                                                "Ctrl+1")
 
         self.label_size_action = self._action("Label Size…", self.on_label_size)
-        self.printer_settings_action = self._action("Printer Settings…", self.on_printer_settings)
+        self.default_printer_action = self._action("Default Printer…", self.on_default_printer)
         self.printer_fonts_action = self._action("Printer Fonts…", self.on_printer_fonts)
+
+        self.session_printer_action = self._action(
+            "&Set Printer for This Session…", self.on_session_printer)
 
     def _build_menus(self):
         menubar = self.menuBar()
@@ -305,6 +311,10 @@ class ZPLDesignerWindow(QMainWindow):
         file_menu.addAction(self.save_as_action)
         file_menu.addSeparator()
         file_menu.addAction(self.print_action)
+        # A submenu rather than a flat item: this is where printer-related
+        # actions beyond the one session override belong as they show up.
+        printer_settings_menu = file_menu.addMenu("Prin&ter Settings")
+        printer_settings_menu.addAction(self.session_printer_action)
         file_menu.addSeparator()
         file_menu.addAction(self.quit_action)
 
@@ -335,7 +345,7 @@ class ZPLDesignerWindow(QMainWindow):
 
         settings_menu = menubar.addMenu("&Settings")
         settings_menu.addAction(self.label_size_action)
-        settings_menu.addAction(self.printer_settings_action)
+        settings_menu.addAction(self.default_printer_action)
         settings_menu.addAction(self.printer_fonts_action)
 
     def _build_toolbar(self):
@@ -577,7 +587,8 @@ class ZPLDesignerWindow(QMainWindow):
             return
         self.apply_label_settings(*result)
 
-    def apply_label_settings(self, width, height, dpi, w_in, h_in):
+    def apply_label_settings(self, width, height, dpi, w_in, h_in,
+                             transform=None):
         """One accepted visit to Label Settings, whatever it changed.
 
         The resolution and the size can both have moved in the same visit, and
@@ -591,6 +602,8 @@ class ZPLDesignerWindow(QMainWindow):
         old_dpi = self.printer_dpi
         self.printer_dpi = dpi
         self.label_inches = (w_in, h_in)
+        if transform is not None:
+            self.document.transform = transform
         # Written before the prompt, as the printer dialog writes its own: the
         # prompt is modal and can be dismissed by the window manager, and the
         # choice the user already made should be on disk by then.
@@ -607,16 +620,40 @@ class ZPLDesignerWindow(QMainWindow):
         message = f"Label size set to {width}x{height}"
         self.update_status(f"{message} - {note}" if note else message)
 
-    def on_printer_settings(self):
+    def on_default_printer(self):
+        # Opened with the persisted default, not the printer currently in
+        # effect: a session override (Printer Settings) must never leak into
+        # this dialog and get re-saved as the new default just by clicking OK.
+        default_address, default_port, default_dpi = self._default_printer
         result = qt_dialogs.printer_settings_dialog(
-            self, self.printer_address, self.printer_port, self.printer_dpi)
+            self, default_address, default_port, default_dpi,
+            title="Default Printer")
         if result is None:
             return
         address, port, dpi = result
         old_dpi = self.printer_dpi
         self.printer_address, self.printer_port, self.printer_dpi = address, port, dpi
         self._save_settings()
+        self._default_printer = (address, port, dpi)
         self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
+        if dpi != old_dpi:
+            note = self._offer_dpi_rescale()
+            if note:
+                self.canvas._sync_size()
+                self.canvas.commit()
+                self.update_status(note[0].upper() + note[1:])
+
+    def on_session_printer(self):
+        """Print To this session's printer, without touching the persisted default."""
+        result = qt_dialogs.printer_settings_dialog(
+            self, self.printer_address, self.printer_port, self.printer_dpi,
+            default=self._default_printer)
+        if result is None:
+            return
+        address, port, dpi = result
+        old_dpi = self.printer_dpi
+        self.printer_address, self.printer_port, self.printer_dpi = address, port, dpi
+        self.update_status(f"Printing to {self.printer_address}:{self.printer_port} for this session")
         if dpi != old_dpi:
             note = self._offer_dpi_rescale()
             if note:

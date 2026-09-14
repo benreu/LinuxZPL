@@ -59,8 +59,9 @@ until one is (§13) — at the configured printer resolution (4 × 6 inches is
 
 ### 3.2 Properties common to every element
 
-`x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`, and
-`print_enabled` (default true — see §6.6).
+`x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`,
+`print_enabled` (default true — see §6.6), and `reverse_print` (`^FR`, default
+false — a checkbox in the Edit Text, Edit Frame and Edit Barcode dialogs, §7).
 
 ### 3.3 Element types
 
@@ -390,11 +391,13 @@ pinned.
 | **Save** | Writes to the current path, or behaves as Save As if there is none. |
 | **Save as…** | File chooser, default name `untitled.zpl`. A name typed with no extension gets `.zpl`; one that already has an extension is left alone. Confirms before overwriting an existing file, and declining returns to the chooser. Adopts the chosen path as the current file. |
 | **Print** | §9. |
+| **Printer Settings ▸ Set Printer for This Session…** | §9. A submenu rather than a flat item, so further printer-related actions can join it later. |
 | **Quit** | Prompts about unsaved changes (§6.7). |
 
 **The menu is in four groups**, separated in this order: start a document
-(New, Open), persist it (Save, Save as), print it, leave. A port that runs them
-together is the thing this grouping exists to avoid.
+(New, Open), persist it (Save, Save as), print it (Print, Printer Settings),
+leave. A port that runs them together is the thing this grouping exists to
+avoid.
 
 Saving refuses an empty document ("No content to save" — a document whose ZPL
 is empty or just `^XA` / `^XZ`). Save clears the modified flag; a failed save
@@ -441,7 +444,7 @@ those two groups. §5 describes what each does to the scale.
 | Command | Behaviour |
 |---|---|
 | **Label Size** | §7 |
-| **Printer Settings** | §7 |
+| **Default Printer** | §7 |
 | **Printer Fonts…** | §10.4 |
 
 ### 6.5 Toolbar
@@ -501,18 +504,30 @@ chooser rather than a form, and stays modal.
   editor's Width and Height will undo a resize made behind it.
 - The font chooser opened from Edit Text is modal to that editor alone, not to
   the application.
+- **Label Settings carries the label home and the three presentation flags** —
+  `^LH`'s x and y because preprinted stock is a design decision, and `^PO`,
+  `^PM` and `^LR` because they change the whole label. `^LS` and `^LT`
+  round-trip without being exposed: one is a dead Z-130 compatibility shim and
+  the other is printer calibration, and neither is a thing to design with.
+- **Edit Text and Edit Barcode both carry the same three `^FN` rows** — a tick
+  for "data comes from a numbered field", the number, and the field name — built
+  from one shared helper per frontend so the two editors cannot offer them
+  differently. A tick rather than a number meaning "none", because 0 is a field
+  number ZPL allows. The box is re-measured after they are applied, since what
+  the canvas draws changes with them (§8.3).
 
-The remaining dialogs — Label Size, Printer Settings, the file choosers and the
-prompts — are modal.
+The remaining dialogs — Label Size, Default Printer, Printer Settings, the
+file choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
-| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. |
-| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). |
-| **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
+| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across all three of these dialogs. |
+| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) flips Colour's effect a second time (§18). |
+| **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode; Reverse | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
-| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Printer Settings and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
-| **Printer Settings** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). |
+| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
+| **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
+| **Printer Settings** | Address; Port; DPI; Test Connection; Use Default | Same fields and ranges as Default Printer, pre-filled with whichever printer is currently in effect. Use Default re-fills the fields from the persisted default printer, for comparing against or reverting to it. Accepting changes only which printer `Print` uses for the rest of this session (§9) — it never writes to settings.ini (§13). |
 
 ---
 
@@ -599,7 +614,8 @@ path are caret-free and are stored as-is.
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
 `^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
-and the four metadata keys.
+the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the label transforms
+(`^LH`, `^LS`, `^LT`, `^PO`, `^PM`, `^LR`), and the four metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -713,6 +729,13 @@ their z-order position.
 
 Elements with `print_enabled` false are sent as `^FXDESIGNER_NOPRINT` comments
 rather than as fields, so the printer ignores them.
+
+**File → Printer Settings ▸ Set Printer for This Session…** changes the
+address, port and DPI that step 2 above uses, for every `Print` from then on,
+without writing them to settings.ini (§13) — the next launch starts back on
+the persisted default. If the DPI changes, it runs the same rescale prompt as
+Default Printer (§11), since a label's dot geometry has to stay consistent
+with whichever printer will render it.
 
 ### Printer wire formats
 
@@ -849,6 +872,76 @@ was no way to make it stop other than noticing that a save was needed. Keeping
 the dots leaves the elements exactly as the file has them, so that answer
 leaves nothing unsaved.
 
+**A `^FN` field is a variable field, not an empty one.** `^FN#"a"` numbers a
+field whose data the printer supplies at print time, optionally naming it with a
+prompt in double quotes. In a stored format `^FN` stands where `^FD` would; in
+the call that recalls one, `^FN` and `^FD` appear together to supply the data.
+Field numbers are **document-scoped and shared** — ZPL's rule is that a field
+carrying both `^FN` and `^FD` supplies its data to every other field with the
+same number — so the values live on the document rather than on the elements.
+
+Because that data can be declared *after* the field that uses it, the values are
+collected in a pass of their own before any element is built. A recall call is
+nothing but such declarations.
+
+| Written | Opens as | Saves as |
+|---|---|---|
+| `^FN1^FS` | a field showing `«FN1»` | `^FN1^FS` |
+| `^FN1"Ship to"^FS` | a field showing `«Ship to»` | `^FN1"Ship to"^FS` |
+| `^FN1"Ship to"^FDAcme^FS` | a field showing `Acme` | `^FN1"Ship to"^FDAcme^FS` |
+| `^FVtext^FS` | a field showing `text` | `^FDtext^FS` |
+
+Requiring `^FD` before building an element discarded **every text field in a
+stored format**, and a `^FN` barcode field was handed the value `123456789` — a
+string that appears nowhere in the file — by a fallback meant for a barcode the
+user has just created. The designer invented label content and then wrote it to
+disk. An element's own text holds only a literal the file actually gave; what
+the canvas draws is derived, so a prompt can never be written back as data.
+
+**`^DF` is written immediately after `^XA`**, because ZPL stores everything
+following it rather than printing it — anything emitted in between would be left
+out of the format being saved. **An `^XF` recall call round-trips as data**: the
+references and the `^FN`/`^FD` pairs are re-emitted, and nothing is drawn,
+because the geometry it fills lives on the printer. Opening one used to empty
+the file.
+
+**`^LH` and `^LS` are folded into coordinates; `^LT` is not.** An element
+holds the **absolute** dot position it will print at, so the canvas, dragging,
+clamping and alignment need to know nothing about either command. A save
+subtracts the offset again, so a file carrying one comes back exactly as it went
+in.
+
+| Written | Element holds | Saves as |
+|---|---|---|
+| `^LH100,100` + `^FO50,50` | 150, 150 | `^LH100,100` + `^FO50,50` |
+| `^LS30` + `^FO50,50` | 20, 50 | `^LS30` + `^FO50,50` |
+| `^LT10` + `^FO50,50` | 50, 50 | `^LT10` + `^FO50,50` |
+
+`^LS` subtracts where `^LH` adds — it *"shifts all field positions to the
+left"*. **`^LT` is carried but never applied**: it is media registration, ±120
+dot rows of fine-tuning for print creeping up or down the roll, which modern
+printers set at the printer. It says nothing about where a field sits within the
+label, so folding it in would move the design on screen to describe a printer
+adjustment. It is read and written back so a save cannot delete it.
+
+`^LH` *"affects only fields that come after it"*, so it is read as a running
+origin, the way `^CF` and `^BY` are. The document keeps the first one to write
+back, fitted so that no element has to be written at a negative `^FO` — `^FO`'s
+range starts at 0, and a format that moves its home part-way through leaves the
+fields before it behind the new origin. Reducing the home costs nothing: printed
+position is `home + ^FO`, so re-splitting the same absolute coordinate a
+different way lands in exactly the same place.
+
+**A parameter that is not a position is not an origin.** `^FX` comments run only
+to the next caret, so prose naming a command becomes that command — a comment
+mentioning `^LH` arrives as `^LH` carrying words. Reading that as `(0, 0)` let it
+take the place of the format's real home, so the transform readers reject
+anything that is not wholly a number.
+
+**`^PO`, `^PM` and `^LR` describe how the finished label is laid down** and
+round-trip unchanged. They are editable from Label Settings (§7), because they
+apply to the whole label rather than to any field on it.
+
 **Barcodes cannot rescale exactly.** Module width is a whole number of dots, so
 a module of 2 becomes 3 rather than 2.96 going from 203 to 300 dpi — a width
 error of up to half a dot per module. Positions and heights scale exactly.
@@ -916,9 +1009,12 @@ height = 844
 
 | Section | Written | Used by |
 |---|---|---|
-| `[printer]` | when Printer Settings or Label Size is accepted | printing, font queries, every inch↔dot conversion |
+| `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion |
 | `[label]` | when Label Size is accepted | the label at startup and on File > New |
 | `[window]` | on quit | where the window opens (§2) |
+
+**File → Printer Settings ▸ Set Printer for This Session…** (§9) deliberately
+never writes `[printer]` — only Default Printer and Label Size do.
 
 Writing re-reads the file first, so a section another version wrote survives.
 
@@ -1053,8 +1149,31 @@ rather than requirements:
   two dots. ZPL does not document its own spacing.
 - **`^FB`'s indent is applied to every line**, where ZPL hangs it on the second
   and later ones. The parameter round-trips; only where it lands differs.
+- **The preview applies `^PO` and `^PM`; the editing canvas does not.** The
+  preview answers "what will print", so it turns the finished label end for end
+  and mirrors it. The canvas answers "what am I editing", and editing through a
+  mirror is hostile: every pointer event would have to be inverse-transformed,
+  and dragging right on an inverted label would move the element left. Pointer
+  input is therefore untouched by either flag.
+- **`^LR` round-trips but is not simulated.** ZPL defines it as *"identical to
+  placing an `^FR` command in all current and subsequent fields"* — a per-field
+  inversion against whatever is beneath — not a whole-image invert. Inverting
+  the finished image would turn the white background black, which is not what a
+  printer does, so nothing is drawn for it in either the canvas or the preview.
+- **The canvas shows a `^FN` placeholder; the preview does not.** The canvas
+  answers "what am I editing", so an unfilled variable field draws its prompt or
+  its number rather than becoming invisible. The preview answers "what will
+  print", and an unfilled `^FN` prints nothing until the printer substitutes for
+  it, so it draws no ink. This is the one place the two deliberately disagree.
 - **A `^BC` with no height and no `^BY` to inherit one from is drawn 100 dots
   tall.** ZPL's power-up default is 10, which a printer would honour and which
   would make such a barcode a hairline on the canvas. A `^BY` that does give a
   height is always obeyed; this is the fallback when nothing in the file has
   said anything at all.
+- **`^FR` is approximated as an ink/background swap on the field's own
+  footprint, not a true sample-and-invert of whatever is already on the label
+  underneath it.** Both canvases and the preview draw the field's background
+  solid and its ink in the opposite colour, which reproduces the common case —
+  a field reversed against a solid `^GB` box already there — without any new
+  compositing machinery. The cost: a field reversed with nothing solid beneath
+  it shows as a filled box, where a real printer would show nothing at all.

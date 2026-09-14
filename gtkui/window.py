@@ -13,6 +13,7 @@ import base64
 import configparser
 import socket
 from pathlib import Path
+from zplcore import fields as zpl_fields
 from zplcore import fonts as zpl_fonts
 from zplcore import model
 from zplcore import parser as zpl_parser
@@ -67,6 +68,44 @@ def _make_spin(value, lower, upper):
     return spin
 
 
+def _make_field_number_rows(content, element, label_width: int = 130):
+    """The ^FN controls, identical for text and for a barcode.
+
+    A field either prints a literal or takes its data from a numbered field the
+    printer fills in, so this is a tick rather than a number that has to mean
+    "none" - 0 is a field number ZPL allows. Returns the function that applies
+    them, so the two editors cannot disagree about what OK does.
+    """
+    check = Gtk.CheckButton(label="Data comes from a numbered field (^FN)")
+    check.set_active(element.field_number is not None)
+    _make_row(content, "Variable:", check, label_width)
+
+    number = _make_spin(element.field_number or 0, 0, zpl_fields.MAX_NUMBER)
+    _make_row(content, "Field Number:", number, label_width)
+
+    prompt = Gtk.Entry()
+    prompt.set_text(element.field_prompt or '')
+    prompt.set_placeholder_text("shown on the canvas and on a printer keypad")
+    _make_row(content, "Field Name:", prompt, label_width)
+
+    def on_toggled(button):
+        number.set_sensitive(button.get_active())
+        prompt.set_sensitive(button.get_active())
+
+    on_toggled(check)
+    check.connect("toggled", on_toggled)
+
+    def apply_to(target):
+        if check.get_active():
+            target.field_number = int(number.get_value())
+            target.field_prompt = prompt.get_text() or None
+        else:
+            target.field_number = None
+            target.field_prompt = None
+
+    return apply_to
+
+
 def _make_combo(choices, current):
     """A combo over (label, code) choices, plus the codes to read it back."""
     combo = Gtk.ComboBoxText()
@@ -99,6 +138,137 @@ def _dpi_combo(dpi: int) -> Gtk.ComboBoxText:
 def _dpi_from(combo: Gtk.ComboBoxText, fallback: int) -> int:
     text = combo.get_active_text()
     return int(text) if text and text.isdigit() else fallback
+
+
+def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
+    """Address/Port/DPI picker with Test Connection.
+
+    Shared by Default Printer and the session-only Printer Settings dialog, so
+    the two can't drift apart. `default`, when given, is the persisted
+    (address, port, dpi) offered via a "Use Default" button.
+
+    Returns (address, port, dpi), or None if cancelled.
+    """
+    dialog = Gtk.Dialog(title=title, parent=parent, flags=0)
+    dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                       Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+    content = dialog.get_content_area()
+    content.set_spacing(4)
+    content.set_margin_start(8)
+    content.set_margin_end(8)
+    content.set_margin_top(8)
+    content.set_margin_bottom(8)
+
+    def make_row(lbl_text, widget):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        lbl = Gtk.Label(label=lbl_text)
+        lbl.set_size_request(90, -1)
+        lbl.set_halign(Gtk.Align.END)
+        row.pack_start(lbl, False, False, 0)
+        row.pack_start(widget, True, True, 0)
+        content.pack_start(row, False, False, 0)
+
+    # Printer address
+    address_entry = Gtk.Entry()
+    address_entry.set_text(address)
+    make_row("Address:", address_entry)
+
+    # Printer port
+    port_spin = Gtk.SpinButton()
+    port_adj = Gtk.Adjustment(value=port, lower=1, upper=65535, step_increment=1)
+    port_spin.set_adjustment(port_adj)
+    port_spin.set_numeric(True)
+    make_row("Port:", port_spin)
+
+    # Printer resolution
+    dpi_combo = _dpi_combo(dpi)
+    make_row("DPI:", dpi_combo)
+
+    def set_dpi_value(value):
+        try:
+            dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(value))
+        except ValueError:
+            model = dpi_combo.get_model()
+            for i, row in enumerate(model):
+                if row[0] == str(value):
+                    dpi_combo.set_active(i)
+                    return
+            dpi_combo.append_text(str(value))
+            dpi_combo.set_active(len(model) - 1)
+
+    # Connection test, which also asks the printer its resolution
+    result_label = Gtk.Label()
+    result_label.set_halign(Gtk.Align.START)
+    result_label.set_line_wrap(True)
+
+    def set_result(colour, text):
+        result_label.set_markup(
+            f"<span foreground='{colour}'>"
+            f"{GLib.markup_escape_text(text)}</span>")
+        # both steps block, so let the label paint before the next one
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+
+    def on_test_clicked(btn):
+        addr = address_entry.get_text().strip()
+        prt = int(port_spin.get_value())
+        if not addr:
+            set_result("red", "Address is required")
+            return
+        set_result("gray", f"Connecting to {addr}:{prt}…")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        try:
+            sock.connect((addr, prt))
+        except OSError as e:
+            set_result("red", f"✗ {e}")
+            return
+        finally:
+            sock.close()
+
+        connected = f"✓ Connected to {addr}:{prt}"
+        set_result("gray", f"{connected} — asking its resolution…")
+        reported = zpl_fonts.query_printer_dpi(addr, prt)
+        if reported is None:
+            set_result("orange", f"{connected}, but it did not report its "
+                                 f"resolution; set the DPI manually.")
+        elif reported in zpl_fonts.SUPPORTED_DPI:
+            dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(reported))
+            set_result("green", f"{connected} — {reported} dpi")
+        else:
+            set_result("orange", f"{connected} — reports {reported} dpi, which "
+                                 f"the designer does not support.")
+
+    test_btn = Gtk.Button(label="Test Connection")
+    test_btn.connect("clicked", on_test_clicked)
+    content.pack_start(test_btn, False, False, 0)
+    content.pack_start(result_label, False, False, 0)
+
+    if default is not None:
+        def on_use_default(btn):
+            def_address, def_port, def_dpi = default
+            address_entry.set_text(def_address)
+            port_spin.set_value(def_port)
+            set_dpi_value(def_dpi)
+
+        default_btn = Gtk.Button(label="Use Default")
+        default_btn.connect("clicked", on_use_default)
+        content.pack_start(default_btn, False, False, 0)
+
+    content.show_all()
+
+    response = dialog.run()
+    result = None
+    if response == Gtk.ResponseType.OK:
+        new_address = address_entry.get_text().strip()
+        if not new_address:
+            dialog.destroy()
+            parent.show_error_dialog("Printer address cannot be empty.")
+            return None
+        result = (new_address, int(port_spin.get_value()), _dpi_from(dpi_combo, dpi))
+    dialog.destroy()
+    return result
 
 
 def _config_path() -> Path:
@@ -139,6 +309,10 @@ class ZPLViewerWindow(Gtk.Window):
         self.label_inches = DEFAULT_LABEL_INCHES
         self.saved_geometry = None
         self._load_settings()
+        # The persisted printer, snapshotted so a session-only override
+        # (Printer Settings) can offer "Use Default" without re-reading the
+        # settings file.
+        self._default_printer = (self.printer_address, self.printer_port, self.printer_dpi)
         self._place_on_screen()
         # Label size in dots, which depends on both settings above
         self.label_width, self.label_height = self.inches_to_dots(*self.label_inches)
@@ -193,9 +367,7 @@ class ZPLViewerWindow(Gtk.Window):
                 ("_Save", self.on_save_clicked, "<Control>s"),
                 ("Save _as\u2026", self.on_save_as_clicked, "<Control><Shift>s"),
                 (None, None, None),
-                ("_Print", self.on_print_clicked, "<Control>p"),
-                (None, None, None),
-                ("_Quit", self.close_app, "<Control>q")):
+                ("_Print", self.on_print_clicked, "<Control>p")):
             if label is None:
                 file_menu.append(Gtk.SeparatorMenuItem())
                 continue
@@ -203,6 +375,25 @@ class ZPLViewerWindow(Gtk.Window):
             item.connect("activate", action)
             add_accel(item, accel)
             file_menu.append(item)
+
+        # A submenu rather than a flat item: this is where printer-related
+        # actions beyond the one session override belong as they show up.
+        printer_settings_menu = Gtk.Menu()
+        printer_settings_item = Gtk.MenuItem.new_with_mnemonic("Prin_ter Settings")
+        printer_settings_item.set_submenu(printer_settings_menu)
+        file_menu.append(printer_settings_item)
+
+        session_printer_item = Gtk.MenuItem.new_with_mnemonic(
+            "_Set Printer for This Session\u2026")
+        session_printer_item.connect("activate", self.on_session_printer_clicked)
+        printer_settings_menu.append(session_printer_item)
+        printer_settings_menu.show_all()
+
+        file_menu.append(Gtk.SeparatorMenuItem())
+        quit_item = Gtk.MenuItem.new_with_mnemonic("_Quit")
+        quit_item.connect("activate", self.close_app)
+        add_accel(quit_item, "<Control>q")
+        file_menu.append(quit_item)
 
         file_menu.show_all()
 
@@ -331,10 +522,10 @@ class ZPLViewerWindow(Gtk.Window):
         label_settings_item.connect("activate", self.on_label_settings_clicked)
         settings_menu.append(label_settings_item)
 
-        # Printer settings menu item
-        printer_settings_item = Gtk.MenuItem(label="Printer Settings\u2026")
-        printer_settings_item.connect("activate", self.on_printer_settings_clicked)
-        settings_menu.append(printer_settings_item)
+        # Default printer menu item
+        default_printer_item = Gtk.MenuItem(label="Default Printer\u2026")
+        default_printer_item.connect("activate", self.on_default_printer_clicked)
+        settings_menu.append(default_printer_item)
 
         # Printer fonts menu item
         printer_fonts_item = Gtk.MenuItem(label="Printer Fonts\u2026")
@@ -1126,122 +1317,51 @@ class ZPLViewerWindow(Gtk.Window):
                 last_error = e
         self.show_error_dialog(f"Could not save settings: {last_error}")
 
-    def on_printer_settings_clicked(self, widget):
-        """Handle printer settings menu item click."""
-        dialog = Gtk.Dialog(title="Printer Settings", parent=self, flags=0)
-        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+    def on_default_printer_clicked(self, widget):
+        """Handle Default Printer menu item click."""
+        # Opened with the persisted default, not the printer currently in
+        # effect: a session override (Printer Settings) must never leak into
+        # this dialog and get re-saved as the new default just by clicking OK.
+        default_address, default_port, default_dpi = self._default_printer
+        result = _printer_picker_dialog(
+            self, "Default Printer", default_address, default_port, default_dpi)
+        if result is None:
+            return
+        self.printer_address, self.printer_port, new_dpi = result
+        old_dpi = self.printer_dpi
+        self.printer_dpi = new_dpi
+        self._save_settings()
+        self._default_printer = (self.printer_address, self.printer_port, self.printer_dpi)
+        self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
+        if self.printer_dpi != old_dpi:
+            # Pointing at a printer with a different head changes what the
+            # open label measures - 1200 dots is 4in at 300 dpi and 5.9in
+            # at 203. Re-stamping it and saying nothing would leave the
+            # elements at the old scale and print the label oversized.
+            note = self._offer_dpi_rescale()
+            self.design_canvas.sync_size()
+            if note:
+                self.on_canvas_changed()
+                self.update_status(note[0].upper() + note[1:])
 
-        content = dialog.get_content_area()
-        content.set_spacing(4)
-        content.set_margin_start(8)
-        content.set_margin_end(8)
-        content.set_margin_top(8)
-        content.set_margin_bottom(8)
-
-        def make_row(lbl_text, widget):
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            lbl = Gtk.Label(label=lbl_text)
-            lbl.set_size_request(90, -1)
-            lbl.set_halign(Gtk.Align.END)
-            row.pack_start(lbl, False, False, 0)
-            row.pack_start(widget, True, True, 0)
-            content.pack_start(row, False, False, 0)
-
-        # Printer address
-        address_entry = Gtk.Entry()
-        address_entry.set_text(self.printer_address)
-        make_row("Address:", address_entry)
-
-        # Printer port
-        port_spin = Gtk.SpinButton()
-        port_adj = Gtk.Adjustment(value=self.printer_port, lower=1,
-                                  upper=65535, step_increment=1)
-        port_spin.set_adjustment(port_adj)
-        port_spin.set_numeric(True)
-        make_row("Port:", port_spin)
-
-        # Printer resolution
-        dpi_combo = _dpi_combo(self.printer_dpi)
-        make_row("DPI:", dpi_combo)
-
-        # Connection test, which also asks the printer its resolution
-        result_label = Gtk.Label()
-        result_label.set_halign(Gtk.Align.START)
-        result_label.set_line_wrap(True)
-
-        def set_result(colour, text):
-            result_label.set_markup(
-                f"<span foreground='{colour}'>"
-                f"{GLib.markup_escape_text(text)}</span>")
-            # both steps block, so let the label paint before the next one
-            while Gtk.events_pending():
-                Gtk.main_iteration()
-
-        def on_test_clicked(btn):
-            addr = address_entry.get_text().strip()
-            port = int(port_spin.get_value())
-            if not addr:
-                set_result("red", "Address is required")
-                return
-            set_result("gray", f"Connecting to {addr}:{port}\u2026")
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
-            try:
-                sock.connect((addr, port))
-            except OSError as e:
-                set_result("red", f"\u2717 {e}")
-                return
-            finally:
-                sock.close()
-
-            connected = f"\u2713 Connected to {addr}:{port}"
-            set_result("gray", f"{connected} \u2014 asking its resolution\u2026")
-            dpi = zpl_fonts.query_printer_dpi(addr, port)
-            if dpi is None:
-                set_result("orange", f"{connected}, but it did not report its "
-                                     f"resolution; set the DPI manually.")
-            elif dpi in zpl_fonts.SUPPORTED_DPI:
-                dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(dpi))
-                set_result("green", f"{connected} \u2014 {dpi} dpi")
-            else:
-                set_result("orange", f"{connected} \u2014 reports {dpi} dpi, which "
-                                     f"the designer does not support.")
-
-        test_btn = Gtk.Button(label="Test Connection")
-        test_btn.connect("clicked", on_test_clicked)
-        content.pack_start(test_btn, False, False, 0)
-        content.pack_start(result_label, False, False, 0)
-
-        content.show_all()
-
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            new_address = address_entry.get_text().strip()
-            new_port = int(port_spin.get_value())
-            if not new_address:
-                dialog.destroy()
-                self.show_error_dialog("Printer address cannot be empty.")
-                return
-            self.printer_address = new_address
-            self.printer_port = new_port
-            old_dpi = self.printer_dpi
-            self.printer_dpi = _dpi_from(dpi_combo, self.printer_dpi)
-            self._save_settings()
-            self.update_status(f"Printer set to {new_address}:{new_port}")
-            if self.printer_dpi != old_dpi:
-                # Pointing at a printer with a different head changes what the
-                # open label measures - 1200 dots is 4in at 300 dpi and 5.9in
-                # at 203. Re-stamping it and saying nothing would leave the
-                # elements at the old scale and print the label oversized.
-                dialog.destroy()
-                note = self._offer_dpi_rescale()
-                self.design_canvas.sync_size()
-                if note:
-                    self.on_canvas_changed()
-                    self.update_status(note[0].upper() + note[1:])
-                return
-        dialog.destroy()
+    def on_session_printer_clicked(self, widget):
+        """Set the printer for this session only, without touching the persisted default."""
+        result = _printer_picker_dialog(
+            self, "Printer Settings", self.printer_address, self.printer_port,
+            self.printer_dpi, default=self._default_printer)
+        if result is None:
+            return
+        self.printer_address, self.printer_port, new_dpi = result
+        old_dpi = self.printer_dpi
+        self.printer_dpi = new_dpi
+        self.update_status(
+            f"Printing to {self.printer_address}:{self.printer_port} for this session")
+        if self.printer_dpi != old_dpi:
+            note = self._offer_dpi_rescale()
+            self.design_canvas.sync_size()
+            if note:
+                self.on_canvas_changed()
+                self.update_status(note[0].upper() + note[1:])
 
     def on_label_settings_clicked(self, widget):
         """Handle label settings menu item click."""
@@ -1327,6 +1447,27 @@ class ZPLViewerWindow(Gtk.Window):
         dpi_combo = _dpi_combo(self.printer_dpi)
         dpi_box.pack_start(dpi_combo, True, True, 0)
 
+        # ^LH: the origin every field is placed from. Its use is preprinted
+        # stock - moving the printable area below a pre-printed header - so it
+        # belongs beside the size rather than among the printer settings.
+        transform = self.design_canvas.document.transform
+        home_x_spin = _make_spin(transform.home[0], 0, 32000)
+        _make_row(content, "Home X (dots):", home_x_spin)
+        home_y_spin = _make_spin(transform.home[1], 0, 32000)
+        _make_row(content, "Home Y (dots):", home_y_spin)
+
+        # How the finished label is laid down, rather than where a field sits
+        invert_check = Gtk.CheckButton(label="Print upside down (^PO)")
+        invert_check.set_active(transform.invert)
+        _make_row(content, "Orientation:", invert_check)
+        mirror_check = Gtk.CheckButton(label="Mirror left to right (^PM)")
+        mirror_check.set_active(transform.mirror)
+        _make_row(content, "Mirror:", mirror_check)
+        reverse_check = Gtk.CheckButton(
+            label="Reverse fields, white on black (^LR)")
+        reverse_check.set_active(transform.reverse)
+        _make_row(content, "Reverse:", reverse_check)
+
         # Info label
         info_label = Gtk.Label()
 
@@ -1367,10 +1508,20 @@ class ZPLViewerWindow(Gtk.Window):
         w_in, h_in = width_spin.get_value(), height_spin.get_value()
         # Destroyed before anything modal can be raised over it, as the printer
         # dialog does before its own rescale prompt.
+        # Copied, not mutated: the document's own transform is what an undo
+        # snapshot may still be holding.
+        chosen_transform = transform.copy()
+        chosen_transform.home = (int(home_x_spin.get_value()),
+                                 int(home_y_spin.get_value()))
+        chosen_transform.invert = invert_check.get_active()
+        chosen_transform.mirror = mirror_check.get_active()
+        chosen_transform.reverse = reverse_check.get_active()
         dialog.destroy()
-        self.apply_label_settings(new_width, new_height, new_dpi, w_in, h_in)
+        self.apply_label_settings(new_width, new_height, new_dpi, w_in, h_in,
+                                  chosen_transform)
 
-    def apply_label_settings(self, width, height, dpi, w_in, h_in):
+    def apply_label_settings(self, width, height, dpi, w_in, h_in,
+                             transform=None):
         """One accepted visit to Label Settings, whatever it changed.
 
         The resolution and the size can both have moved in the same visit, and
@@ -1384,6 +1535,8 @@ class ZPLViewerWindow(Gtk.Window):
         old_dpi = self.printer_dpi
         self.printer_dpi = dpi
         self.label_inches = (w_in, h_in)
+        if transform is not None:
+            self.design_canvas.document.transform = transform
         # Written before the prompt, as the printer dialog writes its own: the
         # prompt is modal and can be dismissed by the window manager, and the
         # choice the user already made should be on disk by then.
@@ -1631,6 +1784,10 @@ class ZPLViewerWindow(Gtk.Window):
                 ORIENTATIONS, element.orientation)
             make_row("Orientation:", orientation_combo)
 
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+
             # Font chooser (installed families only)
             selected_font = [element.font_path, element.font_family]
 
@@ -1717,6 +1874,8 @@ class ZPLViewerWindow(Gtk.Window):
             indent_spin = _make_spin(block.indent, 0, 2000)
             make_row("Indent:", indent_spin)
 
+            apply_field_number = _make_field_number_rows(content, element)
+
             block_fields = (block_width_spin, max_lines_spin, spacing_spin,
                             justify_combo, indent_spin)
 
@@ -1738,6 +1897,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.font_width = int(width_spin.get_value())
                     element.orientation = orientation_codes[
                         orientation_combo.get_active()]
+                    element.reverse_print = fr_check.get_active()
 
                     if wrap_check.get_active():
                         # Assigned rather than mutated: the block on the element
@@ -1776,6 +1936,12 @@ class ZPLViewerWindow(Gtk.Window):
                             element.font_family = None
                             element.printer_font_name = None
                             self.design_canvas.queue_draw()
+
+                    apply_field_number(element)
+                    # Last, because the box is measured from what the canvas will
+                    # draw, and that is the placeholder once the field is a
+                    # numbered one.
+                    self.design_canvas.document.sync_text_width(element)
 
                     self.on_canvas_changed()
 
@@ -1832,6 +1998,12 @@ class ZPLViewerWindow(Gtk.Window):
                                                 element.mode)
             make_row("Mode:", mode_combo)
 
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+
+            apply_field_number = _make_field_number_rows(content, element)
+
             content.show_all()
 
             def on_response(_dialog, response):
@@ -1841,8 +2013,10 @@ class ZPLViewerWindow(Gtk.Window):
                     element.module_width = int(module_spin.get_value())
                     element.orientation = orientation_codes[orientation_combo.get_active()]
                     element.show_text, element.text_above = text_codes[text_combo.get_active()]
+                    apply_field_number(element)
                     element.check_digit = check_codes[check_combo.get_active()]
                     element.mode = mode_codes[mode_combo.get_active()]
+                    element.reverse_print = fr_check.get_active()
                     if element.show_text:
                         # With the line switched on, name the font it prints in
                         # rather than leaving it to whatever the printer has
@@ -1947,8 +2121,12 @@ class ZPLViewerWindow(Gtk.Window):
                                        FrameElement.MAX_ROUNDING)
             content.pack_start(rounding_spin, False, False, 0)
 
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            content.pack_start(fr_check, False, False, 0)
+
             content.show_all()
-            
+
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
                     element.width = int(width_spin.get_value())
@@ -1956,6 +2134,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.thickness = int(thickness_spin.get_value())
                     element.colour = colour_codes[colour_combo.get_active()]
                     element.rounding = int(rounding_spin.get_value())
+                    element.reverse_print = fr_check.get_active()
                     self.design_canvas.queue_draw()
                     self.on_canvas_changed()
 

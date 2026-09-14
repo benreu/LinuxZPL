@@ -77,6 +77,37 @@ window._editors[id(frame)].response(Gtk.ResponseType.CANCEL)
 check("Cancel leaves the document untouched and records no history",
       len(window._undo_stack) == before and id(frame) not in window._editors)
 
+# --- the reverse print (^FR) checkbox reaches the element -------------------
+# Only the model layer is exercised elsewhere - this is what would catch a
+# dialog that adds the checkbox but forgets to read it back in on_response.
+
+
+def _find_checkbutton(container, label):
+    for child in container.get_children():
+        if isinstance(child, Gtk.CheckButton) and child.get_label() == label:
+            return child
+        if isinstance(child, Gtk.Container):
+            found = _find_checkbutton(child, label)
+            if found is not None:
+                return found
+    return None
+
+
+for build, describe in ((lambda: document.add_text_element('reversible'), 'text'),
+                        (lambda: document.add_frame_element(), 'frame'),
+                        (lambda: document.add_barcode_element(), 'barcode')):
+    element = build()
+    window.on_element_double_clicked(None, element)
+    dialog = window._editors[id(element)]
+    fr_check = _find_checkbutton(dialog.get_content_area(), "Reverse print (^FR)")
+    check(f"the {describe} editor offers a reverse print checkbox",
+          fr_check is not None)
+    fr_check.set_active(True)
+    dialog.response(Gtk.ResponseType.OK)
+    check(f"ticking it in the {describe} dialog reaches the element",
+          element.reverse_print is True)
+    document.elements.remove(element)
+
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen
 # over one would write its fields into a copy the document no longer has, and
@@ -173,6 +204,42 @@ check("and fills the lines it wraps into, rather than drawing one of them",
       f"{block_el.y + 6 * block_el.font_height}")
 
 document.elements.remove(block_el)
+
+# --- a rotated fallback field still honours font_width -----------------------
+# The toy-font fallback (^AF, i.e. no downloaded font) used to scale a field
+# by its on-screen footprint width, which sync_text_width transposes with
+# height at a quarter turn - so a rotated field's ink stopped growing with
+# font_width and tracked its (untouched) footprint width, itself just
+# font_height, instead.
+
+def fallback_ink_height(font_width):
+    fb_el = document.add_text_element("IIIIIIIIII")
+    fb_el.font_path = fb_el.font_family = None
+    fb_el.orientation = 'R'
+    fb_el.font_height, fb_el.font_width = 30, font_width
+    fb_el.x, fb_el.y = 20, 20
+    document.sync_text_width(fb_el)
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 300, 300)
+    ctx = cairo.Context(surface)
+    ctx.set_source_rgb(1, 1, 1); ctx.paint()
+    canvas._draw_text_element(ctx, fb_el, False)
+    document.elements.remove(fb_el)
+    data, stride = surface.get_data(), surface.get_stride()
+    top = bottom = -1
+    for y in range(300):
+        row = data[y * stride:(y + 1) * stride]
+        for x in range(300):
+            if row[4 * x] < 100 and row[4 * x + 1] < 100 and row[4 * x + 2] < 100:
+                if top == -1:
+                    top = y
+                bottom = y
+                break
+    return (bottom - top) if top != -1 else 0
+
+narrow_height = fallback_ink_height(10)
+wide_height = fallback_ink_height(60)
+check("a rotated fallback field still stretches with font_width",
+      wide_height > narrow_height * 1.5, (narrow_height, wide_height))
 
 # --- the resolution a rescale is measured against ---------------------------
 # Called with no argument, _offer_dpi_rescale is settling the open design
@@ -286,6 +353,63 @@ try:
     window._load_settings()
     check("and is read back from the fallback location",
           window.printer_address == '10.0.0.9', window.printer_address)
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+
+# --- Set Printer for This Session never touches the persisted default ------
+# The DPI is held fixed across both dialogs below so neither one takes the
+# rescale-prompt path, which would otherwise open a real (blocking) dialog.
+session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: session_path
+gtk_main._fallback_config_path = lambda: session_path
+try:
+    window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.50', 9100, 203
+    window._save_settings()
+    window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+
+    real_dialog = gtk_main._printer_picker_dialog
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    try:
+        window.on_session_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+
+    check("Set Printer for This Session changes the printer in effect",
+          (window.printer_address, window.printer_port) == ('10.0.0.5', 9200),
+          (window.printer_address, window.printer_port))
+
+    written = configparser.ConfigParser(); written.read(session_path)
+    check("but never writes it to the settings file",
+          written.get('printer', 'address', fallback=None) == '192.168.1.50',
+          dict(written['printer']) if written.has_section('printer') else None)
+
+    # Default Printer must open on the persisted default, not the session
+    # override just applied above - otherwise clicking OK on an unedited
+    # dialog would silently promote the override into the new default.
+    seen = {}
+    def capture_dialog(parent, title, address, port, dpi, default=None):
+        seen['address'], seen['port'], seen['dpi'] = address, port, dpi
+        return None  # cancel, so nothing else about window state changes
+    gtk_main._printer_picker_dialog = capture_dialog
+    try:
+        window.on_default_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+    check("Default Printer opens pre-filled with the persisted default, not the session override",
+          (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
+
+    # Contrast: Default Printer, given the same dialog result, does persist.
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    try:
+        window.on_default_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+
+    written = configparser.ConfigParser(); written.read(session_path)
+    check("while Default Printer does persist the new address",
+          written.get('printer', 'address', fallback=None) == '10.0.0.5',
+          dict(written['printer']) if written.has_section('printer') else None)
 finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path

@@ -20,7 +20,7 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QPushButton, QSpinBox, QDoubleSpinBox,
                                QVBoxLayout, QWidget)
 
-from zplcore import fonts as zpl_fonts, textraster
+from zplcore import fields as zpl_fields, fonts as zpl_fonts, textraster
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
                            BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
                            FRAME_COLOURS, ORIENTATIONS,
@@ -207,6 +207,47 @@ def choose_font_family(parent, current_family=None, title="Choose Font"):
 
 # --- element editing --------------------------------------------------------
 
+def _field_number_rows(form, element):
+    """The ^FN controls, identical for text and for a barcode.
+
+    A field either prints a literal or takes its data from a numbered field the
+    printer fills in, so this is a tick rather than a number that has to mean
+    "none" - 0 is a field number ZPL allows.
+    """
+    check = QCheckBox("Data comes from a numbered field (^FN)")
+    check.setObjectName("variable")
+    check.setChecked(element.field_number is not None)
+    form.addRow("Variable:", check)
+
+    number = QSpinBox()
+    number.setObjectName("field_number")
+    number.setRange(0, zpl_fields.MAX_NUMBER)
+    number.setValue(element.field_number or 0)
+    form.addRow("Field Number:", number)
+
+    prompt = QLineEdit(element.field_prompt or '')
+    prompt.setObjectName("field_prompt")
+    prompt.setPlaceholderText("shown on the canvas and on a printer keypad")
+    form.addRow("Field Name:", prompt)
+
+    def sync():
+        number.setEnabled(check.isChecked())
+        prompt.setEnabled(check.isChecked())
+
+    sync()
+    check.stateChanged.connect(sync)
+
+    def apply_to(target):
+        if check.isChecked():
+            target.field_number = number.value()
+            target.field_prompt = prompt.text() or None
+        else:
+            target.field_number = None
+            target.field_prompt = None
+
+    return apply_to
+
+
 def edit_text_dialog(parent, element: TextElement, document: Document,
                      on_accept=None) -> QDialog:
     """Edit a text element. `on_accept` runs once OK has changed it."""
@@ -241,6 +282,11 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     orientation_combo.setCurrentIndex(turns.index(element.orientation)
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
+
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
 
     chosen = {'path': element.font_path, 'family': element.font_family}
 
@@ -317,6 +363,8 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     indent_spin.setValue(block.indent)
     form.addRow("Indent:", indent_spin)
 
+    apply_field_number = _field_number_rows(form, element)
+
     block_fields = (block_width, max_lines, spacing_spin, justify_combo,
                     indent_spin)
 
@@ -335,6 +383,7 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
         element.font_width = width_spin.value()
         element.orientation = orientation_combo.currentData()
         element.height = element.font_height
+        element.reverse_print = fr_check.isChecked()
 
         if wrap_check.isChecked():
             # Assigned rather than mutated: the block on the element may
@@ -368,6 +417,9 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
                 element.font_path = None
                 element.font_family = None
                 element.printer_font_name = None
+        apply_field_number(element)
+        # Last, because the box is measured from what the canvas will draw, and
+        # that is the placeholder once the field is a numbered one.
         document.sync_text_width(element)
 
     return _show_editor(dialog, _apply, on_accept)
@@ -424,6 +476,11 @@ def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
     rounding_spin.setValue(element.rounding)
     form.addRow("Corner Rounding:", rounding_spin)
 
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
@@ -432,6 +489,7 @@ def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
         element.thickness = thickness_spin.value()
         element.colour = colour_combo.currentData()
         element.rounding = rounding_spin.value()
+        element.reverse_print = fr_check.isChecked()
 
     return _show_editor(dialog, _apply, on_accept)
 
@@ -495,6 +553,13 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         if element.mode in [c for _l, c in BARCODE_MODES] else 0)
     form.addRow("Mode:", mode_combo)
 
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+
+    apply_field_number = _field_number_rows(form, element)
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
@@ -505,6 +570,8 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         element.show_text, element.text_above = text_combo.currentData()
         element.check_digit = check_combo.currentData()
         element.mode = mode_combo.currentData()
+        element.reverse_print = fr_check.isChecked()
+        apply_field_number(element)
         if element.show_text:
             # With the line switched on, name the font it prints in rather than
             # leaving it to whatever the printer happens to have selected.
@@ -523,7 +590,7 @@ def choose_image_file(parent, title="Select Image") -> Optional[str]:
 # --- label and printer ------------------------------------------------------
 
 def label_size_dialog(parent, document: Document, dpi: int):
-    """New (width, height, dpi, width_in, height_in), or None.
+    """New (width, height, dpi, width_in, height_in, transform), or None.
 
     The size is entered in inches and stored in dots, so the resolution belongs
     beside it: the dots are a consequence of both, and having to leave for
@@ -561,6 +628,37 @@ def label_size_dialog(parent, document: Document, dpi: int):
     dpi_combo = _dpi_combo(dpi)
     form.addRow("DPI:", dpi_combo)
 
+    # ^LH: the origin every field is placed from. Its use is preprinted stock -
+    # moving the printable area below a pre-printed header - so it belongs
+    # beside the size rather than among the printer settings.
+    home_x = QSpinBox()
+    home_x.setObjectName("home_x")
+    home_x.setRange(0, 32000)
+    home_x.setValue(document.transform.home[0])
+    form.addRow("Home X (dots):", home_x)
+
+    home_y = QSpinBox()
+    home_y.setObjectName("home_y")
+    home_y.setRange(0, 32000)
+    home_y.setValue(document.transform.home[1])
+    form.addRow("Home Y (dots):", home_y)
+
+    # How the finished label is laid down, rather than where a field sits on it
+    invert_check = QCheckBox("Print upside down (^PO)")
+    invert_check.setObjectName("invert")
+    invert_check.setChecked(document.transform.invert)
+    form.addRow("Orientation:", invert_check)
+
+    mirror_check = QCheckBox("Mirror left to right (^PM)")
+    mirror_check.setObjectName("mirror")
+    mirror_check.setChecked(document.transform.mirror)
+    form.addRow("Mirror:", mirror_check)
+
+    reverse_check = QCheckBox("Reverse fields, white on black (^LR)")
+    reverse_check.setObjectName("reverse")
+    reverse_check.setChecked(document.transform.reverse)
+    form.addRow("Reverse:", reverse_check)
+
     for text, w_in, h_in in PRESET_SIZES:
         btn = QPushButton(text)
         btn.clicked.connect(
@@ -595,13 +693,27 @@ def label_size_dialog(parent, document: Document, dpi: int):
     layout.addWidget(_buttons(dialog))
     if dialog.exec_() != QDialog.Accepted:
         return None
-    return to_dots() + (chosen_dpi(), width_spin.value(), height_spin.value())
+    # Copied, not mutated: the document's own transform is what an undo
+    # snapshot may still be holding.
+    transform = document.transform.copy()
+    transform.home = (home_x.value(), home_y.value())
+    transform.invert = invert_check.isChecked()
+    transform.mirror = mirror_check.isChecked()
+    transform.reverse = reverse_check.isChecked()
+    return to_dots() + (chosen_dpi(), width_spin.value(), height_spin.value(),
+                        transform)
 
 
-def printer_settings_dialog(parent, address: str, port: int, dpi: int):
-    """New (address, port, dpi), or None if cancelled."""
+def printer_settings_dialog(parent, address: str, port: int, dpi: int,
+                            title: str = "Printer Settings", default=None):
+    """New (address, port, dpi), or None if cancelled.
+
+    `default`, when given, is the persisted (address, port, dpi) to offer via
+    a "Use Default" button - for the session-only picker, which is opened
+    with whatever printer is currently in effect rather than the default.
+    """
     dialog = QDialog(parent)
-    dialog.setWindowTitle("Printer Settings")
+    dialog.setWindowTitle(title)
     layout = QVBoxLayout(dialog)
     form = QFormLayout()
     layout.addLayout(form)
@@ -663,6 +775,26 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int):
                                  f"the designer does not support.")
 
     test_btn.clicked.connect(on_test)
+
+    if default is not None:
+        default_btn = QPushButton("Use Default")
+        layout.addWidget(default_btn)
+
+        def on_use_default():
+            def_address, def_port, def_dpi = default
+            address_edit.setText(def_address)
+            port_spin.setValue(def_port)
+            if def_dpi in zpl_fonts.SUPPORTED_DPI:
+                dpi_combo.setCurrentIndex(list(zpl_fonts.SUPPORTED_DPI).index(def_dpi))
+            else:
+                idx = dpi_combo.findText(str(def_dpi))
+                if idx < 0:
+                    dpi_combo.addItem(str(def_dpi))
+                    idx = dpi_combo.count() - 1
+                dpi_combo.setCurrentIndex(idx)
+
+        default_btn.clicked.connect(on_use_default)
+
     layout.addWidget(_buttons(dialog))
 
     if dialog.exec_() != QDialog.Accepted:
