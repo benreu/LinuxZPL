@@ -142,6 +142,9 @@ class GtkDriver:
     def add_text(self, text):
         return self.canvas.add_text_element(text)
 
+    def add_time(self, text):
+        return self.canvas.add_time_element(text)
+
     def add_frame(self):
         return self.canvas.add_frame_element()
 
@@ -362,6 +365,9 @@ class QtDriver:
 
     def add_text(self, text):
         return self.document.add_text_element(text)
+
+    def add_time(self, text):
+        return self.document.add_time_element(text)
 
     def add_frame(self):
         return self.document.add_frame_element()
@@ -859,6 +865,13 @@ def sequence(driver, record):
     record('make a field variable')
     driver.set_field_number(_variable, None, None)
     record('and back to a literal')
+
+    # A time field has its own creation button rather than being a mode of
+    # the text editor's Data Source selector, so its own path -
+    # add_time_element - has to write the same ^FC/^FD pair from both
+    # frontends.
+    driver.add_time('%m/%d/%y')
+    record('add a time field')
 
 
 def main():

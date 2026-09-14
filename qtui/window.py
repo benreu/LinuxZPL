@@ -355,6 +355,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         toolbar.addAction(self._action("+ Text", self.on_add_text))
+        toolbar.addAction(self._action("+ Time", self.on_add_time))
         toolbar.addAction(self._action("+ Frame", self.on_add_frame))
         toolbar.addAction(self._action("+ Barcode", self.on_add_barcode))
         toolbar.addAction(self._action("+ Image", self.on_add_image))
@@ -464,6 +465,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.document.add_text_element("New Text")
         self.canvas.commit()
 
+    def on_add_time(self):
+        self.document.add_time_element()
+        self.canvas.commit()
+
     def on_add_frame(self):
         self.document.add_frame_element()
         self.canvas.commit()
@@ -526,7 +531,10 @@ class ZPLDesignerWindow(QMainWindow):
             self._register_label_fonts()
             self.canvas.commit()
 
-        if isinstance(element, TextElement):
+        if isinstance(element, TextElement) and element.clock_format:
+            editor = qt_dialogs.edit_time_dialog(self, element, self.document,
+                                                 on_accept=text_committed)
+        elif isinstance(element, TextElement):
             editor = qt_dialogs.edit_text_dialog(self, element, self.document,
                                                  on_accept=text_committed)
         elif isinstance(element, FrameElement):

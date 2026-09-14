@@ -68,29 +68,31 @@ def _make_spin(value, lower, upper):
     return spin
 
 
-# A field's data is fixed text, or one of three things the printer supplies
-# at print time instead: a numbered field it recalls (^FN), a value it
-# increments each label (^SN), or its own real-time clock spliced in (^FC).
+# A field's data is fixed text, or one of two things the printer supplies at
+# print time instead: a numbered field it recalls (^FN), or a value it
+# increments each label (^SN). ^FC has its own "+ Time" creation button and
+# its own dedicated editor instead of living here - see
+# on_element_double_clicked's clock_format branch.
 _SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall'),
-                   ("Auto-serial (^SN)", 'serial'),
-                   ("Clock substitution (^FC)", 'clock')]
+                   ("Auto-serial (^SN)", 'serial')]
 
 
 def _make_field_source_rows(content, element, label_width: int = 130):
-    """The ^FN/^SN/^FC controls, identical for text and for a barcode.
+    """The ^FN/^SN controls, identical for text and for a barcode.
 
     One selector rather than a checkbox per command, since a field has
-    exactly one of these at a time - three independent ticks could disagree
-    about which. ^SF is left alone entirely: it has no row here and this
-    function's `apply_to` never touches `serial_field_raw`, so a field
-    carrying one keeps it no matter which of these four is chosen. Returns
-    the function that applies the choice, so the two editors cannot disagree
-    about what OK does.
+    exactly one of these at a time - two independent ticks could disagree
+    about which. ^SF and ^FC are both left alone entirely: neither has a row
+    here, and `apply_to` never touches `serial_field_raw`, `clock_format` or
+    `clock_chars`, so a field carrying either keeps it no matter which of
+    these choices is picked. (A plain text field with `clock_format` set
+    never reaches this dialog in the first place - it opens the dedicated
+    time editor instead - so in practice that only matters for a barcode.)
+    Returns the function that applies the choice, so the two editors cannot
+    disagree about what OK does.
     """
     if element.serial_increment is not None:
         current = 'serial'
-    elif element.clock_format:
-        current = 'clock'
     elif element.field_number is not None:
         current = 'recall'
     else:
@@ -142,9 +144,6 @@ def _make_field_source_rows(content, element, label_width: int = 130):
             target.serial_start = None
             target.serial_increment = None
             target.serial_leading_zero = False
-        target.clock_format = (code == 'clock')
-        if code != 'clock':
-            target.clock_chars = None
 
     return apply_to
 
@@ -597,6 +596,11 @@ class ZPLViewerWindow(Gtk.Window):
         add_text_btn = Gtk.Button(label="+ Text")
         add_text_btn.connect("clicked", self.on_add_text_clicked)
         toolbar_box.pack_start(add_text_btn, False, False, 0)
+
+        # Add time button
+        add_time_btn = Gtk.Button(label="+ Time")
+        add_time_btn.connect("clicked", self.on_add_time_clicked)
+        toolbar_box.pack_start(add_time_btn, False, False, 0)
 
         # Add frame button
         add_frame_btn = Gtk.Button(label="+ Frame")
@@ -1692,6 +1696,10 @@ class ZPLViewerWindow(Gtk.Window):
         """Handle add text element button click."""
         self.design_canvas.add_text_element("New Text")
 
+    def on_add_time_clicked(self, widget):
+        """Handle add time element button click."""
+        self.design_canvas.add_time_element()
+
     def on_add_frame_clicked(self, widget):
         """Handle add frame element button click."""
         self.design_canvas.add_frame_element()
@@ -1788,7 +1796,84 @@ class ZPLViewerWindow(Gtk.Window):
             open_editor.present()
             return
 
-        if isinstance(element, TextElement):
+        if isinstance(element, TextElement) and element.clock_format:
+            # Show time (^FC) edit dialog - deliberately smaller than the
+            # text editor below: no wrap/block section, no Data Source
+            # selector, since this dialog *is* the ^FC source (see
+            # _make_field_source_rows, which no longer offers it as a
+            # choice). Unticking the clock checkbox turns the element back
+            # into a plain static text field, and the next double-click then
+            # falls through to the regular text editor instead of here.
+            dialog = Gtk.Dialog(title="Edit Time Field", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                              Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                _make_row(content, label_text, widget)
+
+            text_entry = Gtk.Entry()
+            text_entry.set_text(element.text)
+            make_row("Format:", text_entry)
+
+            hint = Gtk.Label(label="e.g. %m/%d/%y → date, %H:%M:%S → time")
+            hint.set_halign(Gtk.Align.START)
+            content.pack_start(hint, False, False, 0)
+
+            height_spin = _make_spin(element.font_height, 8, 500)
+            make_row("Font Height:", height_spin)
+
+            width_spin = _make_spin(element.font_width, 8, 500)
+            make_row("Font Width:", width_spin)
+
+            orientation_combo, orientation_codes = _make_combo(
+                ORIENTATIONS, element.orientation)
+            make_row("Orientation:", orientation_combo)
+
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+
+            clock_check = Gtk.CheckButton(
+                label="Comes from the printer's clock (^FC)")
+            clock_check.set_active(element.clock_format)
+            make_row("Clock:", clock_check)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.text = text_entry.get_text()
+                    element.font_height = int(height_spin.get_value())
+                    element.font_width = int(width_spin.get_value())
+                    element.orientation = orientation_codes[
+                        orientation_combo.get_active()]
+                    element.height = element.font_height
+                    element.reverse_print = fr_check.get_active()
+                    if clock_check.get_active():
+                        element.clock_format = True
+                    else:
+                        # Off - any custom trigger characters the field had
+                        # no longer mean anything once it is plain text.
+                        element.clock_format = False
+                        element.clock_chars = None
+                    # Last, because the box is measured from what the canvas
+                    # will draw, and that is the wrapped marker for as long
+                    # as this stays a clock field.
+                    self.design_canvas.document.sync_text_width(element)
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
+
+        elif isinstance(element, TextElement):
             # Show text edit dialog
             dialog = Gtk.Dialog(title="Edit Text", parent=self, flags=0)
             dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,

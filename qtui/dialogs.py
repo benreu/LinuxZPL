@@ -207,27 +207,28 @@ def choose_font_family(parent, current_family=None, title="Choose Font"):
 
 # --- element editing --------------------------------------------------------
 
-# A field's data is fixed text, or one of three things the printer supplies
-# at print time instead: a numbered field it recalls (^FN), a value it
-# increments each label (^SN), or its own real-time clock spliced in (^FC).
+# A field's data is fixed text, or one of two things the printer supplies at
+# print time instead: a numbered field it recalls (^FN), or a value it
+# increments each label (^SN). ^FC has its own creation button and its own
+# edit_time_dialog instead of living here - see that function's docstring.
 _SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall'),
-                   ("Auto-serial (^SN)", 'serial'),
-                   ("Clock substitution (^FC)", 'clock')]
+                   ("Auto-serial (^SN)", 'serial')]
 
 
 def _field_source_rows(form, element):
-    """The ^FN/^SN/^FC controls, identical for text and for a barcode.
+    """The ^FN/^SN controls, identical for text and for a barcode.
 
     One selector rather than a checkbox per command, since a field has
-    exactly one of these at a time - three independent ticks could disagree
-    about which. ^SF is left alone entirely: it has no row here and this
-    function's `apply_to` never touches `serial_field_raw`, so a field
-    carrying one keeps it no matter which of these four is chosen.
+    exactly one of these at a time - two independent ticks could disagree
+    about which. ^SF and ^FC are both left alone entirely: neither has a row
+    here, and `apply_to` never touches `serial_field_raw`, `clock_format` or
+    `clock_chars`, so a field carrying either keeps it no matter which of
+    these choices is picked. (A plain text field with `clock_format` set
+    never reaches this dialog in the first place - it opens edit_time_dialog
+    instead - so in practice that only matters for a barcode.)
     """
     if element.serial_increment is not None:
         current = 'serial'
-    elif element.clock_format:
-        current = 'clock'
     elif element.field_number is not None:
         current = 'recall'
     else:
@@ -290,9 +291,6 @@ def _field_source_rows(form, element):
             target.serial_start = None
             target.serial_increment = None
             target.serial_leading_zero = False
-        target.clock_format = (code == 'clock')
-        if code != 'clock':
-            target.clock_chars = None
 
     return apply_to
 
@@ -469,6 +467,85 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
         apply_field_source(element)
         # Last, because the box is measured from what the canvas will draw, and
         # that is the placeholder once the field is a numbered one.
+        document.sync_text_width(element)
+
+    return _show_editor(dialog, _apply, on_accept)
+
+
+def edit_time_dialog(parent, element: TextElement, document: Document,
+                     on_accept=None) -> QDialog:
+    """Edit a clock field (^FC). `on_accept` runs once OK has changed it.
+
+    Deliberately smaller than edit_text_dialog: no wrap/block section (a
+    clock stamp is one short line, not a paragraph) and no Data Source
+    selector - this dialog *is* the ^FC source, which is why
+    `_field_source_rows` no longer offers it as one of its choices. The one
+    on/off control is the checkbox at the bottom: unticking it turns the
+    element back into a plain static text field, and the next double-click
+    opens the regular Text editor instead of this one.
+    """
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Edit Time Field")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    text_edit = QLineEdit(element.text)
+    text_edit.setObjectName("text")
+    form.addRow("Format:", text_edit)
+
+    hint = QLabel("e.g. %m/%d/%y → date, %H:%M:%S → time")
+    hint.setStyleSheet("color: gray;")
+    form.addRow("", hint)
+
+    height_spin = QSpinBox()
+    height_spin.setRange(8, 500)
+    height_spin.setValue(element.font_height)
+    form.addRow("Font Height:", height_spin)
+
+    width_spin = QSpinBox()
+    width_spin.setRange(8, 500)
+    width_spin.setValue(element.font_width)
+    form.addRow("Font Width:", width_spin)
+
+    orientation_combo = QComboBox()
+    orientation_combo.setObjectName("orientation")
+    for label, code in ORIENTATIONS:
+        orientation_combo.addItem(label, code)
+    turns = [code for _label, code in ORIENTATIONS]
+    orientation_combo.setCurrentIndex(turns.index(element.orientation)
+                                      if element.orientation in turns else 0)
+    form.addRow("Orientation:", orientation_combo)
+
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+
+    clock_check = QCheckBox("Comes from the printer's clock (^FC)")
+    clock_check.setObjectName("clock_format")
+    clock_check.setChecked(element.clock_format)
+    form.addRow("Clock:", clock_check)
+
+    layout.addWidget(_buttons(dialog))
+
+    def _apply():
+        element.text = text_edit.text()
+        element.font_height = height_spin.value()
+        element.font_width = width_spin.value()
+        element.orientation = orientation_combo.currentData()
+        element.height = element.font_height
+        element.reverse_print = fr_check.isChecked()
+        if clock_check.isChecked():
+            element.clock_format = True
+        else:
+            # Off - a field's existing custom trigger characters, if it had
+            # any, no longer mean anything once it is plain static text.
+            element.clock_format = False
+            element.clock_chars = None
+        # Last, because the box is measured from what the canvas will draw,
+        # and that is the wrapped marker for as long as this stays a clock
+        # field.
         document.sync_text_width(element)
 
     return _show_editor(dialog, _apply, on_accept)

@@ -2120,6 +2120,18 @@ check("^SF is no longer reported as unsupported either",
       workflow.unsupported_commands(_sf.to_zpl()) == [],
       workflow.unsupported_commands(_sf.to_zpl()))
 
+# add_time_element is its own creation path - the "+ Time" button - rather
+# than a mode of add_text_element, and has to size its box against the
+# wrapped marker like any other clock field does.
+_time_doc = Document()
+_time_el = _time_doc.add_time_element()
+check("add_time_element makes a clock field, not a mode of a text one",
+      _time_el.clock_format and _time_el.text == '%m/%d/%y',
+      (_time_el.clock_format, _time_el.text))
+check("its box is measured from the wrapped marker, not the bare format string",
+      _time_el.width > _time_el.printed_width(None, _time_el.text),
+      (_time_el.width, _time_el.printed_width(None, _time_el.text)))
+
 
 # --- the commands that move or flip a whole label ---------------------------
 # ^LH and ^LS displace every field: a label carrying one was drawn where its ^FO

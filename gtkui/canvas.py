@@ -215,6 +215,9 @@ class DesignCanvas(Gtk.DrawingArea):
     def add_text_element(self, text: str = "New Text"):
         return self._added(self.document.add_text_element(text))
 
+    def add_time_element(self, text: str = "%m/%d/%y"):
+        return self._added(self.document.add_time_element(text))
+
     def add_frame_element(self):
         return self._added(self.document.add_frame_element())
 

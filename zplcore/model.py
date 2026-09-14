@@ -890,6 +890,20 @@ class Document:
         self.sync_text_width(element)
         return self._append(element)
 
+    def add_time_element(self, text: str = "%m/%d/%y") -> TextElement:
+        """A field the printer's real-time clock fills in (^FC).
+
+        Its own creation button and element state rather than a mode of a
+        plain text field - see qtui/dialogs.py's edit_time_dialog for why.
+        `sync_text_width` runs after `clock_format` is set, so the box is
+        measured against the wrapped marker it will actually show.
+        """
+        offset = self._stagger(10)
+        element = TextElement(50 + offset, 50 + offset, text)
+        element.clock_format = True
+        self.sync_text_width(element)
+        return self._append(element)
+
     def add_frame_element(self) -> FrameElement:
         offset = self._stagger(20)
         return self._append(FrameElement(100 + offset, 100 + offset))
