@@ -221,6 +221,9 @@ class DesignCanvas(Gtk.DrawingArea):
     def add_serial_element(self, text: str = "1"):
         return self._added(self.document.add_serial_element(text))
 
+    def add_numbered_element(self, number: int = 1, prompt=None):
+        return self._added(self.document.add_numbered_element(number, prompt))
+
     def add_frame_element(self):
         return self._added(self.document.add_frame_element())
 

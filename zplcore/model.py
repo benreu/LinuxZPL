@@ -921,6 +921,22 @@ class Document:
         self.sync_text_width(element)
         return self._append(element)
 
+    def add_numbered_element(self, number: int = 1, prompt=None) -> TextElement:
+        """A field a stored format recalls by number at print time (^FN).
+
+        Its own creation button and element state rather than a mode of a
+        plain text field - see qtui/dialogs.py's edit_numbered_dialog. No
+        literal by default: a numbered field's data comes from the printer,
+        and handing it one here would be inventing content the design never
+        gave, the same trap a newly-created ^FN barcode used to fall into.
+        """
+        offset = self._stagger(10)
+        element = TextElement(50 + offset, 50 + offset, '')
+        element.field_number = number
+        element.field_prompt = prompt
+        self.sync_text_width(element)
+        return self._append(element)
+
     def add_frame_element(self) -> FrameElement:
         offset = self._stagger(20)
         return self._append(FrameElement(100 + offset, 100 + offset))

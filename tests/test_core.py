@@ -2174,6 +2174,20 @@ check("its box is measured from the wrapped marker, not the bare start value",
       _serial_el.width > _serial_el.printed_width(None, _serial_el.text),
       (_serial_el.width, _serial_el.printed_width(None, _serial_el.text)))
 
+# And add_numbered_element is its own creation path too now - the
+# "+ Numbered" button - rather than a mode of add_text_element. No literal
+# by default: inventing one would be the same trap a newly-created ^FN
+# barcode used to fall into, so the box has to be measured from the
+# placeholder it shows instead of an empty string.
+_numbered_doc = Document()
+_numbered_el = _numbered_doc.add_numbered_element(7, 'Batch')
+check("add_numbered_element makes a numbered field with no invented literal",
+      (_numbered_el.field_number, _numbered_el.field_prompt, _numbered_el.text)
+      == (7, 'Batch', ''),
+      (_numbered_el.field_number, _numbered_el.field_prompt, _numbered_el.text))
+check("its box is measured from the placeholder, not an empty literal",
+      _numbered_el.width > 0, _numbered_el.width)
+
 
 # --- the commands that move or flip a whole label ---------------------------
 # ^LH and ^LS displace every field: a label carrying one was drawn where its ^FO

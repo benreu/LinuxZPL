@@ -357,6 +357,7 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar.addAction(self._action("+ Text", self.on_add_text))
         toolbar.addAction(self._action("+ Time", self.on_add_time))
         toolbar.addAction(self._action("+ Serial", self.on_add_serial))
+        toolbar.addAction(self._action("+ Numbered", self.on_add_numbered))
         toolbar.addAction(self._action("+ Frame", self.on_add_frame))
         toolbar.addAction(self._action("+ Barcode", self.on_add_barcode))
         toolbar.addAction(self._action("+ Image", self.on_add_image))
@@ -474,6 +475,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.document.add_serial_element()
         self.canvas.commit()
 
+    def on_add_numbered(self):
+        self.document.add_numbered_element()
+        self.canvas.commit()
+
     def on_add_frame(self):
         self.document.add_frame_element()
         self.canvas.commit()
@@ -542,6 +547,9 @@ class ZPLDesignerWindow(QMainWindow):
         elif isinstance(element, TextElement) and element.serial_increment is not None:
             editor = qt_dialogs.edit_serial_dialog(self, element, self.document,
                                                    on_accept=text_committed)
+        elif isinstance(element, TextElement) and element.field_number is not None:
+            editor = qt_dialogs.edit_numbered_dialog(self, element, self.document,
+                                                      on_accept=text_committed)
         elif isinstance(element, TextElement):
             editor = qt_dialogs.edit_text_dialog(self, element, self.document,
                                                  on_accept=text_committed)

@@ -148,6 +148,9 @@ class GtkDriver:
     def add_serial(self, text):
         return self.canvas.add_serial_element(text)
 
+    def add_numbered(self, number, prompt=None):
+        return self.canvas.add_numbered_element(number, prompt)
+
     def add_frame(self):
         return self.canvas.add_frame_element()
 
@@ -374,6 +377,9 @@ class QtDriver:
 
     def add_serial(self, text):
         return self.document.add_serial_element(text)
+
+    def add_numbered(self, number, prompt=None):
+        return self.document.add_numbered_element(number, prompt)
 
     def add_frame(self):
         return self.document.add_frame_element()
@@ -883,6 +889,11 @@ def sequence(driver, record):
     # text editor's Data Source selector.
     driver.add_serial('1')
     record('add a serial field')
+
+    # And for a numbered field - add_numbered_element is its own creation
+    # path too now, the same as ^SN and ^FC.
+    driver.add_numbered(7, 'Batch')
+    record('add a numbered field')
 
 
 def main():

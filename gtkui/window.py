@@ -68,30 +68,24 @@ def _make_spin(value, lower, upper):
     return spin
 
 
-# A field's data is fixed text, or the printer recalls it into a numbered
-# field (^FN). ^SN and ^FC each have their own "+ Serial"/"+ Time" creation
-# button and their own dedicated editor instead of living here - see
-# on_element_double_clicked's serial_increment/clock_format branches.
-_SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall')]
+def _make_field_number_rows(content, element, label_width: int = 130):
+    """The ^FN controls, for a barcode.
 
+    Text no longer uses this: a numbered text field gets its own creation
+    button and its own dedicated editor - the same way ^SN and ^FC already
+    got one - see on_element_double_clicked's field_number branch. ^FN stays
+    here for a barcode, though: a recalled stored-format barcode is common
+    and already tested, unlike a serialized or clock-substituted one, so it
+    keeps a row rather than moving out entirely.
 
-def _make_field_source_rows(content, element, label_width: int = 130):
-    """The ^FN controls, identical for text and for a barcode.
-
-    ^SF, ^SN and ^FC are all left alone entirely: none has a row here, and
-    `apply_to` never touches `serial_start`, `serial_increment`,
-    `serial_leading_zero`, `serial_field_raw`, `clock_format` or
-    `clock_chars`, so a field carrying any of them keeps it no matter which
-    of these choices is picked. (A plain text field with `serial_increment`
-    or `clock_format` set never reaches this dialog in the first place - it
-    opens the dedicated serial or time editor instead - so in practice that
-    only matters for a barcode.) Returns the function that applies the
-    choice, so the two editors cannot disagree about what OK does.
+    A barcode either prints a literal or takes its data from a numbered field
+    the printer fills in, so this is a tick rather than a number that has to
+    mean "none" - 0 is a field number ZPL allows. Returns the function that
+    applies it, so the two editors cannot disagree about what OK does.
     """
-    current = 'recall' if element.field_number is not None else 'static'
-
-    source, source_codes = _make_combo(_SOURCE_CHOICES, current)
-    _make_row(content, "Data Source:", source, label_width)
+    check = Gtk.CheckButton(label="Data comes from a numbered field (^FN)")
+    check.set_active(element.field_number is not None)
+    _make_row(content, "Variable:", check, label_width)
 
     number = _make_spin(element.field_number or 0, 0, zpl_fields.MAX_NUMBER)
     _make_row(content, "Field Number:", number, label_width)
@@ -101,19 +95,20 @@ def _make_field_source_rows(content, element, label_width: int = 130):
     prompt.set_placeholder_text("shown on the canvas and on a printer keypad")
     _make_row(content, "Field Name:", prompt, label_width)
 
-    def sync(*_args):
-        code = source_codes[source.get_active()]
-        number.set_sensitive(code == 'recall')
-        prompt.set_sensitive(code == 'recall')
+    def on_toggled(button):
+        number.set_sensitive(button.get_active())
+        prompt.set_sensitive(button.get_active())
 
-    sync()
-    source.connect("changed", sync)
+    on_toggled(check)
+    check.connect("toggled", on_toggled)
 
     def apply_to(target):
-        code = source_codes[source.get_active()]
-        target.field_number = int(number.get_value()) if code == 'recall' else None
-        target.field_prompt = ((prompt.get_text() or None) if code == 'recall'
-                               else None)
+        if check.get_active():
+            target.field_number = int(number.get_value())
+            target.field_prompt = prompt.get_text() or None
+        else:
+            target.field_number = None
+            target.field_prompt = None
 
     return apply_to
 
@@ -576,6 +571,11 @@ class ZPLViewerWindow(Gtk.Window):
         add_serial_btn = Gtk.Button(label="+ Serial")
         add_serial_btn.connect("clicked", self.on_add_serial_clicked)
         toolbar_box.pack_start(add_serial_btn, False, False, 0)
+
+        # Add numbered button
+        add_numbered_btn = Gtk.Button(label="+ Numbered")
+        add_numbered_btn.connect("clicked", self.on_add_numbered_clicked)
+        toolbar_box.pack_start(add_numbered_btn, False, False, 0)
 
         # Add frame button
         add_frame_btn = Gtk.Button(label="+ Frame")
@@ -1679,6 +1679,10 @@ class ZPLViewerWindow(Gtk.Window):
         """Handle add serial element button click."""
         self.design_canvas.add_serial_element()
 
+    def on_add_numbered_clicked(self, widget):
+        """Handle add numbered element button click."""
+        self.design_canvas.add_numbered_element()
+
     def on_add_frame_clicked(self, widget):
         """Handle add frame element button click."""
         self.design_canvas.add_frame_element()
@@ -1778,9 +1782,10 @@ class ZPLViewerWindow(Gtk.Window):
         if isinstance(element, TextElement) and element.clock_format:
             # Show time (^FC) edit dialog - deliberately smaller than the
             # text editor below: no wrap/block section, no Data Source
-            # selector, since this dialog *is* the ^FC source (see
-            # _make_field_source_rows, which no longer offers it as a
-            # choice). Unticking the clock checkbox turns the element back
+            # selector, since this dialog *is* the ^FC source. The plain
+            # text editor carries no field-source mechanism of its own at
+            # all any more: ^FN, ^SN and ^FC each moved out to their own
+            # dialog. Unticking the clock checkbox turns the element back
             # into a plain static text field, and the next double-click then
             # falls through to the regular text editor instead of here.
             dialog = Gtk.Dialog(title="Edit Time Field", parent=self, flags=0)
@@ -1855,9 +1860,10 @@ class ZPLViewerWindow(Gtk.Window):
         elif isinstance(element, TextElement) and element.serial_increment is not None:
             # Show serial (^SN) edit dialog - deliberately smaller than the
             # text editor below: no wrap/block section, no Data Source
-            # selector, since this dialog *is* the ^SN source (see
-            # _make_field_source_rows, which no longer offers it as a
-            # choice). Unticking the serial checkbox turns the element back
+            # selector, since this dialog *is* the ^SN source. The plain
+            # text editor carries no field-source mechanism of its own at
+            # all any more: ^FN, ^SN and ^FC each moved out to their own
+            # dialog. Unticking the serial checkbox turns the element back
             # into a plain static text field, and the next double-click then
             # falls through to the regular text editor instead of here.
             dialog = Gtk.Dialog(title="Edit Serial Field", parent=self, flags=0)
@@ -1930,6 +1936,95 @@ class ZPLViewerWindow(Gtk.Window):
                     # Last, because the box is measured from what the canvas
                     # will draw, and that is the wrapped marker for as long
                     # as this stays a serial field.
+                    self.design_canvas.document.sync_text_width(element)
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
+
+        elif isinstance(element, TextElement) and element.field_number is not None:
+            # Show numbered (^FN) edit dialog - deliberately smaller than the
+            # text editor below: no wrap/block section (a numbered field's
+            # own literal, when it has one, is short in every fixture this
+            # designer ships with) and no Data Source selector, since this
+            # dialog *is* the ^FN source. Unticking the variable checkbox
+            # turns the element back into a plain static text field, and the
+            # next double-click then falls through to the regular text
+            # editor instead of here. ^FN is still available on a barcode,
+            # through _make_field_number_rows in the barcode branch below -
+            # unlike ^SN/^FC, a recalled stored-format barcode is common and
+            # already tested, so it keeps a row there rather than moving out
+            # entirely.
+            dialog = Gtk.Dialog(title="Edit Numbered Field", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                              Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                _make_row(content, label_text, widget)
+
+            text_entry = Gtk.Entry()
+            text_entry.set_text(element.text)
+            text_entry.set_placeholder_text(
+                "optional - shared with every other field carrying the same number")
+            make_row("Text:", text_entry)
+
+            number_spin = _make_spin(element.field_number or 0, 0,
+                                     zpl_fields.MAX_NUMBER)
+            make_row("Field Number:", number_spin)
+
+            prompt_entry = Gtk.Entry()
+            prompt_entry.set_text(element.field_prompt or '')
+            prompt_entry.set_placeholder_text(
+                "shown on the canvas and on a printer keypad")
+            make_row("Field Name:", prompt_entry)
+
+            height_spin = _make_spin(element.font_height, 8, 500)
+            make_row("Font Height:", height_spin)
+
+            width_spin = _make_spin(element.font_width, 8, 500)
+            make_row("Font Width:", width_spin)
+
+            orientation_combo, orientation_codes = _make_combo(
+                ORIENTATIONS, element.orientation)
+            make_row("Orientation:", orientation_combo)
+
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+
+            variable_check = Gtk.CheckButton(
+                label="Data comes from a numbered field (^FN)")
+            variable_check.set_active(element.field_number is not None)
+            make_row("Variable:", variable_check)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.text = text_entry.get_text()
+                    element.font_height = int(height_spin.get_value())
+                    element.font_width = int(width_spin.get_value())
+                    element.orientation = orientation_codes[
+                        orientation_combo.get_active()]
+                    element.height = element.font_height
+                    element.reverse_print = fr_check.get_active()
+                    if variable_check.get_active():
+                        element.field_number = int(number_spin.get_value())
+                        element.field_prompt = prompt_entry.get_text() or None
+                    else:
+                        element.field_number = None
+                        element.field_prompt = None
+                    # Last, because the box is measured from what the canvas
+                    # will draw, and that is the placeholder for as long as
+                    # this stays a numbered field with no literal of its own.
                     self.design_canvas.document.sync_text_width(element)
                     self.on_canvas_changed()
 
@@ -2066,8 +2161,6 @@ class ZPLViewerWindow(Gtk.Window):
             indent_spin = _make_spin(block.indent, 0, 2000)
             make_row("Indent:", indent_spin)
 
-            apply_field_source = _make_field_source_rows(content, element)
-
             block_fields = (block_width_spin, max_lines_spin, spacing_spin,
                             justify_combo, indent_spin)
 
@@ -2129,10 +2222,6 @@ class ZPLViewerWindow(Gtk.Window):
                             element.printer_font_name = None
                             self.design_canvas.queue_draw()
 
-                    apply_field_source(element)
-                    # Last, because the box is measured from what the canvas will
-                    # draw, and that is the placeholder once the field is a
-                    # numbered one.
                     self.design_canvas.document.sync_text_width(element)
 
                     self.on_canvas_changed()
@@ -2194,7 +2283,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
 
-            apply_field_source = _make_field_source_rows(content, element)
+            apply_field_number = _make_field_number_rows(content, element)
 
             content.show_all()
 
@@ -2205,7 +2294,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.module_width = int(module_spin.get_value())
                     element.orientation = orientation_codes[orientation_combo.get_active()]
                     element.show_text, element.text_above = text_codes[text_combo.get_active()]
-                    apply_field_source(element)
+                    apply_field_number(element)
                     element.check_digit = check_codes[check_combo.get_active()]
                     element.mode = mode_codes[mode_combo.get_active()]
                     element.reverse_print = fr_check.get_active()

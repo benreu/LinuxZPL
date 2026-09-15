@@ -207,34 +207,25 @@ def choose_font_family(parent, current_family=None, title="Choose Font"):
 
 # --- element editing --------------------------------------------------------
 
-# A field's data is fixed text, or the printer recalls it into a numbered
-# field (^FN). ^SN and ^FC each have their own creation button and their own
-# dedicated dialog instead of living here - see edit_serial_dialog and
-# edit_time_dialog.
-_SOURCE_CHOICES = [("Static text", 'static'), ("Numbered field (^FN)", 'recall')]
+def _field_number_rows(form, element):
+    """The ^FN controls, for a barcode.
 
+    Text no longer uses this: a numbered text field gets its own creation
+    button and its own edit_numbered_dialog - see that function's docstring
+    - the same way ^SN and ^FC already got edit_serial_dialog and
+    edit_time_dialog. ^FN stays here for a barcode, though: a recalled
+    stored-format barcode is common and already tested, unlike a serialized
+    or clock-substituted one, so it keeps a row rather than moving out
+    entirely.
 
-def _field_source_rows(form, element):
-    """The ^FN controls, identical for text and for a barcode.
-
-    ^SF, ^SN and ^FC are all left alone entirely: none has a row here, and
-    `apply_to` never touches `serial_start`, `serial_increment`,
-    `serial_leading_zero`, `serial_field_raw`, `clock_format` or
-    `clock_chars`, so a field carrying any of them keeps it no matter which
-    of these choices is picked. (A plain text field with `serial_increment`
-    or `clock_format` set never reaches this dialog in the first place - it
-    opens edit_serial_dialog or edit_time_dialog instead - so in practice
-    that only matters for a barcode.)
+    A barcode either prints a literal or takes its data from a numbered field
+    the printer fills in, so this is a tick rather than a number that has to
+    mean "none" - 0 is a field number ZPL allows.
     """
-    current = 'recall' if element.field_number is not None else 'static'
-
-    source = QComboBox()
-    source.setObjectName("field_source")
-    for label, code in _SOURCE_CHOICES:
-        source.addItem(label, code)
-    codes = [code for _l, code in _SOURCE_CHOICES]
-    source.setCurrentIndex(codes.index(current))
-    form.addRow("Data Source:", source)
+    check = QCheckBox("Data comes from a numbered field (^FN)")
+    check.setObjectName("variable")
+    check.setChecked(element.field_number is not None)
+    form.addRow("Variable:", check)
 
     number = QSpinBox()
     number.setObjectName("field_number")
@@ -248,17 +239,19 @@ def _field_source_rows(form, element):
     form.addRow("Field Name:", prompt)
 
     def sync():
-        number.setEnabled(source.currentData() == 'recall')
-        prompt.setEnabled(source.currentData() == 'recall')
+        number.setEnabled(check.isChecked())
+        prompt.setEnabled(check.isChecked())
 
     sync()
-    source.currentIndexChanged.connect(sync)
+    check.stateChanged.connect(sync)
 
     def apply_to(target):
-        code = source.currentData()
-        target.field_number = number.value() if code == 'recall' else None
-        target.field_prompt = ((prompt.text() or None) if code == 'recall'
-                               else None)
+        if check.isChecked():
+            target.field_number = number.value()
+            target.field_prompt = prompt.text() or None
+        else:
+            target.field_number = None
+            target.field_prompt = None
 
     return apply_to
 
@@ -378,8 +371,6 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     indent_spin.setValue(block.indent)
     form.addRow("Indent:", indent_spin)
 
-    apply_field_source = _field_source_rows(form, element)
-
     block_fields = (block_width, max_lines, spacing_spin, justify_combo,
                     indent_spin)
 
@@ -432,9 +423,6 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
                 element.font_path = None
                 element.font_family = None
                 element.printer_font_name = None
-        apply_field_source(element)
-        # Last, because the box is measured from what the canvas will draw, and
-        # that is the placeholder once the field is a numbered one.
         document.sync_text_width(element)
 
     return _show_editor(dialog, _apply, on_accept)
@@ -446,11 +434,12 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
 
     Deliberately smaller than edit_text_dialog: no wrap/block section (a
     clock stamp is one short line, not a paragraph) and no Data Source
-    selector - this dialog *is* the ^FC source, which is why
-    `_field_source_rows` no longer offers it as one of its choices. The one
-    on/off control is the checkbox at the bottom: unticking it turns the
-    element back into a plain static text field, and the next double-click
-    opens the regular Text editor instead of this one.
+    selector - this dialog *is* the ^FC source. edit_text_dialog carries no
+    field-source mechanism of its own at all any more: ^FN, ^SN and ^FC each
+    moved out to their own dialog. The one on/off control here is the
+    checkbox at the bottom: unticking it turns the element back into a plain
+    static text field, and the next double-click opens the regular Text
+    editor instead of this one.
     """
     dialog = QDialog(parent)
     dialog.setWindowTitle("Edit Time Field")
@@ -525,11 +514,12 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
 
     Deliberately smaller than edit_text_dialog: no wrap/block section (a
     serial number is one short line, not a paragraph) and no Data Source
-    selector - this dialog *is* the ^SN source, which is why
-    `_field_source_rows` no longer offers it as one of its choices. The one
-    on/off control is the checkbox at the bottom: unticking it turns the
-    element back into a plain static text field, and the next double-click
-    opens the regular Text editor instead of this one.
+    selector - this dialog *is* the ^SN source. edit_text_dialog carries no
+    field-source mechanism of its own at all any more: ^FN, ^SN and ^FC each
+    moved out to their own dialog. The one on/off control here is the
+    checkbox at the bottom: unticking it turns the element back into a plain
+    static text field, and the next double-click opens the regular Text
+    editor instead of this one.
     """
     dialog = QDialog(parent)
     dialog.setWindowTitle("Edit Serial Field")
@@ -604,6 +594,98 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
         # Last, because the box is measured from what the canvas will draw,
         # and that is the wrapped marker for as long as this stays a serial
         # field.
+        document.sync_text_width(element)
+
+    return _show_editor(dialog, _apply, on_accept)
+
+
+def edit_numbered_dialog(parent, element: TextElement, document: Document,
+                         on_accept=None) -> QDialog:
+    """Edit a numbered field (^FN). `on_accept` runs once OK has changed it.
+
+    Deliberately smaller than edit_text_dialog: no wrap/block section - a
+    numbered field's own literal, when it has one, is short in every fixture
+    this designer ships with (the manual's own stored_format.zpl example
+    included) - and no Data Source selector, since this dialog *is* the ^FN
+    source. The one on/off control is the checkbox at the bottom: unticking
+    it turns the element back into a plain static text field, and the next
+    double-click opens the regular Text editor instead of this one.
+
+    ^FN is still available on a barcode, through `_field_number_rows` in
+    edit_barcode_dialog - unlike ^SN/^FC, a recalled stored-format barcode is
+    common and already tested, so it keeps a row there rather than moving
+    out entirely.
+    """
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Edit Numbered Field")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    text_edit = QLineEdit(element.text)
+    text_edit.setObjectName("text")
+    text_edit.setPlaceholderText("optional - shared with every other field "
+                                 "carrying the same number")
+    form.addRow("Text:", text_edit)
+
+    number = QSpinBox()
+    number.setObjectName("field_number")
+    number.setRange(0, zpl_fields.MAX_NUMBER)
+    number.setValue(element.field_number or 0)
+    form.addRow("Field Number:", number)
+
+    prompt = QLineEdit(element.field_prompt or '')
+    prompt.setObjectName("field_prompt")
+    prompt.setPlaceholderText("shown on the canvas and on a printer keypad")
+    form.addRow("Field Name:", prompt)
+
+    height_spin = QSpinBox()
+    height_spin.setRange(8, 500)
+    height_spin.setValue(element.font_height)
+    form.addRow("Font Height:", height_spin)
+
+    width_spin = QSpinBox()
+    width_spin.setRange(8, 500)
+    width_spin.setValue(element.font_width)
+    form.addRow("Font Width:", width_spin)
+
+    orientation_combo = QComboBox()
+    orientation_combo.setObjectName("orientation")
+    for label, code in ORIENTATIONS:
+        orientation_combo.addItem(label, code)
+    turns = [code for _label, code in ORIENTATIONS]
+    orientation_combo.setCurrentIndex(turns.index(element.orientation)
+                                      if element.orientation in turns else 0)
+    form.addRow("Orientation:", orientation_combo)
+
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+
+    variable_check = QCheckBox("Data comes from a numbered field (^FN)")
+    variable_check.setObjectName("variable")
+    variable_check.setChecked(element.field_number is not None)
+    form.addRow("Variable:", variable_check)
+
+    layout.addWidget(_buttons(dialog))
+
+    def _apply():
+        element.text = text_edit.text()
+        element.font_height = height_spin.value()
+        element.font_width = width_spin.value()
+        element.orientation = orientation_combo.currentData()
+        element.height = element.font_height
+        element.reverse_print = fr_check.isChecked()
+        if variable_check.isChecked():
+            element.field_number = number.value()
+            element.field_prompt = prompt.text() or None
+        else:
+            element.field_number = None
+            element.field_prompt = None
+        # Last, because the box is measured from what the canvas will draw,
+        # and that is the placeholder for as long as this stays a numbered
+        # field with no literal of its own.
         document.sync_text_width(element)
 
     return _show_editor(dialog, _apply, on_accept)
@@ -742,7 +824,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
 
-    apply_field_source = _field_source_rows(form, element)
+    apply_field_number = _field_number_rows(form, element)
 
     layout.addWidget(_buttons(dialog))
 
@@ -755,7 +837,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         element.check_digit = check_combo.currentData()
         element.mode = mode_combo.currentData()
         element.reverse_print = fr_check.isChecked()
-        apply_field_source(element)
+        apply_field_number(element)
         if element.show_text:
             # With the line switched on, name the font it prints in rather than
             # leaving it to whatever the printer happens to have selected.
