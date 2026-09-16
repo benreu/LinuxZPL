@@ -2809,6 +2809,30 @@ check("and every parameter round-trips together",
 check("^PQ is no longer reported as something a save would drop",
       workflow.unsupported_commands("^XA^PQ5,1,0,Y^XZ") == [])
 
+# --- printer_io.send_command(): the console's text-in/text-out wrapper -----
+# It should encode the command as UTF-8, pass it straight through to send()
+# unmodified (read_reply always on, since a console has no other way to know
+# whether anything came back), and decode whatever comes back the same way -
+# including a reply that isn't valid UTF-8, which must not raise.
+from zplcore import printer_io
+
+_sc_calls = []
+def _fake_send(address, port, payload, timeout, read_reply=False):
+    _sc_calls.append((address, port, payload, timeout, read_reply))
+    return b'ok: \xff\xfe'  # deliberately invalid UTF-8
+
+_real_send = printer_io.send
+printer_io.send = _fake_send
+try:
+    _sc_reply = printer_io.send_command('10.0.0.1', 9100, '~HS')
+finally:
+    printer_io.send = _real_send
+
+check("send_command(): encodes the command as UTF-8 and asks for a reply",
+      _sc_calls == [('10.0.0.1', 9100, b'~HS', 5, True)], _sc_calls)
+check("send_command(): a non-UTF-8 reply decodes with replacement chars, not a raise",
+      _sc_reply == 'ok: ��', _sc_reply)
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

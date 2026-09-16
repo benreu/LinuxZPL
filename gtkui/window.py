@@ -17,6 +17,7 @@ from pathlib import Path
 from zplcore import fields as zpl_fields
 from zplcore import fonts as zpl_fonts
 from zplcore import graphic_store
+from zplcore import printer_io
 from zplcore import printer_objects
 from zplcore import model
 from zplcore import parser as zpl_parser
@@ -537,6 +538,10 @@ class ZPLViewerWindow(Gtk.Window):
         printer_objects_item = Gtk.MenuItem(label="Objects…")
         printer_objects_item.connect("activate", self.on_printer_objects_clicked)
         printer_menu.append(printer_objects_item)
+
+        printer_console_item = Gtk.MenuItem(label="Console…")
+        printer_console_item.connect("activate", self.on_printer_console_clicked)
+        printer_menu.append(printer_console_item)
 
         printer_menu.show_all()
 
@@ -1916,6 +1921,74 @@ class ZPLViewerWindow(Gtk.Window):
         # changes no Document state, so this is a plain repaint.
         if changed_any:
             self.design_canvas.queue_draw()
+
+    def on_printer_console_clicked(self, widget):
+        """A free-form send/reply console for whatever the type-specific
+        managers (Fonts/Graphics/Objects) don't cover - one-off diagnostics
+        like ~HS host status or ~HI host identification, or an SGD
+        getvar/setvar not wrapped by any dialog. Text is sent to the printer
+        exactly as typed, no ^XA/^XZ wrapping added, so both immediate
+        commands and full formats work unchanged.
+        """
+        dialog = Gtk.Dialog(title="Printer Console", parent=self, flags=0)
+        dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(480, 420)
+
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        input_view = Gtk.TextView()
+        input_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        input_scroll = Gtk.ScrolledWindow()
+        input_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        input_scroll.set_shadow_type(Gtk.ShadowType.IN)
+        input_scroll.set_size_request(-1, 90)
+        input_scroll.add(input_view)
+        content.pack_start(input_scroll, False, False, 0)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        send_btn = Gtk.Button(label="Send")
+        buttons.pack_start(send_btn, False, False, 0)
+        content.pack_start(buttons, False, False, 0)
+
+        log_view = Gtk.TextView()
+        log_view.set_editable(False)
+        log_view.set_cursor_visible(False)
+        log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        log_scroll = Gtk.ScrolledWindow()
+        log_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        log_scroll.set_shadow_type(Gtk.ShadowType.IN)
+        log_scroll.set_vexpand(True)
+        log_scroll.add(log_view)
+        content.pack_start(log_scroll, True, True, 0)
+
+        def on_send(_b):
+            input_buf = input_view.get_buffer()
+            text = input_buf.get_text(input_buf.get_start_iter(),
+                                      input_buf.get_end_iter(), False)
+            if not text.strip():
+                return
+            try:
+                reply = printer_io.send_command(
+                    self.printer_address, self.printer_port, text)
+            except Exception as e:
+                self.show_error_dialog(f"Could not send command: {e}")
+                return
+            log_buf = log_view.get_buffer()
+            log_buf.insert(log_buf.get_end_iter(),
+                           f"> {text}\n{reply or '(no reply)'}\n\n")
+            log_view.scroll_to_iter(log_buf.get_end_iter(), 0, False, 0, 0)
+            input_buf.set_text("")
+
+        send_btn.connect("clicked", on_send)
+
+        content.show_all()
+        dialog.run()
+        dialog.destroy()
 
     def _offer_dpi_rescale(self, loaded_dpi=workflow._FROM_DOCUMENT):
         """If the file was drawn for another resolution, offer to rescale it.

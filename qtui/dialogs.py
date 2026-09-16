@@ -23,7 +23,7 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDoubleSpinBox, QVBoxLayout, QWidget)
 
 from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
-                     graphic_store, printer_objects, textraster)
+                     graphic_store, printer_io, printer_objects, textraster)
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
                            BARCODE_MODES, BARCODE_ORIENTATIONS,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
@@ -1805,6 +1805,54 @@ class PrinterObjectsDialog(QDialog):
         if graphic_store.delete(spec) and self._on_changed:
             self._on_changed(spec, None)
         self.refresh()
+
+
+class PrinterConsoleDialog(QDialog):
+    """A free-form send/reply console for whatever the type-specific
+    managers (Fonts/Graphics/Objects) don't cover - one-off diagnostics like
+    ~HS host status or ~HI host identification, or an SGD getvar/setvar not
+    wrapped by any dialog. Text is sent to the printer exactly as typed, no
+    ^XA/^XZ wrapping added, so both immediate commands and full formats work
+    unchanged.
+    """
+
+    def __init__(self, parent, address: str, port: int):
+        super().__init__(parent)
+        self.setWindowTitle("Printer Console")
+        self.resize(480, 420)
+        self._address, self._port = address, port
+
+        layout = QVBoxLayout(self)
+        self._input = QPlainTextEdit()
+        self._input.setMinimumHeight(4 * QFontMetrics(self._input.font()).height())
+        layout.addWidget(self._input)
+
+        row = QHBoxLayout()
+        self._send_btn = QPushButton("Send")
+        row.addWidget(self._send_btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        self._log = QPlainTextEdit(readOnly=True)
+        layout.addWidget(self._log, 1)
+
+        close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        close.rejected.connect(self.reject)
+        layout.addWidget(close)
+
+        self._send_btn.clicked.connect(self._on_send)
+
+    def _on_send(self):
+        text = self._input.toPlainText()
+        if not text.strip():
+            return
+        try:
+            reply = printer_io.send_command(self._address, self._port, text)
+        except Exception as e:
+            show_error(self, f"Could not send command: {e}")
+            return
+        self._log.appendPlainText(f"> {text}\n{reply or '(no reply)'}\n")
+        self._input.clear()
 
 
 # --- prompts ----------------------------------------------------------------

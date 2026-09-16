@@ -40,3 +40,19 @@ def send(address: str, port: int, payload: bytes, timeout: float,
         return b''.join(chunks)
     finally:
         sock.close()
+
+
+def send_command(address: str, port: int, command: str, timeout: float = 5) -> str:
+    """Send raw text to the printer and return whatever it writes back.
+
+    No wrapping, no interpretation - the command is sent exactly as given
+    (encoded UTF-8, matching how the Print action already encodes label
+    text), so both immediate commands like ~HS and full ^XA...^XZ formats
+    work unchanged. The reply, if any, is decoded the same way; a reply
+    that is not valid UTF-8 (e.g. a binary object) is decoded with
+    replacement characters rather than raising, since this is a diagnostic
+    view, not a retrieval path - Objects -> Retrieve already exists for
+    getting bytes back losslessly.
+    """
+    reply = send(address, port, command.encode('utf-8'), timeout, read_reply=True)
+    return reply.decode('utf-8', errors='replace')

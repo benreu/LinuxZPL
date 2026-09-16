@@ -901,6 +901,20 @@ Deleting an object that `graphic_store`'s local cache also has pixels for
 (see §18) clears that cache entry too, so a `^XG`/`^IM`/`^IL` already on the
 canvas cannot go on showing pixels for an object the printer no longer has.
 
+### 10.6 Printer console
+
+**Printer → Console…** is a free-form send/reply dialog for whatever the
+type-specific managers above don't cover - one-off diagnostics like `~HS`
+host status or `~HI` host identification, or an SGD `getvar`/`setvar` not
+wrapped by any manager. Text is sent to the printer exactly as typed, with
+no `^XA`/`^XZ` wrapping added, so both immediate commands and full label
+formats work unchanged; whatever the printer writes back is shown beneath
+it in a scrollback log, or `(no reply)` if nothing came back before the
+same timeout the other managers use. A reply that is not valid UTF-8 (e.g.
+the bytes of a retrieved object) is shown with replacement characters
+rather than failing - this is a diagnostic view, not a retrieval path;
+Objects → Retrieve already exists for getting bytes back losslessly.
+
 ---
 
 ## 11. Print resolution

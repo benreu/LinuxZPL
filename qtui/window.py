@@ -298,6 +298,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_fonts_action = self._action("Fonts…", self.on_printer_fonts)
         self.printer_graphics_action = self._action("Graphics…", self.on_printer_graphics)
         self.printer_objects_action = self._action("Objects…", self.on_printer_objects)
+        self.printer_console_action = self._action("Console…", self.on_printer_console)
 
         self.session_printer_action = self._action(
             "&Set Printer for This Session…", self.on_session_printer)
@@ -349,6 +350,7 @@ class ZPLDesignerWindow(QMainWindow):
         printer_menu.addAction(self.printer_graphics_action)
         printer_menu.addAction(self.printer_fonts_action)
         printer_menu.addAction(self.printer_objects_action)
+        printer_menu.addAction(self.printer_console_action)
 
         settings_menu = menubar.addMenu("&Settings")
         settings_menu.addAction(self.label_size_action)
@@ -729,6 +731,11 @@ class ZPLDesignerWindow(QMainWindow):
         dialog = qt_dialogs.PrinterObjectsDialog(
             self, self.printer_address, self.printer_port,
             on_changed=lambda *_a: self.canvas.update())
+        dialog.exec_()
+
+    def on_printer_console(self):
+        dialog = qt_dialogs.PrinterConsoleDialog(
+            self, self.printer_address, self.printer_port)
         dialog.exec_()
 
     # --- files ---------------------------------------------------------------
