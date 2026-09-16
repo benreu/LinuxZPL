@@ -16,6 +16,7 @@ from pathlib import Path
 from zplcore import fields as zpl_fields
 from zplcore import fonts as zpl_fonts
 from zplcore import graphic_store
+from zplcore import printer_objects
 from zplcore import model
 from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
@@ -515,6 +516,10 @@ class ZPLViewerWindow(Gtk.Window):
         printer_fonts_item = Gtk.MenuItem(label="Fonts…")
         printer_fonts_item.connect("activate", self.on_printer_fonts_clicked)
         printer_menu.append(printer_fonts_item)
+
+        printer_objects_item = Gtk.MenuItem(label="Objects…")
+        printer_objects_item.connect("activate", self.on_printer_objects_clicked)
+        printer_menu.append(printer_objects_item)
 
         printer_menu.show_all()
 
@@ -1286,11 +1291,54 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.destroy()
         return spec
 
-    def _confirm_delete_graphic(self, parent, spec: str) -> bool:
+    def _ask_object_name(self, parent, default_name: str, default_ext: str):
+        """Ask for the name and extension an arbitrary local file should be
+        stored under on the printer's E: drive - the only device
+        printer_objects.upload_printer_object can target, so unlike
+        _ask_device_spec this asks for no device. Case is left exactly as
+        typed rather than forced to upper, unlike _ask_device_spec: a
+        CISDFCRC16-stored object is not necessarily an upper-case 8.3 ZPL
+        object (the manual's own examples include privkey.nrd, feedback.get),
+        and file.type's retrieval is case sensitive - see
+        zplcore.printer_objects. Returns (name, ext), or None if cancelled.
+        """
+        dialog = Gtk.Dialog(title="Store Object As", parent=parent, flags=0)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+        content = dialog.get_content_area()
+        content.set_spacing(4)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        name_entry = Gtk.Entry()
+        name_entry.set_text(default_name)
+        name_entry.set_max_length(8)
+        _make_row(content, "Name (on E:):", name_entry)
+
+        ext_entry = Gtk.Entry()
+        ext_entry.set_text(default_ext)
+        _make_row(content, "Extension:", ext_entry)
+
+        content.show_all()
+        response = dialog.run()
+        result = None
+        if response == Gtk.ResponseType.OK:
+            name = name_entry.get_text().strip() or 'UNKNOWN'
+            ext = ext_entry.get_text().strip() or 'DAT'
+            result = (name, ext)
+        dialog.destroy()
+        return result
+
+    def _confirm_delete_object(self, parent, spec: str) -> bool:
         """Whether to really delete `spec` from the printer - the same
         shape as _confirm_overwrite, for the same reason: a destructive
         action against real state needs a way back that "just don't click
         it again" cannot offer, since this one cannot be undone from here.
+        Shared by the Graphics and Objects dialogs, since neither the
+        wording nor the reasoning is specific to graphics.
         """
         dialog = Gtk.MessageDialog(
             parent=parent, flags=0, message_type=Gtk.MessageType.QUESTION,
@@ -1513,7 +1561,7 @@ class ZPLViewerWindow(Gtk.Window):
             spec = selected_entry()
             if spec is None:
                 return
-            if not self._confirm_delete_graphic(dialog, spec):
+            if not self._confirm_delete_object(dialog, spec):
                 return
             try:
                 graphic_store.delete_printer_graphic(
@@ -1539,6 +1587,197 @@ class ZPLViewerWindow(Gtk.Window):
         # this is a plain repaint - queue_draw(), never on_canvas_changed() -
         # so an ^XG/^IM/^IL that now resolves differently is shown without
         # marking the file dirty or pushing a bogus undo entry.
+        if changed_any:
+            self.design_canvas.queue_draw()
+
+    def on_printer_objects_clicked(self, widget):
+        """Every object on the real printer, across R:/E:/B:/A:/Z: and any
+        extension - not just the fonts and graphics on_printer_fonts_clicked
+        and on_printer_graphics_clicked already manage. Modelled on those:
+        no preview, since most objects here are not images. Store and
+        Retrieve both exist here because both have a genuinely generic
+        printer command behind them - CISDFCRC16 and file.type - unlike
+        ~DY/~DG/^HG, which are each locked to one format and stay with the
+        two dialogs that already know it.
+
+        Store always writes to E: - CISDFCRC16 gives no device choice - so
+        its prompt asks only for a name and extension, never a device. Z:
+        is read-only factory content ^ID cannot delete (see
+        printer_objects.DEVICES), so Delete is withheld for a Z: selection
+        even though it is listed and can still be Retrieved.
+        """
+        dialog = Gtk.Dialog(title="Printer Objects", parent=self, flags=0)
+        dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(380, 340)
+
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        status = Gtk.Label(halign=Gtk.Align.START)
+        status.set_line_wrap(True)
+        content.pack_start(status, False, False, 0)
+
+        list_store = Gtk.ListStore(str)
+        tree_view = Gtk.TreeView(model=list_store)
+        tree_view.append_column(
+            Gtk.TreeViewColumn("Object", Gtk.CellRendererText(), text=0))
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        scroller.add(tree_view)
+        content.pack_start(scroller, True, True, 0)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        store_btn = Gtk.Button(label="Store…")
+        retrieve_btn = Gtk.Button(label="Retrieve…")
+        delete_btn = Gtk.Button(label="Delete")
+        refresh_btn = Gtk.Button(label="Refresh")
+        retrieve_btn.set_sensitive(False)
+        delete_btn.set_sensitive(False)
+        for b in (store_btn, retrieve_btn, delete_btn, refresh_btn):
+            buttons.pack_start(b, False, False, 0)
+        content.pack_start(buttons, False, False, 0)
+
+        entries = []
+        changed_any = False
+
+        def refresh(*_a):
+            nonlocal entries
+            list_store.clear()
+            specs = printer_objects.query_printer_objects(
+                self.printer_address, self.printer_port)
+            if specs is None:
+                status.set_text(f"Could not reach the printer at "
+                                f"{self.printer_address}:{self.printer_port}.")
+                entries = []
+                retrieve_btn.set_sensitive(False)
+                delete_btn.set_sensitive(False)
+                return
+            entries = specs
+            for spec in entries:
+                list_store.append([spec])
+            status.set_text(
+                f"{len(entries)} object(s) on {self.printer_address}"
+                if entries else "No objects on the printer.")
+            retrieve_btn.set_sensitive(False)
+            delete_btn.set_sensitive(False)
+
+        def selected_entry():
+            """The spec the list has selected, or None."""
+            model, treeiter = tree_view.get_selection().get_selected()
+            if treeiter is None:
+                return None
+            index = model.get_path(treeiter).get_indices()[0]
+            return entries[index] if index < len(entries) else None
+
+        def on_selection_changed(_selection):
+            spec = selected_entry()
+            retrieve_btn.set_sensitive(spec is not None)
+            # ^ID silently ignores Z: (read-only factory content), so
+            # Delete would report success and change nothing - withhold it
+            # rather than let that happen.
+            delete_btn.set_sensitive(spec is not None and not spec.startswith('Z:'))
+
+        tree_view.get_selection().connect("changed", on_selection_changed)
+
+        def on_store(_b):
+            chooser = Gtk.FileChooserDialog(
+                title="Store Object", parent=dialog,
+                action=Gtk.FileChooserAction.OPEN)
+            chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                                Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+            response = chooser.run()
+            filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+            chooser.destroy()
+            if not filepath:
+                return
+
+            src = Path(filepath)
+            result = self._ask_object_name(
+                dialog, src.stem[:8] or 'UNKNOWN', src.suffix.lstrip('.') or 'DAT')
+            if result is None:
+                return
+            name, ext = result
+
+            try:
+                data = src.read_bytes()
+            except Exception as e:
+                self.show_error_dialog(f"Could not read {filepath}: {e}")
+                return
+
+            status.set_text(f"Uploading E:{name}.{ext}...")
+            try:
+                printer_objects.upload_printer_object(
+                    self.printer_address, self.printer_port, name, ext, data)
+            except Exception as e:
+                self.show_error_dialog(f"Could not store E:{name}.{ext}: {e}")
+                refresh()
+                return
+            refresh()
+
+        def on_retrieve(_b):
+            spec = selected_entry()
+            if spec is None:
+                return
+            status.set_text(f"Retrieving {spec}...")
+            try:
+                data = printer_objects.download_printer_object(
+                    self.printer_address, self.printer_port, spec)
+            except Exception as e:
+                self.show_error_dialog(f"Could not retrieve {spec}: {e}")
+                refresh()
+                return
+
+            chooser = Gtk.FileChooserDialog(
+                title="Save Retrieved Object", parent=dialog,
+                action=Gtk.FileChooserAction.SAVE)
+            chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                                Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
+            chooser.set_do_overwrite_confirmation(True)
+            _device, name, ext = graphic_store.split_device_spec(spec)
+            chooser.set_current_name(f"{name}.{ext.lower()}")
+            response = chooser.run()
+            filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+            chooser.destroy()
+            if filepath:
+                try:
+                    Path(filepath).write_bytes(data)
+                except Exception as e:
+                    self.show_error_dialog(f"Could not save {filepath}: {e}")
+            refresh()
+
+        def on_delete(_b):
+            nonlocal changed_any
+            spec = selected_entry()
+            if spec is None:
+                return
+            if not self._confirm_delete_object(dialog, spec):
+                return
+            try:
+                printer_objects.delete_printer_object(
+                    self.printer_address, self.printer_port, spec)
+            except Exception as e:
+                self.show_error_dialog(f"Could not delete {spec}: {e}")
+                refresh()
+                return
+            if graphic_store.delete(spec):
+                changed_any = True
+            refresh()
+
+        store_btn.connect("clicked", on_store)
+        retrieve_btn.connect("clicked", on_retrieve)
+        delete_btn.connect("clicked", on_delete)
+        refresh_btn.connect("clicked", refresh)
+
+        content.show_all()
+        refresh()
+        dialog.run()
+        dialog.destroy()
+        # Same reasoning as on_printer_graphics_clicked: deleting an object
+        # changes no Document state, so this is a plain repaint.
         if changed_any:
             self.design_canvas.queue_draw()
 

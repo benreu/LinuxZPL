@@ -94,10 +94,11 @@ In VS Code, press **F5**; the default configuration is the flagless one.
 6. **File -> Print** to send the label
 
 Use **Settings -> Label Size** for the label dimensions - presets of 4x6, 5x7,
-6x4, 3x5 and 2x3 inches, or a custom size - **Settings -> Printer
-Fonts...** to manage the fonts stored on the printer, and **Printer ->
-Graphics...** to manage the images `^XG`/`^IM`/`^IL` recall, the same way -
-against whichever printer is actually in effect for this session.
+6x4, 3x5 and 2x3 inches, or a custom size - **Printer -> Fonts...** to manage
+the fonts stored on the printer, **Printer -> Graphics...** to manage the
+images `^XG`/`^IM`/`^IL` recall, and **Printer -> Objects...** to see and
+delete everything else stored there, all against whichever printer is
+actually in effect for this session.
 
 `sample.zpl` is included to try the designer out.
 
@@ -132,7 +133,11 @@ zplcore/    no GUI toolkit, runs headless
   fonts.py       discovery, printer object naming, printer I/O
   graphic_store.py  the in-session ^IS/^XG memory, and real printer I/O for
                     Printer -> Graphics... (view/store/retrieve/delete)
-  printer_io.py  the raw socket send/reply fonts.py and graphic_store.py share
+  printer_objects.py  real printer I/O for Printer -> Objects... (view/
+                    store/retrieve/delete of everything on the printer,
+                    any device including Z:, any extension)
+  printer_io.py  the raw socket send/reply fonts.py, graphic_store.py and
+                    printer_objects.py share
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   textraster.py  the text raster both canvases blit

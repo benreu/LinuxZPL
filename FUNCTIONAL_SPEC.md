@@ -445,7 +445,6 @@ those two groups. §5 describes what each does to the scale.
 |---|---|
 | **Label Size** | §7 |
 | **Default Printer** | §7 |
-| **Printer Fonts…** | §10.4 |
 
 ### 6.5 Toolbar
 
@@ -816,6 +815,50 @@ Lists the font objects on the printer, with Upload… (choose an installed
 family), Delete (the selected object) and Refresh. When the printer is
 unreachable it says so and disables Delete rather than showing an empty list as
 if the printer had no fonts.
+
+### 10.5 Printer object manager
+
+**Printer → Objects…** lists every object stored on the printer — any of
+R:/E:/B:/A:/Z:, any extension — with Store, Retrieve, Delete and Refresh,
+same status handling as the font and graphic managers. Where the font and
+graphic managers scope their `^HW` request to `E:*.TTF` and `*.GRF`
+respectively, this one is unscoped (`d:*.*`) on purpose: the point of this
+manager is to surface everything the printer is holding, including objects
+neither of the other two recognizes — a saved format, firmware/config
+housekeeping, a printer's own WML front-panel menu, anything another tool
+put there. `Z:` is queried here but not by Graphics: it is read-only
+factory content (a default WML menu, an RFID recipe file), not somewhere a
+user's own graphic would ever be stored.
+
+Store and Retrieve both exist here, unlike Upload in the font and graphic
+managers, because both have a genuinely generic printer command behind
+them. Store sends `CISDFCRC16`, which writes an arbitrary local file to the
+printer's `E:` drive verbatim — the only device it supports, so its prompt
+asks only for a name and extension, never a device — with CRC and checksum
+both sent as `0000`, which the command documents as skipping that field's
+validation entirely, rather than risk a wrong implementation of an
+under-specified checksum silently failing every upload. Retrieve sends the
+`file.type` Set/Get/Do command, which hands back a named object's bytes
+verbatim regardless of what kind of object it is, and offers them for
+saving to a local file exactly as retrieved, no decoding attempted. Neither
+`~DY` nor `~DG` — the font and graphic managers' own Upload — is generic
+this way; each is locked to its one format.
+
+Object names round-trip through this manager exactly as the printer gives
+them, never forced to upper case the way the font and graphic managers
+force theirs: those two only ever create upper-case 8.3 objects, but a
+`CISDFCRC16`-stored object is not necessarily one (the command's own manual
+examples are lower case), and `file.type` retrieval is case sensitive — a
+name normalised the wrong way would silently stop matching the real object.
+
+Delete sends `^ID`, the same extension-agnostic command the font and graphic
+managers already use, and asks for confirmation first, same as Graphics —
+except for a `Z:` object, where Delete is unavailable: `^ID` does not reach
+that device at all and silently ignores a target there, so the control is
+withheld rather than let a click report nothing and change nothing.
+Deleting an object that `graphic_store`'s local cache also has pixels for
+(see §18) clears that cache entry too, so a `^XG`/`^IM`/`^IL` already on the
+canvas cannot go on showing pixels for an object the printer no longer has.
 
 ---
 

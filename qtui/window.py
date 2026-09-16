@@ -297,6 +297,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.default_printer_action = self._action("Default Printer…", self.on_default_printer)
         self.printer_fonts_action = self._action("Fonts…", self.on_printer_fonts)
         self.printer_graphics_action = self._action("Graphics…", self.on_printer_graphics)
+        self.printer_objects_action = self._action("Objects…", self.on_printer_objects)
 
         self.session_printer_action = self._action(
             "&Set Printer for This Session…", self.on_session_printer)
@@ -347,6 +348,7 @@ class ZPLDesignerWindow(QMainWindow):
         printer_menu = menubar.addMenu("&Printer")
         printer_menu.addAction(self.printer_graphics_action)
         printer_menu.addAction(self.printer_fonts_action)
+        printer_menu.addAction(self.printer_objects_action)
 
         settings_menu = menubar.addMenu("&Settings")
         settings_menu.addAction(self.label_size_action)
@@ -715,6 +717,14 @@ class ZPLDesignerWindow(QMainWindow):
         # so an ^XG/^IM/^IL that now resolves differently is shown without
         # marking the file dirty or pushing a bogus undo entry.
         dialog = qt_dialogs.PrinterGraphicsDialog(
+            self, self.printer_address, self.printer_port,
+            on_changed=lambda *_a: self.canvas.update())
+        dialog.exec_()
+
+    def on_printer_objects(self):
+        # Same reasoning as on_printer_graphics: deleting an object changes
+        # no Document state, so this is a plain repaint, never a commit().
+        dialog = qt_dialogs.PrinterObjectsDialog(
             self, self.printer_address, self.printer_port,
             on_changed=lambda *_a: self.canvas.update())
         dialog.exec_()

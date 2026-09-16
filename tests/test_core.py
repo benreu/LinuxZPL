@@ -2294,6 +2294,21 @@ check("parse_hg_reply(): a reply that isn't ~DG-shaped falls through as None",
       graphic_store.parse_hg_reply(b'\x0a\x05\x01\x01\x01\x00garbage') is None,
       graphic_store.parse_hg_reply(b'\x0a\x05\x01\x01\x01\x00garbage'))
 
+# printer_objects.build_object_upload(): the CISDFCRC16 payload Store sends
+# for an arbitrary file - unlike fonts/graphics, case is preserved exactly
+# (see the module docstring), and validation is deliberately skipped via
+# "0000"/"0000" rather than a guessed checksum algorithm.
+from zplcore import printer_objects
+obj_payload = printer_objects.build_object_upload('privkey', 'nrd', b'hello')
+check("build_object_upload(): CISDFCRC16 header, CRC/checksum both 0000",
+      obj_payload.startswith(b'! CISDFCRC16\r\n0000\r\nprivkey.nrd\r\n00000005\r\n0000\r\n'),
+      obj_payload)
+check("build_object_upload(): case preserved, not forced to upper",
+      b'privkey.nrd' in obj_payload and b'PRIVKEY.NRD' not in obj_payload,
+      obj_payload)
+check("build_object_upload(): the data itself follows the header verbatim",
+      obj_payload.endswith(b'hello'), obj_payload)
+
 
 # --- ^SN, ^SF, ^FC: the other ways a printer supplies a field's value -------
 # ^SN (serialization) and ^FC (real-time clock) used to be dropped entirely,

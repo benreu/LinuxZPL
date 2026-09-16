@@ -23,7 +23,7 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDoubleSpinBox, QVBoxLayout, QWidget)
 
 from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
-                     graphic_store, textraster)
+                     graphic_store, printer_objects, textraster)
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
                            BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
                            FRAME_COLOURS, ORIENTATIONS,
@@ -971,6 +971,39 @@ def store_graphic_dialog(parent) -> Optional[str]:
     return f"{device_combo.currentData()}:{object_name}.{extension}"
 
 
+def store_object_dialog(parent, default_name: str, default_ext: str):
+    """Ask for the name and extension an arbitrary local file should be
+    stored under on the printer's E: drive - the only device
+    printer_objects.upload_printer_object can target, so unlike
+    store_graphic_dialog this asks for no device. Case is left exactly as
+    typed rather than forced to upper, unlike store_graphic_dialog: a
+    CISDFCRC16-stored object is not necessarily an upper-case 8.3 ZPL
+    object (the manual's own examples include privkey.nrd, feedback.get),
+    and file.type's retrieval is case sensitive - see zplcore.printer_objects.
+    Returns (name, ext), or None if cancelled.
+    """
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Store Object As")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    name_edit = QLineEdit(default_name)
+    name_edit.setMaxLength(8)
+    form.addRow("Name (on E:):", name_edit)
+
+    ext_edit = QLineEdit(default_ext)
+    form.addRow("Extension:", ext_edit)
+
+    layout.addWidget(_buttons(dialog))
+
+    if dialog.exec_() != QDialog.Accepted:
+        return None
+    name = name_edit.text().strip() or 'UNKNOWN'
+    ext = ext_edit.text().strip() or 'DAT'
+    return name, ext
+
+
 # --- label and printer ------------------------------------------------------
 
 def label_size_dialog(parent, document: Document, dpi: int):
@@ -1451,7 +1484,7 @@ class PrinterGraphicsDialog(QDialog):
         spec = self._selected_entry()
         if spec is None:
             return
-        if not ask_delete_graphic(self, spec, self._address, self._port):
+        if not ask_delete_object(self, spec, self._address, self._port):
             return
         try:
             graphic_store.delete_printer_graphic(self._address, self._port, spec)
@@ -1461,6 +1494,157 @@ class PrinterGraphicsDialog(QDialog):
             return
         graphic_store.delete(spec)
         if self._on_changed:
+            self._on_changed(spec, None)
+        self.refresh()
+
+
+class PrinterObjectsDialog(QDialog):
+    """Every object stored on the real printer at `address`:`port`, across
+    R:/E:/B:/A:/Z: and any extension - not just the fonts and graphics
+    PrinterFontsDialog and PrinterGraphicsDialog already manage. Modelled on
+    PrinterFontsDialog: no preview pane, since most objects here are not
+    images. Store and Retrieve both exist here because both have a genuinely
+    generic printer command behind them - CISDFCRC16 and file.type - unlike
+    ~DY/~DG/^HG, which are each locked to one format and stay with the two
+    dialogs that already know it.
+
+    Store always writes to E: - CISDFCRC16 gives no device choice - so its
+    prompt asks only for a name and extension, never a device. Z: is
+    read-only factory content ^ID cannot delete (see
+    printer_objects.DEVICES), so Delete is withheld for a Z: selection even
+    though it is listed and can still be Retrieved.
+    """
+
+    def __init__(self, parent, address: str, port: int, on_changed=None):
+        super().__init__(parent)
+        self.setWindowTitle("Printer Objects")
+        self.resize(380, 340)
+        self._address, self._port = address, port
+        self._on_changed = on_changed
+
+        layout = QVBoxLayout(self)
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        self._list = QListWidget()
+        layout.addWidget(self._list, 1)
+
+        row = QHBoxLayout()
+        self._store_btn = QPushButton("Store…")
+        self._retrieve_btn = QPushButton("Retrieve…")
+        self._delete_btn = QPushButton("Delete")
+        self._refresh_btn = QPushButton("Refresh")
+        self._retrieve_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
+        for b in (self._store_btn, self._retrieve_btn, self._delete_btn,
+                 self._refresh_btn):
+            row.addWidget(b)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        close.rejected.connect(self.reject)
+        layout.addWidget(close)
+
+        self._store_btn.clicked.connect(self._on_store)
+        self._retrieve_btn.clicked.connect(self._on_retrieve)
+        self._delete_btn.clicked.connect(self._on_delete)
+        self._refresh_btn.clicked.connect(self.refresh)
+        self._list.currentRowChanged.connect(self._on_selection_changed)
+        self.refresh()
+
+    def refresh(self):
+        self._list.clear()
+        specs = printer_objects.query_printer_objects(self._address, self._port)
+        if specs is None:
+            self._status.setText(f"Could not reach the printer at "
+                                 f"{self._address}:{self._port}.")
+            self._retrieve_btn.setEnabled(False)
+            self._delete_btn.setEnabled(False)
+            return
+        for spec in specs:
+            self._list.addItem(spec)
+        self._status.setText(f"{len(specs)} object(s) on {self._address}"
+                             if specs else "No objects on the printer.")
+        self._retrieve_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
+
+    def _selected_spec(self) -> Optional[str]:
+        item = self._list.currentItem()
+        return item.text() if item is not None else None
+
+    def _on_selection_changed(self, _row: int):
+        spec = self._selected_spec()
+        self._retrieve_btn.setEnabled(spec is not None)
+        # ^ID silently ignores Z: (read-only factory content), so Delete
+        # would report success and change nothing - withhold it rather than
+        # let that happen.
+        self._delete_btn.setEnabled(spec is not None and not spec.startswith('Z:'))
+
+    def _on_store(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Store Object")
+        if not path:
+            return
+        default_name = Path(path).stem[:8] or 'UNKNOWN'
+        default_ext = Path(path).suffix.lstrip('.') or 'DAT'
+        result = store_object_dialog(self, default_name, default_ext)
+        if result is None:
+            return
+        name, ext = result
+
+        try:
+            data = Path(path).read_bytes()
+        except Exception as e:
+            show_error(self, f"Could not read {path}: {e}")
+            return
+
+        self._status.setText(f"Uploading E:{name}.{ext}...")
+        try:
+            printer_objects.upload_printer_object(
+                self._address, self._port, name, ext, data)
+        except Exception as e:
+            show_error(self, f"Could not store E:{name}.{ext}: {e}")
+            self.refresh()
+            return
+        self.refresh()
+
+    def _on_retrieve(self):
+        spec = self._selected_spec()
+        if spec is None:
+            return
+        self._status.setText(f"Retrieving {spec}...")
+        try:
+            data = printer_objects.download_printer_object(
+                self._address, self._port, spec)
+        except Exception as e:
+            show_error(self, f"Could not retrieve {spec}: {e}")
+            self.refresh()
+            return
+
+        _device, name, ext = graphic_store.split_device_spec(spec)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Retrieved Object", f"{name}.{ext.lower()}")
+        if path:
+            try:
+                Path(path).write_bytes(data)
+            except Exception as e:
+                show_error(self, f"Could not save {path}: {e}")
+        self.refresh()
+
+    def _on_delete(self):
+        spec = self._selected_spec()
+        if spec is None:
+            return
+        if not ask_delete_object(self, spec, self._address, self._port):
+            return
+        try:
+            printer_objects.delete_printer_object(self._address, self._port, spec)
+        except Exception as e:
+            show_error(self, f"Could not delete {spec}: {e}")
+            self.refresh()
+            return
+        if graphic_store.delete(spec) and self._on_changed:
             self._on_changed(spec, None)
         self.refresh()
 
@@ -1482,17 +1666,19 @@ def ask_overwrite(parent, filepath) -> bool:
     return box.clickedButton() is replace
 
 
-def ask_delete_graphic(parent, spec: str, address: str, port: int) -> bool:
+def ask_delete_object(parent, spec: str, address: str, port: int) -> bool:
     """Whether to really delete `spec` from the printer.
 
     A destructive action against real state needs a way back that "just
     don't click it again" cannot offer, since this one cannot be undone
     from here - the same reasoning ask_overwrite already has, just for a
-    printer object instead of a local file.
+    printer object instead of a local file. Shared by PrinterGraphicsDialog
+    and PrinterObjectsDialog, since neither the wording nor the reasoning
+    is specific to graphics.
     """
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Question)
-    box.setWindowTitle("Delete Graphic")
+    box.setWindowTitle("Delete Object")
     box.setText(f"Delete {spec} from the printer?")
     box.setInformativeText(
         f"This removes it from {address}:{port} itself, not just this "
