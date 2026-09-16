@@ -295,7 +295,7 @@ class ZPLDesignerWindow(QMainWindow):
 
         self.label_size_action = self._action("Label Size…", self.on_label_size)
         self.default_printer_action = self._action("Default Printer…", self.on_default_printer)
-        self.printer_fonts_action = self._action("Printer Fonts…", self.on_printer_fonts)
+        self.printer_fonts_action = self._action("Fonts…", self.on_printer_fonts)
         self.printer_graphics_action = self._action("Graphics…", self.on_printer_graphics)
 
         self.session_printer_action = self._action(
@@ -346,11 +346,11 @@ class ZPLDesignerWindow(QMainWindow):
 
         printer_menu = menubar.addMenu("&Printer")
         printer_menu.addAction(self.printer_graphics_action)
+        printer_menu.addAction(self.printer_fonts_action)
 
         settings_menu = menubar.addMenu("&Settings")
         settings_menu.addAction(self.label_size_action)
         settings_menu.addAction(self.default_printer_action)
-        settings_menu.addAction(self.printer_fonts_action)
 
     def _build_toolbar(self):
         toolbar = QToolBar("Elements", self)

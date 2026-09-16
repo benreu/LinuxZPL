@@ -511,6 +511,11 @@ class ZPLViewerWindow(Gtk.Window):
         printer_graphics_item.connect("activate", self.on_printer_graphics_clicked)
         printer_menu.append(printer_graphics_item)
 
+        # Printer fonts menu item
+        printer_fonts_item = Gtk.MenuItem(label="Fonts…")
+        printer_fonts_item.connect("activate", self.on_printer_fonts_clicked)
+        printer_menu.append(printer_fonts_item)
+
         printer_menu.show_all()
 
         # Undo/redo buttons at the far end of the header bar. pack_end fills
@@ -548,11 +553,6 @@ class ZPLViewerWindow(Gtk.Window):
         default_printer_item = Gtk.MenuItem(label="Default Printer\u2026")
         default_printer_item.connect("activate", self.on_default_printer_clicked)
         settings_menu.append(default_printer_item)
-
-        # Printer fonts menu item
-        printer_fonts_item = Gtk.MenuItem(label="Printer Fonts\u2026")
-        printer_fonts_item.connect("activate", self.on_printer_fonts_clicked)
-        settings_menu.append(printer_fonts_item)
 
         settings_menu.show_all()
 
