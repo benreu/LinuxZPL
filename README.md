@@ -40,6 +40,10 @@ disagree.
 - **Fonts**: pick any installed TrueType font per text element; upload, list and
   delete fonts on the printer, with a check before printing that the label's
   fonts are actually there
+- **Stored graphics**: `^XG`/`^IM`/`^IL` recall an image the printer holds
+  rather than one embedded in the file; **Printer -> Graphics...** talks to
+  the real printer to view what it has stored, upload an image file to it,
+  retrieve one back out to a file, or delete one
 - **Network Printing**: straight over TCP to a Zebra, no printing subsystem
   involved
 - **Select more than one**: shift-click, or drag a band across the canvas, and
@@ -90,8 +94,10 @@ In VS Code, press **F5**; the default configuration is the flagless one.
 6. **File -> Print** to send the label
 
 Use **Settings -> Label Size** for the label dimensions - presets of 4x6, 5x7,
-6x4, 3x5 and 2x3 inches, or a custom size - and **Settings -> Printer
-Fonts...** to manage the fonts stored on the printer.
+6x4, 3x5 and 2x3 inches, or a custom size - **Settings -> Printer
+Fonts...** to manage the fonts stored on the printer, and **Printer ->
+Graphics...** to manage the images `^XG`/`^IM`/`^IL` recall, the same way -
+against whichever printer is actually in effect for this session.
 
 `sample.zpl` is included to try the designer out.
 
@@ -124,6 +130,9 @@ zplcore/    no GUI toolkit, runs headless
   model.py       elements and the Document, the ZPL written out
   parser.py      the ZPL read back in
   fonts.py       discovery, printer object naming, printer I/O
+  graphic_store.py  the in-session ^IS/^XG memory, and real printer I/O for
+                    Printer -> Graphics... (view/store/retrieve/delete)
+  printer_io.py  the raw socket send/reply fonts.py and graphic_store.py share
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   textraster.py  the text raster both canvases blit
@@ -186,7 +195,9 @@ element's own `^FO` and `^FD` would resume executing and print anyway.
 Sent to the printer but not rendered:
 
 - `~DY` - Download a font to the printer
+- `~DG` - Download a graphic to the printer
 - `^HW` - List the objects stored on the printer
+- `^HG` - Retrieve a stored graphic's own bytes back from the printer
 - `^ID` - Delete an object from the printer
 - `~HI` - Ask the printer its model and head resolution
 

@@ -941,6 +941,60 @@ device, name, extension and magnification. `^IL` and `^IS` have no creation
 dialog of their own, the same as `^DF`/`^XF` — they round-trip a file that
 already carries them rather than being authored from a blank document.
 
+**Printer → Graphics…** talks to the real printer, the same way Settings →
+Printer Fonts… already does for fonts — not `graphic_store`'s local memory,
+though it keeps that in step as a convenience (see below). Every request
+goes to whichever printer is actually in effect this session
+(`self.printer_address`/`self.printer_port`, which a session-only "Set
+Printer for This Session…" override moves without touching the persisted
+default) — never the persisted default itself.
+
+- **View** queries the printer live via `^HW`, one request per device
+  (`R:`/`E:`/`B:`/`A:`, since graphics — unlike fonts, always `E:` — can live
+  in any of them), scoped to `*.GRF` — the canonical ZPL graphic extension,
+  and the one Store writes — the same way `query_printer_fonts` is scoped to
+  `E:*.TTF`. An unscoped `*.*` was tried first and rejected: a printer's own
+  memory holds plenty that is not a graphic at all — fonts, firmware/config
+  objects, whatever else came from the factory or another tool — and it made
+  the dialog list all of it. The `.GRF` filter is applied twice, once in the
+  request and again on the reply, so a printer model that ignores the
+  pattern and answers with its whole directory anyway is still filtered
+  correctly. Reachability is judged by the first device queried, the same
+  rule `query_printer_fonts` already uses for its one query; a later device
+  answering nothing is not treated as the printer going away.
+- **Store…** builds a `~DG` payload — the same 1-bit, Floyd-Steinberg
+  dithered, hex-encoded bitmap `^GF` fields already carry — from a PNG/JPG
+  picked off disk and a chosen device/name/extension, and uploads it for
+  real.
+- **Retrieve…** fetches an object's real bytes back via `^HG` (Host
+  Graphic), read the same request/read-reply way `^HW`'s listing already is.
+  Confirmed against real hardware: the reply is not a self-contained image
+  file — it is the same shape a `~DG` upload writes (name, total bytes,
+  bytes per row, then the bitmap itself ASCII-hex encoded), just missing
+  the device and extension a `~DG` carries. `graphics.decode_data()` reads
+  that data half the same way it already does for `^GF` fields. If a reply
+  does not start this way, PIL is tried on it directly as a fallback, in
+  case some other firmware genuinely answers with a self-contained image;
+  a reply that fits neither raises with its length and a hex preview
+  rather than a bare decode error. The fetched image is then offered as a
+  file to save.
+- **Delete** sends `^ID...^FS`, the same shape `delete_printer_font` already
+  uses, and asks for confirmation first, since — unlike everything else this
+  designer does to a stored graphic — it cannot be undone from here.
+
+Store and Retrieve also mirror a successful result into `graphic_store`'s
+local, in-session cache, purely so an already-placed `^XG`/`^IM`/`^IL`
+element updates on screen without a second round trip to the printer — the
+same way uploading a font also registers it locally for the canvas to draw
+with. An object the printer already had before this session opened is
+listed by View but shows no thumbnail until Retrieved. Two real devices can
+genuinely hold distinctly-named objects (a real `R:LOGO.GRF` and a real
+`E:LOGO.GRF`); View's list keeps both distinct, but the *locally cached
+pixels* for one can still overwrite the other's if both are Retrieved in one
+session, since `graphic_store.key()` does not distinguish device (see §18).
+None of this touches the Document: nothing about it is written to the saved
+ZPL, and it never marks the file as having unsaved changes.
+
 **`^LH` and `^LS` are folded into coordinates; `^LT` is not.** An element
 holds the **absolute** dot position it will print at, so the canvas, dragging,
 clamping and alignment need to know nothing about either command. A save
@@ -1213,21 +1267,33 @@ rather than requirements:
   a field reversed against a solid `^GB` box already there — without any new
   compositing machinery. The cost: a field reversed with nothing solid beneath
   it shows as a filled box, where a real printer would show nothing at all.
-- **`^XG`/`^IM`/`^IL` resolve a stored graphic by name and extension only —
-  the `R:`/`E:`/`B:`/`A:` device prefix is preserved for round-tripping but
-  does not distinguish objects.** A real printer has separate storage areas and
-  can hold `R:LOGO.GRF` and `E:LOGO.GRF` as two different images at once; this
-  app has no per-device memory to run out of or manage, so two files that only
-  differ by device prefix are treated as the same stored object. Nothing a user
-  does through the designer alone can produce that collision — see `zplcore/graphic_store.py`.
+- **`^XG`/`^IM`/`^IL` resolve a stored graphic in `graphic_store` (the local,
+  in-session cache) by name and extension only — the `R:`/`E:`/`B:`/`A:`
+  device prefix is preserved for round-tripping but does not distinguish
+  objects there.** A real printer has separate storage areas and can hold
+  `R:LOGO.GRF` and `E:LOGO.GRF` as two different images at once; **Printer →
+  Graphics…**'s View correctly keeps the two distinct, since it lists what
+  the real printer reports, device and all. But Retrieving both into the
+  local cache in the same session *can* now produce the collision this used
+  to be impossible to reach: the second Retrieve's pixels overwrite the
+  first's under the shared, device-blind key — see `zplcore/graphic_store.py`.
+  Nothing about `^IS`/`^XG`/`^IM`/`^IL` themselves changed to cause this;
+  it is Printer → Graphics… bridging session-local memory to a real
+  multi-device printer for the first time.
 - **A stored graphic resolves only for as long as the app keeps running, and
-  only if this same run has already parsed the `^IS` that saved it.** There is
-  no on-disk persistence, no simulation of a printer's actual memory, and no
-  merging of data across separately opened files — the same limit `^DF`/`^XF`
-  already has. Opening a file with `^XG`/`^IM`/`^IL` cold shows a placeholder
-  naming what it is waiting for rather than failing or inventing an image.
-- **`^DG` (Download Graphic) and `^ID` (Object Delete) are not implemented.**
-  `^IS` is the only way this app's graphic store is populated; a file that
-  instead relies on `^DG` to seed a stored graphic opens with that graphic
-  unresolved, the same as one referencing an object this session never saw
-  saved at all.
+  only if this same run has already parsed the `^IS` that saved it, or
+  Stored/Retrieved it via Printer → Graphics….** There is no on-disk
+  persistence, no merging of data across separately opened files — the same
+  limit `^DF`/`^XF` already has. Opening a file with `^XG`/`^IM`/`^IL` cold
+  shows a placeholder naming what it is waiting for rather than failing or
+  inventing an image; opening **Printer → Graphics…** and using Retrieve
+  resolves it for real, straight from the printer, without needing a
+  matching `^IS` to have been parsed at all.
+- **`^DG` (Download Graphic), `^HG` (Host Graphic) and `^ID` (Object Delete)
+  are not parsed from ZPL *files*.** A file that relies on any of them to
+  seed, fetch or remove a stored object still opens with the graphic it names
+  unresolved or unremoved — this app never sees the command, only the
+  `^XG`/`^IM`/`^IL` that assumed it had already run. **Printer → Graphics…**
+  performs the real exchanges instead — `~DG` for Store, `^HG` for Retrieve,
+  `^ID` for Delete — directly against the printer, just never triggered by
+  opening a file.

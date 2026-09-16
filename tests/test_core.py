@@ -2201,6 +2201,99 @@ check("no name at all is not an error",
       graphic_store.key('') == 'UNKNOWN.GRF', graphic_store.key(''))
 graphic_store.clear()
 
+# graphic_store.items(): what a "Printer Graphics" manager lists - every
+# stored (name.ext, image) pair, sorted so both frontends' lists agree with
+# each other and with repeated calls.
+check("items() is empty before anything is stored",
+      graphic_store.items() == [], graphic_store.items())
+graphic_store.store('R:B.GRF', Image.new('RGB', (3, 3)))
+graphic_store.store('E:A.GRF', Image.new('RGB', (5, 5)))
+check("items() lists every stored image, sorted by key",
+      [k for k, _img in graphic_store.items()] == ['A.GRF', 'B.GRF'],
+      graphic_store.items())
+graphic_store.clear()
+check("and clear() empties it",
+      graphic_store.items() == [], graphic_store.items())
+
+# graphic_store.delete(): the UI-level counterpart of ^ID, which this app
+# does not parse from ZPL - see FUNCTIONAL_SPEC.md section 18.
+graphic_store.store('R:LOGO.GRF', Image.new('RGB', (7, 7)))
+check("delete() removes a stored image and says it was there",
+      graphic_store.delete('R:LOGO.GRF') is True, graphic_store.recall('R:LOGO.GRF'))
+check("recall() finds nothing afterwards",
+      graphic_store.recall('R:LOGO.GRF') is None, graphic_store.recall('R:LOGO.GRF'))
+check("deleting again says there was nothing to delete",
+      graphic_store.delete('R:LOGO.GRF') is False, graphic_store.delete('R:LOGO.GRF'))
+graphic_store.store('E:SAMPLE.GRF', Image.new('RGB', (2, 2)))
+check("delete() normalises its spec the same way store()/recall() do",
+      graphic_store.delete('e:sample.grf') is True, graphic_store.items())
+graphic_store.clear()
+
+# graphic_store.split_device_spec(): a `d:o.x` spec taken apart for an
+# editor's separate fields - moved here from zplcore/model.py so the network
+# builders below can use it without a circular import.
+check("split_device_spec: no colon defaults to device R",
+      graphic_store.split_device_spec('LOGO.GRF') == ('R', 'LOGO', 'GRF'),
+      graphic_store.split_device_spec('LOGO.GRF'))
+check("split_device_spec: an explicit device is upper-cased, name/ext are not",
+      graphic_store.split_device_spec('e:sample.png') == ('E', 'sample', 'png'),
+      graphic_store.split_device_spec('e:sample.png'))
+check("split_device_spec: missing name/ext default to UNKNOWN/GRF",
+      graphic_store.split_device_spec('B:') == ('B', 'UNKNOWN', 'GRF'),
+      graphic_store.split_device_spec('B:'))
+
+# zplcore.graphics.encode(): the encode-side counterpart of decode_data(),
+# extracted from ImageElement.to_zpl() so the ~DG builder below can reuse the
+# same packer rather than a second, untested one - see zplcore/graphics.py.
+# The existing ^GFA checks earlier in this file already guard to_zpl()'s
+# output stayed byte-identical after that extraction.
+mono = Image.new('1', (8, 1))
+for x in range(4):
+    mono.putpixel((x, 0), 0)      # black
+for x in range(4, 8):
+    mono.putpixel((x, 0), 255)    # white
+check("graphics.encode(): MSB-first, a set bit is black",
+      zpl_graphics.encode(mono, 1) == 'F0', zpl_graphics.encode(mono, 1))
+padded = Image.new('1', (5, 1), 0)   # all black, narrower than one byte
+check("graphics.encode(): a short row pads white up to bytes_per_row",
+      zpl_graphics.encode(padded, 1) == 'F8', zpl_graphics.encode(padded, 1))
+
+# graphic_store.build_graphic_upload(): the ~DG payload Store sends to the
+# real printer - same bitmap graphics.encode() already produces, so this
+# only needs to check the header and that the two agree on the data.
+upload_img = Image.new('RGB', (16, 8), (0, 0, 0))
+upload_payload = graphic_store.build_graphic_upload('R:LOGO.GRF', upload_img)
+check("build_graphic_upload(): ~DG header names device, object and sizes",
+      upload_payload.startswith(b'~DGR:LOGO.GRF,16,2,'), upload_payload[:24])
+upload_hex = upload_payload.decode('ascii').split(',', 3)[-1]
+check("build_graphic_upload()'s hex is exactly graphics.encode()'s own output",
+      upload_hex == zpl_graphics.encode(upload_img.convert('1'), 2), upload_hex)
+check("and it decodes back via the existing graphics.decode_data()",
+      zpl_graphics.decode_data(upload_hex, 2) == b'\xff' * 16,
+      zpl_graphics.decode_data(upload_hex, 2))
+
+# graphic_store.parse_hg_reply(): real hardware answers ^HG not with a
+# self-contained image file but with the same shape a ~DG upload writes,
+# minus the device/extension - name,total,bytes_per_row, a newline, then
+# the bitmap itself. Round-trip through graphics.encode() the way the
+# printer's own reply would be shaped, and confirm the pixels survive.
+rt_src = Image.new('1', (16, 2), 255)
+for x in range(8):
+    rt_src.putpixel((x, 0), 0)   # top row half black, bottom row all white
+rt_bpr = 2
+rt_hex = zpl_graphics.encode(rt_src, rt_bpr)
+rt_reply = f'~DGPHOTO,{rt_bpr * 2},{rt_bpr},\r\n{rt_hex}'.encode('ascii')
+rt_out = graphic_store.parse_hg_reply(rt_reply)
+check("parse_hg_reply(): reconstructs the ~DG-echoed bitmap",
+      rt_out is not None and rt_out.size == (16, 2), rt_out)
+check("parse_hg_reply(): round-tripped pixels match the source",
+      rt_out is not None
+      and list(rt_out.convert('L').getdata()) == list(rt_src.convert('L').getdata()),
+      rt_out and list(rt_out.convert('L').getdata()))
+check("parse_hg_reply(): a reply that isn't ~DG-shaped falls through as None",
+      graphic_store.parse_hg_reply(b'\x0a\x05\x01\x01\x01\x00garbage') is None,
+      graphic_store.parse_hg_reply(b'\x0a\x05\x01\x01\x01\x00garbage'))
+
 
 # --- ^SN, ^SF, ^FC: the other ways a printer supplies a field's value -------
 # ^SN (serialization) and ^FC (real-time clock) used to be dropped entirely,

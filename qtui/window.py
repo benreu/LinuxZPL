@@ -296,6 +296,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.label_size_action = self._action("Label Size…", self.on_label_size)
         self.default_printer_action = self._action("Default Printer…", self.on_default_printer)
         self.printer_fonts_action = self._action("Printer Fonts…", self.on_printer_fonts)
+        self.printer_graphics_action = self._action("Graphics…", self.on_printer_graphics)
 
         self.session_printer_action = self._action(
             "&Set Printer for This Session…", self.on_session_printer)
@@ -342,6 +343,9 @@ class ZPLDesignerWindow(QMainWindow):
         view_menu.addAction(self.fit_label_action)
         view_menu.addAction(self.fit_width_action)
         view_menu.addAction(self.actual_size_action)
+
+        printer_menu = menubar.addMenu("&Printer")
+        printer_menu.addAction(self.printer_graphics_action)
 
         settings_menu = menubar.addMenu("&Settings")
         settings_menu.addAction(self.label_size_action)
@@ -703,6 +707,16 @@ class ZPLDesignerWindow(QMainWindow):
 
         dialog = qt_dialogs.PrinterFontsDialog(
             self, self.printer_address, self.printer_port, on_uploaded)
+        dialog.exec_()
+
+    def on_printer_graphics(self):
+        # Storing/retrieving/deleting a graphic changes no Document state, so
+        # this is a plain repaint - canvas.update(), never canvas.commit() -
+        # so an ^XG/^IM/^IL that now resolves differently is shown without
+        # marking the file dirty or pushing a bogus undo entry.
+        dialog = qt_dialogs.PrinterGraphicsDialog(
+            self, self.printer_address, self.printer_port,
+            on_changed=lambda *_a: self.canvas.update())
         dialog.exec_()
 
     # --- files ---------------------------------------------------------------

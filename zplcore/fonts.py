@@ -8,12 +8,12 @@ the printer.
 
 import ctypes
 import re
-import socket
-import time
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Set
 
 from PIL import ImageFont
+
+from . import printer_io
 
 # Fonts live in the printer's E: memory as 8.3 TrueType objects
 FONT_DEVICE = 'E:'
@@ -176,40 +176,10 @@ def build_font_upload(font_path: str, name: str) -> bytes:
     return header + data
 
 
-def _send(address: str, port: int, payload: bytes, timeout: float,
-          read_reply: bool = False) -> bytes:
-    """Send a payload to the printer, optionally reading whatever it replies."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect((address, port))
-        sock.sendall(payload)
-        if not read_reply:
-            return b''
-        chunks = []
-        deadline = time.monotonic() + timeout
-        while True:
-            try:
-                chunk = sock.recv(4096)
-            except (socket.timeout, TimeoutError):
-                break
-            if not chunk:
-                break
-            chunks.append(chunk)
-            # Once the printer starts talking it sends the rest promptly, so
-            # drop to a short timeout rather than waiting out the full one.
-            sock.settimeout(0.5)
-            if time.monotonic() > deadline:
-                break
-        return b''.join(chunks)
-    finally:
-        sock.close()
-
-
 def upload_font(address: str, port: int, font_path: str, name: str,
                 timeout: float = 30) -> None:
     """Store a local font file on the printer as E:<name>.TTF."""
-    _send(address, port, build_font_upload(font_path, name), timeout)
+    printer_io.send(address, port, build_font_upload(font_path, name), timeout)
 
 
 def query_printer_fonts(address: str, port: int,
@@ -221,7 +191,8 @@ def query_printer_fonts(address: str, port: int,
     printer could not be asked" - unreachable, or no ^HW support.
     """
     try:
-        reply = _send(address, port, b'^XA^HWE:*.TTF^XZ', timeout, read_reply=True)
+        reply = printer_io.send(address, port, b'^XA^HWE:*.TTF^XZ', timeout,
+                                read_reply=True)
     except OSError:
         return None
     if not reply:
@@ -240,7 +211,7 @@ def query_printer_dpi(address: str, port: int,
     when the printer is unreachable or answers in an unexpected shape.
     """
     try:
-        reply = _send(address, port, b'~HI', timeout, read_reply=True)
+        reply = printer_io.send(address, port, b'~HI', timeout, read_reply=True)
     except OSError:
         return None
     if not reply:
@@ -257,7 +228,7 @@ def delete_printer_font(address: str, port: int, name: str,
                         timeout: float = 10) -> None:
     """Delete a font object from the printer."""
     payload = f"^XA^ID{printer_font_path(name)}^FS^XZ".encode('ascii')
-    _send(address, port, payload, timeout)
+    printer_io.send(address, port, payload, timeout)
 
 
 # --- local rendering --------------------------------------------------------

@@ -19,6 +19,7 @@ from . import code128
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
 from . import graphic_store
+from . import graphics
 from . import transforms as zpl_transforms
 from . import geometry
 
@@ -633,15 +634,6 @@ STORED_GRAPHIC_DEVICES = (("R: (DRAM)", 'R'), ("E: (Flash)", 'E'),
                           ("B: (B: memory)", 'B'), ("A: (A: memory)", 'A'))
 
 
-def split_device_spec(spec: str):
-    """A `d:o.x` spec, taken apart for an editor's separate fields."""
-    device, rest = 'R', (spec or '')
-    if len(rest) > 1 and rest[1] == ':':
-        device, rest = rest[0].upper(), rest[2:]
-    name, _, ext = rest.partition('.')
-    return device, name or 'UNKNOWN', ext or 'GRF'
-
-
 class ImageElement(DesignElement):
     """Image element for the designer, rendered from a JPG/PNG file."""
 
@@ -752,7 +744,6 @@ class ImageElement(DesignElement):
     def to_zpl(self, offset=(0, 0)) -> str:
         if not self.image_path and self._pil_image is None:
             return ""
-        import numpy as np
 
         img_sized = self._get_sized_image()
         if img_sized is None:
@@ -762,19 +753,7 @@ class ImageElement(DesignElement):
         img_1bit = self.get_print_bitmap()
         bytes_per_row = (self.width + 7) // 8
         total_bytes = bytes_per_row * self.height
-        arr = np.array(img_1bit, dtype=np.uint8)
-        padded_w = bytes_per_row * 8
-        if padded_w > self.width:
-            # Padding is white, i.e. an unset bit, so it prints nothing.
-            pad = np.full((self.height, padded_w - self.width), 255, dtype=np.uint8)
-            arr = np.concatenate([arr, pad], axis=1)
-        arr = arr.reshape(self.height, bytes_per_row, 8)
-        # A SET bit is black - the inverse of the usual 1-bit convention, which
-        # is why this compares against 0 rather than casting the array.
-        bits = (arr == 0).astype(np.uint8)
-        weights = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint8)
-        packed = (bits * weights).sum(axis=2).astype(np.uint8)
-        data = packed.tobytes().hex().upper()
+        data = graphics.encode(img_1bit, bytes_per_row)
 
         # Embed full-colour JPEG preview in a ^FX comment so the designer can
         # restore the original image quality when the ZPL file is reopened.

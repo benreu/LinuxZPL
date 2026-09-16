@@ -23,7 +23,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import _isolate  # a throwaway settings file, before any frontend is imported
-from zplcore import transforms
+from PIL import Image
+from zplcore import graphic_store, transforms
 FIXTURE_300 = ROOT / 'tests' / 'fixtures' / 'sample_300dpi.zpl'
 # ZPL as another tool writes it: ^A0, ^FB and two commands on one line
 FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'
@@ -162,6 +163,12 @@ class GtkDriver:
 
     def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
         return self.canvas.add_stored_graphic_element(command, device_spec)
+
+    def store_graphic(self, device_spec, image):
+        """What Printer -> Graphics... 'Store...' does, bypassing its
+        dialogs - graphic_store is core, so both frontends do the same
+        thing here."""
+        graphic_store.store(device_spec, image)
 
     def add_barcode(self):
         return self.canvas.add_barcode_element()
@@ -395,6 +402,12 @@ class QtDriver:
 
     def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
         return self.document.add_stored_graphic_element(command, device_spec)
+
+    def store_graphic(self, device_spec, image):
+        """What Printer -> Graphics... 'Store...' does, bypassing its
+        dialogs - graphic_store is core, so both frontends do the same
+        thing here."""
+        graphic_store.store(device_spec, image)
 
     def add_barcode(self):
         return self.document.add_barcode_element()
@@ -924,6 +937,18 @@ def sequence(driver, record):
     # as time/serial/numbered above.
     driver.add_stored_graphic('XG', 'R:SAMPLE.GRF')
     record('add a stored graphic reference')
+
+    # Printer -> Graphics... 'Store...' is a second way into graphic_store,
+    # alongside ^IS - store_graphic bypasses its own file-chooser and
+    # device/name/extension dialogs the way every other driver method
+    # bypasses its editor, going straight to the graphic_store.store() call
+    # both frontends make. It changes no Document state - see
+    # zplcore/graphic_store.py - so the ZPL is unaffected; what has to agree
+    # between frontends is that the reference just added now resolves.
+    driver.store_graphic('R:SAMPLE.GRF', Image.new('RGB', (40, 30), (10, 20, 30)))
+    resolved = driver.elements[-1].resolve()
+    record('store a graphic and resolve the reference already pointing at it',
+          text=f"resolved={resolved.size if resolved else None}")
 
 
 def main():

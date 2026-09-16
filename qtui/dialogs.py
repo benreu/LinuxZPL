@@ -11,22 +11,27 @@ import socket
 from pathlib import Path
 from typing import Optional
 
+from PIL import Image as PILImage
+
 from PySide2.QtCore import Qt
-from PySide2.QtGui import QFont, QFontMetrics
+from PySide2.QtGui import QFont, QFontMetrics, QPixmap
 from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QListWidget, QMessageBox, QPlainTextEdit,
-                               QPushButton, QSpinBox, QDoubleSpinBox,
-                               QVBoxLayout, QWidget)
+                               QFormLayout, QFrame, QHBoxLayout, QLabel,
+                               QLineEdit, QListWidget, QMessageBox,
+                               QPlainTextEdit, QPushButton, QSpinBox,
+                               QDoubleSpinBox, QVBoxLayout, QWidget)
 
-from zplcore import fields as zpl_fields, fonts as zpl_fonts, textraster
+from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
+                     graphic_store, textraster)
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
                            BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
                            FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
                            TEXT_JUSTIFICATIONS, Document, FieldBlock,
-                           FrameElement, TextElement, split_device_spec)
+                           FrameElement, TextElement)
+
+from .canvas import to_qimage
 
 IMAGE_FILTER = "Image files (*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG);;All files (*)"
 ZPL_FILTER = "ZPL files (*.zpl);;All files (*)"
@@ -783,7 +788,7 @@ def edit_stored_graphic_dialog(parent, element, on_accept=None) -> QDialog:
                                   if element.command in command_codes else 0)
     form.addRow("Command:", command_combo)
 
-    device, name, ext = split_device_spec(element.device_spec)
+    device, name, ext = graphic_store.split_device_spec(element.device_spec)
     device_combo = QComboBox()
     device_combo.setObjectName("device")
     for label, code in STORED_GRAPHIC_DEVICES:
@@ -928,6 +933,42 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
 def choose_image_file(parent, title="Select Image") -> Optional[str]:
     path, _ = QFileDialog.getOpenFileName(parent, title, "", IMAGE_FILTER)
     return path or None
+
+
+def store_graphic_dialog(parent) -> Optional[str]:
+    """Ask for device / name / extension for a graphic about to be stored.
+
+    The same three fields `edit_stored_graphic_dialog` asks for, minus
+    command and magnification - those describe an ^XG/^IM reference, not the
+    object being stored. Modal, unlike the element editors: there is no live
+    element on the canvas for a non-modal dialog to stay in sync with here.
+    Returns the `d:o.x` spec, or None if cancelled.
+    """
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Store Graphic As")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    device_combo = QComboBox()
+    for label, code in STORED_GRAPHIC_DEVICES:
+        device_combo.addItem(label, code)
+    form.addRow("Device:", device_combo)
+
+    name_edit = QLineEdit("LOGO")
+    name_edit.setMaxLength(8)
+    form.addRow("Name:", name_edit)
+
+    ext_edit = QLineEdit("GRF")
+    form.addRow("Extension:", ext_edit)
+
+    layout.addWidget(_buttons(dialog))
+
+    if dialog.exec_() != QDialog.Accepted:
+        return None
+    object_name = (name_edit.text().strip() or 'UNKNOWN').upper()
+    extension = (ext_edit.text().strip() or 'GRF').upper()
+    return f"{device_combo.currentData()}:{object_name}.{extension}"
 
 
 # --- label and printer ------------------------------------------------------
@@ -1230,6 +1271,200 @@ class PrinterFontsDialog(QDialog):
         self.refresh()
 
 
+class PrinterGraphicsDialog(QDialog):
+    """View, store, retrieve and delete graphics on the real printer at
+    `address`:`port` - whichever one is actually in effect this session
+    (the caller passes self.printer_address/self.printer_port, which a
+    session override moves without touching the persisted default), the
+    same target PrinterFontsDialog already uses.
+
+    Modelled closely on PrinterFontsDialog: refresh() queries the printer
+    live and reports when it cannot be reached, exactly as that one does for
+    ^HW. The one thing this keeps that Fonts has no need for is
+    graphic_store's in-session local cache, which ^XG/^IM/^IL already read
+    from - Store and Retrieve mirror a successful network result into it
+    (the same way upload_font's caller also registers the font locally),
+    purely so an already-placed reference on the canvas updates without a
+    second round trip to the printer.
+    """
+
+    def __init__(self, parent, address: str, port: int, on_changed=None):
+        super().__init__(parent)
+        self.setWindowTitle("Printer Graphics")
+        self.resize(460, 340)
+        self._address, self._port = address, port
+        self._on_changed = on_changed
+        self._entries = []
+
+        layout = QVBoxLayout(self)
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        body = QHBoxLayout()
+        layout.addLayout(body, 1)
+
+        self._list = QListWidget()
+        body.addWidget(self._list, 1)
+
+        self._preview = QLabel()
+        self._preview.setFixedSize(160, 160)
+        self._preview.setAlignment(Qt.AlignCenter)
+        self._preview.setFrameShape(QFrame.Box)
+        body.addWidget(self._preview)
+
+        row = QHBoxLayout()
+        self._store_btn = QPushButton("Store…")
+        self._retrieve_btn = QPushButton("Retrieve…")
+        self._delete_btn = QPushButton("Delete")
+        self._refresh_btn = QPushButton("Refresh")
+        self._retrieve_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
+        for b in (self._store_btn, self._retrieve_btn, self._delete_btn,
+                 self._refresh_btn):
+            row.addWidget(b)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        close.rejected.connect(self.reject)
+        layout.addWidget(close)
+
+        self._store_btn.clicked.connect(self._on_store)
+        self._retrieve_btn.clicked.connect(self._on_retrieve)
+        self._delete_btn.clicked.connect(self._on_delete)
+        self._refresh_btn.clicked.connect(self.refresh)
+        self._list.currentRowChanged.connect(self._on_selection_changed)
+        self.refresh()
+
+    def refresh(self):
+        self._list.clear()
+        specs = graphic_store.query_printer_graphics(self._address, self._port)
+        if specs is None:
+            self._status.setText(f"Could not reach the printer at "
+                                 f"{self._address}:{self._port}.")
+            self._entries = []
+            self._preview.clear()
+            self._retrieve_btn.setEnabled(False)
+            self._delete_btn.setEnabled(False)
+            return
+        self._entries = specs
+        for spec in self._entries:
+            cached = graphic_store.recall(spec)
+            suffix = f" ({cached.width}×{cached.height})" if cached else ""
+            self._list.addItem(f"{spec}{suffix}")
+        self._status.setText(
+            f"{len(self._entries)} graphic(s) on {self._address}"
+            if self._entries else f"No graphics on {self._address}.")
+        self._preview.clear()
+        self._retrieve_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
+
+    def _selected_entry(self):
+        """The spec the list has selected, or None."""
+        row = self._list.currentRow()
+        return self._entries[row] if 0 <= row < len(self._entries) else None
+
+    def _on_selection_changed(self, row: int):
+        spec = self._selected_entry()
+        self._retrieve_btn.setEnabled(spec is not None)
+        self._delete_btn.setEnabled(spec is not None)
+        if spec is None:
+            self._preview.clear()
+            return
+        image = graphic_store.recall(spec)
+        if image is None:
+            # Not fetched this session yet - Retrieve first.
+            self._preview.clear()
+            return
+        qimage = to_qimage(image)
+        if qimage is None or qimage.isNull():
+            self._preview.clear()
+            return
+        pixmap = QPixmap.fromImage(qimage).scaled(
+            self._preview.width(), self._preview.height(),
+            Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._preview.setPixmap(pixmap)
+
+    def _on_store(self):
+        path = choose_image_file(self, "Store Graphic")
+        if not path:
+            return
+        spec = store_graphic_dialog(self)
+        if spec is None:
+            return
+        try:
+            image = PILImage.open(path)
+            image.load()
+            if image.mode not in ('RGB', 'L'):
+                image = image.convert('RGB')
+        except Exception as e:
+            show_error(self, f"Could not open {path}: {e}")
+            return
+
+        self._status.setText(f"Uploading {spec}...")
+        try:
+            graphic_store.upload_graphic(self._address, self._port, spec, image)
+        except Exception as e:
+            show_error(self, f"Could not store {spec}: {e}")
+            self.refresh()
+            return
+
+        graphic_store.store(spec, image)
+        if self._on_changed:
+            self._on_changed(spec, image)
+        self.refresh()
+
+    def _on_retrieve(self):
+        """Fetch the selected graphic's real bytes from the printer, cache
+        them locally so ^XG/^IM/^IL resolve, and offer to save them to a
+        file too."""
+        spec = self._selected_entry()
+        if spec is None:
+            return
+        self._status.setText(f"Retrieving {spec}...")
+        try:
+            image = graphic_store.retrieve_printer_graphic(
+                self._address, self._port, spec)
+        except Exception as e:
+            show_error(self, f"Could not retrieve {spec}: {e}")
+            self.refresh()
+            return
+
+        graphic_store.store(spec, image)
+        if self._on_changed:
+            self._on_changed(spec, image)
+
+        _device, name, _ext = graphic_store.split_device_spec(spec)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Retrieved Graphic", f"{name}.png", IMAGE_FILTER)
+        if path:
+            try:
+                if not Path(path).suffix:
+                    path += '.png'
+                image.save(path)
+            except Exception as e:
+                show_error(self, f"Could not save {path}: {e}")
+        self.refresh()
+
+    def _on_delete(self):
+        spec = self._selected_entry()
+        if spec is None:
+            return
+        if not ask_delete_graphic(self, spec, self._address, self._port):
+            return
+        try:
+            graphic_store.delete_printer_graphic(self._address, self._port, spec)
+        except Exception as e:
+            show_error(self, f"Could not delete {spec}: {e}")
+            self.refresh()
+            return
+        graphic_store.delete(spec)
+        if self._on_changed:
+            self._on_changed(spec, None)
+        self.refresh()
+
+
 # --- prompts ----------------------------------------------------------------
 
 def ask_overwrite(parent, filepath) -> bool:
@@ -1245,6 +1480,29 @@ def ask_overwrite(parent, filepath) -> bool:
     box.setEscapeButton(cancel)
     box.exec_()
     return box.clickedButton() is replace
+
+
+def ask_delete_graphic(parent, spec: str, address: str, port: int) -> bool:
+    """Whether to really delete `spec` from the printer.
+
+    A destructive action against real state needs a way back that "just
+    don't click it again" cannot offer, since this one cannot be undone
+    from here - the same reasoning ask_overwrite already has, just for a
+    printer object instead of a local file.
+    """
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Question)
+    box.setWindowTitle("Delete Graphic")
+    box.setText(f"Delete {spec} from the printer?")
+    box.setInformativeText(
+        f"This removes it from {address}:{port} itself, not just this "
+        "list. It cannot be undone from here.")
+    delete = box.addButton("Delete", QMessageBox.DestructiveRole)
+    cancel = box.addButton("Cancel", QMessageBox.RejectRole)
+    box.setDefaultButton(cancel)
+    box.setEscapeButton(cancel)
+    box.exec_()
+    return box.clickedButton() is delete
 
 
 def ask_unsaved_changes(parent) -> str:
