@@ -96,6 +96,39 @@ def read_clock_chars(params: str):
     return tuple(p or default for p, default in zip(parts, _CLOCK_DEFAULTS))
 
 
+_HEX_DIGITS = frozenset('0123456789ABCDEFabcdef')
+
+
+def read_hex_indicator(params: str) -> str:
+    """^FHa's indicator character, or ZPL's own default '_' when a is omitted."""
+    stripped = (params or '').strip()
+    return stripped[0] if stripped else '_'
+
+
+def decode_hex(text, indicator):
+    """A ^FD/^FV literal with `indicator`XX escapes replaced by that byte.
+
+    Only a well-formed pair - the indicator followed by exactly two hex
+    digits - is an escape; a lone indicator, or one followed by something
+    that isn't hex, is left exactly as written, since there is no printer
+    behaviour to fall back to for a malformed one.
+    """
+    if not text or not indicator:
+        return text
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if (ch == indicator and i + 2 < n
+                and text[i + 1] in _HEX_DIGITS and text[i + 2] in _HEX_DIGITS):
+            out.append(chr(int(text[i + 1:i + 3], 16)))
+            i += 3
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out)
+
+
 def clock_chars_zpl(chars) -> str:
     """^FC's parameters, trimmed after the last one that is actually set.
 

@@ -35,6 +35,7 @@ class ZPLRenderer:
         self.current_font_size = 12
         self.current_font = None
         self.field_data = None
+        self.hex_indicator = None
         self.font_cache = {}
         self.barcode_height = 0
         self.is_barcode_mode = False
@@ -340,6 +341,7 @@ class ZPLRenderer:
         self.typeset = False
         self.unsupported_field = False
         self.current_reverse = False
+        self.hex_indicator = None
         self.pending_frame = None
         # ^FN's data can be declared after the field that uses it, so the table
         # is built in a pass of its own before anything is drawn.
@@ -464,13 +466,18 @@ class ZPLRenderer:
                 self.typeset = (command == 'FT')
                 self.unsupported_field = False
                 self.current_reverse = False
+                self.hex_indicator = None
                 self.pending_frame = None
                 # A field names its own font with ^A or inherits ^CF's, and a
                 # printer starts every field from the latter.
                 self._use_default_font()
+        elif command == 'FH':
+            # Field hex indicator: ^FHa marks a-XX escapes in the ^FD that
+            # follows, decoded here since the preview never re-saves ZPL.
+            self.hex_indicator = fields.read_hex_indicator(params)
         elif command == 'FD':
             # Field data: ^FD<data>
-            self.field_data = params
+            self.field_data = fields.decode_hex(params, self.hex_indicator)
         elif command == 'FN':
             # A numbered field prints whatever its ^FN#^FD pair gave it, and
             # nothing at all when no pair did - the printer substitutes at print

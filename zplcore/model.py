@@ -92,6 +92,12 @@ class DesignElement:
     clock_format = False
     clock_chars = None
 
+    # ^FH: the character that marks a hex escape (indicatorXX) in this
+    # field's literal, or None when the file gave none. The literal itself
+    # stays raw - see data_literal() - so a save writes ^FH back unchanged;
+    # only display_text()/encoded_value() decode it.
+    hex_indicator = None
+
     # ^SF (deprecated): kept only as opaque, unparsed params so a file that
     # carries one round-trips unchanged - its mask-character semantics are
     # not modelled.
@@ -116,7 +122,7 @@ class DesignElement:
         starting serial value, a clock-format string), not a stand-in, so it
         is shown with a marker rather than replaced by one.
         """
-        literal = self.data_literal()
+        literal = zpl_fields.decode_hex(self.data_literal(), self.hex_indicator)
         if self.serial_increment is not None:
             base = literal or self.serial_start or ''
             return zpl_fields.serial_display(base, self.serial_increment)
@@ -143,6 +149,8 @@ class DesignElement:
         if self.clock_format:
             chars = self.clock_chars or zpl_fields._CLOCK_DEFAULTS
             zpl += f"^FC{zpl_fields.clock_chars_zpl(chars)}"
+        if self.hex_indicator:
+            zpl += f"^FH{self.hex_indicator}"
         if self.field_number is None:
             zpl += f"^FD{literal}"
         else:
@@ -248,7 +256,7 @@ class TextElement(DesignElement):
                  serial_start=None, serial_increment=None,
                  serial_leading_zero=False,
                  clock_format=False, clock_chars=None,
-                 serial_field_raw=None):
+                 serial_field_raw=None, hex_indicator=None):
         self.x = x
         self.y = y
         self.text = text
@@ -266,6 +274,7 @@ class TextElement(DesignElement):
         self.clock_format = clock_format
         self.clock_chars = clock_chars
         self.serial_field_raw = serial_field_raw
+        self.hex_indicator = hex_indicator
         self.font_height = font_height
         self.font_width = font_width
         self.width = len(text) * font_width
@@ -473,7 +482,7 @@ class BarcodeElement(DesignElement):
                  serial_start=None, serial_increment=None,
                  serial_leading_zero=False,
                  clock_format=False, clock_chars=None,
-                 serial_field_raw=None):
+                 serial_field_raw=None, hex_indicator=None):
         self.x = x
         self.y = y
         self.bar_height = height
@@ -486,6 +495,7 @@ class BarcodeElement(DesignElement):
         self.clock_format = clock_format
         self.clock_chars = clock_chars
         self.serial_field_raw = serial_field_raw
+        self.hex_indicator = hex_indicator
         self.module_width = module_width
         self.ratio = float(ratio)
         self.orientation = orientation
@@ -514,7 +524,7 @@ class BarcodeElement(DesignElement):
 
     def encoded_value(self) -> str:
         """The data the symbol carries, and the interpretation line shows."""
-        value = self.barcode_value
+        value = zpl_fields.decode_hex(self.barcode_value, self.hex_indicator)
         if self.check_digit:
             value += code128.ucc_check_digit(value)
         return value

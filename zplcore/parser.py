@@ -443,6 +443,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
         elif cmd == '^FC':
             field['clock_format'] = True
             field['clock_chars'] = zpl_fields.read_clock_chars(params)
+        elif cmd == '^FH':
+            field['hex_indicator'] = zpl_fields.read_hex_indicator(params)
         elif cmd == '^FD':
             field['data'] = params
         elif cmd == '^FV':
@@ -473,7 +475,7 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None) -> dict:
             'serial_start': None, 'serial_increment': None,
             'serial_leading_zero': False,
             'clock_format': False, 'clock_chars': None,
-            'serial_field_raw': None,
+            'serial_field_raw': None, 'hex_indicator': None,
             'module_width': inherited['module_width'],
             'ratio': inherited['ratio'],
             'bar_height': inherited['height'],
@@ -746,6 +748,7 @@ def _build_element(field, doc, renderer):
                               clock_format=field['clock_format'],
                               clock_chars=field['clock_chars'],
                               serial_field_raw=field['serial_field_raw'],
+                              hex_indicator=field['hex_indicator'],
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
 
@@ -777,7 +780,8 @@ def _build_text(x, y, field, doc, renderer):
                           serial_leading_zero=field['serial_leading_zero'],
                           clock_format=field['clock_format'],
                           clock_chars=field['clock_chars'],
-                          serial_field_raw=field['serial_field_raw'])
+                          serial_field_raw=field['serial_field_raw'],
+                          hex_indicator=field['hex_indicator'])
     element.orientation = font.get('orientation', 'N')
     element.height = font['height']
     element.printer_font_name = font['name']

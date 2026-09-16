@@ -690,7 +690,7 @@ check("nothing is reported for the templates",
       workflow.unsupported_commands(product) == []
       and workflow.unsupported_commands(serial) == [])
 check("unmodelled commands are reported",
-      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^FH^XZ") == ['^BQ', '^FH'])
+      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^FH^XZ") == ['^BQ'])
 check("and the label transforms are not, now that they survive a save",
       workflow.unsupported_commands(
           "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [],
@@ -2427,6 +2427,63 @@ check("^SF round-trips byte-identical",
 check("^SF is no longer reported as unsupported either",
       workflow.unsupported_commands(_sf.to_zpl()) == [],
       workflow.unsupported_commands(_sf.to_zpl()))
+
+# ^FH: a hex indicator marking indicatorXX escapes in the ^FD that follows.
+# decode_hex() is the pure substitution, checked directly first.
+check("decode_hex: a well-formed escape is substituted",
+      zpl_fields.decode_hex('_48ello', '_') == 'Hello',
+      zpl_fields.decode_hex('_48ello', '_'))
+check("decode_hex: a custom indicator character works the same way",
+      zpl_fields.decode_hex('~48ello', '~') == 'Hello',
+      zpl_fields.decode_hex('~48ello', '~'))
+check("decode_hex: a non-hex second digit leaves the escape literal",
+      zpl_fields.decode_hex('_4Zello', '_') == '_4Zello',
+      zpl_fields.decode_hex('_4Zello', '_'))
+check("decode_hex: a lone trailing indicator is left as-is",
+      zpl_fields.decode_hex('abc_', '_') == 'abc_',
+      zpl_fields.decode_hex('abc_', '_'))
+check("decode_hex: no indicator is a no-op",
+      zpl_fields.decode_hex('_48ello', None) == '_48ello',
+      zpl_fields.decode_hex('_48ello', None))
+check("read_hex_indicator: bare ^FH defaults to underscore",
+      zpl_fields.read_hex_indicator('') == '_',
+      zpl_fields.read_hex_indicator(''))
+check("read_hex_indicator: ^FH's own character is read as given",
+      zpl_fields.read_hex_indicator('~') == '~',
+      zpl_fields.read_hex_indicator('~'))
+
+# End to end: the literal stays raw for storage and round-tripping, and is
+# only decoded where it is actually turned into pixels or bars.
+_fh = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FH_^FD_48ello^FS^XZ")[0]
+_fhe = _fh.elements[0]
+check("^FH's indicator is read onto the element",
+      _fhe.hex_indicator == '_', _fhe.hex_indicator)
+check("the stored literal stays raw, not decoded",
+      _fhe.text == '_48ello', _fhe.text)
+check("display_text() decodes the hex escape",
+      _fhe.display_text() == 'Hello', _fhe.display_text())
+check("^FH round-trips byte-identical",
+      '^FH_^FD_48ello^FS' in _fh.to_zpl(), _fh.to_zpl())
+check("^FH is no longer reported as unsupported",
+      workflow.unsupported_commands(_fh.to_zpl()) == [],
+      workflow.unsupported_commands(_fh.to_zpl()))
+
+# A barcode's value is decoded the same way, through the one method both
+# canvases already draw bars and the interpretation line from.
+_fh_bc = BarcodeElement(50, 50, barcode_value='_48ello', hex_indicator='_')
+check("a barcode's encoded_value() decodes its hex escape too",
+      _fh_bc.encoded_value() == 'Hello', _fh_bc.encoded_value())
+
+# The print-preview renderer is a second, independent interpreter, so it is
+# checked separately: a ^FH-escaped field must render pixel-identical to the
+# plain field it decodes to.
+_fh_escaped = ZPLRenderer(300, 150).render(
+    "^XA^PW300^LL150^FO20,20^A0N,30,30^FH_^FD_48ello^FS^XZ").convert('L')
+_fh_plain = ZPLRenderer(300, 150).render(
+    "^XA^PW300^LL150^FO20,20^A0N,30,30^FDHello^FS^XZ").convert('L')
+check("the renderer decodes ^FH the same way the model does",
+      list(_fh_escaped.getdata()) == list(_fh_plain.getdata()))
 
 # add_time_element is its own creation path - the "+ Time" button - rather
 # than a mode of add_text_element, and has to size its box against the
