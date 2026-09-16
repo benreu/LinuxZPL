@@ -2698,6 +2698,34 @@ check("and none of the six is reported as unsupported any more",
       workflow.unsupported_commands(
           "^XA^LH1,1^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [])
 
+# Printing must not depend on the printer already being clean of a previous
+# job's ^PO/^PM/^LR - unlike ^XA...^XZ, these three are sticky at the printer
+# and outlive the job that set them, so the print path asks to_zpl to say so
+# even when a flag is at ZPL's own default.
+_lt_default = zpl_transforms.LabelTransform()
+check("to_zpl(explicit_flips=True) states all three flags even at default",
+      _lt_default.to_zpl(explicit_flips=True) == "^PON\n^PMN\n^LRN\n",
+      _lt_default.to_zpl(explicit_flips=True))
+check("and the save path is unchanged: still nothing at default",
+      _lt_default.to_zpl() == "", _lt_default.to_zpl())
+
+_lt_flipped = zpl_transforms.LabelTransform()
+_lt_flipped.invert = _lt_flipped.mirror = _lt_flipped.reverse = True
+check("an already-flipped label states the flip, not both forms",
+      _lt_flipped.to_zpl(explicit_flips=True) == "^POI\n^PMY\n^LRY\n",
+      _lt_flipped.to_zpl(explicit_flips=True))
+
+_print_doc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("Document.to_zpl(explicit_flips=True) threads through to the transform",
+      all(tok in _print_doc.to_zpl(explicit_flips=True)
+          for tok in ('^PON', '^PMN', '^LRN')),
+      _print_doc.to_zpl(explicit_flips=True))
+check("but Document.to_zpl() (the save path) is untouched",
+      not any(tok in _print_doc.to_zpl()
+              for tok in ('^PON', '^PMN', '^LRN', '^POI', '^PMY', '^LRY')),
+      _print_doc.to_zpl())
+
 _plain = _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
 check("the preview moves the ink by ^LH",
       _preview_ink("^XA^PW300^LL200^LH100,50^FO20,20^A0N,30,30^FDHg^FS", 300, 200)

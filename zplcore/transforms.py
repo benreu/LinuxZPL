@@ -90,7 +90,9 @@ class LabelTransform:
 
     Defaults are ZPL's own, and to_zpl writes nothing for a value still at its
     default, so a label this designer created serialises exactly as it always
-    did.
+    did. Printing is different: real printers keep ^PO, ^PM and ^LR after the
+    job that set them, so the print path asks to_zpl for explicit ^PON/^PMN/
+    ^LRN too - see to_zpl's explicit_flips.
     """
 
     def __init__(self):
@@ -115,11 +117,18 @@ class LabelTransform:
         """Whether anything here displaces a field at all."""
         return self.field_offset() != (0, 0)
 
-    def to_zpl(self) -> str:
+    def to_zpl(self, *, explicit_flips: bool = False) -> str:
         """The commands, omitting any still at ZPL's default.
 
         ^LH goes first: it is the reference point for everything after it, and
         the manual recommends it as one of the first commands in a format.
+
+        explicit_flips is for the print path only. ^PO, ^PM and ^LR are sticky
+        on the printer itself and survive past ^XA...^XZ, so a label that does
+        not use them still has to say so, or a flag a previous job left in
+        effect (from this app or elsewhere) keeps being applied silently. A
+        save has no such printer state to correct, so it goes on omitting them
+        at default.
         """
         out = ''
         if self.home != (0, 0):
@@ -130,10 +139,16 @@ class LabelTransform:
             out += f"^LT{self.top}\n"
         if self.invert:
             out += "^POI\n"
+        elif explicit_flips:
+            out += "^PON\n"
         if self.mirror:
             out += "^PMY\n"
+        elif explicit_flips:
+            out += "^PMN\n"
         if self.reverse:
             out += "^LRY\n"
+        elif explicit_flips:
+            out += "^LRN\n"
         return out
 
     def fitted(self, lowest) -> 'LabelTransform':

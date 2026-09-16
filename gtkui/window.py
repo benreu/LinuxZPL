@@ -1142,7 +1142,7 @@ class ZPLViewerWindow(Gtk.Window):
         except OSError as e:
             self.show_error_dialog(str(e))
             return
-        content = self.design_canvas.to_zpl()
+        content = self.design_canvas.to_zpl(explicit_flips=True)
         try:
             # sendall, not send: a label with an image runs to tens of
             # kilobytes, and send() may write only part of it.

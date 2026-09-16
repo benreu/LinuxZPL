@@ -756,6 +756,14 @@ their z-order position.
    failure, show the error and stop.
 3. Send the document's ZPL as UTF-8 bytes and close the connection.
 
+**`^PO`, `^PM` and `^LR` are always sent explicitly in step 3, whatever their
+value.** A real printer keeps these three after the job that set them —
+`^XA...^XZ` does not reset them — so a label that does not invert, mirror or
+reverse-print still sends `^PON`, `^PMN` and `^LRN`, clearing whatever an
+earlier job (from this app or elsewhere) left in effect. A saved `.zpl` file
+is never sent to a printer and has no such state to correct, so Save keeps
+omitting them at ZPL's own default (§8.1).
+
 If the label carries a `^PQ`, it is sent as part of that ZPL like any other
 command, and the printer prints that many copies itself — this step does not
 loop the send.

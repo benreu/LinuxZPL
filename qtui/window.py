@@ -949,7 +949,7 @@ class ZPLDesignerWindow(QMainWindow):
             self.update_status("Printing cancelled")
             return
         try:
-            content = self.document.to_zpl()
+            content = self.document.to_zpl(explicit_flips=True)
         except Exception as e:
             self.show_error(f"Failed to generate ZPL: {e}")
             return

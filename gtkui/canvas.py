@@ -290,8 +290,8 @@ class DesignCanvas(Gtk.DrawingArea):
                                        printer_font_name)
         self.queue_draw()
 
-    def to_zpl(self) -> str:
-        return self.document.to_zpl()
+    def to_zpl(self, *, explicit_flips: bool = False) -> str:
+        return self.document.to_zpl(explicit_flips=explicit_flips)
 
     def set_label_size(self, width: int, height: int):
         self.document.set_label_size(width, height)

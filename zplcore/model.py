@@ -1418,8 +1418,13 @@ class Document:
 
     # --- serialisation -------------------------------------------------------
 
-    def to_zpl(self) -> str:
-        """Generate ZPL code from the elements, with the label size settings."""
+    def to_zpl(self, *, explicit_flips: bool = False) -> str:
+        """Generate ZPL code from the elements, with the label size settings.
+
+        explicit_flips is passed through to the label transform (see
+        LabelTransform.to_zpl) and exists for the print path, not for saving
+        a file.
+        """
         zpl = "^XA\n"
         # ZPL requires ^DF immediately after ^XA: everything following it is
         # stored as text rather than printed, so anything written in between
@@ -1436,7 +1441,7 @@ class Document:
         # and the coordinates are then consistent by construction rather than
         # by two places agreeing.
         placed = self.transform.fitted(self._lowest_element())
-        zpl += placed.to_zpl()
+        zpl += placed.to_zpl(explicit_flips=explicit_flips)
         zpl += f"^PW{self.label_width}\n"
         zpl += f"^LL{self.label_height}\n"
         # ZPL carries no resolution, so record what the dots were drawn for.
