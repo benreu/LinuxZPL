@@ -7,13 +7,15 @@ the printer.
 """
 
 import ctypes
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Set
 
 from PIL import ImageFont
 
-from . import printer_io
+from . import printer_io, printer_objects
 
 # Fonts live in the printer's E: memory as 8.3 TrueType objects
 FONT_DEVICE = 'E:'
@@ -29,6 +31,26 @@ DEFAULT_DPI = 203
 _PREFERRED_STYLES = ('regular', 'book', 'roman', 'normal')
 _UNSAFE_CHARS = re.compile(r'[^A-Z0-9_-]')
 _OBJECT_NAME = re.compile(r'([A-Za-z0-9_\-]{1,8})\.TTF', re.IGNORECASE)
+_FONT_OBJECT_NAME = re.compile(r'([A-Za-z0-9_\-]{1,8})\.FNT', re.IGNORECASE)
+
+# Zebra's standard resident fonts - built into printer firmware, not objects
+# that can be uploaded or deleted. Matrix/kind are from the ZPL Programming
+# Guide's font table; unlike the TrueType fonts above, there is no local file
+# for these, so nothing here can be rendered - only reported. '0' matches
+# parser.SCALABLE_FONTS.
+RESIDENT_FONTS = [
+    {'code': '0', 'name': 'Font 0', 'matrix': 'Scalable',
+     'kind': 'Scalable outline (CG Triplet)'},
+    {'code': 'A', 'name': 'Font A', 'matrix': '9 x 5', 'kind': 'Fixed bitmap'},
+    {'code': 'B', 'name': 'Font B', 'matrix': '11 x 7', 'kind': 'Fixed bitmap'},
+    {'code': 'C', 'name': 'Font C', 'matrix': '18 x 10', 'kind': 'Fixed bitmap'},
+    {'code': 'D', 'name': 'Font D', 'matrix': '18 x 10', 'kind': 'Fixed bitmap'},
+    {'code': 'E', 'name': 'Font E', 'matrix': '28 x 15', 'kind': 'OCR-B'},
+    {'code': 'F', 'name': 'Font F', 'matrix': '26 x 13', 'kind': 'Fixed bitmap'},
+    {'code': 'G', 'name': 'Font G', 'matrix': '60 x 40', 'kind': 'Fixed bitmap'},
+    {'code': 'H', 'name': 'Font H', 'matrix': '21 x 13', 'kind': 'OCR-A'},
+    {'code': 'GS', 'name': 'Font GS', 'matrix': '24 x 24', 'kind': 'Symbols'},
+]
 
 _families_cache: Optional[Dict[str, str]] = None
 _paths_cache: Optional[list] = None
@@ -201,6 +223,27 @@ def query_printer_fonts(address: str, port: int,
     return {m.group(1).upper() for m in _OBJECT_NAME.finditer(text)}
 
 
+def query_resident_fonts(address: str, port: int,
+                         timeout: float = 5) -> Optional[Set[str]]:
+    """Resident font codes the printer reports on its read-only Z: memory.
+
+    Best-effort: Zebra's built-in fonts (A-H, 0, GS - see RESIDENT_FONTS)
+    conventionally show up as .FNT objects on Z: when a printer answers ^HW
+    for it, but this is not guaranteed on every model or firmware. Same
+    None-vs-empty-set contract as query_printer_fonts: None means the printer
+    could not be asked, not that it reported nothing.
+    """
+    try:
+        reply = printer_io.send(address, port, b'^XA^HWZ:*.FNT^XZ', timeout,
+                                read_reply=True)
+    except OSError:
+        return None
+    if not reply:
+        return None
+    text = reply.decode('ascii', 'replace')
+    return {m.group(1).upper() for m in _FONT_OBJECT_NAME.finditer(text)}
+
+
 def query_printer_dpi(address: str, port: int,
                       timeout: float = 5) -> Optional[int]:
     """The printer's resolution in dpi, or None if it could not be asked.
@@ -229,6 +272,39 @@ def delete_printer_font(address: str, port: int, name: str,
     """Delete a font object from the printer."""
     payload = f"^XA^ID{printer_font_path(name)}^FS^XZ".encode('ascii')
     printer_io.send(address, port, payload, timeout)
+
+
+# Printer object name (upper) -> local temp .ttf path, for a font this
+# session already downloaded to preview. In-memory only, like
+# graphic_store's downloaded-graphic cache - a fresh run downloads again.
+_downloaded_font_cache: Dict[str, str] = {}
+
+
+def cached_download_path(name: str) -> Optional[str]:
+    """A copy of `name` already downloaded this session, if any."""
+    return _downloaded_font_cache.get(name.upper())
+
+
+def download_font_for_preview(address: str, port: int, name: str,
+                              timeout: float = 30) -> str:
+    """Fetch `name`'s raw bytes from the printer's E: memory so a font with
+    no local match can still be previewed, and cache the result to a temp
+    file for the rest of this session.
+
+    This is a full network round trip - potentially the largest payload this
+    app pulls from a printer - so it is meant to be called off the UI
+    thread; it does the fetch, the temp-file write and the cache update as
+    one blocking unit precisely so a caller only has to run it in a
+    background thread and nothing else.
+    """
+    data = printer_objects.download_printer_object(
+        address, port, printer_font_path(name), timeout=timeout)
+    fd, path = tempfile.mkstemp(prefix=f"{name.upper()}_",
+                                suffix=FONT_EXTENSION.lower())
+    with os.fdopen(fd, 'wb') as f:
+        f.write(data)
+    _downloaded_font_cache[name.upper()] = path
+    return path
 
 
 # --- local rendering --------------------------------------------------------

@@ -13,7 +13,7 @@ from typing import Optional
 
 from PIL import Image as PILImage
 
-from PySide2.QtCore import Qt
+from PySide2.QtCore import Qt, QThread, Signal
 from PySide2.QtGui import QFont, QFontMetrics, QPixmap
 from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
@@ -1269,23 +1269,59 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
     return new_address, port_spin.value(), _dpi_from(dpi_combo, dpi)
 
 
+class _FontDownloadThread(QThread):
+    """Fetches one font's bytes from the printer off the UI thread.
+
+    A font with no local match still has to come from somewhere for a
+    preview to be more than a guess, and the only place left is the printer
+    itself - a full network round trip that would otherwise freeze the
+    dialog for the length of the call, the same as any other printer_io.send.
+    """
+    done_ok = Signal(str, str)   # name, local path
+    done_err = Signal(str, str)  # name, message
+
+    def __init__(self, address: str, port: int, name: str):
+        super().__init__()
+        self._address, self._port, self._name = address, port, name
+
+    def run(self):
+        try:
+            path = zpl_fonts.download_font_for_preview(
+                self._address, self._port, self._name)
+        except Exception as e:
+            self.done_err.emit(self._name, str(e))
+            return
+        self.done_ok.emit(self._name, path)
+
+
 class PrinterFontsDialog(QDialog):
-    """The fonts stored on the printer, with upload, delete and refresh."""
+    """The fonts stored on the printer, with upload, delete and refresh, plus
+    a read-only reference list of the printer's built-in resident fonts."""
 
     def __init__(self, parent, address: str, port: int, on_uploaded=None):
         super().__init__(parent)
         self.setWindowTitle("Printer Fonts")
-        self.resize(380, 300)
+        self.resize(420, 520)
         self._address, self._port = address, port
         self._on_uploaded = on_uploaded
+        self._font_names = []
+        self._downloads = {}  # name -> _FontDownloadThread in flight
+        self._closed = False
+        self.finished.connect(lambda _r: setattr(self, '_closed', True))
 
         layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("<b>Uploaded Fonts</b>"))
         self._status = QLabel()
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
 
         self._list = QListWidget()
         layout.addWidget(self._list, 1)
+
+        self._preview = QLabel()
+        self._preview.setMinimumHeight(52)
+        self._preview.setWordWrap(True)
+        layout.addWidget(self._preview)
 
         row = QHBoxLayout()
         self._upload_btn = QPushButton("Upload…")
@@ -1296,6 +1332,13 @@ class PrinterFontsDialog(QDialog):
         row.addStretch(1)
         layout.addLayout(row)
 
+        layout.addWidget(QLabel("<b>Built-in Fonts</b>"))
+        self._resident_status = QLabel()
+        self._resident_status.setWordWrap(True)
+        layout.addWidget(self._resident_status)
+        self._resident_list = QListWidget()
+        layout.addWidget(self._resident_list, 1)
+
         close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         close.rejected.connect(self.reject)
         layout.addWidget(close)
@@ -1303,10 +1346,12 @@ class PrinterFontsDialog(QDialog):
         self._upload_btn.clicked.connect(self._on_upload)
         self._delete_btn.clicked.connect(self._on_delete)
         self._refresh_btn.clicked.connect(self.refresh)
+        self._list.currentRowChanged.connect(self._update_preview)
         self.refresh()
 
     def refresh(self):
         self._list.clear()
+        self._preview.clear()
         fonts = zpl_fonts.query_printer_fonts(self._address, self._port)
         if fonts is None:
             # Not the same as "no fonts": say the printer could not be asked,
@@ -1314,12 +1359,79 @@ class PrinterFontsDialog(QDialog):
             self._status.setText(f"Could not reach the printer at "
                                  f"{self._address}:{self._port}.")
             self._delete_btn.setEnabled(False)
+            self._font_names = []
+        else:
+            self._font_names = sorted(fonts)
+            for name in self._font_names:
+                self._list.addItem(zpl_fonts.printer_font_path(name))
+            self._delete_btn.setEnabled(bool(fonts))
+            self._status.setText(f"{len(fonts)} font(s) on {self._address}"
+                                 if fonts else "No fonts stored on the printer.")
+        self._refresh_resident()
+
+    def _refresh_resident(self):
+        self._resident_list.clear()
+        detected = zpl_fonts.query_resident_fonts(self._address, self._port)
+        if detected:
+            self._resident_status.setText(
+                f"Reported by the printer at {self._address}.")
+        elif detected is None:
+            self._resident_status.setText(
+                "Could not confirm which are present - showing the standard "
+                "set. Sizes and styles are as published, not rendered.")
+        else:
+            self._resident_status.setText(
+                "Printer reported none of the standard set - showing it "
+                "anyway. Sizes and styles are as published, not rendered.")
+        for font in zpl_fonts.RESIDENT_FONTS:
+            label = f"{font['code']} — {font['name']} ({font['matrix']}, {font['kind']})"
+            if detected and font['code'].upper() in detected:
+                label += " — detected on this printer"
+            self._resident_list.addItem(label)
+
+    def _current_font_name(self):
+        row = self._list.currentRow()
+        return self._font_names[row] if 0 <= row < len(self._font_names) else None
+
+    def _update_preview(self, row: int):
+        if not (0 <= row < len(self._font_names)):
+            self._preview.clear()
             return
-        for name in sorted(fonts):
-            self._list.addItem(zpl_fonts.printer_font_path(name))
-        self._delete_btn.setEnabled(bool(fonts))
-        self._status.setText(f"{len(fonts)} font(s) on {self._address}"
-                             if fonts else "No fonts stored on the printer.")
+        name = self._font_names[row]
+        path = (zpl_fonts.file_for_printer_name(name)
+               or zpl_fonts.cached_download_path(name))
+        if path:
+            self._show_preview(path)
+            return
+        self._preview.setText(f"Downloading {name} from the printer for "
+                              f"preview…")
+        self._preview.setFont(QFont())
+        if name in self._downloads:
+            return  # already fetching it - let that one finish
+        thread = _FontDownloadThread(self._address, self._port, name)
+        thread.done_ok.connect(self._on_download_ok)
+        thread.done_err.connect(self._on_download_err)
+        thread.finished.connect(lambda n=name: self._downloads.pop(n, None))
+        thread.finished.connect(thread.deleteLater)
+        self._downloads[name] = thread
+        thread.start()
+
+    def _show_preview(self, path: str):
+        zpl_fonts.register_app_font(path)
+        font = QFont(zpl_fonts.family_for_file(path))
+        font.setPointSize(16)
+        self._preview.setText("The quick brown fox 0123456789")
+        self._preview.setFont(font)
+
+    def _on_download_ok(self, name: str, path: str):
+        if not self._closed and self._current_font_name() == name:
+            self._show_preview(path)
+
+    def _on_download_err(self, name: str, message: str):
+        if not self._closed and self._current_font_name() == name:
+            self._preview.setText(
+                f"(could not download {name} from the printer: {message})")
+            self._preview.setFont(QFont())
 
     def _on_upload(self):
         family, path = choose_font_family(self, title="Upload Font to Printer")

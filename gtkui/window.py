@@ -12,6 +12,7 @@ import os
 import base64
 import configparser
 import socket
+import threading
 from pathlib import Path
 from zplcore import fields as zpl_fields
 from zplcore import fonts as zpl_fonts
@@ -1176,7 +1177,7 @@ class ZPLViewerWindow(Gtk.Window):
         """Show the fonts stored on the printer, and add or remove them."""
         dialog = Gtk.Dialog(title="Printer Fonts", parent=self, flags=0)
         dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
-        dialog.set_default_size(360, 280)
+        dialog.set_default_size(420, 560)
 
         content = dialog.get_content_area()
         content.set_spacing(8)
@@ -1185,10 +1186,14 @@ class ZPLViewerWindow(Gtk.Window):
         content.set_margin_top(8)
         content.set_margin_bottom(8)
 
+        content.pack_start(Gtk.Label(label="<b>Uploaded Fonts</b>",
+                                     use_markup=True, halign=Gtk.Align.START),
+                           False, False, 0)
         status = Gtk.Label(halign=Gtk.Align.START)
         status.set_line_wrap(True)
         content.pack_start(status, False, False, 0)
 
+        font_names = []
         store = Gtk.ListStore(str)
         view = Gtk.TreeView(model=store)
         view.append_column(Gtk.TreeViewColumn("Font", Gtk.CellRendererText(), text=0))
@@ -1196,6 +1201,10 @@ class ZPLViewerWindow(Gtk.Window):
         scroller.set_vexpand(True)
         scroller.add(view)
         content.pack_start(scroller, True, True, 0)
+
+        preview = Gtk.Label(halign=Gtk.Align.START)
+        preview.set_line_wrap(True)
+        content.pack_start(preview, False, False, 0)
 
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         upload_btn = Gtk.Button(label="Upload\u2026")
@@ -1205,19 +1214,129 @@ class ZPLViewerWindow(Gtk.Window):
             buttons.pack_start(b, False, False, 0)
         content.pack_start(buttons, False, False, 0)
 
+        content.pack_start(Gtk.Label(label="<b>Built-in Fonts</b>",
+                                     use_markup=True, halign=Gtk.Align.START),
+                           False, False, 0)
+        resident_status = Gtk.Label(halign=Gtk.Align.START)
+        resident_status.set_line_wrap(True)
+        content.pack_start(resident_status, False, False, 0)
+
+        resident_store = Gtk.ListStore(str)
+        resident_view = Gtk.TreeView(model=resident_store)
+        resident_view.append_column(
+            Gtk.TreeViewColumn("Font", Gtk.CellRendererText(), text=0))
+        resident_scroller = Gtk.ScrolledWindow()
+        resident_scroller.set_vexpand(True)
+        resident_scroller.add(resident_view)
+        content.pack_start(resident_scroller, True, True, 0)
+
+        def refresh_resident(*_a):
+            resident_store.clear()
+            detected = zpl_fonts.query_resident_fonts(
+                self.printer_address, self.printer_port)
+            if detected:
+                resident_status.set_text(
+                    f"Reported by the printer at {self.printer_address}.")
+            elif detected is None:
+                resident_status.set_text(
+                    "Could not confirm which are present - showing the "
+                    "standard set. Sizes and styles are as published, not "
+                    "rendered.")
+            else:
+                resident_status.set_text(
+                    "Printer reported none of the standard set - showing "
+                    "it anyway. Sizes and styles are as published, not "
+                    "rendered.")
+            for font in zpl_fonts.RESIDENT_FONTS:
+                label = (f"{font['code']} \u2014 {font['name']} "
+                        f"({font['matrix']}, {font['kind']})")
+                if detected and font['code'].upper() in detected:
+                    label += " \u2014 detected on this printer"
+                resident_store.append([label])
+
+        closed = {'value': False}
+        downloads = set()  # names currently being fetched from the printer
+
+        def current_font_name():
+            _model, treeiter = view.get_selection().get_selected()
+            if treeiter is None:
+                return None
+            row = store.get_path(treeiter).get_indices()[0]
+            return font_names[row] if 0 <= row < len(font_names) else None
+
+        def show_preview(path):
+            zpl_fonts.register_app_font(path)
+            family = zpl_fonts.family_for_file(path)
+            escaped = GLib.markup_escape_text("The quick brown fox 0123456789")
+            preview.set_markup(
+                f'<span font_desc="{GLib.markup_escape_text(family)} 16">'
+                f'{escaped}</span>')
+
+        def on_download_done(name, path, error):
+            downloads.discard(name)
+            if closed['value'] or current_font_name() != name:
+                return False
+            if error is not None:
+                preview.set_markup(
+                    f"<i>(could not download {GLib.markup_escape_text(name)} "
+                    f"from the printer: "
+                    f"{GLib.markup_escape_text(str(error))})</i>")
+            else:
+                show_preview(path)
+            return False
+
+        def download_in_background(name):
+            def worker():
+                try:
+                    path = zpl_fonts.download_font_for_preview(
+                        self.printer_address, self.printer_port, name)
+                except Exception as e:
+                    GLib.idle_add(on_download_done, name, None, e)
+                    return
+                GLib.idle_add(on_download_done, name, path, None)
+            threading.Thread(target=worker, daemon=True).start()
+
+        def update_preview(selection):
+            model_, treeiter = selection.get_selected()
+            if treeiter is None:
+                preview.set_text("")
+                return
+            row = model_.get_path(treeiter).get_indices()[0]
+            if not (0 <= row < len(font_names)):
+                preview.set_text("")
+                return
+            name = font_names[row]
+            path = (zpl_fonts.file_for_printer_name(name)
+                   or zpl_fonts.cached_download_path(name))
+            if path:
+                show_preview(path)
+                return
+            preview.set_markup(
+                f"Downloading {GLib.markup_escape_text(name)} from the "
+                f"printer for preview\u2026")
+            if name not in downloads:
+                downloads.add(name)
+                download_in_background(name)
+
         def refresh(*_a):
             store.clear()
+            preview.set_text("")
             fonts = zpl_fonts.query_printer_fonts(self.printer_address, self.printer_port)
             if fonts is None:
                 status.set_text(f"Could not reach the printer at "
                                 f"{self.printer_address}:{self.printer_port}.")
                 delete_btn.set_sensitive(False)
-                return
-            for name in sorted(fonts):
-                store.append([zpl_fonts.printer_font_path(name)])
-            delete_btn.set_sensitive(bool(fonts))
-            status.set_text(f"{len(fonts)} font(s) on {self.printer_address}"
-                            if fonts else "No fonts stored on the printer.")
+                font_names.clear()
+            else:
+                font_names[:] = sorted(fonts)
+                for name in font_names:
+                    store.append([zpl_fonts.printer_font_path(name)])
+                delete_btn.set_sensitive(bool(fonts))
+                status.set_text(f"{len(fonts)} font(s) on {self.printer_address}"
+                                if fonts else "No fonts stored on the printer.")
+            refresh_resident()
+
+        view.get_selection().connect("changed", update_preview)
 
         def on_upload(_b):
             families = zpl_fonts.list_ttf_families()
@@ -1264,6 +1383,7 @@ class ZPLViewerWindow(Gtk.Window):
         content.show_all()
         refresh()
         dialog.run()
+        closed['value'] = True
         dialog.destroy()
 
     def _ask_device_spec(self, parent):
