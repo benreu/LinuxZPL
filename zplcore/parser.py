@@ -14,10 +14,11 @@ from typing import Optional, Tuple
 
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
+from . import graphic_store
 from . import graphics
 from . import transforms as zpl_transforms
 from .model import (BarcodeElement, Document, FieldBlock, FrameElement,
-                    ImageElement, TextElement)
+                    ImageElement, StoredGraphicElement, TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
@@ -162,6 +163,52 @@ def _decode_gfa_image(x: int, y: int, params: str, preview_b64, path_hint):
     return None
 
 
+def _capture_image_save(expanded: str, offset: int, spec: str, doc: Document) -> None:
+    """^IS: flatten everything drawn before this point and store it.
+
+    Reusing the standalone renderer rather than a third drawing
+    implementation: "everything drawn before this point" is exactly what
+    running it over the text up to here, and no further, produces. A
+    snapshot that fails to render is skipped rather than raised - a bad ^IS
+    must not be the reason the rest of the file fails to open.
+    """
+    from . import renderer as zpl_renderer
+
+    prefix = expanded[:offset]
+    if not prefix.rstrip().endswith('^XZ'):
+        prefix += '^XZ'
+    try:
+        image = zpl_renderer.ZPLRenderer(
+            width=doc.label_width, height=doc.label_height).render(prefix)
+    except Exception:
+        return
+    graphic_store.store(spec, image)
+
+
+def _read_stored_graphic(cmd: str, params: str):
+    """The device spec and magnification an ^XG/^IM field names.
+
+    ^IM has no magnification of its own - it is, per the ZPL manual,
+    "identical to ^XG... except there are no sizing parameters" - so both are
+    read the same way and ^IM's is simply always 1,1. That is what lets one
+    element class serve both commands.
+    """
+    parts = [p.strip() for p in params.split(',')]
+    spec = parts[0] if parts and parts[0] else 'R:UNKNOWN.GRF'
+
+    def number(index):
+        if len(parts) > index and parts[index]:
+            try:
+                return max(1, min(10, int(parts[index])))
+            except ValueError:
+                pass
+        return 1
+
+    mag_x = number(1) if cmd == '^XG' else 1
+    mag_y = number(2) if cmd == '^XG' else 1
+    return spec, mag_x, mag_y
+
+
 def read_field_table(tokens):
     """The values and prompts a format's ^FN#^FD pairs give its fields.
 
@@ -203,7 +250,13 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     if height:
         doc.label_height = height
 
-    tokens = tokenise(_expand_hidden(zpl_content))
+    expanded = _expand_hidden(zpl_content)
+    tokens = tokenise(expanded)
+    # Same matches tokenise() itself found, kept alongside the tokens rather
+    # than folded into its return value - `tokenise` is used elsewhere for
+    # just the (cmd, params) pairs, and only ^IS needs to know where in the
+    # text a token started (see _capture_image_save).
+    token_offsets = [m.start() for m in COMMAND.finditer(expanded)]
     doc.fields = read_field_table(tokens)
     loaded_dpi = None
     pending_no_print = False
@@ -219,7 +272,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     home = (0, 0)           # the ^LH in force, which is not always the first
     seen_home = False
 
-    for cmd, params in tokens:
+    for index, (cmd, params) in enumerate(tokens):
         if cmd == '^FX':
             key = params.strip()
             if key.startswith(DPI_PARAM):
@@ -290,6 +343,28 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 doc.recalls.append(recalled)
             continue
 
+        if cmd == '^IL':
+            # The graphic counterpart of ^XF: a stored image, always placed at
+            # ^FO0,0, for the fields after it to overlay. Recorded rather than
+            # turned into an element - like ^XF, this is data the printer
+            # holds, not geometry this file drew - so a save writes it back
+            # unchanged and the canvas/renderer resolve it (if this session's
+            # ^IS has it) at draw time instead.
+            doc.image_load = params.strip() or None
+            continue
+
+        if cmd == '^IS':
+            # Saves everything drawn so far as a named image. Recorded so a
+            # save writes it back, and captured into this session's graphic
+            # store now, while `expanded` still has the text to render - see
+            # _capture_image_save.
+            saved = params.strip()
+            if saved:
+                doc.image_saves.append(saved)
+                _capture_image_save(expanded, token_offsets[index],
+                                    saved.split(',')[0].strip(), doc)
+            continue
+
         if cmd == '^CF':
             default_font = _read_default_font(params, default_font)
             continue
@@ -352,6 +427,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['frame'] = params
         elif cmd == '^GF':
             field['graphic'] = params
+        elif cmd in ('^IM', '^XG'):
+            field['stored_graphic'] = (cmd, params)
         elif cmd == '^FN':
             read = zpl_fields.read(params)
             if read is not None:
@@ -401,7 +478,8 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None) -> dict:
             'ratio': inherited['ratio'],
             'bar_height': inherited['height'],
             'default_font': dict(default_font or DEFAULT_FONT),
-            'barcode': None, 'frame': None, 'graphic': None, 'data': None,
+            'barcode': None, 'frame': None, 'graphic': None,
+            'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'symbology': None,
             'reverse': False}
 
@@ -620,6 +698,24 @@ def _build_element(field, doc, renderer):
         # the spelling this designer writes.
         return _decode_gfa_image(x, y, field['graphic'],
                                  field['preview'], field['path'])
+
+    if field['stored_graphic'] is not None:
+        # ^XG/^IM name an image this file never carries the bytes for - only
+        # this session's own ^IS can supply them (see graphic_store) - so
+        # this element holds the reference, not pixels, and resolves live
+        # whenever it is drawn. If this session already has it, size the box
+        # to match - magnified, as ^XG asks - so the canvas lays out the rest
+        # of the label the way it will really print; otherwise a placeholder
+        # size, since there is nothing yet to measure.
+        cmd, params = field['stored_graphic']
+        spec, mag_x, mag_y = _read_stored_graphic(cmd, params)
+        resolved = graphic_store.recall(spec)
+        if resolved is not None:
+            width, height = resolved.width * mag_x, resolved.height * mag_y
+        else:
+            width, height = 200, 200
+        return StoredGraphicElement(x, y, width, height, command=cmd[1:],
+                                    device_spec=spec, mag_x=mag_x, mag_y=mag_y)
 
     if field['frame'] is not None:
         return FrameElement(x, y, *_read_frame(field['frame']))

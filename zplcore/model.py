@@ -18,6 +18,7 @@ from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
 from . import code128
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
+from . import graphic_store
 from . import transforms as zpl_transforms
 from . import geometry
 
@@ -623,6 +624,23 @@ FRAME_COLOURS = (("Black", 'B'), ("White", 'W'))
 TEXT_JUSTIFICATIONS = (("Left", 'L'), ("Centred", 'C'),
                        ("Right", 'R'), ("Justified", 'J'))
 
+# ^XG/^IM name a stored image as d:o.x - device, object name, extension - and
+# both editors offer the same choices for the same reason every list above
+# does.
+STORED_GRAPHIC_COMMANDS = (("Recall Graphic (^XG)", 'XG'),
+                           ("Image Move (^IM)", 'IM'))
+STORED_GRAPHIC_DEVICES = (("R: (DRAM)", 'R'), ("E: (Flash)", 'E'),
+                          ("B: (B: memory)", 'B'), ("A: (A: memory)", 'A'))
+
+
+def split_device_spec(spec: str):
+    """A `d:o.x` spec, taken apart for an editor's separate fields."""
+    device, rest = 'R', (spec or '')
+    if len(rest) > 1 and rest[1] == ':':
+        device, rest = rest[0].upper(), rest[2:]
+    name, _, ext = rest.partition('.')
+    return device, name or 'UNKNOWN', ext or 'GRF'
+
 
 class ImageElement(DesignElement):
     """Image element for the designer, rendered from a JPG/PNG file."""
@@ -774,6 +792,52 @@ class ImageElement(DesignElement):
         return zpl
 
 
+class StoredGraphicElement(DesignElement):
+    """^XG (Recall Graphic) or ^IM (Image Move) - a field that places a
+    graphic held in printer storage rather than one embedded in this file.
+
+    This app has no printer to ask, but it does keep its own in-session
+    memory of anything a `^IS` it has parsed this run saved - see
+    zplcore/graphic_store.py. `resolve()` is looked up live, on every draw,
+    rather than cached at parse time: if that memory is empty when this
+    element is created, a later file's `^IS` can still fill it in without
+    this element needing to be reparsed.
+
+    Whatever `resolve()` returns, `to_zpl()` always writes back the command
+    this field named, never the resolved pixels - the whole point of ^XG and
+    ^IM is that the printer, not this file, owns the image data. Baking the
+    resolved bitmap into a ^GF here would turn a small reference into a large
+    embedded image the next time the file was saved, and would drop the
+    device path a real printer still needs to look the object up by.
+    """
+
+    def __init__(self, x: int = 50, y: int = 50, width: int = 200, height: int = 200,
+                 command: str = 'XG', device_spec: str = 'R:UNKNOWN.GRF',
+                 mag_x: int = 1, mag_y: int = 1):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.command = command if command in ('IM', 'XG') else 'XG'
+        self.device_spec = device_spec or 'R:UNKNOWN.GRF'
+        self.mag_x = mag_x or 1
+        self.mag_y = mag_y or 1
+        self.element_type = 'stored_graphic'
+
+    def resolve(self):
+        """The real image this reference names, if this session has it."""
+        return graphic_store.recall(self.device_spec)
+
+    def to_zpl(self, offset=(0, 0)) -> str:
+        zpl = self.origin_zpl(offset) + self.reverse_zpl()
+        if self.command == 'XG':
+            zpl += f"^XG{self.device_spec},{self.mag_x},{self.mag_y}\n"
+        else:
+            zpl += f"^IM{self.device_spec}\n"
+        zpl += "^FS\n"
+        return zpl
+
+
 class Document:
     """The label being designed: its size, its elements, and its z-order.
 
@@ -797,6 +861,15 @@ class Document:
         self.stored_format: Optional[str] = None
         self.recalls: List[str] = []
         self.fields = zpl_fields.FieldTable()
+
+        # ^IL names a stored image to load at ^FO0,0, ahead of the fields
+        # that overlay it - the graphic counterpart of a recall, so it lives
+        # here rather than as an element for the same reason ^XF's data does.
+        # ^IS instead saves everything drawn before it as a named image; a
+        # format can do that more than once, so it is a list like `recalls`,
+        # not a single value like `stored_format`.
+        self.image_load: Optional[str] = None
+        self.image_saves: List[str] = []
 
         # ^LH, ^LS, ^LT, ^PO, ^PM and ^LR - what the format says about the
         # label as a whole rather than about any one field on it.
@@ -948,6 +1021,12 @@ class Document:
     def add_image_element(self, image_path: str) -> ImageElement:
         offset = self._stagger(20)
         return self._append(ImageElement(50 + offset, 50 + offset, 200, 200, image_path))
+
+    def add_stored_graphic_element(self, command: str = 'XG',
+                                   device_spec: str = 'R:UNKNOWN.GRF') -> StoredGraphicElement:
+        offset = self._stagger(20)
+        return self._append(StoredGraphicElement(50 + offset, 50 + offset, 200, 200,
+                                                  command=command, device_spec=device_spec))
 
     def _append(self, element: DesignElement) -> DesignElement:
         self._fit_new_element_to_bounds(element)
@@ -1241,6 +1320,10 @@ class Document:
         # would be left out of the format being saved.
         if self.stored_format:
             zpl += f"^DF{self.stored_format}^FS\n"
+        # ^IL belongs at the start of the format too - it names an image to
+        # load at ^FO0,0, underneath the fields that follow it.
+        if self.image_load:
+            zpl += f"^IL{self.image_load}\n"
         # Before the fields, because ^LH is the reference point every ^FO after
         # it is measured from. Fitted to the elements first, so the offset it
         # declares is one none of them has to be written above - the commands
@@ -1275,6 +1358,11 @@ class Document:
         # is what stops opening such a file and saving it from emptying it.
         for recalled in self.recalls:
             zpl += f"^XF{recalled}^FS\n"
+        # ^IS saves everything drawn before it as a named image; re-emitting
+        # it here, after the elements it captured, is what a save has to do
+        # to keep meaning "save this design" rather than losing the request.
+        for saved in self.image_saves:
+            zpl += f"^IS{saved}^FS\n"
         if not self.elements:
             zpl += self.fields.to_zpl()
         zpl += "^XZ"

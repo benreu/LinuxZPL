@@ -24,8 +24,9 @@ from zplcore import fields as zpl_fields, fonts as zpl_fonts, textraster
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
                            BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
                            FRAME_COLOURS, ORIENTATIONS,
+                           STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
                            TEXT_JUSTIFICATIONS, Document, FieldBlock,
-                           FrameElement, TextElement)
+                           FrameElement, TextElement, split_device_spec)
 
 IMAGE_FILTER = "Image files (*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG);;All files (*)"
 ZPL_FILTER = "ZPL files (*.zpl);;All files (*)"
@@ -756,6 +757,82 @@ def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
         element.colour = colour_combo.currentData()
         element.rounding = rounding_spin.value()
         element.reverse_print = fr_check.isChecked()
+
+    return _show_editor(dialog, _apply, on_accept)
+
+
+def edit_stored_graphic_dialog(parent, element, on_accept=None) -> QDialog:
+    """Edit a ^XG/^IM reference. `on_accept` runs once OK has changed it.
+
+    ^XG/^IM name an image the printer holds, not one this file carries the
+    bytes for - see zplcore/graphic_store.py. Editing this element only ever
+    changes which name it recalls.
+    """
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Edit Stored Graphic")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    command_combo = QComboBox()
+    command_combo.setObjectName("command")
+    for label, code in STORED_GRAPHIC_COMMANDS:
+        command_combo.addItem(label, code)
+    command_codes = [code for _label, code in STORED_GRAPHIC_COMMANDS]
+    command_combo.setCurrentIndex(command_codes.index(element.command)
+                                  if element.command in command_codes else 0)
+    form.addRow("Command:", command_combo)
+
+    device, name, ext = split_device_spec(element.device_spec)
+    device_combo = QComboBox()
+    device_combo.setObjectName("device")
+    for label, code in STORED_GRAPHIC_DEVICES:
+        device_combo.addItem(label, code)
+    device_codes = [code for _label, code in STORED_GRAPHIC_DEVICES]
+    device_combo.setCurrentIndex(device_codes.index(device)
+                                 if device in device_codes else 0)
+    form.addRow("Device:", device_combo)
+
+    name_edit = QLineEdit(name)
+    name_edit.setObjectName("name")
+    name_edit.setMaxLength(8)
+    form.addRow("Name:", name_edit)
+
+    ext_edit = QLineEdit(ext)
+    ext_edit.setObjectName("extension")
+    form.addRow("Extension:", ext_edit)
+
+    mag_x_spin = QSpinBox()
+    mag_x_spin.setRange(1, 10)
+    mag_x_spin.setValue(element.mag_x)
+    form.addRow("Magnification X:", mag_x_spin)
+
+    mag_y_spin = QSpinBox()
+    mag_y_spin.setRange(1, 10)
+    mag_y_spin.setValue(element.mag_y)
+    form.addRow("Magnification Y:", mag_y_spin)
+
+    def sync_magnification_enabled():
+        # ^IM has no magnification of its own - always 1,1.
+        is_xg = command_combo.currentData() == 'XG'
+        mag_x_spin.setEnabled(is_xg)
+        mag_y_spin.setEnabled(is_xg)
+
+    sync_magnification_enabled()
+    command_combo.currentIndexChanged.connect(sync_magnification_enabled)
+
+    layout.addWidget(_buttons(dialog))
+
+    def _apply():
+        element.command = command_combo.currentData()
+        object_name = (name_edit.text().strip() or 'UNKNOWN').upper()
+        extension = (ext_edit.text().strip() or 'GRF').upper()
+        element.device_spec = f"{device_combo.currentData()}:{object_name}.{extension}"
+        if element.command == 'XG':
+            element.mag_x = mag_x_spin.value()
+            element.mag_y = mag_y_spin.value()
+        else:
+            element.mag_x = element.mag_y = 1
 
     return _show_editor(dialog, _apply, on_accept)
 

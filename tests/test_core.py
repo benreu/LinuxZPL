@@ -2032,6 +2032,113 @@ check("an undo snapshot does not share the field table",
       _udoc.fields.value(7) == 'A-1000', _udoc.fields.value(7))
 
 
+# --- stored graphics: ^IM, ^XG, ^IL, ^IS -------------------------------------
+# The graphic counterpart of the stored-format family above. ^DG's role -
+# putting a named image into printer storage - is played here by ^IS, which
+# saves everything a format has drawn so far; ^XG, ^IM and ^IL each recall one
+# back. None of the four existed at all before this: a label using any of them
+# had its image silently absent on screen and silently dropped on save.
+#
+# Unlike ^DF/^XF, resolution is real within one session: zplcore.graphic_store
+# is a plain module-level dict, so parsing a file with ^IS actually captures a
+# renderable image, and a later ^XG/^IM/^IL - in the same file or a different
+# one parsed afterwards - can recall the real pixels rather than only a
+# placeholder. Each block below clears the store first, so one case's ^IS
+# cannot leak into another's expectations.
+
+from zplcore import graphic_store
+
+_sg_save = (FIXTURES / 'stored_graphic_save.zpl').read_text()
+_sg_recall = (FIXTURES / 'stored_graphic_recall.zpl').read_text()
+_sg_load = (FIXTURES / 'stored_graphic_load.zpl').read_text()
+
+# Cold session: nothing has been parsed yet, so a recall or a load has
+# nothing to resolve - and must still round-trip exactly, not vanish.
+graphic_store.clear()
+_cold_recall = zpl_parser.parse_zpl(_sg_recall)[0]
+check("a cold ^XG/^IM resolve to nothing yet",
+      all(e.resolve() is None for e in _cold_recall.elements),
+      [e.resolve() for e in _cold_recall.elements])
+_cold_saved = _cold_recall.to_zpl()
+check("and the file still round-trips exactly, unresolved",
+      '^XGR:LOGO.GRF,2,2' in _cold_saved and '^IMR:LOGO.GRF' in _cold_saved
+      and '^GF' not in _cold_saved,
+      _cold_saved)
+
+_cold_load = zpl_parser.parse_zpl(_sg_load)[0]
+check("a cold ^IL is recorded but resolves to nothing",
+      _cold_load.image_load == 'R:LOGO.GRF'
+      and graphic_store.recall(_cold_load.image_load) is None,
+      _cold_load.image_load)
+check("and it round-trips right after ^XA, ahead of the fields it underlies",
+      _cold_load.to_zpl().split('\n')[:2] == ['^XA', '^ILR:LOGO.GRF'],
+      _cold_load.to_zpl().split('\n')[:2])
+
+check("none of the four commands are reported as unsupported",
+      workflow.unsupported_commands(_sg_save) == []
+      and workflow.unsupported_commands(_sg_recall) == []
+      and workflow.unsupported_commands(_sg_load) == [],
+      (workflow.unsupported_commands(_sg_save),
+       workflow.unsupported_commands(_sg_recall),
+       workflow.unsupported_commands(_sg_load)))
+
+# Warm session: parsing the save fixture first captures a real image under
+# R:LOGO.GRF, so parsing the recall/load fixtures afterwards resolves for real.
+graphic_store.clear()
+_sg_save_doc = zpl_parser.parse_zpl(_sg_save)[0]
+check("^IS is recorded for round-tripping",
+      _sg_save_doc.image_saves == ['R:LOGO.GRF,Y'], _sg_save_doc.image_saves)
+check("and it captures a real image into this session's store",
+      graphic_store.recall('R:LOGO.GRF') is not None,
+      graphic_store.recall('R:LOGO.GRF'))
+check("^IS round-trips after the elements it captured",
+      _sg_save_doc.to_zpl().endswith('^ISR:LOGO.GRF,Y^FS\n^XZ'),
+      _sg_save_doc.to_zpl())
+
+_warm_recall = zpl_parser.parse_zpl(_sg_recall)[0]
+_xg, _im = _warm_recall.elements
+check("a warm ^XG now resolves to the real image",
+      _xg.resolve() is not None, _xg.resolve())
+check("magnified by the factor it named",
+      (_xg.width, _xg.height) == (_xg.resolve().width * 2, _xg.resolve().height * 2),
+      (_xg.width, _xg.height, _xg.resolve().size))
+check("a warm ^IM resolves too, unmagnified",
+      _im.resolve() is not None and (_im.width, _im.height) == _im.resolve().size,
+      (_im.width, _im.height, _im.resolve() and _im.resolve().size))
+check("saving a resolved ^XG/^IM still writes the reference, never the pixels",
+      '^GF' not in _warm_recall.to_zpl(), _warm_recall.to_zpl())
+
+_warm_load = zpl_parser.parse_zpl(_sg_load)[0]
+check("a warm ^IL resolves to the real image too",
+      graphic_store.recall(_warm_load.image_load) is not None,
+      graphic_store.recall(_warm_load.image_load))
+
+# The preview renderer never repeats the capture itself - see
+# zplcore/renderer.py - it only recalls what the parser already stored, so
+# this exercises that same warm-then-forgotten store rather than parsing again.
+check("the preview draws real ink for a resolved ^XG",
+      _preview_ink(_sg_recall, 812, 1218) is not None,
+      _preview_ink(_sg_recall, 812, 1218))
+graphic_store.clear()
+check("and no ink at all once the session forgets the source",
+      _preview_ink(_sg_recall, 812, 1218) is None,
+      _preview_ink(_sg_recall, 812, 1218))
+
+# graphic_store.key() normalisation: device is not distinguished, and a bare
+# or partial spec still resolves - see FUNCTIONAL_SPEC.md section 18.
+check("device prefix is not distinguished",
+      graphic_store.key('R:SAMPLE.GRF') == graphic_store.key('E:SAMPLE.GRF'),
+      (graphic_store.key('R:SAMPLE.GRF'), graphic_store.key('E:SAMPLE.GRF')))
+check("case does not matter",
+      graphic_store.key('r:sample.grf') == graphic_store.key('R:SAMPLE.GRF'),
+      graphic_store.key('r:sample.grf'))
+check("a bare name defaults to a .GRF extension",
+      graphic_store.key('R:SAMPLE') == 'SAMPLE.GRF', graphic_store.key('R:SAMPLE'))
+check("no name at all is not an error",
+      graphic_store.key('') == 'UNKNOWN.GRF', graphic_store.key(''))
+graphic_store.clear()
+
+
 # --- ^SN, ^SF, ^FC: the other ways a printer supplies a field's value -------
 # ^SN (serialization) and ^FC (real-time clock) used to be dropped entirely,
 # silently, with nothing on screen suggesting a field was ever dynamic - the

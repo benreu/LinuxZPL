@@ -20,9 +20,12 @@ from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import textraster
-from zplcore.model import (FRAME_COLOURS, ORIENTATIONS, TEXT_JUSTIFICATIONS,
-                           BarcodeElement, Document, FieldBlock, FrameElement,
-                           ImageElement, TextElement)
+from zplcore.model import (FRAME_COLOURS, ORIENTATIONS,
+                           STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
+                           TEXT_JUSTIFICATIONS, BarcodeElement, Document,
+                           FieldBlock, FrameElement, ImageElement,
+                           StoredGraphicElement, TextElement,
+                           split_device_spec)
 from zplcore.renderer import ZPLRenderer
 
 from .canvas import DesignCanvas
@@ -591,6 +594,11 @@ class ZPLViewerWindow(Gtk.Window):
         add_image_btn = Gtk.Button(label="+ Image")
         add_image_btn.connect("clicked", self.on_add_image_clicked)
         toolbar_box.pack_start(add_image_btn, False, False, 0)
+
+        # Add stored graphic button
+        add_stored_graphic_btn = Gtk.Button(label="+ Graphic")
+        add_stored_graphic_btn.connect("clicked", self.on_add_stored_graphic_clicked)
+        toolbar_box.pack_start(add_stored_graphic_btn, False, False, 0)
 
         # Zoom controls
         zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -1720,6 +1728,10 @@ class ZPLViewerWindow(Gtk.Window):
         else:
             dialog.destroy()
 
+    def on_add_stored_graphic_clicked(self, widget):
+        """Handle add stored graphic element button click."""
+        self.design_canvas.add_stored_graphic_element()
+
     def on_delete_clicked(self, widget):
         """Handle delete selected element button click."""
         # Every selected element goes, so every editor open on one has to be
@@ -2342,6 +2354,76 @@ class ZPLViewerWindow(Gtk.Window):
                 self.on_canvas_changed()
             else:
                 dialog.destroy()
+
+        elif isinstance(element, StoredGraphicElement):
+            # ^XG/^IM name an image the printer holds, not one this file
+            # carries the bytes for - see zplcore/graphic_store.py. Editing
+            # this element only ever changes which name it recalls.
+            dialog = Gtk.Dialog(title="Edit Stored Graphic", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                              Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                _make_row(content, label_text, widget)
+
+            command_combo, command_codes = _make_combo(
+                STORED_GRAPHIC_COMMANDS, element.command)
+            make_row("Command:", command_combo)
+
+            device, name, ext = split_device_spec(element.device_spec)
+            device_combo, device_codes = _make_combo(STORED_GRAPHIC_DEVICES, device)
+            make_row("Device:", device_combo)
+
+            name_entry = Gtk.Entry()
+            name_entry.set_text(name)
+            name_entry.set_max_length(8)
+            make_row("Name:", name_entry)
+
+            ext_entry = Gtk.Entry()
+            ext_entry.set_text(ext)
+            make_row("Extension:", ext_entry)
+
+            mag_x_spin = _make_spin(element.mag_x, 1, 10)
+            make_row("Magnification X:", mag_x_spin)
+
+            mag_y_spin = _make_spin(element.mag_y, 1, 10)
+            make_row("Magnification Y:", mag_y_spin)
+
+            def on_command_changed(_combo):
+                # ^IM has no magnification of its own - always 1,1.
+                is_xg = command_codes[command_combo.get_active()] == 'XG'
+                mag_x_spin.set_sensitive(is_xg)
+                mag_y_spin.set_sensitive(is_xg)
+
+            on_command_changed(command_combo)
+            command_combo.connect("changed", on_command_changed)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.command = command_codes[command_combo.get_active()]
+                    device_code = device_codes[device_combo.get_active()]
+                    object_name = (name_entry.get_text().strip() or 'UNKNOWN').upper()
+                    extension = (ext_entry.get_text().strip() or 'GRF').upper()
+                    element.device_spec = f"{device_code}:{object_name}.{extension}"
+                    if element.command == 'XG':
+                        element.mag_x = int(mag_x_spin.get_value())
+                        element.mag_y = int(mag_y_spin.get_value())
+                    else:
+                        element.mag_x = element.mag_y = 1
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
 
         elif isinstance(element, FrameElement):
             # Show Frame edit dialog

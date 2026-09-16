@@ -24,7 +24,7 @@ from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore.model import (BarcodeElement, Document, FrameElement, ImageElement,
-                           TextElement)
+                           StoredGraphicElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from . import dialogs as qt_dialogs
@@ -361,6 +361,7 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar.addAction(self._action("+ Frame", self.on_add_frame))
         toolbar.addAction(self._action("+ Barcode", self.on_add_barcode))
         toolbar.addAction(self._action("+ Image", self.on_add_image))
+        toolbar.addAction(self._action("+ Graphic", self.on_add_stored_graphic))
         toolbar.addSeparator()
         toolbar.addAction(self.delete_action)
 
@@ -494,6 +495,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.document.add_image_element(path)
         self.canvas.commit()
 
+    def on_add_stored_graphic(self):
+        self.document.add_stored_graphic_element()
+        self.canvas.commit()
+
     def on_delete(self):
         # Every selected element goes, so every editor open on one has to be
         # closed - an editor must never outlive the element it is editing.
@@ -568,6 +573,9 @@ class ZPLDesignerWindow(QMainWindow):
                 element.reload()
                 self.canvas.commit()
             return
+        elif isinstance(element, StoredGraphicElement):
+            editor = qt_dialogs.edit_stored_graphic_dialog(self, element,
+                                                            on_accept=committed)
         else:
             return
 

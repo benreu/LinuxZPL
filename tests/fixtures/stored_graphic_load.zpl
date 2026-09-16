@@ -1,0 +1,4 @@
+^XA
+^ILR:LOGO.GRF
+^FO400,900^ADN,36,20^FDOverlay text^FS
+^XZ

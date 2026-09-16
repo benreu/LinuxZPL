@@ -614,8 +614,9 @@ path are caret-free and are stored as-is.
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
 `^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
-the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the label transforms
-(`^LH`, `^LS`, `^LT`, `^PO`, `^PM`, `^LR`), and the four metadata keys.
+the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
+family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
+`^PO`, `^PM`, `^LR`), and the four metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -905,6 +906,41 @@ references and the `^FN`/`^FD` pairs are re-emitted, and nothing is drawn,
 because the geometry it fills lives on the printer. Opening one used to empty
 the file.
 
+**`^IM`/`^XG`/`^IL`/`^IS` are the graphic counterpart of `^DF`/`^XF`.** `^IS`
+saves everything a format has drawn so far as a named image; `^XG` and `^IM`
+recall one inside a field, positioned by `^FO` like any other field (`^XG` also
+takes a magnification factor, 1 to 10 on each axis; `^IM` is "identical to
+^XG... except there are no sizing parameters", so it is always 1,1); `^IL`
+recalls one at the very start of a format, always at `^FO0,0`, for the fields
+after it to overlay.
+
+Unlike `^DF`/`^XF`, resolution here is real, not only round-tripped:
+`zplcore.graphic_store` keeps an in-memory registry, keyed on name and
+extension (**not** on the `R:`/`E:`/`B:`/`A:` device prefix — see §18), for as
+long as the process runs. Parsing a file that carries `^IS` captures a real
+image into that registry; a later `^XG`/`^IM`/`^IL` — in the same file, or a
+different one parsed afterwards in the same running app — resolves it back.
+The lookup is live, not cached, so an element already on screen updates the
+next time it is drawn once some other file's `^IS` fills the name in.
+
+Resolution never changes what a save writes: an `^XG`/`^IM` field always writes
+back the command and the name it named, never the resolved pixels — inlining
+them would turn a small reference into a large embedded image, and drop the
+device path a real printer still needs to look the object up by.
+
+| Written | Opens as | Saves as |
+|---|---|---|
+| `^FO50,50^XGR:LOGO.GRF,2,2^FS` | a graphic field, magnified 2× if this session has `R:LOGO.GRF`, else a placeholder naming it | `^FO50,50^XGR:LOGO.GRF,2,2^FS` |
+| `^FO50,50^IMR:LOGO.GRF^FS` | the same, unmagnified | `^FO50,50^IMR:LOGO.GRF^FS` |
+| `^ILR:LOGO.GRF` | the document's `image_load`; drawn as a background at 0,0 if resolved | `^ILR:LOGO.GRF`, right after `^XA` |
+| `^ISR:LOGO.GRF,Y^FS` | recorded on the document; captures everything drawn before it into the store | `^ISR:LOGO.GRF,Y^FS`, after the elements it captured |
+
+A `+ Graphic` button creates an `^XG`/`^IM` reference the same way `+ Time` and
+`+ Serial` create theirs; double-clicking one opens an editor for its command,
+device, name, extension and magnification. `^IL` and `^IS` have no creation
+dialog of their own, the same as `^DF`/`^XF` — they round-trip a file that
+already carries them rather than being authored from a blank document.
+
 **`^LH` and `^LS` are folded into coordinates; `^LT` is not.** An element
 holds the **absolute** dot position it will print at, so the canvas, dragging,
 clamping and alignment need to know nothing about either command. A save
@@ -1177,3 +1213,21 @@ rather than requirements:
   a field reversed against a solid `^GB` box already there — without any new
   compositing machinery. The cost: a field reversed with nothing solid beneath
   it shows as a filled box, where a real printer would show nothing at all.
+- **`^XG`/`^IM`/`^IL` resolve a stored graphic by name and extension only —
+  the `R:`/`E:`/`B:`/`A:` device prefix is preserved for round-tripping but
+  does not distinguish objects.** A real printer has separate storage areas and
+  can hold `R:LOGO.GRF` and `E:LOGO.GRF` as two different images at once; this
+  app has no per-device memory to run out of or manage, so two files that only
+  differ by device prefix are treated as the same stored object. Nothing a user
+  does through the designer alone can produce that collision — see `zplcore/graphic_store.py`.
+- **A stored graphic resolves only for as long as the app keeps running, and
+  only if this same run has already parsed the `^IS` that saved it.** There is
+  no on-disk persistence, no simulation of a printer's actual memory, and no
+  merging of data across separately opened files — the same limit `^DF`/`^XF`
+  already has. Opening a file with `^XG`/`^IM`/`^IL` cold shows a placeholder
+  naming what it is waiting for rather than failing or inventing an image.
+- **`^DG` (Download Graphic) and `^ID` (Object Delete) are not implemented.**
+  `^IS` is the only way this app's graphic store is populated; a file that
+  instead relies on `^DG` to seed a stored graphic opens with that graphic
+  unresolved, the same as one referencing an object this session never saw
+  saved at all.

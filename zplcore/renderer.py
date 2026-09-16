@@ -7,7 +7,7 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
-from . import fields, geometry, graphics, parser, textraster, transforms
+from . import fields, geometry, graphic_store, graphics, parser, textraster, transforms
 from .model import BarcodeElement, FieldBlock, FrameElement, TextElement
 
 
@@ -305,6 +305,23 @@ class ZPLRenderer:
         self.image.paste(bitmap.convert('RGB'),
                          (self.current_x, self._top(rows)))
 
+    def _render_stored_graphic(self, command: str, params: str):
+        """Render a ^XG/^IM field, if this session's ^IS has the image it names.
+
+        Unresolved is not an error: the same rule an unfilled ^FN follows -
+        the printer would supply this at print time, and there is nothing to
+        draw yet, so nothing is drawn.
+        """
+        spec, mag_x, mag_y = parser._read_stored_graphic('^' + command, params)
+        image = graphic_store.recall(spec)
+        if image is None:
+            return
+        if mag_x != 1 or mag_y != 1:
+            image = image.resize((max(1, image.width * mag_x),
+                                  max(1, image.height * mag_y)))
+        self.image.paste(image.convert('RGB'),
+                         (self.current_x, self._top(image.height)))
+
     def render(self, zpl_content: str) -> Image.Image:
         """
         Render ZPL content to an image.
@@ -521,6 +538,26 @@ class ZPLRenderer:
         elif command == 'GF':
             # Graphic field: ^GFa,total,total,bytes_per_row,<data>
             self._render_graphic(params)
+        elif command in ('IM', 'XG'):
+            # Recall a stored image, like ^GF but naming one this session's
+            # own ^IS may have captured rather than carrying its own data.
+            self._render_stored_graphic(command, params)
+        elif command == 'IL':
+            # Image Load: a stored image, always at ^FO0,0, underneath
+            # whatever this format goes on to draw over it.
+            image = graphic_store.recall(params)
+            if image is not None:
+                self.image.paste(image.convert('RGB'), (0, 0))
+        elif command == 'IS':
+            # Image Save: captured into graphic_store by the parser, which
+            # runs on every open - not repeated here, so a preview render is
+            # never the hidden reason a recall does or does not work. All
+            # this does is honour p=N, which means "do not print this pass".
+            parts = [p.strip() for p in params.split(',')]
+            print_flag = parts[1].upper() if len(parts) > 1 and parts[1] else 'Y'
+            if print_flag == 'N':
+                self.image = Image.new('RGB', (self.width, self.height), color='white')
+                self.draw = ImageDraw.Draw(self.image)
         elif command == 'CF':
             # ^CFf,h,w - the font every later field prints in unless it names
             # its own. Ignoring it drew a default-font field at this class's

@@ -187,11 +187,16 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # offsets became real coordinates and the flips round-trip. ^LR is modelled in
 # the sense that matters here - it survives a save - though the preview does not
 # simulate it; see FUNCTIONAL_SPEC.md section 18.
+# ^IM, ^XG, ^IL and ^IS are the graphic counterpart of the stored-format
+# family: a reference to an image the printer holds, modelled the same way -
+# as a real (if only sometimes resolvable) placeholder rather than something
+# a save quietly drops.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC',
-            '^LH', '^LS', '^LT', '^PO', '^PM', '^LR'}
+            '^LH', '^LS', '^LT', '^PO', '^PM', '^LR',
+            '^IM', '^XG', '^IL', '^IS'}
 
 
 def unsupported_commands(zpl_content: str) -> list:

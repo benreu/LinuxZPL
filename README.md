@@ -163,6 +163,9 @@ Read when loading a file and written when saving:
 - `^GB` - Draw box
 - `^BC` / `^BY` - Code 128 barcode and its module width
 - `^GF` - Graphic field (images, 1-bit, where a set bit is black)
+- `^DF` / `^XF` - Store / recall a format, with `^FN` / `^FV` variable fields
+- `^IM` / `^XG` - Recall a stored graphic into a field (Image Move / Recall Graphic)
+- `^IL` / `^IS` - Load / save a stored graphic for a whole format (Image Load / Image Save)
 - `^PW` / `^LL` - Print width / label length
 - `^FX` - Comment, used for the designer's own metadata
 

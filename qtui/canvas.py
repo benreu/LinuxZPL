@@ -21,7 +21,7 @@ from PySide2.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide2.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen
 from PySide2.QtWidgets import QMenu, QWidget
 
-from zplcore import geometry, textraster, view
+from zplcore import geometry, graphic_store, textraster, view
 from zplcore.model import DesignElement, Document
 
 
@@ -187,6 +187,11 @@ class DesignCanvas(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(QRectF(0, 0, doc.label_width, doc.label_height))
 
+        # ^IL: a stored image this format loads at ^FO0,0, underneath its
+        # fields - not one of doc.elements, so drawn here rather than through
+        # _draw_element.
+        self._draw_image_load(painter)
+
         for element in doc.elements:
             selected = doc.is_selected(element)
             # An element that will not print is dimmed rather than hidden: the
@@ -208,6 +213,30 @@ class DesignCanvas(QWidget):
             self._draw_barcode_element(painter, element, selected)
         elif element.element_type == 'image':
             self._draw_image_element(painter, element, selected)
+        elif element.element_type == 'stored_graphic':
+            self._draw_stored_graphic_element(painter, element, selected)
+
+    def _draw_image_load(self, painter):
+        """The ^IL image this format loads at ^FO0,0, if it names one."""
+        spec = self.document.image_load
+        if not spec:
+            return
+        image = graphic_store.recall(spec)
+        if image is not None:
+            qimage = to_qimage(image)
+            if qimage is not None and not qimage.isNull():
+                painter.drawImage(QPointF(0, 0), qimage)
+            return
+        # Not available this session - a small marker beats leaving a ^IL the
+        # file names completely invisible.
+        doc = self.document
+        rect = QRectF(0, 0, min(220, doc.label_width), min(24, doc.label_height))
+        painter.fillRect(rect, QColor(230, 217, 102, 128))
+        painter.setPen(QColor(89, 77, 13))
+        font = QFont("sans-serif")
+        font.setPixelSize(11)
+        painter.setFont(font)
+        painter.drawText(QPointF(4, 17), f"^IL {spec} (unavailable)")
 
     def _draw_band(self, painter, scale: float):
         """The rubber band, while one is being dragged."""
@@ -543,6 +572,41 @@ class DesignCanvas(QWidget):
 
         painter.setPen(QPen(QColor(0, 0, 255), 2) if selected
                        else QPen(QColor(77, 77, 77), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
+
+        if selected:
+            self._draw_handles(painter, element)
+
+    def _draw_stored_graphic_element(self, painter, element, selected: bool):
+        """Draw a ^XG/^IM reference: the real image if this session has it,
+        otherwise a placeholder naming what it is waiting for."""
+        image = element.resolve()
+        qimage = to_qimage(image) if image is not None else None
+
+        if qimage is not None and not qimage.isNull():
+            painter.save()
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            painter.drawImage(
+                QRectF(element.x, element.y, element.width, element.height), qimage)
+            painter.restore()
+        else:
+            painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
+                             QColor(237, 237, 204))
+            painter.setPen(QColor(115, 102, 26))
+            font = QFont("sans-serif")
+            font.setPixelSize(12)
+            painter.setFont(font)
+            painter.drawText(QPointF(element.x + 5, element.y + element.height / 2 - 6),
+                             f"^{element.command} {element.device_spec}")
+            painter.drawText(QPointF(element.x + 5, element.y + element.height / 2 + 10),
+                             "(not available this session)")
+
+        pen = QPen(QColor(0, 0, 255), 2) if selected else QPen(QColor(153, 140, 51), 1)
+        if not selected:
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([4, 3])
+        painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 

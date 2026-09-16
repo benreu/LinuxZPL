@@ -24,9 +24,10 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gdk, GdkPixbuf, GObject, Gtk
 
-from zplcore import geometry, textraster, view
+from zplcore import geometry, graphic_store, textraster, view
 from zplcore.model import (BarcodeElement, DesignElement, Document,
-                           FrameElement, ImageElement, TextElement)
+                           FrameElement, ImageElement, StoredGraphicElement,
+                           TextElement)
 
 
 def to_pixbuf(pil_image) -> Optional[GdkPixbuf.Pixbuf]:
@@ -233,6 +234,10 @@ class DesignCanvas(Gtk.DrawingArea):
     def add_image_element(self, image_path: str):
         return self._added(self.document.add_image_element(image_path))
 
+    def add_stored_graphic_element(self, command: str = 'XG',
+                                   device_spec: str = 'R:UNKNOWN.GRF'):
+        return self._added(self.document.add_stored_graphic_element(command, device_spec))
+
     def remove_selected(self):
         if self.document.remove_selected():
             self._changed()
@@ -423,6 +428,11 @@ class DesignCanvas(Gtk.DrawingArea):
         context.stroke()
         context.set_dash([], 0)
 
+        # ^IL: a stored image this format loads at ^FO0,0, underneath its
+        # fields - not one of self.elements, so drawn here rather than through
+        # _draw_element.
+        self._draw_image_load(context)
+
         # Draw elements in label coordinates (context is scaled)
         for element in self.elements:
             selected = self.document.is_selected(element)
@@ -450,6 +460,35 @@ class DesignCanvas(Gtk.DrawingArea):
             self._draw_barcode_element(context, element, selected)
         elif element.element_type == 'image':
             self._draw_image_element(context, element, selected)
+        elif element.element_type == 'stored_graphic':
+            self._draw_stored_graphic_element(context, element, selected)
+
+    def _draw_image_load(self, context):
+        """The ^IL image this format loads at ^FO0,0, if it names one."""
+        spec = self.document.image_load
+        if not spec:
+            return
+        image = graphic_store.recall(spec)
+        if image is not None:
+            pixbuf = to_pixbuf(image)
+            if pixbuf:
+                context.save()
+                Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+                context.paint()
+                context.restore()
+            return
+        # Not available this session - a small marker beats leaving a ^IL the
+        # file names completely invisible.
+        context.save()
+        context.set_source_rgba(0.9, 0.85, 0.4, 0.5)
+        context.rectangle(0, 0, min(220, self.label_width), min(24, self.label_height))
+        context.fill()
+        context.set_source_rgb(0.35, 0.3, 0.05)
+        context.select_font_face("sans")
+        context.set_font_size(11)
+        context.move_to(4, 17)
+        context.show_text(f"^IL {spec} (unavailable)")
+        context.restore()
     
     def _draw_text_element(self, context, element, selected: bool):
         """Draw a text element."""
@@ -773,6 +812,50 @@ class DesignCanvas(Gtk.DrawingArea):
 
         if selected:
             self._draw_handles(context, element)
+
+    def _draw_stored_graphic_element(self, context, element, selected: bool):
+        """Draw a ^XG/^IM reference: the real image if this session has it,
+        otherwise a placeholder naming what it is waiting for."""
+        image = element.resolve()
+        if image is not None:
+            pixbuf = to_pixbuf(image)
+        else:
+            pixbuf = None
+        if pixbuf:
+            context.save()
+            context.translate(element.x, element.y)
+            context.scale(element.width / pixbuf.get_width(),
+                          element.height / pixbuf.get_height())
+            Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+            context.get_source().set_filter(cairo.Filter.GOOD)
+            context.paint()
+            context.restore()
+        else:
+            context.set_source_rgb(0.93, 0.93, 0.8)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.fill()
+            context.set_source_rgb(0.45, 0.4, 0.1)
+            context.select_font_face("sans")
+            context.set_font_size(12)
+            context.move_to(element.x + 5, element.y + element.height / 2 - 6)
+            context.show_text(f"^{element.command} {element.device_spec}")
+            context.move_to(element.x + 5, element.y + element.height / 2 + 10)
+            context.show_text("(not available this session)")
+
+        if selected:
+            context.set_source_rgb(0, 0, 1)
+            context.set_line_width(2)
+        else:
+            context.set_source_rgb(0.6, 0.55, 0.2)
+            context.set_dash([4, 3], 0)
+            context.set_line_width(1)
+        context.rectangle(element.x, element.y, element.width, element.height)
+        context.stroke()
+        context.set_dash([], 0)
+
+        if selected:
+            self._draw_handles(context, element)
+
     def _show_context_menu(self, event, element):
         """Show right-click context menu for element reordering."""
         menu = Gtk.Menu()

@@ -43,6 +43,12 @@ FIXTURE_COMPRESSED = ROOT / 'tests' / 'fixtures' / 'compressed_logo.zpl'
 FIXTURE_STORED = ROOT / 'tests' / 'fixtures' / 'stored_format.zpl'
 FIXTURE_RECALL = ROOT / 'tests' / 'fixtures' / 'recall_format.zpl'
 FIXTURE_NAMED = ROOT / 'tests' / 'fixtures' / 'named_fields.zpl'
+# The graphic counterpart: ^IS saves a rendered snapshot, ^XG/^IM/^IL recall
+# it - within this one process, so loading the save fixture first lets the
+# recall/load fixtures resolve for real.
+FIXTURE_GRAPHIC_SAVE = ROOT / 'tests' / 'fixtures' / 'stored_graphic_save.zpl'
+FIXTURE_GRAPHIC_RECALL = ROOT / 'tests' / 'fixtures' / 'stored_graphic_recall.zpl'
+FIXTURE_GRAPHIC_LOAD = ROOT / 'tests' / 'fixtures' / 'stored_graphic_load.zpl'
 # The commands that move or flip a whole label
 FIXTURE_HOME = ROOT / 'tests' / 'fixtures' / 'label_home.zpl'
 FIXTURE_FLIPPED = ROOT / 'tests' / 'fixtures' / 'flipped_label.zpl'
@@ -153,6 +159,9 @@ class GtkDriver:
 
     def add_frame(self):
         return self.canvas.add_frame_element()
+
+    def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
+        return self.canvas.add_stored_graphic_element(command, device_spec)
 
     def add_barcode(self):
         return self.canvas.add_barcode_element()
@@ -383,6 +392,9 @@ class QtDriver:
 
     def add_frame(self):
         return self.document.add_frame_element()
+
+    def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
+        return self.document.add_stored_graphic_element(command, device_spec)
 
     def add_barcode(self):
         return self.document.add_barcode_element()
@@ -840,6 +852,18 @@ def sequence(driver, record):
     driver.load(FIXTURE_RECALL)
     record('load an ^XF recall call, which is data and no geometry')
 
+    # The graphic counterpart of the pair above: ^IS saves a rendered
+    # snapshot, then ^XG/^IM/^IL each recall it. Loading the save fixture
+    # first, in this same process, is what lets the recall/load fixtures
+    # resolve real pixels rather than only a placeholder - both frontends
+    # have to agree on that resolved image, not just on the reference.
+    driver.load(FIXTURE_GRAPHIC_SAVE)
+    record('load a format that saves itself with ^IS')
+    driver.load(FIXTURE_GRAPHIC_RECALL)
+    record('load a format recalling that image with ^XG and ^IM')
+    driver.load(FIXTURE_GRAPHIC_LOAD)
+    record('load a format loading that image with ^IL')
+
     # ^LH moves every field, so a frontend that read it differently would place
     # the whole design somewhere else; the flips have to survive a save in both.
     driver.load(FIXTURE_HOME)
@@ -894,6 +918,12 @@ def sequence(driver, record):
     # path too now, the same as ^SN and ^FC.
     driver.add_numbered(7, 'Batch')
     record('add a numbered field')
+
+    # A stored graphic reference has its own creation path too -
+    # add_stored_graphic_element - the same "+ button, its own element" shape
+    # as time/serial/numbered above.
+    driver.add_stored_graphic('XG', 'R:SAMPLE.GRF')
+    record('add a stored graphic reference')
 
 
 def main():
