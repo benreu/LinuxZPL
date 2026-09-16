@@ -410,13 +410,14 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['block'] = FieldBlock.from_zpl(params)
         elif cmd == '^FR':
             field['reverse'] = True
-        elif cmd == '^BC':
-            field['barcode'] = _read_barcode(params, field['bar_height'])
+        elif cmd in ('^BC', '^B3', '^BE', '^B2', '^BS'):
+            field['barcode'] = _read_barcode(cmd, params, field['bar_height'])
         elif cmd.startswith('^B') or cmd == '^GS':
-            # Code 39, QR, Data Matrix, EAN - a symbology this designer cannot
-            # draw. Recorded so the field is dropped, because falling through
-            # to the text branch did not merely lose the barcode: it put a text
-            # element holding the barcode's data on the label in its place.
+            # QR, Data Matrix, PDF417 and the rest - a symbology this designer
+            # cannot draw. Recorded so the field is dropped, because falling
+            # through to the text branch did not merely lose the barcode: it
+            # put a text element holding the barcode's data on the label in
+            # its place.
             #
             # ^GS draws a glyph from the symbol font and is the same trap for
             # the same reason. It is not a ^B command, so it went on falling
@@ -612,29 +613,59 @@ def _read_frame(params: str):
             thickness, colour, number(4, 0))
 
 
-def _read_barcode(params: str, default_height=None) -> dict:
-    """^BC<orientation>,<height>,<interpretation line>,<above>,<check>,<mode>.
+BARCODE_SYMBOLOGY = {'^BC': 'code128', '^B3': 'code39', '^BE': 'ean13',
+                     '^B2': 'interleaved2of5', '^BS': 'upcean_extension'}
+
+# Where each command's own trailing flags land, keyed by the canonical
+# (show_text, text_above, check_digit, mode) BarcodeElement's own `options`
+# tuple always uses. ^B3 is not here: its check digit comes before the
+# height, not after, so `_read_barcode` reads it separately.
+_BARCODE_PARAMS = {
+    '^BC': ('o', 'h', 'f', 'g', 'e', 'm'),
+    '^BE': ('o', 'h', 'f', 'g'),
+    '^B2': ('o', 'h', 'f', 'g', 'e'),
+    '^BS': ('o', 'h', 'f', 'g'),
+}
+
+
+def _read_barcode(cmd: str, params: str, default_height=None) -> dict:
+    """A barcode command's own parameters, whichever of ^BC/^B3/^BE/^B2/^BS.
 
     Everything after the height is carried through untouched: those flags
-    decide whether the digits print under the bars and which Code 128 subsets
-    the printer may use, and re-emitting a barcode without them would change
-    the label.
+    decide whether the digits print under the bars and, where a symbology
+    has one, whether and how a check digit is added - re-emitting a barcode
+    without them would change the label. Each command spells its own subset
+    of them in its own order, which is what `_BARCODE_PARAMS` (and, for ^B3,
+    the code below) exists to put back into one shape: the (show, above,
+    check, mode) order `options` always uses regardless of symbology.
 
     An omitted height is ^BY's, which is what its third parameter is for.
-    Hard-coding 100 here turned ^BY3,3.0,150^BCN into a barcode a third shorter
-    than the file asked for.
+    Hard-coding 100 here turned ^BY3,3.0,150^BCN into a barcode a third
+    shorter than the file asked for.
     """
     parts = [p.strip() for p in params.split(',')]
-    orientation = ''
-    if parts and parts[0][:1].isalpha():
-        orientation = parts[0][:1].upper()
     fallback = DESIGNER_BAR_HEIGHT if default_height is None else default_height
+
+    if cmd == '^B3':
+        # ^B3o,e,h,f,g - the one command whose check digit comes before the
+        # height rather than after it, among the other trailing options.
+        fields = dict(zip(('o', 'e', 'h', 'f', 'g'), parts))
+    else:
+        fields = dict(zip(_BARCODE_PARAMS[cmd], parts))
+
+    orientation = ''
+    o = fields.get('o', '')
+    if o[:1].isalpha():
+        orientation = o[:1].upper()
     try:
-        height = int(parts[1]) if len(parts) > 1 and parts[1] else fallback
+        height = int(fields['h']) if fields.get('h') else fallback
     except ValueError:
         height = fallback
-    return {'orientation': orientation, 'height': height,
-            'options': tuple(p for p in parts[2:])}
+
+    return {'symbology': BARCODE_SYMBOLOGY[cmd], 'orientation': orientation,
+            'height': height,
+            'options': (fields.get('f', ''), fields.get('g', ''),
+                        fields.get('e', ''), fields.get('m', ''))}
 
 
 def _flush(field, doc, renderer, pending_no_print: bool) -> bool:
@@ -740,6 +771,7 @@ def _build_element(field, doc, renderer):
                               ratio=field['ratio'],
                               orientation=bc['orientation'],
                               options=bc['options'],
+                              symbology=bc['symbology'],
                               field_number=field['field_number'],
                               field_prompt=field['field_prompt'],
                               serial_start=field['serial_start'],

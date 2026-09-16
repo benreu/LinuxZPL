@@ -162,19 +162,24 @@ the frame is a solid filled rectangle. Clamp to that maximum, minimum 1.
 
 #### Barcode
 
-Code 128, subsets B and C.
+One element, five symbologies: Code 128 (`^BC`, subsets B and C), Code 39
+(`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`) and a UPC/EAN Extension
+add-on (`^BS`). QR, Data Matrix, PDF417 and the rest are still not offered -
+see §18.
 
 | Property | Default |
 |---|---|
+| `symbology` | `code128` - which of the five |
 | `barcode_value` | `"123456789"` |
-| `bar_height` | 100 dots - the bars themselves, `^BC`'s own height |
+| `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots |
+| `ratio` | 3.0 - the wide-to-narrow ratio Code 39 and Interleaved 2 of 5 draw their wide elements at; the other three are fixed-ratio and ignore it |
 | `orientation` | none - `N` upright, `R` 90°, `I` 180°, `B` 270° |
 | `show_text` | true - whether the value prints as an interpretation line |
-| `text_above` | false - the line goes above the bars instead of below |
-| `check_digit` | false - append a UCC/EAN mod-10 digit |
-| `mode` | `N` - `A` lets the symbol use subset C |
-| `font` | none - the `^A` before the `^BC`, which sets the interpretation line's font |
+| `text_above` | false for every symbology but the UPC/EAN extension, where it is true - the line goes above the bars instead of below |
+| `check_digit` | false - append a check digit (Code 128's UCC/EAN one, Code 39's own Mod-43, or Interleaved 2 of 5's Mod-10); EAN-13 and the UPC/EAN extension have no such flag at all, because EAN-13's own check digit is never optional and the extension has none |
+| `mode` | `N` - `A` lets Code 128 use subset C; the other four symbologies have no mode |
+| `font` | none - the `^A` before the barcode command, which sets the interpretation line's font |
 
 **`width` and `height` are the footprint, not the bars.** The element box is
 the bars plus the interpretation line, transposed when the barcode is rotated:
@@ -188,27 +193,39 @@ box   = (run, stack) upright,  (stack, run) rotated
 Because a quarter turn leaves the box axis-aligned, rotation needs nothing from
 hit-testing, dragging or the resize handles - they only ever see the box.
 
-**Derive the width from the symbol, not from the character count.** Subset C
-packs two digits into one symbol, so `(35 + n×11) × module_width` is wrong by
-nearly half for a numeric value in mode A. Summing the encoded module widths is
-right for both subsets.
+**Derive the width from the symbol, not from the character count.** Code
+128's subset C packs two digits into one symbol, so `(35 + n×11) × module_width`
+is wrong by nearly half for a numeric value in mode A - and no formula at all
+covers Interleaved 2 of 5's checksum digit or EAN-13 and the extension's own
+fixed lengths. Summing each symbology's own encoded module widths is right for
+all of them; only Code 128's happens to have a closed form as well.
 
-Mode `A` is the printer's automatic subset switching: move into subset C across
-a run of four or more digits (or two, when the whole value is numeric and the
+Mode `A` is Code 128's automatic subset switching: move into subset C across a
+run of four or more digits (or two, when the whole value is numeric and the
 start code is free), and back to B for anything else. Switching for a shorter
 run costs more than it saves.
 
-The interpretation line prints the encoded value - including the check digit
-when there is one - in the font the `^A` selected, at that font's dot height. A
+The interpretation line prints the encoded value - including a check digit
+when there is one, and EAN-13's own thirteenth digit or the extension's fitted
+length always - in the font the `^A` selected, at that font's dot height. A
 barcode whose line is switched on and whose file named no font is given one, so
 what prints is stated rather than inherited from the printer's `^CF`.
+
+**EAN-13 and the UPC/EAN extension fit the value to a fixed length rather than
+validating it.** EAN-13 takes the last 12 digits (padding on the left with
+zeros if there are fewer) and appends its own check digit; the extension does
+the same to 2 digits if that many or fewer were given, or to 5 otherwise.
+Interleaved 2 of 5 similarly gets a leading zero if, after any check digit, its
+own digit count is odd - two digits share every symbol, so an odd count cannot
+be interleaved at all.
 
 Resizing a barcode is a request for a module width and a bar height, not for an
 arbitrary rectangle: the drag sets those two and the box snaps back to what
 they produce, so the symbol is never stretched to fill.
 
-**`width` is derived**: `(35 + len(value) × 11) × module_width`. The constant 35
-is the start, check and stop modules; each data character is 11 modules.
+**Code 128's `width` has a closed form**: `(35 + len(value) × 11) × module_width`.
+The constant 35 is the start, check and stop modules; each data character is
+11 modules. It holds only for Code 128 subset B - see above.
 
 #### Image
 
@@ -522,7 +539,7 @@ file choosers and the prompts — are modal.
 |---|---|---|
 | **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across all three of these dialogs. |
 | **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) flips Colour's effect a second time (§18). |
-| **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode; Reverse | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
+| **Edit Barcode** | Symbology; Value; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the five choices of §3.3; the rest are that symbology's own parameters, and Ratio, Check Digit and Mode are shown only for the symbologies that have one — Check Digit's own label changes with it. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
@@ -549,12 +566,14 @@ file choosers and the prompts — are modal.
 | Text in a block | as above, with `^FB<width>,<lines>,<spacing>,<justification>,<indent>` between the font and the data |
 | Text, downloaded font | `^FO<x>,<y>` / `^A@<orientation>,<font_height>,<font_width>,E:<NAME>.TTF` / `^FD<text>^FS` |
 | Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>[,<colour>[,<rounding>]]` / `^FS` — the colour and rounding are written only when they are not `B` and `0` |
-| Barcode | `^FO<x>,<y>` / `^BY<module_width>` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` |
+| Barcode | `^FO<x>,<y>` / `^BY<module_width>[,<ratio>]` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` — or `^B3`, `^BE`, `^B2`, `^BS` for the other four symbologies, each in its own parameter order (§3.3) |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
 
 Each command is on its own line. `^BY` must be emitted: without it the printer
 uses its own default module width of 2, which pins the barcode's physical size
 to the head resolution and makes it the one element that cannot be rescaled.
+Its ratio is written too, for Code 39 and Interleaved 2 of 5, when it is not
+the default 3.0.
 
 **Graphic encoding** (`^GFA`): one bit per dot, rows padded to whole bytes,
 `bytes_per_row = ceil(width / 8)`, data as uppercase hex. **A set bit is
@@ -661,11 +680,14 @@ the power-up module width of 2 and **printed at half the width the file asked
 for** (404 dots to 202), and a save wrote that back. Nothing was said either,
 because `^BY` is a command the model holds.
 
-The ratio is carried but not modelled: ZPL states it has no effect on
-fixed-ratio symbologies, and Code 128 is one, so it changes nothing this
-designer draws. It round-trips so that a file which gave one does not lose it.
-`^BY`'s `h` is read but never written, because the height always goes on `^BC`
-explicitly and there is nowhere for the two to disagree.
+The ratio is carried but not modelled for Code 128, EAN-13 and the UPC/EAN
+extension: ZPL states it has no effect on fixed-ratio symbologies, and all
+three are, so it changes nothing this designer draws for them. Code 39 and
+Interleaved 2 of 5 are not fixed-ratio, and it does change their own wide
+elements' width (§3.3). Either way it round-trips so that a file which gave
+one does not lose it. `^BY`'s `h` is read but never written, because the
+height always goes on the barcode command itself and there is nowhere for the
+two to disagree.
 
 **`^FT` places a field from its baseline, and `^FO` from its top.** `^FT`
 opens a field exactly as `^FO` does; ignoring it does not misplace such a field
@@ -679,11 +701,13 @@ where a baseline sits inside a character cell is measured from the font file and
 is only an estimate of what the printer will do - and normalising bakes that
 estimate into the file every time such a label is opened and saved.
 
-**A symbology that cannot be drawn is dropped, not redrawn as text.** `^B3`,
-`^BQ`, `^BX` and the rest reached the text branch, so a Code 39 sixty dots tall
-arrived as nine-dot text holding the barcode's data, and saved that way. The
-label gaining something that was never in it is worse than losing the barcode,
-which the load warning names either way.
+**A symbology that cannot be drawn is dropped, not redrawn as text.** `^BQ`,
+`^BX` and the rest still reach the text branch's own trap otherwise, so a QR
+code sixty dots tall would arrive as nine-dot text holding its data, and save
+that way. The label gaining something that was never in it is worse than
+losing the barcode, which the load warning names either way. `^B3`, `^BE`,
+`^B2` and `^BS` used to be dropped the same way; they are real symbologies now
+(§3.3) and reach the barcode branch instead.
 
 **Read the source as commands, not as lines.** A ZPL command is a caret (or
 tilde) plus exactly two characters, and its parameters run to the next caret -
@@ -1229,7 +1253,7 @@ message — never a swallowed exception or a placeholder.
 | Frame | 200 × 150 dots, 2 dot thickness |
 | Frame dialog limits | width 10–800, height 10–1200, thickness 1 to `min(w,h)/2` |
 | Barcode | Code 128, `"123456789"`, 100 dot bar height, module width 2, value printed below |
-| Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200 |
+| Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200, ratio 2.0–3.0 |
 | Image | 200 × 200 dots, JPEG/PNG source |
 | Minimum element size when resizing | 20 × 20 dots |
 | Resize handle size and hit radius | 8 **screen pixels** — `8 / scale` dots, so it neither shrinks out of reach when zoomed out nor covers the element when zoomed in; where the radius puts two handles in reach, the nearer wins |
@@ -1270,11 +1294,21 @@ rather than requirements:
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
   drawn whole, wrapped, whether or not a font file is available.
-- **Code 128 only.** No other symbology is offered, and the value is not
-  validated against the subset.
+- **Five symbologies: Code 128, Code 39, EAN-13, Interleaved 2 of 5 and the
+  UPC/EAN extension.** QR, Data Matrix, PDF417 and the rest are still not
+  offered, and no symbology's value is validated against its own character
+  set or length - EAN-13 and the extension fit whatever they are given rather
+  than rejecting it (§3.3), and Code 39 draws an out-of-set character as a
+  blank rather than refusing the barcode.
+- **Code 39's Full ASCII Mode is not simulated.** The `+$`/`-$` escapes a
+  scanner configured for it would read specially are drawn as the literal `+`,
+  `$` and `-` characters they are - Code 39 itself has no such mode; it is a
+  convention some scanners apply to the decoded text, one this designer has
+  no way to know a given printer's scanner follows.
 - **Modes `U` and `D` are carried but not simulated.** Only `A` changes the
   symbol; UCC case mode and UCC/EAN mode round-trip and can be chosen, but the
-  canvas draws them as `N`. The same goes for `>` FNC1 escapes in `^FD`.
+  canvas draws them as `N`. The same goes for `>` FNC1 escapes in `^FD`. Both
+  are Code 128 only - the other four symbologies have no mode at all.
 - **The exact subset-switching threshold is inferred.** Zebra does not publish
   where mode A moves into subset C; the rule above is the conservative reading,
   and a printer would settle it.

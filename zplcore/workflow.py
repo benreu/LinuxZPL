@@ -191,7 +191,8 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # family: a reference to an image the printer holds, modelled the same way -
 # as a real (if only sometimes resolvable) placeholder rather than something
 # a save quietly drops.
-MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^FB', '^FR',
+MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^B3', '^BE', '^B2',
+            '^BS', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC', '^FH',

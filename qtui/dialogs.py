@@ -24,8 +24,9 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
 
 from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
                      graphic_store, printer_objects, textraster)
-from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_MODES,
-                           BARCODE_ORIENTATIONS, BARCODE_TEXT_CHOICES,
+from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
+                           BARCODE_MODES, BARCODE_ORIENTATIONS,
+                           BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
                            FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
                            TEXT_JUSTIFICATIONS, Document, FieldBlock,
@@ -850,6 +851,13 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     form = QFormLayout()
     layout.addLayout(form)
 
+    symbology_combo = QComboBox()
+    for label, code in BARCODE_SYMBOLOGIES:
+        symbology_combo.addItem(label, code)
+    symbology_combo.setCurrentIndex(
+        [c for _l, c in BARCODE_SYMBOLOGIES].index(element.symbology))
+    form.addRow("Symbology:", symbology_combo)
+
     value_edit = QLineEdit(element.barcode_value)
     form.addRow("Barcode Value:", value_edit)
 
@@ -862,6 +870,13 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     module_spin.setRange(1, 20)
     module_spin.setValue(element.module_width)
     form.addRow("Module Width:", module_spin)
+
+    ratio_spin = QDoubleSpinBox()
+    ratio_spin.setRange(2.0, 3.0)
+    ratio_spin.setDecimals(1)
+    ratio_spin.setSingleStep(0.1)
+    ratio_spin.setValue(element.ratio)
+    form.addRow("Ratio:", ratio_spin)
 
     orientation_combo = QComboBox()
     for label, code in BARCODE_ORIENTATIONS:
@@ -891,7 +906,8 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     for label, flag in BARCODE_CHECK_DIGIT:
         check_combo.addItem(label, flag)
     check_combo.setCurrentIndex(1 if element.check_digit else 0)
-    form.addRow("UCC Check Digit:", check_combo)
+    form.addRow("Check Digit:", check_combo)
+    check_label = form.labelForField(check_combo)
 
     mode_combo = QComboBox()
     for label, code in BARCODE_MODES:
@@ -900,6 +916,8 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         [c for _l, c in BARCODE_MODES].index(element.mode)
         if element.mode in [c for _l, c in BARCODE_MODES] else 0)
     form.addRow("Mode:", mode_combo)
+    mode_label = form.labelForField(mode_combo)
+    ratio_label = form.labelForField(ratio_spin)
 
     fr_check = QCheckBox("Reverse print (^FR)")
     fr_check.setObjectName("reverse_print")
@@ -908,12 +926,34 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
 
     apply_field_number = _field_number_rows(form, element)
 
+    def _update_visible_rows():
+        # Each symbology carries a different subset of these rows - Code
+        # 128's mode, a check digit only some of them have (and call
+        # something different), a ratio that only matters for the two not
+        # drawn at a fixed one. Showing every row for every symbology would
+        # offer a Mode a Code 39 barcode has no ZPL parameter for at all.
+        features = BARCODE_FEATURES[symbology_combo.currentData()]
+        for widget in (mode_combo, mode_label):
+            widget.setVisible(features['mode'])
+        for widget in (ratio_spin, ratio_label):
+            widget.setVisible(features['ratio'])
+        check_visible = features['check_digit'] is not None
+        for widget in (check_combo, check_label):
+            widget.setVisible(check_visible)
+        if check_visible:
+            check_label.setText(features['check_digit'] + ":")
+
+    symbology_combo.currentIndexChanged.connect(_update_visible_rows)
+    _update_visible_rows()
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
+        element.symbology = symbology_combo.currentData()
         element.barcode_value = value_edit.text()
         element.bar_height = height_spin.value()
         element.module_width = module_spin.value()
+        element.ratio = ratio_spin.value()
         element.orientation = orientation_combo.currentData()
         element.show_text, element.text_above = text_combo.currentData()
         element.check_digit = check_combo.currentData()

@@ -758,6 +758,109 @@ check("both frontends are offered the same modes",
 check("both frontends are offered the same orientations",
       [c for _l, c in BARCODE_ORIENTATIONS] == ['N', 'R', 'I', 'B'])
 
+# --- the other symbologies: ^B3, ^BE, ^B2, ^BS -------------------------------
+from zplcore import code39, ean13, i2of5, upcext
+from zplcore.model import BARCODE_FEATURES, BARCODE_SYMBOLOGIES
+
+for cmd in ('^B3', '^BE', '^B2', '^BS'):
+    check(f"{cmd} is no longer reported as unsupported",
+          cmd not in workflow.unsupported_commands(f"^XA^FO0,0{cmd}N^FD1^FS^XZ"),
+          workflow.unsupported_commands(f"^XA^FO0,0{cmd}N^FD1^FS^XZ"))
+
+check("both frontends are offered the same five symbologies",
+      [v for _l, v in BARCODE_SYMBOLOGIES]
+      == ['code128', 'code39', 'ean13', 'interleaved2of5', 'upcean_extension'])
+check("only Code 128 and Code 39 offer a mode or a check digit label apiece",
+      [(name, feat['mode'], feat['check_digit'] is not None)
+       for name, feat in BARCODE_FEATURES.items()]
+      == [('code128', True, True), ('code39', False, True),
+          ('ean13', False, False), ('interleaved2of5', False, True),
+          ('upcean_extension', False, False)])
+
+# Code 39: self-checking, so every character costs the same twelve modules -
+# three wide (2) plus six narrow (1) plus the inter-character gap.
+c39 = BarcodeElement(0, 0, 60, 'CODE-39', symbology='code39')
+check("Code 39 draws the value between two start/stop asterisks",
+      # Twelve modules a character (nine elements, three of them twice a
+      # narrow one) plus a one-module gap between every pair of them,
+      # asterisks included.
+      sum(code39.encode('CODE-39')) == 12 * (len('CODE-39') + 2) + (len('CODE-39') + 1),
+      sum(code39.encode('CODE-39')))
+check("its own mod-43 check digit is a single extra character",
+      code39.mod43_check_digit('CODE-39') == code39.mod43_check_digit('code-39'),
+      "case is folded, the way encode() folds it too")
+c39_checked = BarcodeElement(0, 0, 60, 'CODE-39', symbology='code39', options=('Y', 'N', 'Y'))
+check("Code 39's own check digit joins the text, like Code 128's",
+      c39_checked.encoded_value() == 'CODE-39' + code39.mod43_check_digit('CODE-39'),
+      c39_checked.encoded_value())
+c39_wide = BarcodeElement(0, 0, 60, 'A', symbology='code39', ratio=2.0)
+check("Code 39's ratio scales its wide elements, unlike Code 128's",
+      set(c39_wide.modules()) == {1, 2} and set(code39.encode('A')) == {1, 2},
+      c39_wide.modules())
+c39_wider = BarcodeElement(0, 0, 60, 'A', symbology='code39', ratio=3.0)
+check("a bigger ratio widens the symbol without changing its narrow modules",
+      c39_wider.printed_width() > c39_wide.printed_width(),
+      (c39_wide.printed_width(), c39_wider.printed_width()))
+
+# EAN-13: always 95 modules, always thirteen digits including its own check
+# digit, which is not optional - there is no ^BE parameter for it at all.
+ean = BarcodeElement(0, 0, 60, '400638133393', symbology='ean13')
+check("EAN-13 is always ninety-five modules",
+      sum(ean.modules()) == 95, sum(ean.modules()))
+check("its check digit is always appended, with no flag to ask for it",
+      ean.encoded_value() == '4006381333931', ean.encoded_value())
+ean_short = BarcodeElement(0, 0, 60, '123', symbology='ean13')
+check("a short value is padded with zeros on the left, not on the right",
+      ean_short.encoded_value().startswith('000000000123'), ean_short.encoded_value())
+ean_long = BarcodeElement(0, 0, 60, '1' * 20, symbology='ean13')
+check("a long one is truncated to its last twelve digits",
+      ean_long.encoded_value()[:-1] == '1' * 12, ean_long.encoded_value())
+
+# Interleaved 2 of 5: numeric, and always an even number of digits.
+i25 = BarcodeElement(0, 0, 60, '123456', symbology='interleaved2of5')
+check("an even value round-trips unpadded",
+      i25.encoded_value() == '123456', i25.encoded_value())
+i25_odd = BarcodeElement(0, 0, 60, '12345', symbology='interleaved2of5')
+check("an odd one gets a leading zero, not a trailing one",
+      i25_odd.encoded_value() == '012345', i25_odd.encoded_value())
+i25_checked = BarcodeElement(0, 0, 60, '123456', symbology='interleaved2of5',
+                             options=('Y', 'N', 'Y'))
+check("its own Mod-10 check digit is added before the even-length padding",
+      i25_checked.encoded_value() == '0' + '123456' + code128.ucc_check_digit('123456'),
+      i25_checked.encoded_value())
+
+# UPC/EAN Extension: a 2-digit or 5-digit add-on, no check digit at all.
+ext2 = BarcodeElement(0, 0, 60, '05', symbology='upcean_extension')
+check("two digits stay a two-digit extension",
+      ext2.encoded_value() == '05' and sum(ext2.modules()) == 21,
+      (ext2.encoded_value(), sum(ext2.modules())))
+ext5 = BarcodeElement(0, 0, 60, '12345', symbology='upcean_extension')
+check("five digits are a five-digit extension",
+      ext5.encoded_value() == '12345' and sum(ext5.modules()) == 48,
+      (ext5.encoded_value(), sum(ext5.modules())))
+check("the extension's own default prints its line above the bars, not below",
+      BarcodeElement(0, 0, 60, '05', symbology='upcean_extension').text_above,
+      "^BS's own default for that parameter is Y, unlike every other symbology")
+
+# every one of the four round-trips through its own command, options and all
+for symbology, value, options, ratio, expect in (
+        ('code39', 'ABC-1', ('N', 'Y', 'Y'), 2.5, '^B3N,Y,60,N,Y\n'),
+        ('ean13', '400638133393', ('N', 'Y'), 3.0, '^BEN,60,N,Y\n'),
+        ('interleaved2of5', '1234', ('Y', 'N', 'Y'), 2.0, '^B2N,60,Y,N,Y\n'),
+        ('upcean_extension', '12', ('N', 'N'), 3.0, '^BSN,60,N,N\n')):
+    made = BarcodeElement(1, 2, 60, value, orientation='N', options=options,
+                          ratio=ratio, symbology=symbology)
+    zpl = made.to_zpl()
+    check(f"{symbology} writes its own command", expect in zpl, zpl)
+    back = zpl_parser.parse_zpl(f"^XA{zpl}^XZ")[0].elements[0]
+    check(f"{symbology} reads back the same element it wrote",
+          (back.symbology, back.barcode_value, back.show_text, back.text_above,
+           back.check_digit if symbology != 'ean13' and symbology != 'upcean_extension'
+           else False)
+          == (symbology, value, options[0] != 'N', options[1] == 'Y',
+              (options[2] == 'Y') if len(options) > 2 else False),
+          (back.symbology, back.barcode_value, back.show_text, back.text_above))
+
 # --- ^FR (reverse print) -----------------------------------------------------
 for make, describe in (
         (lambda: TextElement(0, 0, 'Reversed'), 'text'),
@@ -1784,10 +1887,9 @@ check("rescaling carries the ^FT offset with the dots",
 # ^GS draws a glyph from the symbol font. It is the same trap as an unsupported
 # symbology and was missed by the fix for those because it is not a ^B command:
 # ^GSN,50,50^FDA saved as ^AAN,9,5^FDA, a 50-dot symbol arriving as 9-dot text.
-for symbology, source in (("^B3", "^B3N,N,60,Y,N^FD123ABC^FS"),
-                          ("^BQ", "^BQN,2,5^FDMM,AHELLO^FS"),
+# ^B3 and ^BE are no longer in this list - they draw for real now, checked below.
+for symbology, source in (("^BQ", "^BQN,2,5^FDMM,AHELLO^FS"),
                           ("^BX", "^BXN,6,200^FDdata^FS"),
-                          ("^BE", "^BEN,80,Y,N^FD123456789012^FS"),
                           ("^GS", "^GSN,50,50^FDA^FS")):
     page = f"^XA^PW812^LL1218^FO50,50{source}^XZ"
     read = zpl_parser.parse_zpl(page)[0]
@@ -1797,9 +1899,14 @@ for symbology, source in (("^B3", "^B3N,N,60,Y,N^FD123ABC^FS"),
           symbology in workflow.unsupported_commands(page),
           workflow.unsupported_commands(page))
 
-check("the preview draws nothing for one either",
-      _preview_ink("^XA^PW400^LL300^FO50,50^B3N,N,60,Y,N^FD123ABC^FS^XZ",
+check("the preview draws nothing for one still unsupported either",
+      _preview_ink("^XA^PW400^LL300^FO50,50^BQN,2,5^FDMM,AHELLO^FS^XZ",
                    400, 300) is None,
+      _preview_ink("^XA^PW400^LL300^FO50,50^BQN,2,5^FDMM,AHELLO^FS^XZ", 400, 300))
+
+check("but the preview draws ^B3 for real, the same as the canvas would",
+      _preview_ink("^XA^PW400^LL300^FO50,50^B3N,N,60,Y,N^FD123ABC^FS^XZ",
+                   400, 300) is not None,
       _preview_ink("^XA^PW400^LL300^FO50,50^B3N,N,60,Y,N^FD123ABC^FS^XZ", 400, 300))
 
 check("a ^BC is still a barcode",
@@ -1995,16 +2102,21 @@ _stored = (FIXTURES / 'stored_format.zpl').read_text()
 _doc = zpl_parser.parse_zpl(_stored)[0]
 check("a ^DF names the format the file describes",
       _doc.stored_format == 'R:SAMPLE.GRF', _doc.stored_format)
-check("the manual's template opens as all thirteen of its fields",
-      len(_doc.elements) == 13, len(_doc.elements))
-check("and its four ^FN text fields are numbered, not dropped",
+check("the manual's template opens as all fourteen of its fields",
+      len(_doc.elements) == 14, len(_doc.elements))
+check("and its five ^FN fields - one of them a ^B3 barcode - are numbered, not dropped",
       [e.field_number for e in _doc.elements
-       if getattr(e, 'field_number', None) is not None] == [1, 2, 3, 5],
+       if getattr(e, 'field_number', None) is not None] == [1, 2, 3, 4, 5],
       [getattr(e, 'field_number', None) for e in _doc.elements])
+check("^FN4 is the barcode, Code 39 read straight off the manual's own ^B3",
+      [e.element_type for e in _doc.elements if getattr(e, 'field_number', None) == 4]
+      == ['barcode'],
+      [(e.element_type, e.symbology) for e in _doc.elements
+       if getattr(e, 'field_number', None) == 4])
 _saved = _doc.to_zpl()
 check("every ^FN is written back",
       [l for l in _saved.split('\n') if '^FN' in l]
-      == ['^FN1^FS', '^FN2^FS', '^FN3^FS', '^FN5^FS'],
+      == ['^FN1^FS', '^FN2^FS', '^FN3^FS', '^FN4^FS', '^FN5^FS'],
       [l for l in _saved.split('\n') if '^FN' in l])
 check("and the ^DF comes straight after the ^XA, as ZPL requires",
       _saved.split('\n')[:2] == ['^XA', '^DFR:SAMPLE.GRF^FS'],

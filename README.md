@@ -142,7 +142,8 @@ zplcore/    no GUI toolkit, runs headless
   geometry.py    handles, hit-testing, dragging, resizing
   textraster.py  the text raster both canvases blit
   workflow.py    the decisions that decide whether a label prints correctly
-  code128.py     barcode module encoding
+  code128.py, code39.py, ean13.py, i2of5.py, upcext.py
+                 barcode module encoding, one file per symbology
 gtkui/      GTK3 frontend: Cairo painting, dialogs, menus
 qtui/       PySide2/Qt5 frontend: QPainter painting, dialogs, menus
 tests/      core checks, and the conformance suite the frontends must agree on
@@ -175,7 +176,8 @@ Read when loading a file and written when saving:
 - `^AF` - Built-in font selection
 - `^A@` - Downloaded TrueType font, e.g. `^A@N,36,20,E:DEJAVUSA.TTF`
 - `^GB` - Draw box
-- `^BC` / `^BY` - Code 128 barcode and its module width
+- `^BC` / `^B3` / `^BE` / `^B2` / `^BS` / `^BY` - Code 128, Code 39, EAN-13,
+  Interleaved 2 of 5 and UPC/EAN Extension barcodes, and their module width
 - `^GF` - Graphic field (images, 1-bit, where a set bit is black)
 - `^DF` / `^XF` - Store / recall a format, with `^FN` / `^FV` variable fields
 - `^IM` / `^XG` - Recall a stored graphic into a field (Image Move / Recall Graphic)
@@ -210,8 +212,9 @@ Sent to the printer but not rendered:
 
 Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
 
-- Barcodes are Code 128 subset B only, and the value is not validated against
-  the subset.
+- Barcodes are Code 128, Code 39, EAN-13, Interleaved 2 of 5 and the UPC/EAN
+  extension; QR, Data Matrix and the rest are not offered. No symbology's
+  value is validated against its own character set or length.
 - Rescaling between resolutions cannot be exact for barcodes: a module is a
   whole number of dots, so 2 becomes 3 going from 203 to 300 dpi. Positions and
   heights scale exactly.

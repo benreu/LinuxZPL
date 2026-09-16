@@ -53,7 +53,12 @@ ALIGN_ITEMS = (
 
 
 def _make_row(content, label_text, widget, label_width: int = 130):
-    """One labelled row in a dialog's content area."""
+    """One labelled row in a dialog's content area.
+
+    Returns the row and its label, so a caller that needs to hide the row
+    later (a barcode dialog whose fields depend on the symbology chosen) or
+    relabel it does not have to reach back into `content` to find it.
+    """
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     label = Gtk.Label(label=label_text)
     label.set_size_request(label_width, -1)
@@ -61,6 +66,7 @@ def _make_row(content, label_text, widget, label_width: int = 130):
     row.pack_start(label, False, False, 0)
     row.pack_start(widget, True, True, 0)
     content.pack_start(row, False, False, 0)
+    return row, label
 
 
 def _make_spin(value, lower, upper):
@@ -68,6 +74,16 @@ def _make_spin(value, lower, upper):
     spin = Gtk.SpinButton()
     spin.set_adjustment(Gtk.Adjustment(value=value, lower=lower,
                                        upper=upper, step_increment=1))
+    spin.set_numeric(True)
+    return spin
+
+
+def _make_ratio_spin(value, lower, upper):
+    """A one-decimal spin button, for a barcode's wide-to-narrow ratio."""
+    spin = Gtk.SpinButton()
+    spin.set_adjustment(Gtk.Adjustment(value=value, lower=lower,
+                                       upper=upper, step_increment=0.1))
+    spin.set_digits(1)
     spin.set_numeric(True)
     return spin
 
@@ -2814,9 +2830,13 @@ class ZPLViewerWindow(Gtk.Window):
             content.set_margin_bottom(8)
 
             def make_row(label_text, widget):
-                _make_row(content, label_text, widget)
+                return _make_row(content, label_text, widget)
 
             make_spin, make_combo = _make_spin, _make_combo
+
+            symbology_combo, symbology_codes = make_combo(
+                model.BARCODE_SYMBOLOGIES, element.symbology)
+            make_row("Symbology:", symbology_combo)
 
             value_entry = Gtk.Entry()
             value_entry.set_text(element.barcode_value)
@@ -2827,6 +2847,9 @@ class ZPLViewerWindow(Gtk.Window):
 
             module_spin = make_spin(element.module_width, 1, 20)
             make_row("Module Width:", module_spin)
+
+            ratio_spin = _make_ratio_spin(element.ratio, 2.0, 3.0)
+            ratio_row, _ratio_label = make_row("Ratio:", ratio_spin)
 
             orientation_combo, orientation_codes = make_combo(
                 model.BARCODE_ORIENTATIONS,
@@ -2843,11 +2866,11 @@ class ZPLViewerWindow(Gtk.Window):
 
             check_combo, check_codes = make_combo(model.BARCODE_CHECK_DIGIT,
                                                   element.check_digit)
-            make_row("UCC Check Digit:", check_combo)
+            check_row, check_label = make_row("Check Digit:", check_combo)
 
             mode_combo, mode_codes = make_combo(model.BARCODE_MODES,
                                                 element.mode)
-            make_row("Mode:", mode_combo)
+            mode_row, _mode_label = make_row("Mode:", mode_combo)
 
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
@@ -2855,13 +2878,32 @@ class ZPLViewerWindow(Gtk.Window):
 
             apply_field_number = _make_field_number_rows(content, element)
 
-            content.show_all()
+            def on_symbology_changed(_combo):
+                # Each symbology carries a different subset of these rows -
+                # Code 128's mode, a check digit only some of them have (and
+                # call something different), a ratio that only matters for
+                # the two not drawn at a fixed one. Showing every row for
+                # every symbology would offer a Mode a Code 39 barcode has
+                # no ZPL parameter for at all.
+                features = model.BARCODE_FEATURES[symbology_codes[symbology_combo.get_active()]]
+                mode_row.set_visible(features['mode'])
+                ratio_row.set_visible(features['ratio'])
+                check_row.set_visible(features['check_digit'] is not None)
+                if features['check_digit'] is not None:
+                    check_label.set_text(features['check_digit'] + ":")
+                # A dialog GTK already grew to fit more rows does not shrink
+                # back on its own just because some of them hid.
+                dialog.resize(1, 1)
+
+            symbology_combo.connect('changed', on_symbology_changed)
 
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
+                    element.symbology = symbology_codes[symbology_combo.get_active()]
                     element.barcode_value = value_entry.get_text()
                     element.bar_height = int(height_spin.get_value())
                     element.module_width = int(module_spin.get_value())
+                    element.ratio = ratio_spin.get_value()
                     element.orientation = orientation_codes[orientation_combo.get_active()]
                     element.show_text, element.text_above = text_codes[text_combo.get_active()]
                     apply_field_number(element)
@@ -2882,7 +2924,11 @@ class ZPLViewerWindow(Gtk.Window):
                 _dialog.destroy()
 
             self._open_editor(element, dialog, on_response)
-        
+            # _open_editor's own show_all() would otherwise re-show every row
+            # this just hid - so the symbology-dependent ones only get their
+            # first visibility pass once it has already run.
+            on_symbology_changed(symbology_combo)
+
         elif isinstance(element, ImageElement):
             dialog = Gtk.FileChooserDialog(
                 title="Replace Image",

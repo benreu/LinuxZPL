@@ -16,6 +16,10 @@ from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
                  ImageFont as PILImageFont)
 
 from . import code128
+from . import code39
+from . import ean13
+from . import i2of5
+from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
 from . import graphic_store
@@ -439,30 +443,50 @@ class FrameElement(DesignElement):
 
 
 class BarcodeElement(DesignElement):
-    """Barcode element for the designer. Code 128, subsets B and C.
+    """Barcode element for the designer: Code 128, Code 39, EAN-13,
+    Interleaved 2 of 5, or a UPC/EAN Extension add-on, chosen by `symbology`.
 
-    ZPL's ^BC carries six parameters, and all six change the label. They are
-    held here by name rather than as a tail of strings, so the canvas can draw
-    what each one will actually do.
+    Each symbology has its own encoder module (code128.py, code39.py, ...),
+    matching this element's own job of holding what ^BC and its siblings
+    carry by name rather than as a tail of strings, so the canvas can draw
+    what each parameter will actually do. The parameters themselves differ
+    per symbology - EAN-13 has no check-digit flag because its own is not
+    optional, Code 39 spells its check digit before the height instead of
+    after - so `to_zpl` and the parser both dispatch on `symbology` for the
+    shape of the command, not just which encoder to call.
 
-    `bar_height` is ^BC's own height - the bars themselves. `width` and
-    `height` are the element's footprint: the bars plus the interpretation
-    line, transposed when the barcode is rotated. The shared geometry only
-    ever sees the footprint, which is why rotating one needs nothing from it.
+    `bar_height` is the bars themselves. `width` and `height` are the
+    element's footprint: the bars plus the interpretation line, transposed
+    when the barcode is rotated. The shared geometry only ever sees the
+    footprint, which is why rotating one needs nothing from it.
     """
 
-    # ZPL's defaults for the parameters after the height, in order. A barcode
-    # written with these is written without them, so a label this designer
-    # created serialises exactly as it always did.
-    DEFAULTS = ('Y', 'N', 'N', 'N')
+    SYMBOLOGIES = ('code128', 'code39', 'ean13', 'interleaved2of5',
+                   'upcean_extension')
+    # The ZPL command letter(s) for every symbology but code39, which to_zpl
+    # spells directly - its check digit does not live among the trailing
+    # options the rest share.
+    COMMANDS = {'code128': 'BC', 'ean13': 'BE',
+                'interleaved2of5': 'B2', 'upcean_extension': 'BS'}
+    # Which trailing options each command's own format carries, in the order
+    # ZPL spells them in - a subset and order of (show_text, text_above,
+    # check_digit, mode), since ^BE and ^BS have no check digit and ^BC is
+    # the only one with a mode.
+    TRAILING_OPTIONS = {
+        'code128': ('show_text', 'text_above', 'check_digit', 'mode'),
+        'ean13': ('show_text', 'text_above'),
+        'interleaved2of5': ('show_text', 'text_above', 'check_digit'),
+        'upcean_extension': ('show_text', 'text_above'),
+    }
     ORIENTATIONS = ('', 'N', 'R', 'I', 'B')
     MODES = ('N', 'U', 'A', 'D')
 
-    # ^BY's wide-to-narrow ratio. Carried rather than modelled: the manual is
-    # explicit that it "has no effect on fixed-ratio bar codes", and Code 128 -
-    # the only symbology this designer draws - is one of them. So it changes
-    # nothing that prints here, and is kept only so that a file which gave one
-    # does not quietly lose it on the next save.
+    # ^BY's wide-to-narrow ratio. Carried but not modelled for Code 128,
+    # EAN-13 and the UPC/EAN extension - the manual is explicit that it "has
+    # no effect on fixed-ratio bar codes", and all three are. Code 39 and
+    # Interleaved 2 of 5 are not: their own wide elements are drawn at this
+    # many narrow modules, rounded to a whole one the same way a module
+    # width itself always is (see `modules`).
     DEFAULT_RATIO = 3.0
 
     data_attribute = 'barcode_value'
@@ -478,6 +502,7 @@ class BarcodeElement(DesignElement):
                  orientation: str = '', options: tuple = (),
                  font: Optional[tuple] = None,
                  ratio: float = DEFAULT_RATIO,
+                 symbology: str = 'code128',
                  field_number=None, field_prompt=None,
                  serial_start=None, serial_increment=None,
                  serial_leading_zero=False,
@@ -499,16 +524,22 @@ class BarcodeElement(DesignElement):
         self.module_width = module_width
         self.ratio = float(ratio)
         self.orientation = orientation
-        # The font a ^A before the ^BC selected, as (code, height, width). It
-        # sets the interpretation line, so losing it would change the label
-        # even though no text element uses it.
+        self.symbology = symbology if symbology in self.SYMBOLOGIES else 'code128'
+        # The font a ^A before the barcode command selected, as
+        # (code, height, width). It sets the interpretation line, so losing
+        # it would change the label even though no text element uses it.
         self.font = tuple(font) if font else None
         self.element_type = 'barcode'
 
-        # ^BC's remaining parameters, by name. Each missing one falls back to
-        # ZPL's default for *that position* - padding with the defaults as a
-        # suffix would slide them along, so ^BC,100,N would read as "no line,
-        # printed above".
+        # The trailing options, by name, in the canonical (show, above,
+        # check, mode) order every symbology's constructor call uses
+        # regardless of how its own ZPL command spells them. Each missing
+        # one falls back to *that position's* default - padding with the
+        # defaults as a suffix would slide them along, so ^BC,100,N would
+        # read as "no line, printed above". The UPC/EAN extension is the one
+        # symbology whose own default for "above" is Y, not N.
+        self.DEFAULTS = (('Y', 'Y', 'N', 'N') if self.symbology == 'upcean_extension'
+                         else ('Y', 'N', 'N', 'N'))
         given = list(options)
         show, above, check, mode = [
             given[i] if i < len(given) and given[i] != '' else self.DEFAULTS[i]
@@ -522,16 +553,54 @@ class BarcodeElement(DesignElement):
 
     # --- what the printer will make of it -----------------------------------
 
+    def _raw_value(self) -> str:
+        """The field data, hex-decoded, before any symbology processing."""
+        return zpl_fields.decode_hex(self.barcode_value, self.hex_indicator)
+
     def encoded_value(self) -> str:
         """The data the symbol carries, and the interpretation line shows."""
-        value = zpl_fields.decode_hex(self.barcode_value, self.hex_indicator)
+        value = self._raw_value()
+        if self.symbology == 'ean13':
+            return ean13.normalize(value)
+        if self.symbology == 'upcean_extension':
+            return upcext.normalize(value)
+        if self.symbology == 'interleaved2of5':
+            if self.check_digit:
+                value += code128.ucc_check_digit(value)
+            return i2of5.normalize(value)
         if self.check_digit:
-            value += code128.ucc_check_digit(value)
+            value += (code39.mod43_check_digit(value) if self.symbology == 'code39'
+                      else code128.ucc_check_digit(value))
         return value
 
     def modules(self) -> list:
-        """The bar and space widths of the symbol, in modules."""
-        return code128.encode(self.encoded_value(), self.mode)
+        """The bar and space widths of the symbol, in modules.
+
+        EAN-13 and the UPC/EAN extension always fit and checksum their own
+        way (see their `normalize`), which `encoded_value` also calls for the
+        interpretation line - encoding straight from the raw value here
+        rather than from that result avoids re-fitting an already-fitted
+        string, which would corrupt it.
+        """
+        if self.symbology == 'ean13':
+            return ean13.encode(self._raw_value())
+        if self.symbology == 'upcean_extension':
+            return upcext.encode(self._raw_value())
+        value = self.encoded_value()
+        if self.symbology == 'code128':
+            return code128.encode(value, self.mode)
+        if self.symbology == 'code39':
+            return self._ratio_scaled(code39.encode(value))
+        return self._ratio_scaled(i2of5.encode(value))  # interleaved2of5
+
+    def _ratio_scaled(self, mods: list) -> list:
+        """Code 39 and Interleaved 2 of 5 encode a wide element as 2 - twice
+        a narrow one - because neither knows this barcode's own ratio. This
+        is where that 2 becomes however many narrow modules the ratio asks
+        for, rounded to a whole one the way a module width itself always is.
+        """
+        wide = max(1, round(self.ratio))
+        return [wide if m == 2 else m for m in mods]
 
     def printed_width(self) -> int:
         """The bars, end to end, in dots.
@@ -561,13 +630,23 @@ class BarcodeElement(DesignElement):
 
     # --- serialisation ------------------------------------------------------
 
-    def _options_zpl(self) -> str:
-        """^BC's parameters after the height, up to the last non-default one."""
-        values = ['Y' if self.show_text else 'N',
-                  'Y' if self.text_above else 'N',
-                  'Y' if self.check_digit else 'N',
-                  self.mode]
-        while values and values[-1] == self.DEFAULTS[len(values) - 1]:
+    def _trailing_zpl(self, names: tuple) -> str:
+        """`names` - some subset of (show_text, text_above, check_digit,
+        mode) - in this command's own ZPL order, up to the last one that is
+        not that position's default.
+
+        The four flags share one canonical order in the constructor and in
+        DEFAULTS regardless of symbology, but each command spells only its
+        own subset of them, in its own order - this is what puts them back.
+        """
+        canonical = ('show_text', 'text_above', 'check_digit', 'mode')
+        spelled = {'show_text': 'Y' if self.show_text else 'N',
+                  'text_above': 'Y' if self.text_above else 'N',
+                  'check_digit': 'Y' if self.check_digit else 'N',
+                  'mode': self.mode}
+        defaults = dict(zip(canonical, self.DEFAULTS))
+        values = [spelled[name] for name in names]
+        while values and values[-1] == defaults[names[len(values) - 1]]:
             values.pop()
         return ("," + ",".join(values)) if values else ""
 
@@ -597,13 +676,22 @@ class BarcodeElement(DesignElement):
         # of 2 dots, which pins the barcode's physical size to the head
         # resolution and makes it the one element that cannot be rescaled.
         #
-        # The height goes on ^BC explicitly, which is why ^BY's own h is read
-        # but never written: there is nowhere for it to disagree.
-        return (self.origin_zpl(offset) + self.reverse_zpl() +
-                f"{self._by_zpl()}\n"
-                f"{self._font_zpl()}"
-                f"^BC{self.orientation},{self.bar_height}{self._options_zpl()}\n"
-                + self.data_zpl())
+        # The height goes on the barcode command itself, which is why ^BY's
+        # own h is read but never written: there is nowhere for it to disagree.
+        preamble = (self.origin_zpl(offset) + self.reverse_zpl() +
+                   f"{self._by_zpl()}\n{self._font_zpl()}")
+        if self.symbology == 'code39':
+            # ^B3 spells its own check digit right after orientation, before
+            # the height - the one command whose parameters do not otherwise
+            # match every other symbology's own shape.
+            check = 'Y' if self.check_digit else 'N'
+            trailing = self._trailing_zpl(('show_text', 'text_above'))
+            command = f"^B3{self.orientation},{check},{self.bar_height}{trailing}\n"
+        else:
+            letter = self.COMMANDS[self.symbology]
+            trailing = self._trailing_zpl(self.TRAILING_OPTIONS[self.symbology])
+            command = f"^{letter}{self.orientation},{self.bar_height}{trailing}\n"
+        return preamble + command + self.data_zpl()
 
 
 # The choices both frontends offer for a barcode, as (label, value). Here
@@ -627,6 +715,24 @@ BARCODE_MODES = (("None", 'N'),
                  ("UCC/EAN", 'D'))
 
 BARCODE_CHECK_DIGIT = (("No", False), ("Yes", True))
+
+BARCODE_SYMBOLOGIES = (("Code 128", 'code128'), ("Code 39", 'code39'),
+                       ("EAN-13", 'ean13'),
+                       ("Interleaved 2 of 5", 'interleaved2of5'),
+                       ("UPC/EAN Extension", 'upcean_extension'))
+
+# Which of the dialog's own rows apply to a given symbology, and what to call
+# the check digit there - Code 128's UCC digit, Code 39's Mod-43 and
+# Interleaved 2 of 5's Mod-10 are three different checksums under one name,
+# and EAN-13 and the UPC/EAN extension have none to offer at all. Here rather
+# than in either toolkit, for the same reason the lists above are.
+BARCODE_FEATURES = {
+    'code128':          {'mode': True,  'ratio': False, 'check_digit': "UCC Check Digit"},
+    'code39':           {'mode': False, 'ratio': True,  'check_digit': "Mod-43 Check Digit"},
+    'ean13':            {'mode': False, 'ratio': False, 'check_digit': None},
+    'interleaved2of5':  {'mode': False, 'ratio': True,  'check_digit': "Mod-10 Check Digit"},
+    'upcean_extension': {'mode': False, 'ratio': False, 'check_digit': None},
+}
 
 FRAME_COLOURS = (("Black", 'B'), ("White", 'W'))
 

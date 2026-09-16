@@ -56,7 +56,9 @@ class ZPLRenderer:
         self.pending_frame = None
         self.barcode_orientation = ''
         self.barcode_options = ()
+        self.barcode_symbology = 'code128'
         self.module_width = 2
+        self.ratio = 3.0
         self.custom_font_path: Optional[str] = None
         self.current_field_font_path: Optional[str] = None
         self.font_registry: dict = {}
@@ -120,6 +122,8 @@ class ZPLRenderer:
             module_width=max(1, getattr(self, 'module_width', 2)),
             orientation=self.barcode_orientation,
             options=self.barcode_options,
+            symbology=getattr(self, 'barcode_symbology', 'code128'),
+            ratio=getattr(self, 'ratio', 3.0),
             font=(('0', self.current_font_size,
                    self.current_font_width or self.current_font_size)
                   if self.current_font_size else None))
@@ -509,10 +513,21 @@ class ZPLRenderer:
             # after ^GB in the same field is still seen before it is drawn.
             self.pending_frame = params
         elif command == 'BY':
-            # Module width, which sets how wide the bars are
-            match = re.match(r'\s*(\d+)', params)
-            if match:
-                self.module_width = max(1, int(match.group(1)))
+            # Module width, and the wide-to-narrow ratio Code 39 and
+            # Interleaved 2 of 5 draw their wide elements at - every other
+            # symbology here is fixed-ratio and ignores it, the same way
+            # BarcodeElement does.
+            parts = [p.strip() for p in params.split(',')]
+            if parts and parts[0]:
+                try:
+                    self.module_width = max(1, int(parts[0]))
+                except ValueError:
+                    pass
+            if len(parts) > 1 and parts[1]:
+                try:
+                    self.ratio = float(parts[1])
+                except ValueError:
+                    pass
         elif command == 'FB':
             # Field block: the text that follows is wrapped into it
             self.current_block = FieldBlock.from_zpl(params)
@@ -538,6 +553,7 @@ class ZPLRenderer:
                     self.is_barcode_mode = False
                     self.barcode_orientation = ''
                     self.barcode_options = ()
+                    self.barcode_symbology = 'code128'
                     self.current_block = None
                 else:
                     self._render_text(self.field_data)
@@ -583,10 +599,24 @@ class ZPLRenderer:
             except ValueError:
                 self.barcode_height = 50
             self.barcode_options = tuple(parts[2:])
+            self.barcode_symbology = 'code128'
+            self.is_barcode_mode = True
+        elif command in ('B3', 'BE', 'B2', 'BS'):
+            # Code 39, EAN-13, Interleaved 2 of 5 and the UPC/EAN extension -
+            # reusing parser._read_barcode rather than a second copy of its
+            # per-command parameter order is what stops the preview and a
+            # save disagreeing about where one of them spells its own check
+            # digit or its own trailing flags.
+            bc = parser._read_barcode('^' + command, params)
+            self.barcode_orientation = bc['orientation']
+            self.barcode_height = bc['height']
+            self.barcode_options = bc['options']
+            self.barcode_symbology = bc['symbology']
             self.is_barcode_mode = True
         elif command[0] == 'B':
-            # Code 39, QR, Data Matrix, EAN - a symbology this designer cannot
-            # draw. ^BY and ^BC are matched above, so only the rest reach here.
+            # QR, Data Matrix, PDF417 and the rest - a symbology this
+            # designer cannot draw. ^BY and the other four are matched
+            # above, so only the rest reach here.
             self.unsupported_field = True
     
     def render_from_file(self, filepath: str) -> Image.Image:
