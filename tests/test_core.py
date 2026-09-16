@@ -2753,6 +2753,34 @@ _tdoc.restore(_tsnap)
 check("an undo snapshot does not share the transform",
       _tdoc.transform.home == (20, 100), _tdoc.transform.home)
 
+# --- ^PQ: print quantity -----------------------------------------------------
+# The most common command this designer had never modelled: a label saying
+# "print 5 copies" opened and saved (or printed) came back saying "print 1".
+
+_pq = zpl_parser.parse_zpl("^XA^PQ5,2,1,Y^XZ")[0]
+check("^PQ sets quantity, pause count, replicates and the override flag",
+      (_pq.print_quantity, _pq.print_pause_count, _pq.print_replicates,
+       _pq.print_override_pause) == (5, 2, 1, True),
+      (_pq.print_quantity, _pq.print_pause_count, _pq.print_replicates,
+       _pq.print_override_pause))
+
+_no_pq = zpl_parser.parse_zpl("^XA^XZ")[0]
+check("a format with no ^PQ defaults to one copy and no options",
+      (_no_pq.print_quantity, _no_pq.print_pause_count,
+       _no_pq.print_replicates, _no_pq.print_override_pause)
+      == (1, 0, 0, False))
+check("and writes back no ^PQ line at all", '^PQ' not in _no_pq.to_zpl())
+
+check("a quantity on its own round-trips as just ^PQ5",
+      '^PQ5' in zpl_parser.parse_zpl("^XA^PQ5^XZ")[0].to_zpl().split('\n'))
+check("a later parameter forces the earlier ones to be spelled too",
+      '^PQ1,3' in zpl_parser.parse_zpl("^XA^PQ1,3^XZ")[0].to_zpl().split('\n'))
+check("and every parameter round-trips together",
+      '^PQ5,2,1,Y' in zpl_parser.parse_zpl("^XA^PQ5,2,1,Y^XZ")[0].to_zpl().split('\n'))
+
+check("^PQ is no longer reported as something a save would drop",
+      workflow.unsupported_commands("^XA^PQ5,1,0,Y^XZ") == [])
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

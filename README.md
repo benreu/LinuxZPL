@@ -183,6 +183,7 @@ Read when loading a file and written when saving:
 - `^IM` / `^XG` - Recall a stored graphic into a field (Image Move / Recall Graphic)
 - `^IL` / `^IS` - Load / save a stored graphic for a whole format (Image Load / Image Save)
 - `^PW` / `^LL` - Print width / label length
+- `^PQ` - Print quantity (copies), set from Label Settings
 - `^FX` - Comment, used for the designer's own metadata
 
 Four `^FX` keys carry what ZPL itself has nowhere to put, and printers ignore

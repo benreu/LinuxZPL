@@ -2047,6 +2047,10 @@ class ZPLViewerWindow(Gtk.Window):
         dpi_combo = _dpi_combo(self.printer_dpi)
         dpi_box.pack_start(dpi_combo, True, True, 0)
 
+        quantity_spin = _make_spin(
+            self.design_canvas.document.print_quantity, 1, 99999999)
+        _make_row(content, "Copies (^PQ):", quantity_spin)
+
         # ^LH: the origin every field is placed from. Its use is preprinted
         # stock - moving the printable area below a pre-printed header - so it
         # belongs beside the size rather than among the printer settings.
@@ -2118,10 +2122,10 @@ class ZPLViewerWindow(Gtk.Window):
         chosen_transform.reverse = reverse_check.get_active()
         dialog.destroy()
         self.apply_label_settings(new_width, new_height, new_dpi, w_in, h_in,
-                                  chosen_transform)
+                                  chosen_transform, int(quantity_spin.get_value()))
 
     def apply_label_settings(self, width, height, dpi, w_in, h_in,
-                             transform=None):
+                             transform=None, quantity=None):
         """One accepted visit to Label Settings, whatever it changed.
 
         The resolution and the size can both have moved in the same visit, and
@@ -2141,6 +2145,8 @@ class ZPLViewerWindow(Gtk.Window):
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.design_canvas.document.transform = transform
+        if quantity is not None:
+            self.design_canvas.document.print_quantity = quantity
         # Written before the prompt, as the printer dialog writes its own: the
         # prompt is modal and can be dismissed by the window manager, and the
         # choice the user already made should be on disk by then.

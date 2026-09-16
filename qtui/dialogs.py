@@ -1085,6 +1085,12 @@ def label_size_dialog(parent, document: Document, dpi: int):
     dpi_combo = _dpi_combo(dpi)
     form.addRow("DPI:", dpi_combo)
 
+    quantity_spin = QSpinBox()
+    quantity_spin.setObjectName("quantity")
+    quantity_spin.setRange(1, 99999999)
+    quantity_spin.setValue(document.print_quantity)
+    form.addRow("Copies (^PQ):", quantity_spin)
+
     # ^LH: the origin every field is placed from. Its use is preprinted stock -
     # moving the printable area below a pre-printed header - so it belongs
     # beside the size rather than among the printer settings.
@@ -1158,7 +1164,7 @@ def label_size_dialog(parent, document: Document, dpi: int):
     transform.mirror = mirror_check.isChecked()
     transform.reverse = reverse_check.isChecked()
     return to_dots() + (chosen_dpi(), width_spin.value(), height_spin.value(),
-                        transform)
+                        transform, quantity_spin.value())
 
 
 def printer_settings_dialog(parent, address: str, port: int, dpi: int,

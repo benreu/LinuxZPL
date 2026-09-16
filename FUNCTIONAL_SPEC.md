@@ -575,6 +575,11 @@ to the head resolution and makes it the one element that cannot be rescaled.
 Its ratio is written too, for Code 39 and Interleaved 2 of 5, when it is not
 the default 3.0.
 
+`^PQ<quantity>[,<pause count>,<replicates>,<override pause>]` is written last,
+immediately before `^XZ`, and only when at least one of its four values is not
+ZPL's own default (`1,0,0,N`) — trimmed to however many of them that takes, so
+a quantity-only label writes just `^PQ5` rather than `^PQ5,0,0,N`.
+
 **Graphic encoding** (`^GFA`): one bit per dot, rows padded to whole bytes,
 `bytes_per_row = ceil(width / 8)`, data as uppercase hex. **A set bit is
 black** — the inverse of the usual 1-bit image convention, where 0 is black.
@@ -634,7 +639,7 @@ path are caret-free and are stored as-is.
 `^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
-`^PO`, `^PM`, `^LR`), and the four metadata keys.
+`^PO`, `^PM`, `^LR`), `^PQ`, and the four metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -750,6 +755,10 @@ their z-order position.
 2. Open a TCP connection to the configured address and port (10 s timeout). On
    failure, show the error and stop.
 3. Send the document's ZPL as UTF-8 bytes and close the connection.
+
+If the label carries a `^PQ`, it is sent as part of that ZPL like any other
+command, and the printer prints that many copies itself — this step does not
+loop the send.
 
 Elements with `print_enabled` false are sent as `^FXDESIGNER_NOPRINT` comments
 rather than as fields, so the printer ignores them.
@@ -1327,6 +1336,10 @@ rather than requirements:
   inversion against whatever is beneath — not a whole-image invert. Inverting
   the finished image would turn the white background black, which is not what a
   printer does, so nothing is drawn for it in either the canvas or the preview.
+- **`^PQ`'s pause count, RFID replicates and override-pause flag round-trip but
+  have no editor and are not otherwise acted on.** Only quantity, the common
+  case, is exposed in Label Settings; a file from another tool that sets the
+  other three keeps them through a save, the same treatment `^LT` gets.
 - **The canvas shows a `^FN` placeholder; the preview does not.** The canvas
   answers "what am I editing", so an unfilled variable field draws its prompt or
   its number rather than becoming invisible. The preview answers "what will

@@ -365,6 +365,12 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                                     saved.split(',')[0].strip(), doc)
             continue
 
+        if cmd == '^PQ':
+            (doc.print_quantity, doc.print_pause_count,
+             doc.print_replicates, doc.print_override_pause) = \
+                _read_print_quantity(params)
+            continue
+
         if cmd == '^CF':
             default_font = _read_default_font(params, default_font)
             continue
@@ -536,6 +542,30 @@ def _read_barcode_default(params: str, current: dict) -> dict:
     number(1, 'ratio', float)
     number(2, 'height', int)
     return default
+
+
+def _read_print_quantity(params: str) -> tuple:
+    """^PQq,p,r,o - copies, pause count, RFID replicates, override-pause flag.
+
+    Each is independently optional; a blank or unreadable one falls back to
+    ZPL's own default rather than raising, since this is exactly the kind of
+    command another tool's ZPL should not be rejected over.
+    """
+    parts = [p.strip() for p in (params or '').split(',')]
+
+    def integer(index, fallback):
+        if len(parts) > index and parts[index]:
+            try:
+                return int(parts[index])
+            except ValueError:
+                pass
+        return fallback
+
+    quantity = integer(0, 1) or 1
+    pause_count = integer(1, 0)
+    replicates = integer(2, 0)
+    override_pause = len(parts) > 3 and parts[3].strip().upper() == 'Y'
+    return quantity, pause_count, replicates, override_pause
 
 
 def read_font(code: str, params: str, default_font=None) -> dict:

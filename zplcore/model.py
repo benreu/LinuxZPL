@@ -970,6 +970,15 @@ class Document:
         # label as a whole rather than about any one field on it.
         self.transform = zpl_transforms.LabelTransform()
 
+        # ^PQ - how many copies to print, and the pause/RFID options that ride
+        # along with it. Only quantity has an editor (Label Settings); the
+        # rest are carried the way ^LT is - present so a save does not
+        # silently drop them.
+        self.print_quantity = 1
+        self.print_pause_count = 0
+        self.print_replicates = 0
+        self.print_override_pause = False
+
         # Document-wide font, used by any text element that has none of its own
         self.font_path: Optional[str] = None
         self.font_family: Optional[str] = None
@@ -1240,11 +1249,12 @@ class Document:
         # entry holding it.
         return (self.label_width, self.label_height,
                 [_copy_element(el) for el in self.elements], selected,
-                self.fields.copy(), self.transform.copy())
+                self.fields.copy(), self.transform.copy(), self.print_quantity)
 
     def restore(self, snap):
         """Put the design back to a snapshot taken earlier."""
-        label_width, label_height, elements, selected, table, transform = snap
+        (label_width, label_height, elements, selected, table, transform,
+         print_quantity) = snap
         # assigned directly rather than through set_label_size, which would
         # clamp elements that were already valid at this size
         self.label_width = label_width
@@ -1255,6 +1265,7 @@ class Document:
         self.selection = [self.elements[i] for i in selected]
         self.fields = table.copy()
         self.transform = transform.copy()
+        self.print_quantity = print_quantity
 
     # --- geometry ------------------------------------------------------------
 
@@ -1458,10 +1469,29 @@ class Document:
         # to keep meaning "save this design" rather than losing the request.
         for saved in self.image_saves:
             zpl += f"^IS{saved}^FS\n"
+        zpl += self._print_quantity_zpl()
         if not self.elements:
             zpl += self.fields.to_zpl()
         zpl += "^XZ"
         return zpl
+
+    def _print_quantity_zpl(self) -> str:
+        """^PQ, trimmed after the last parameter still worth writing.
+
+        q, p, r and o are positional, so anything before the last non-default
+        one has to be spelled even when it is itself still the default.
+        """
+        given = [self.print_quantity, self.print_pause_count,
+                 self.print_replicates,
+                 'Y' if self.print_override_pause else 'N']
+        defaults = [1, 0, 0, 'N']
+        keep = 0
+        for index, value in enumerate(given):
+            if value != defaults[index]:
+                keep = index + 1
+        if keep == 0:
+            return ''
+        return '^PQ' + ','.join(str(v) for v in given[:keep]) + '\n'
 
     def _lowest_element(self):
         """The smallest (x, y) any element occupies, or None if there are none."""

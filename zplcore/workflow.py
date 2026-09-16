@@ -191,13 +191,17 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # family: a reference to an image the printer holds, modelled the same way -
 # as a real (if only sometimes resolvable) placeholder rather than something
 # a save quietly drops.
+# ^PQ is how many copies the label prints, plus the pause/RFID options that
+# ride along with it - modelled the way ^LT is: quantity survives a save and
+# can be set from Label Settings, the rest survive a save but are carried
+# only.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^B3', '^BE', '^B2',
             '^BS', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC', '^FH',
             '^LH', '^LS', '^LT', '^PO', '^PM', '^LR',
-            '^IM', '^XG', '^IL', '^IS'}
+            '^IM', '^XG', '^IL', '^IS', '^PQ'}
 
 
 def unsupported_commands(zpl_content: str) -> list:

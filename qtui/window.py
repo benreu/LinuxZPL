@@ -626,7 +626,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.apply_label_settings(*result)
 
     def apply_label_settings(self, width, height, dpi, w_in, h_in,
-                             transform=None):
+                             transform=None, quantity=None):
         """One accepted visit to Label Settings, whatever it changed.
 
         The resolution and the size can both have moved in the same visit, and
@@ -646,6 +646,8 @@ class ZPLDesignerWindow(QMainWindow):
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.document.transform = transform
+        if quantity is not None:
+            self.document.print_quantity = quantity
         # Written before the prompt, as the printer dialog writes its own: the
         # prompt is modal and can be dismissed by the window manager, and the
         # choice the user already made should be on disk by then.
