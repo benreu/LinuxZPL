@@ -1425,7 +1425,7 @@ try:
     fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
     qt_main._config_path = lambda: blocked_dir / 'settings.ini'
     qt_main._fallback_config_path = lambda: fallback_path
-    zw.printer_address = '10.0.0.9'
+    zw._default_printer = ('10.0.0.9', zw.printer_port, zw.printer_dpi)
     zw._save_settings()
     written = _cfg.ConfigParser(); written.read(fallback_path)
     check("a settings file the user config directory won't take is written to the project fallback instead",
@@ -1447,8 +1447,8 @@ qt_main._config_path = lambda: session_path
 qt_main._fallback_config_path = lambda: session_path
 try:
     zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.50', 9100, 203
-    zw._save_settings()
     zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+    zw._save_settings()
 
     real_dialog = qt_dialogs.printer_settings_dialog
     qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
@@ -1491,6 +1491,69 @@ try:
     written = _cfg.ConfigParser(); written.read(session_path)
     check("while Default Printer does persist the new address",
           written.get('printer', 'address', fallback=None) == '10.0.0.5',
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    qt_main._config_path = real_config_path
+    qt_main._fallback_config_path = real_fallback_path
+
+# --- quitting must not promote an active session override to the default ---
+# closeEvent calls _save_settings() only to persist window geometry, but that
+# used to re-save whichever printer was active, silently adopting a session
+# override as the new default the moment the app quit.
+quit_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+qt_main._config_path = lambda: quit_path
+qt_main._fallback_config_path = lambda: quit_path
+try:
+    zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.70', 9100, 203
+    zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+    zw._save_settings()
+
+    real_dialog = qt_dialogs.printer_settings_dialog
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203)
+    try:
+        zw.on_session_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+
+    # Stand in for what closeEvent does: it never touches _default_printer,
+    # it just calls _save_settings() again on the way out.
+    zw._save_settings()
+    written = _cfg.ConfigParser(); written.read(quit_path)
+    check("quitting with a session override active does not promote it to the default",
+          written.get('printer', 'address', fallback=None) == '192.168.1.70',
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    qt_main._config_path = real_config_path
+    qt_main._fallback_config_path = real_fallback_path
+
+# --- Label Settings persists its own DPI, never a session-overridden address
+label_settings_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+qt_main._config_path = lambda: label_settings_path
+qt_main._fallback_config_path = lambda: label_settings_path
+try:
+    zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.80', 9100, 203
+    zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+    zw._save_settings()
+
+    real_dialog = qt_dialogs.printer_settings_dialog
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203)
+    try:
+        zw.on_session_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+
+    qt_dialogs.ask_dpi_rescale = lambda *a, **k: 'keep'
+    zw.apply_label_settings(900, 600, 300, 3.0, 2.0)
+
+    check("Label Settings updates the persisted default's DPI",
+          zw._default_printer[2] == 300, zw._default_printer)
+    check("but leaves the persisted default's address alone",
+          zw._default_printer[0] == '192.168.1.80', zw._default_printer)
+
+    written = _cfg.ConfigParser(); written.read(label_settings_path)
+    check("the settings file reflects the new DPI but the original, non-overridden address",
+          (written.get('printer', 'address', fallback=None),
+           written.get('printer', 'dpi', fallback=None)) == ('192.168.1.80', '300'),
           dict(written['printer']) if written.has_section('printer') else None)
 finally:
     qt_main._config_path = real_config_path

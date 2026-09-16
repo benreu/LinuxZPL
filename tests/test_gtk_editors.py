@@ -343,7 +343,7 @@ fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 gtk_main._config_path = lambda: blocked_dir / 'settings.ini'
 gtk_main._fallback_config_path = lambda: fallback_path
 try:
-    window.printer_address = '10.0.0.9'
+    window._default_printer = ('10.0.0.9', window.printer_port, window.printer_dpi)
     window._save_settings()
     written = configparser.ConfigParser(); written.read(fallback_path)
     check("a settings file the user config directory won't take is written to the project fallback instead",
@@ -365,8 +365,8 @@ gtk_main._config_path = lambda: session_path
 gtk_main._fallback_config_path = lambda: session_path
 try:
     window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.50', 9100, 203
-    window._save_settings()
     window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+    window._save_settings()
 
     real_dialog = gtk_main._printer_picker_dialog
     gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
@@ -409,6 +409,74 @@ try:
     written = configparser.ConfigParser(); written.read(session_path)
     check("while Default Printer does persist the new address",
           written.get('printer', 'address', fallback=None) == '10.0.0.5',
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+
+# --- quitting must not promote an active session override to the default ---
+# close_app calls _save_settings() only to persist window geometry, but that
+# used to re-save whichever printer was active, silently adopting a session
+# override as the new default the moment the app quit.
+quit_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: quit_path
+gtk_main._fallback_config_path = lambda: quit_path
+try:
+    window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.70', 9100, 203
+    window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+    window._save_settings()
+
+    real_dialog = gtk_main._printer_picker_dialog
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203)
+    try:
+        window.on_session_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+
+    # Stand in for what close_app does: it never touches _default_printer,
+    # it just calls _save_settings() again on the way out.
+    window._save_settings()
+    written = configparser.ConfigParser(); written.read(quit_path)
+    check("quitting with a session override active does not promote it to the default",
+          written.get('printer', 'address', fallback=None) == '192.168.1.70',
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+
+# --- Label Settings persists its own DPI, never a session-overridden address
+label_settings_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: label_settings_path
+gtk_main._fallback_config_path = lambda: label_settings_path
+try:
+    window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.80', 9100, 203
+    window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+    window._save_settings()
+
+    real_dialog = gtk_main._printer_picker_dialog
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203)
+    try:
+        window.on_session_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+
+    # Take the Keep Dots branch without a real dialog, the same trick
+    # conformance_driver.py uses.
+    window._offer_dpi_rescale = \
+        lambda loaded_dpi=_wf._FROM_DOCUMENT: _wf.reconcile_dpi(
+            window.design_canvas.document, window.printer_dpi,
+            lambda *a: 'keep', file_dpi=loaded_dpi)
+    window.apply_label_settings(900, 600, 300, 3.0, 2.0)
+
+    check("Label Settings updates the persisted default's DPI",
+          window._default_printer[2] == 300, window._default_printer)
+    check("but leaves the persisted default's address alone",
+          window._default_printer[0] == '192.168.1.80', window._default_printer)
+
+    written = configparser.ConfigParser(); written.read(label_settings_path)
+    check("the settings file reflects the new DPI but the original, non-overridden address",
+          (written.get('printer', 'address', fallback=None),
+           written.get('printer', 'dpi', fallback=None)) == ('192.168.1.80', '300'),
           dict(written['printer']) if written.has_section('printer') else None)
 finally:
     gtk_main._config_path = real_config_path

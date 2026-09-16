@@ -1319,9 +1319,15 @@ class ZPLViewerWindow(Gtk.Window):
                 parser.read(path)
                 if not parser.has_section('printer'):
                     parser.add_section('printer')
-                parser.set('printer', 'address', self.printer_address)
-                parser.set('printer', 'port', str(self.printer_port))
-                parser.set('printer', 'dpi', str(self.printer_dpi))
+                # The persisted default, not self.printer_address/_port/_dpi:
+                # those are whatever is active for printing right now, which a
+                # session override (Printer Settings) deliberately changes
+                # without this ever running. Only Default Printer and Label
+                # Settings are allowed to move self._default_printer, and they
+                # do so before calling this.
+                parser.set('printer', 'address', self._default_printer[0])
+                parser.set('printer', 'port', str(self._default_printer[1]))
+                parser.set('printer', 'dpi', str(self._default_printer[2]))
                 if not parser.has_section('label'):
                     parser.add_section('label')
                 # Inches, not dots: dots only mean a size once a resolution is
@@ -1360,8 +1366,8 @@ class ZPLViewerWindow(Gtk.Window):
         self.printer_address, self.printer_port, new_dpi = result
         old_dpi = self.printer_dpi
         self.printer_dpi = new_dpi
-        self._save_settings()
         self._default_printer = (self.printer_address, self.printer_port, self.printer_dpi)
+        self._save_settings()
         self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
         if self.printer_dpi != old_dpi:
             # Pointing at a printer with a different head changes what the
@@ -1564,6 +1570,10 @@ class ZPLViewerWindow(Gtk.Window):
         """
         old_dpi = self.printer_dpi
         self.printer_dpi = dpi
+        # Only the DPI slot of the default moves - address/port stay whatever
+        # the persisted default already was, so a session override on those
+        # (Printer Settings) survives a Label Settings visit untouched.
+        self._default_printer = (self._default_printer[0], self._default_printer[1], dpi)
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.design_canvas.document.transform = transform
