@@ -1788,11 +1788,6 @@ class PrinterObjectsDialog(QDialog):
         spec = self._selected_spec()
         if spec is None:
             return
-        if printer_objects.retrieval_known_unsupported(self._address, self._port):
-            show_error(self, "This printer does not support retrieving "
-                             "stored files (it did not answer an earlier "
-                             "attempt this session).")
-            return
         self._status.setText(f"Retrieving {spec}...")
         try:
             data = printer_objects.download_printer_object(

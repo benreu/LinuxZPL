@@ -23,7 +23,7 @@ name normalised the wrong way silently stops matching the real object.
 """
 
 import re
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional
 
 from . import printer_io
 from .graphic_store import split_device_spec
@@ -77,7 +77,7 @@ def query_printer_objects(address: str, port: int,
 
 
 def delete_printer_object(address: str, port: int, raw_spec: str,
-                          timeout: float = 10) -> None:
+                          timeout: float = 5) -> None:
     """Delete any object from the printer via ^ID - the same shape
     fonts.delete_printer_font and graphic_store.delete_printer_graphic
     already send under their own names, and extension-agnostic, so no
@@ -101,29 +101,20 @@ class ObjectNotRetrievable(OSError):
     """The printer accepted the connection but never answered file.type.
 
     Distinct from a plain connection failure (refused, timed out connecting,
-    unreachable host) so a caller can tell "this printer does not implement
-    retrieval" - confirmed on at least one real unit, whose firmware also
-    ignores a bare SGD getvar with no file.type involved at all - from a
-    one-off network hiccup that a retry might fix.
+    unreachable host) so a caller can report "this object could not be
+    retrieved" precisely - confirmed on at least one real unit, whose
+    firmware answers file.type with total silence for a .TTF specifically,
+    to protect font distribution rights, while other objects (e.g. a .GRF)
+    download fine. Not assumed to mean every other object on the same
+    printer will fail too, so it carries no session-wide state: each
+    retrieval is judged only on its own reply, with a short timeout (see
+    download_printer_object) so a printer that is going to stay silent does
+    so quickly rather than tying up the caller.
     """
 
 
-# (address, port) pairs that have already failed to answer a retrieval this
-# session. Checked before every attempt so a printer that does not implement
-# file.type - a printer-wide fact, not a per-object one - is not asked again
-# for every other font or object a user happens to click on. In-memory only,
-# like every other printer-response cache in this app: a fresh run asks
-# again, in case of a firmware update or a different printer at the address.
-_unsupported_retrieval: Set[Tuple[str, int]] = set()
-
-
-def retrieval_known_unsupported(address: str, port: int) -> bool:
-    """Whether this printer has already failed to answer a retrieval."""
-    return (address, port) in _unsupported_retrieval
-
-
 def download_printer_object(address: str, port: int, raw_spec: str,
-                            timeout: float = 30) -> bytes:
+                            timeout: float = 5) -> bytes:
     """Fetch `raw_spec`'s raw bytes from the printer, verbatim.
 
     Sent via the file.type Set/Get/Do command - `! U1 setvar "file.type"
@@ -136,16 +127,17 @@ def download_printer_object(address: str, port: int, raw_spec: str,
     reader for. Set/Get/Do commands are their own small command language,
     sent standalone rather than wrapped in ^XA/^XZ, the same way
     delete_printer_object's sibling commands (file.dir, file.delete) are
-    shown in the manual. Raises ObjectNotRetrievable on an empty reply -
-    not every printer answers this command, confirmed live rather than
-    assumed - and records the printer as such for retrieval_known_unsupported.
+    shown in the manual. Raises ObjectNotRetrievable on an empty reply - not
+    every object answers this command, confirmed live rather than assumed
+    (see ObjectNotRetrievable) - which is why the default timeout is short:
+    a real reply arrives quickly, so there is little to gain from waiting
+    longer for one that never comes.
     """
     device, name, ext = split_device_spec(raw_spec)
     payload = (f'! U1 setvar "file.type" "{device}:{name}.{ext}"'
               '\r\n').encode('ascii')
     reply = printer_io.send(address, port, payload, timeout, read_reply=True)
     if not reply:
-        _unsupported_retrieval.add((address, port))
         raise ObjectNotRetrievable(f"No reply retrieving {raw_spec}")
     return reply
 
@@ -175,6 +167,6 @@ def build_object_upload(name: str, ext: str, data: bytes) -> bytes:
 
 
 def upload_printer_object(address: str, port: int, name: str, ext: str,
-                          data: bytes, timeout: float = 30) -> None:
+                          data: bytes, timeout: float = 5) -> None:
     """Store `data` on the printer as E:name.ext. Raises on failure."""
     printer_io.send(address, port, build_object_upload(name, ext, data), timeout)

@@ -1837,12 +1837,6 @@ class ZPLViewerWindow(Gtk.Window):
             spec = selected_entry()
             if spec is None:
                 return
-            if printer_objects.retrieval_known_unsupported(
-                    self.printer_address, self.printer_port):
-                self.show_error_dialog(
-                    "This printer does not support retrieving stored files "
-                    "(it did not answer an earlier attempt this session).")
-                return
             status.set_text(f"Retrieving {spec}...")
             try:
                 data = printer_objects.download_printer_object(

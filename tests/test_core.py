@@ -2421,6 +2421,48 @@ check("build_object_upload(): case preserved, not forced to upper",
 check("build_object_upload(): the data itself follows the header verbatim",
       obj_payload.endswith(b'hello'), obj_payload)
 
+# printer_objects.download_printer_object(): a printer answering a .TTF
+# retrieval with total silence (blocked to protect font distribution
+# rights - see zplcore/fonts.py) must not be treated as broken for every
+# other object afterward - each retrieval is judged on its own reply, and
+# every request in this module uses a short (5s) timeout so a silent one
+# fails fast rather than blocking or tying up the caller.
+import inspect
+from zplcore import printer_io as zpl_printer_io
+
+_dpo_calls = []
+def _fake_dpo_send(address, port, payload, timeout, read_reply=False):
+    _dpo_calls.append((address, port, payload, timeout, read_reply))
+    return b'' if b'FIRST.TTF' in payload else b'second-object-bytes'
+
+_real_send = zpl_printer_io.send
+zpl_printer_io.send = _fake_dpo_send
+try:
+    _dpo_raised = False
+    try:
+        printer_objects.download_printer_object('10.0.0.1', 9100, 'E:FIRST.TTF')
+    except printer_objects.ObjectNotRetrievable:
+        _dpo_raised = True
+    _dpo_second = printer_objects.download_printer_object(
+        '10.0.0.1', 9100, 'E:SECOND.GRF')
+finally:
+    zpl_printer_io.send = _real_send
+
+check("download_printer_object(): an empty reply raises ObjectNotRetrievable",
+      _dpo_raised, _dpo_raised)
+check("download_printer_object(): a later object is still attempted, not skipped",
+      len(_dpo_calls) == 2, _dpo_calls)
+check("download_printer_object(): the second attempt succeeds with real data",
+      _dpo_second == b'second-object-bytes', _dpo_second)
+check("download_printer_object(): every attempt uses the short 5s timeout",
+      _dpo_calls[0][3] == 5 and _dpo_calls[1][3] == 5, _dpo_calls)
+check("delete_printer_object(): defaults to the same 5s timeout",
+      inspect.signature(printer_objects.delete_printer_object)
+      .parameters['timeout'].default == 5)
+check("upload_printer_object(): defaults to the same 5s timeout",
+      inspect.signature(printer_objects.upload_printer_object)
+      .parameters['timeout'].default == 5)
+
 
 # --- ^SN, ^SF, ^FC: the other ways a printer supplies a field's value -------
 # ^SN (serialization) and ^FC (real-time clock) used to be dropped entirely,
