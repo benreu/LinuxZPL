@@ -23,7 +23,7 @@ name normalised the wrong way silently stops matching the real object.
 """
 
 import re
-from typing import List, Optional
+from typing import List, Optional, Set, Tuple
 
 from . import printer_io
 from .graphic_store import split_device_spec
@@ -97,6 +97,31 @@ def delete_printer_object(address: str, port: int, raw_spec: str,
     printer_io.send(address, port, payload, timeout)
 
 
+class ObjectNotRetrievable(OSError):
+    """The printer accepted the connection but never answered file.type.
+
+    Distinct from a plain connection failure (refused, timed out connecting,
+    unreachable host) so a caller can tell "this printer does not implement
+    retrieval" - confirmed on at least one real unit, whose firmware also
+    ignores a bare SGD getvar with no file.type involved at all - from a
+    one-off network hiccup that a retry might fix.
+    """
+
+
+# (address, port) pairs that have already failed to answer a retrieval this
+# session. Checked before every attempt so a printer that does not implement
+# file.type - a printer-wide fact, not a per-object one - is not asked again
+# for every other font or object a user happens to click on. In-memory only,
+# like every other printer-response cache in this app: a fresh run asks
+# again, in case of a firmware update or a different printer at the address.
+_unsupported_retrieval: Set[Tuple[str, int]] = set()
+
+
+def retrieval_known_unsupported(address: str, port: int) -> bool:
+    """Whether this printer has already failed to answer a retrieval."""
+    return (address, port) in _unsupported_retrieval
+
+
 def download_printer_object(address: str, port: int, raw_spec: str,
                             timeout: float = 30) -> bytes:
     """Fetch `raw_spec`'s raw bytes from the printer, verbatim.
@@ -111,15 +136,17 @@ def download_printer_object(address: str, port: int, raw_spec: str,
     reader for. Set/Get/Do commands are their own small command language,
     sent standalone rather than wrapped in ^XA/^XZ, the same way
     delete_printer_object's sibling commands (file.dir, file.delete) are
-    shown in the manual. Raises OSError on an empty reply, the same shape
-    graphic_store.retrieve_printer_graphic already uses.
+    shown in the manual. Raises ObjectNotRetrievable on an empty reply -
+    not every printer answers this command, confirmed live rather than
+    assumed - and records the printer as such for retrieval_known_unsupported.
     """
     device, name, ext = split_device_spec(raw_spec)
     payload = (f'! U1 setvar "file.type" "{device}:{name}.{ext}"'
               '\r\n').encode('ascii')
     reply = printer_io.send(address, port, payload, timeout, read_reply=True)
     if not reply:
-        raise OSError(f"No reply retrieving {raw_spec}")
+        _unsupported_retrieval.add((address, port))
+        raise ObjectNotRetrievable(f"No reply retrieving {raw_spec}")
     return reply
 
 

@@ -12,7 +12,6 @@ import os
 import base64
 import configparser
 import socket
-import threading
 from pathlib import Path
 from zplcore import fields as zpl_fields
 from zplcore import fonts as zpl_fonts
@@ -1259,16 +1258,6 @@ class ZPLViewerWindow(Gtk.Window):
                     label += " \u2014 detected on this printer"
                 resident_store.append([label])
 
-        closed = {'value': False}
-        downloads = set()  # names currently being fetched from the printer
-
-        def current_font_name():
-            _model, treeiter = view.get_selection().get_selected()
-            if treeiter is None:
-                return None
-            row = store.get_path(treeiter).get_indices()[0]
-            return font_names[row] if 0 <= row < len(font_names) else None
-
         def show_preview(path):
             zpl_fonts.register_app_font(path)
             family = zpl_fonts.family_for_file(path)
@@ -1276,30 +1265,6 @@ class ZPLViewerWindow(Gtk.Window):
             preview.set_markup(
                 f'<span font_desc="{GLib.markup_escape_text(family)} 16">'
                 f'{escaped}</span>')
-
-        def on_download_done(name, path, error):
-            downloads.discard(name)
-            if closed['value'] or current_font_name() != name:
-                return False
-            if error is not None:
-                preview.set_markup(
-                    f"<i>(could not download {GLib.markup_escape_text(name)} "
-                    f"from the printer: "
-                    f"{GLib.markup_escape_text(str(error))})</i>")
-            else:
-                show_preview(path)
-            return False
-
-        def download_in_background(name):
-            def worker():
-                try:
-                    path = zpl_fonts.download_font_for_preview(
-                        self.printer_address, self.printer_port, name)
-                except Exception as e:
-                    GLib.idle_add(on_download_done, name, None, e)
-                    return
-                GLib.idle_add(on_download_done, name, path, None)
-            threading.Thread(target=worker, daemon=True).start()
 
         def update_preview(selection):
             model_, treeiter = selection.get_selected()
@@ -1311,17 +1276,20 @@ class ZPLViewerWindow(Gtk.Window):
                 preview.set_text("")
                 return
             name = font_names[row]
-            path = (zpl_fonts.file_for_printer_name(name)
-                   or zpl_fonts.cached_download_path(name))
+            path = zpl_fonts.file_for_printer_name(name)
             if path:
                 show_preview(path)
                 return
+            # Printers won't hand a font's bytes back once uploaded -
+            # confirmed live (SGD retrieval gets no reply at all, and a
+            # printer's own FTP server, where present, answers with a plain
+            # 550 Permission denied for a .TTF while other stored files
+            # download fine) - so there is nothing to try here, only this
+            # to say.
             preview.set_markup(
-                f"Downloading {GLib.markup_escape_text(name)} from the "
-                f"printer for preview\u2026")
-            if name not in downloads:
-                downloads.add(name)
-                download_in_background(name)
+                "<i>(preview unavailable \u2014 printers block "
+                "downloading fonts to protect font distribution "
+                "rights)</i>")
 
         def refresh(*_a):
             store.clear()
@@ -1388,7 +1356,6 @@ class ZPLViewerWindow(Gtk.Window):
         content.show_all()
         refresh()
         dialog.run()
-        closed['value'] = True
         dialog.destroy()
 
     def _ask_device_spec(self, parent):
@@ -1863,10 +1830,22 @@ class ZPLViewerWindow(Gtk.Window):
             spec = selected_entry()
             if spec is None:
                 return
+            if printer_objects.retrieval_known_unsupported(
+                    self.printer_address, self.printer_port):
+                self.show_error_dialog(
+                    "This printer does not support retrieving stored files "
+                    "(it did not answer an earlier attempt this session).")
+                return
             status.set_text(f"Retrieving {spec}...")
             try:
                 data = printer_objects.download_printer_object(
                     self.printer_address, self.printer_port, spec)
+            except printer_objects.ObjectNotRetrievable:
+                self.show_error_dialog(
+                    "This printer does not support retrieving stored files "
+                    "(no reply to the retrieval command).")
+                refresh()
+                return
             except Exception as e:
                 self.show_error_dialog(f"Could not retrieve {spec}: {e}")
                 refresh()

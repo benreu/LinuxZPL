@@ -13,7 +13,7 @@ from typing import Optional
 
 from PIL import Image as PILImage
 
-from PySide2.QtCore import Qt, QThread, Signal
+from PySide2.QtCore import Qt
 from PySide2.QtGui import QFont, QFontMetrics, QPixmap
 from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
@@ -1269,31 +1269,6 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
     return new_address, port_spin.value(), _dpi_from(dpi_combo, dpi)
 
 
-class _FontDownloadThread(QThread):
-    """Fetches one font's bytes from the printer off the UI thread.
-
-    A font with no local match still has to come from somewhere for a
-    preview to be more than a guess, and the only place left is the printer
-    itself - a full network round trip that would otherwise freeze the
-    dialog for the length of the call, the same as any other printer_io.send.
-    """
-    done_ok = Signal(str, str)   # name, local path
-    done_err = Signal(str, str)  # name, message
-
-    def __init__(self, address: str, port: int, name: str):
-        super().__init__()
-        self._address, self._port, self._name = address, port, name
-
-    def run(self):
-        try:
-            path = zpl_fonts.download_font_for_preview(
-                self._address, self._port, self._name)
-        except Exception as e:
-            self.done_err.emit(self._name, str(e))
-            return
-        self.done_ok.emit(self._name, path)
-
-
 class PrinterFontsDialog(QDialog):
     """The fonts stored on the printer, with upload, delete and refresh, plus
     a read-only reference list of the printer's built-in resident fonts."""
@@ -1305,9 +1280,6 @@ class PrinterFontsDialog(QDialog):
         self._address, self._port = address, port
         self._on_uploaded = on_uploaded
         self._font_names = []
-        self._downloads = {}  # name -> _FontDownloadThread in flight
-        self._closed = False
-        self.finished.connect(lambda _r: setattr(self, '_closed', True))
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("<b>Uploaded Fonts</b>"))
@@ -1389,32 +1361,24 @@ class PrinterFontsDialog(QDialog):
                 label += " — detected on this printer"
             self._resident_list.addItem(label)
 
-    def _current_font_name(self):
-        row = self._list.currentRow()
-        return self._font_names[row] if 0 <= row < len(self._font_names) else None
-
     def _update_preview(self, row: int):
         if not (0 <= row < len(self._font_names)):
             self._preview.clear()
             return
         name = self._font_names[row]
-        path = (zpl_fonts.file_for_printer_name(name)
-               or zpl_fonts.cached_download_path(name))
+        path = zpl_fonts.file_for_printer_name(name)
         if path:
             self._show_preview(path)
             return
-        self._preview.setText(f"Downloading {name} from the printer for "
-                              f"preview…")
+        # Printers won't hand a font's bytes back once uploaded - confirmed
+        # live (SGD retrieval gets no reply at all, and a printer's own FTP
+        # server, where present, answers with a plain 550 Permission denied
+        # for a .TTF while other stored files download fine) - so there is
+        # nothing to try here, only this to say.
+        self._preview.setText(
+            "(preview unavailable — printers block downloading fonts to "
+            "protect font distribution rights)")
         self._preview.setFont(QFont())
-        if name in self._downloads:
-            return  # already fetching it - let that one finish
-        thread = _FontDownloadThread(self._address, self._port, name)
-        thread.done_ok.connect(self._on_download_ok)
-        thread.done_err.connect(self._on_download_err)
-        thread.finished.connect(lambda n=name: self._downloads.pop(n, None))
-        thread.finished.connect(thread.deleteLater)
-        self._downloads[name] = thread
-        thread.start()
 
     def _show_preview(self, path: str):
         zpl_fonts.register_app_font(path)
@@ -1422,16 +1386,6 @@ class PrinterFontsDialog(QDialog):
         font.setPointSize(16)
         self._preview.setText("The quick brown fox 0123456789")
         self._preview.setFont(font)
-
-    def _on_download_ok(self, name: str, path: str):
-        if not self._closed and self._current_font_name() == name:
-            self._show_preview(path)
-
-    def _on_download_err(self, name: str, message: str):
-        if not self._closed and self._current_font_name() == name:
-            self._preview.setText(
-                f"(could not download {name} from the printer: {message})")
-            self._preview.setFont(QFont())
 
     def _on_upload(self):
         family, path = choose_font_family(self, title="Upload Font to Printer")
@@ -1771,10 +1725,21 @@ class PrinterObjectsDialog(QDialog):
         spec = self._selected_spec()
         if spec is None:
             return
+        if printer_objects.retrieval_known_unsupported(self._address, self._port):
+            show_error(self, "This printer does not support retrieving "
+                             "stored files (it did not answer an earlier "
+                             "attempt this session).")
+            return
         self._status.setText(f"Retrieving {spec}...")
         try:
             data = printer_objects.download_printer_object(
                 self._address, self._port, spec)
+        except printer_objects.ObjectNotRetrievable:
+            show_error(self, "This printer does not support retrieving "
+                             "stored files (no reply to the retrieval "
+                             "command).")
+            self.refresh()
+            return
         except Exception as e:
             show_error(self, f"Could not retrieve {spec}: {e}")
             self.refresh()
