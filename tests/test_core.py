@@ -881,6 +881,23 @@ for make, describe in (
 check("^FR is modelled, not reported as an unsupported command",
       '^FR' not in workflow.unsupported_commands(was_reversed.to_zpl()))
 
+# ^FR must sit immediately before the command it reverses - a real printer
+# was seen not to honour it at all when it sat right after ^FO instead, ahead
+# of the field's own setup commands.
+for make, describe, marker in (
+        (lambda: TextElement(0, 0, 'Reversed'), 'text', '^FD'),
+        (lambda: BarcodeElement(0, 0, 80, '12345'), 'barcode', '^FD')):
+    el = make()
+    el.reverse_print = True
+    zpl = el.to_zpl()
+    check(f"^FR immediately precedes {marker} on a {describe} element",
+          f'^FR\n{marker}' in zpl, zpl)
+
+numbered = TextElement(0, 0, field_number=1)
+numbered.reverse_print = True
+check("^FR immediately precedes ^FN on a numbered text element",
+      '^FR\n^FN' in numbered.to_zpl(), numbered.to_zpl())
+
 # --- wrapped text (^FB) -----------------------------------------------------
 
 # the editor's line breaks and ZPL's are the same thing, spelled differently

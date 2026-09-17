@@ -372,13 +372,16 @@ class TextElement(DesignElement):
         """Convert to ZPL commands."""
         effective_font = self.printer_font_name or printer_font_name
         turn = self.orientation or 'N'
-        zpl = self.origin_zpl(offset) + self.reverse_zpl()
+        zpl = self.origin_zpl(offset)
         if effective_font:
             zpl += f"^A@{turn},{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
         else:
             zpl += f"^A{self.font_code}{turn},{self.font_height},{self.font_width}\n"
         if self.block is not None:
             zpl += self.block.to_zpl() + "\n"
+        # ^FR immediately before the data it reverses, not right after ^FO -
+        # the working convention, and the one place this differed from it.
+        zpl += self.reverse_zpl()
         zpl += self.data_zpl()
         return zpl
 
@@ -678,7 +681,7 @@ class BarcodeElement(DesignElement):
         #
         # The height goes on the barcode command itself, which is why ^BY's
         # own h is read but never written: there is nowhere for it to disagree.
-        preamble = (self.origin_zpl(offset) + self.reverse_zpl() +
+        preamble = (self.origin_zpl(offset) +
                    f"{self._by_zpl()}\n{self._font_zpl()}")
         if self.symbology == 'code39':
             # ^B3 spells its own check digit right after orientation, before
@@ -691,7 +694,9 @@ class BarcodeElement(DesignElement):
             letter = self.COMMANDS[self.symbology]
             trailing = self._trailing_zpl(self.TRAILING_OPTIONS[self.symbology])
             command = f"^{letter}{self.orientation},{self.bar_height}{trailing}\n"
-        return preamble + command + self.data_zpl()
+        # ^FR immediately before the data it reverses, not right after ^FO -
+        # the working convention, and the one place this differed from it.
+        return preamble + command + self.reverse_zpl() + self.data_zpl()
 
 
 # The choices both frontends offer for a barcode, as (label, value). Here
@@ -878,10 +883,13 @@ class ImageElement(DesignElement):
         img_sized.convert('RGB').save(preview_bio, format='JPEG', quality=85, optimize=True)
         b64_preview = _b64.b64encode(preview_bio.getvalue()).decode('ascii')
 
-        zpl = self.origin_zpl(offset) + self.reverse_zpl()
+        zpl = self.origin_zpl(offset)
         zpl += f"^FXDESIGNER_PREVIEW:{b64_preview}\n"
         if self.image_path:
             zpl += f"^FXDESIGNER_PATH:{self.image_path}\n"
+        # ^FR immediately before ^GF, not right after ^FO - the comment
+        # lines above carry no ink and must not sit between the two.
+        zpl += self.reverse_zpl()
         zpl += f"^GFA,{total_bytes},{total_bytes},{bytes_per_row},{data}\n"
         zpl += f"^FS\n"
         return zpl
