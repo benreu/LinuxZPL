@@ -331,6 +331,8 @@ class ZPLViewerWindow(Gtk.Window):
         self.printer_address = DEFAULT_PRINTER_ADDRESS
         self.printer_port = DEFAULT_PRINTER_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        # The one non-modal printer window - see on_printer_console_clicked.
+        self.printer_console_window = None
         # The size last chosen in Label Settings, also persisted. Held in
         # inches because the resolution it converts with is itself a setting
         # that can change between sessions.
@@ -1908,17 +1910,33 @@ class ZPLViewerWindow(Gtk.Window):
         getvar/setvar not wrapped by any dialog. Text is sent to the printer
         exactly as typed, no ^XA/^XZ wrapping added, so both immediate
         commands and full formats work unchanged.
-        """
-        dialog = Gtk.Dialog(title="Printer Console", parent=self, flags=0)
-        dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
-        dialog.set_default_size(480, 420)
 
-        content = dialog.get_content_area()
-        content.set_spacing(8)
+        A plain top-level Gtk.Window, not a Gtk.Dialog run modally: unlike
+        the other printer managers, this one is meant to stay open while the
+        user keeps working in the main window (watching status while editing
+        a label, say), so it is shown with show_all() rather than blocking
+        on run(). Only one is ever open at a time - a second click presents
+        the existing window instead of stacking another one. on_send reads
+        self.printer_address/self.printer_port fresh on every send rather
+        than a value captured at open time, so a printer changed via Printer
+        Settings while this window is open takes effect immediately.
+        """
+        if self.printer_console_window is not None:
+            self.printer_console_window.present()
+            return
+
+        window = Gtk.Window(title="Printer Console")
+        window.set_transient_for(self)
+        window.set_destroy_with_parent(True)
+        window.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        window.set_default_size(480, 420)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         content.set_margin_start(8)
         content.set_margin_end(8)
         content.set_margin_top(8)
         content.set_margin_bottom(8)
+        window.add(content)
 
         input_view = Gtk.TextView()
         input_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
@@ -1931,7 +1949,9 @@ class ZPLViewerWindow(Gtk.Window):
 
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         send_btn = Gtk.Button(label="Send")
+        close_btn = Gtk.Button(label="Close")
         buttons.pack_start(send_btn, False, False, 0)
+        buttons.pack_start(close_btn, False, False, 0)
         content.pack_start(buttons, False, False, 0)
 
         log_view = Gtk.TextView()
@@ -1964,10 +1984,15 @@ class ZPLViewerWindow(Gtk.Window):
             input_buf.set_text("")
 
         send_btn.connect("clicked", on_send)
+        close_btn.connect("clicked", lambda _b: window.destroy())
 
-        content.show_all()
-        dialog.run()
-        dialog.destroy()
+        def on_destroy(_w):
+            self.printer_console_window = None
+
+        window.connect("destroy", on_destroy)
+
+        self.printer_console_window = window
+        window.show_all()
 
     def _offer_dpi_rescale(self, loaded_dpi=workflow._FROM_DOCUMENT):
         """If the file was drawn for another resolution, offer to rescale it.

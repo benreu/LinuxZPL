@@ -1779,13 +1779,21 @@ class PrinterConsoleDialog(QDialog):
     wrapped by any dialog. Text is sent to the printer exactly as typed, no
     ^XA/^XZ wrapping added, so both immediate commands and full formats work
     unchanged.
+
+    Shown non-modally (see on_printer_console in qtui/window.py) so the main
+    window stays usable while this stays open. That means it can outlive a
+    printer change made elsewhere, so address/port are never copied at
+    construction - _on_send reads them from `parent` fresh on every send.
+    WA_DeleteOnClose ensures Close (or the window's own close button) really
+    tears the dialog down rather than leaving a hidden, stale instance.
     """
 
-    def __init__(self, parent, address: str, port: int):
+    def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("Printer Console")
         self.resize(480, 420)
-        self._address, self._port = address, port
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self._parent = parent
 
         layout = QVBoxLayout(self)
         self._input = QPlainTextEdit()
@@ -1812,7 +1820,8 @@ class PrinterConsoleDialog(QDialog):
         if not text.strip():
             return
         try:
-            reply = printer_io.send_command(self._address, self._port, text)
+            reply = printer_io.send_command(
+                self._parent.printer_address, self._parent.printer_port, text)
         except Exception as e:
             show_error(self, f"Could not send command: {e}")
             return

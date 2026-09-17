@@ -74,6 +74,8 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_address = DEFAULT_ADDRESS
         self.printer_port = DEFAULT_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        # The one non-modal printer window - see on_printer_console.
+        self.printer_console_dialog = None
         self.label_inches = DEFAULT_LABEL_INCHES
         self.saved_geometry = None
         self._load_settings()
@@ -734,9 +736,18 @@ class ZPLDesignerWindow(QMainWindow):
         dialog.exec_()
 
     def on_printer_console(self):
-        dialog = qt_dialogs.PrinterConsoleDialog(
-            self, self.printer_address, self.printer_port)
-        dialog.exec_()
+        # Non-modal and a singleton, unlike the other printer dialogs: this
+        # one is meant to stay open while the user keeps working elsewhere
+        # in the window, so a second click focuses it rather than stacking
+        # another one.
+        if self.printer_console_dialog is not None:
+            self.printer_console_dialog.raise_()
+            self.printer_console_dialog.activateWindow()
+            return
+        dialog = qt_dialogs.PrinterConsoleDialog(self)
+        dialog.destroyed.connect(lambda *_a: setattr(self, 'printer_console_dialog', None))
+        self.printer_console_dialog = dialog
+        dialog.show()
 
     # --- files ---------------------------------------------------------------
 
