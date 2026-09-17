@@ -40,8 +40,8 @@ _OBJECT_SPEC = re.compile(r'([A-Za-z0-9_\-]{1,8})\.([A-Za-z0-9_\-]{1,8})',
                           re.IGNORECASE)
 
 
-def query_printer_objects(address: str, port: int,
-                          timeout: float = 5) -> Optional[List[str]]:
+def query_printer_objects(address: str, port: int, timeout: float = 5,
+                          cancel=None) -> Optional[List[str]]:
     """Every object stored on the printer, across R:/E:/B:/A:/Z:, as
     'd:NAME.EXT', or None if it could not be asked.
 
@@ -60,7 +60,7 @@ def query_printer_objects(address: str, port: int,
         payload = f'^XA^HW{device}:*.*^XZ'.encode('ascii')
         try:
             reply = printer_io.send(address, port, payload, timeout,
-                                    read_reply=True)
+                                    read_reply=True, cancel=cancel)
         except OSError:
             if index == 0:
                 return None
@@ -77,7 +77,7 @@ def query_printer_objects(address: str, port: int,
 
 
 def delete_printer_object(address: str, port: int, raw_spec: str,
-                          timeout: float = 5) -> None:
+                          timeout: float = 5, cancel=None) -> None:
     """Delete any object from the printer via ^ID - the same shape
     fonts.delete_printer_font and graphic_store.delete_printer_graphic
     already send under their own names, and extension-agnostic, so no
@@ -94,7 +94,7 @@ def delete_printer_object(address: str, port: int, raw_spec: str,
     """
     device, name, ext = split_device_spec(raw_spec)
     payload = f"^XA^ID{device}:{name}.{ext}^FS^XZ".encode('ascii')
-    printer_io.send(address, port, payload, timeout)
+    printer_io.send(address, port, payload, timeout, cancel=cancel)
 
 
 class ObjectNotRetrievable(OSError):
@@ -114,7 +114,7 @@ class ObjectNotRetrievable(OSError):
 
 
 def download_printer_object(address: str, port: int, raw_spec: str,
-                            timeout: float = 5) -> bytes:
+                            timeout: float = 5, cancel=None) -> bytes:
     """Fetch `raw_spec`'s raw bytes from the printer, verbatim.
 
     Sent via the file.type Set/Get/Do command - `! U1 setvar "file.type"
@@ -136,7 +136,8 @@ def download_printer_object(address: str, port: int, raw_spec: str,
     device, name, ext = split_device_spec(raw_spec)
     payload = (f'! U1 setvar "file.type" "{device}:{name}.{ext}"'
               '\r\n').encode('ascii')
-    reply = printer_io.send(address, port, payload, timeout, read_reply=True)
+    reply = printer_io.send(address, port, payload, timeout, read_reply=True,
+                            cancel=cancel)
     if not reply:
         raise ObjectNotRetrievable(f"No reply retrieving {raw_spec}")
     return reply
@@ -167,6 +168,7 @@ def build_object_upload(name: str, ext: str, data: bytes) -> bytes:
 
 
 def upload_printer_object(address: str, port: int, name: str, ext: str,
-                          data: bytes, timeout: float = 5) -> None:
+                          data: bytes, timeout: float = 5, cancel=None) -> None:
     """Store `data` on the printer as E:name.ext. Raises on failure."""
-    printer_io.send(address, port, build_object_upload(name, ext, data), timeout)
+    printer_io.send(address, port, build_object_upload(name, ext, data), timeout,
+                    cancel=cancel)

@@ -2431,7 +2431,7 @@ import inspect
 from zplcore import printer_io as zpl_printer_io
 
 _dpo_calls = []
-def _fake_dpo_send(address, port, payload, timeout, read_reply=False):
+def _fake_dpo_send(address, port, payload, timeout, read_reply=False, cancel=None):
     _dpo_calls.append((address, port, payload, timeout, read_reply))
     return b'' if b'FIRST.TTF' in payload else b'second-object-bytes'
 
@@ -2462,6 +2462,179 @@ check("delete_printer_object(): defaults to the same 5s timeout",
 check("upload_printer_object(): defaults to the same 5s timeout",
       inspect.signature(printer_objects.upload_printer_object)
       .parameters['timeout'].default == 5)
+
+# printer_io.CancelToken / Cancelled: the one way a dialog abandons a call
+# that is out on a worker thread. Cancelled must not be an OSError, or the
+# query functions would turn a cancel into "printer unreachable".
+import socket, threading, time
+from zplcore import graphic_store as zpl_graphic_store
+
+check("Cancelled is not an OSError, so query_* can't swallow it",
+      not issubclass(zpl_printer_io.Cancelled, OSError))
+
+def _raise_cancelled(*a, **k):
+    raise zpl_printer_io.Cancelled("x")
+zpl_printer_io.send = _raise_cancelled
+try:
+    try:
+        _q = printer_objects.query_printer_objects('10.0.0.1', 9100)
+        _q_outcome = f"returned {_q!r}"
+    except zpl_printer_io.Cancelled:
+        _q_outcome = "raised Cancelled"
+finally:
+    zpl_printer_io.send = _real_send
+check("a cancel propagates out of query_printer_objects rather than becoming None",
+      _q_outcome == "raised Cancelled", _q_outcome)
+
+# cancel= is threaded through every wrapper the same way timeout= is.
+_fwd = []
+def _capture_send(address, port, payload, timeout, read_reply=False, cancel=None):
+    _fwd.append(cancel)
+    return b'~DGX,1,1,\r\n00'
+_sentinel = object()
+zpl_printer_io.send = _capture_send
+try:
+    printer_objects.download_printer_object('h', 1, 'E:A.B', cancel=_sentinel)
+    zpl_fonts.query_printer_fonts('h', 1, cancel=_sentinel)
+    zpl_graphic_store.delete_printer_graphic('h', 1, 'R:A.GRF', cancel=_sentinel)
+    zpl_printer_io.send_command('h', 1, '~HS', cancel=_sentinel)
+finally:
+    zpl_printer_io.send = _real_send
+check("cancel= reaches printer_io.send from objects, fonts, graphics and the console",
+      _fwd == [_sentinel] * 4, _fwd)
+
+# The real thing: a listener that accepts and never answers, cancelled from
+# another thread, must let send() out promptly with Cancelled - not after
+# its 10s timeout.
+_srv = socket.socket(); _srv.bind(('127.0.0.1', 0)); _srv.listen(1)
+_srv_port = _srv.getsockname()[1]
+_token = zpl_printer_io.CancelToken()
+_outcome = {}
+def _blocked_send():
+    try:
+        zpl_printer_io.send('127.0.0.1', _srv_port, b'hi', 10, read_reply=True,
+                            cancel=_token)
+        _outcome['r'] = 'returned'
+    except zpl_printer_io.Cancelled:
+        _outcome['r'] = 'cancelled'
+    except Exception as e:
+        _outcome['r'] = f'other {e!r}'
+_worker = threading.Thread(target=_blocked_send, daemon=True); _worker.start()
+_conn, _ = _srv.accept()
+_t0 = time.monotonic()
+while _token._sock is None and time.monotonic() - _t0 < 2:
+    time.sleep(0.01)
+_t0 = time.monotonic()
+_token.cancel()
+_worker.join(2)
+_took = time.monotonic() - _t0
+_conn.close(); _srv.close()
+check("cancel() unblocks a recv() stuck on a silent printer",
+      not _worker.is_alive() and _outcome.get('r') == 'cancelled', (_outcome, _took))
+check("and does so promptly, not after the timeout", _took < 1, f"{_took:.2f}s")
+
+# A token cancelled before the call never opens a socket: with nothing
+# listening, an attempt would surface as ConnectionRefusedError instead.
+_dead = socket.socket(); _dead.bind(('127.0.0.1', 0)); _dead_port = _dead.getsockname()[1]; _dead.close()
+_pre = zpl_printer_io.CancelToken(); _pre.cancel()
+try:
+    zpl_printer_io.send('127.0.0.1', _dead_port, b'x', 5, cancel=_pre)
+    _pre_outcome = 'returned'
+except zpl_printer_io.Cancelled:
+    _pre_outcome = 'Cancelled'
+except Exception as e:
+    _pre_outcome = type(e).__name__
+check("a pre-cancelled token raises Cancelled before connecting", _pre_outcome == 'Cancelled', _pre_outcome)
+
+# workflow's pre-print font check, now in three pieces the frontends chain:
+# what's missing (network), the prompt wording (pure), the uploads (network).
+class _FontDoc:
+    def __init__(self, sources): self._s = sources
+    def font_sources(self): return self._s
+_real_qpf, _real_upload = zpl_fonts.query_printer_fonts, zpl_fonts.upload_font
+try:
+    zpl_fonts.query_printer_fonts = lambda *a, **k: None
+    check("missing_printer_fonts(): None when the printer could not be asked",
+          workflow.missing_printer_fonts(_FontDoc({'ARIAL': '/a.ttf'}), 'h', 1) is None)
+    zpl_fonts.query_printer_fonts = lambda *a, **k: {'ARIAL'}
+    check("missing_printer_fonts(): nothing missing when the printer has them all",
+          workflow.missing_printer_fonts(_FontDoc({'arial': '/a.ttf'}), 'h', 1) == ({}, {}))
+    _m = workflow.missing_printer_fonts(_FontDoc({'ARIAL': '/a.ttf', 'ROBOTO': '/r.ttf', 'MYSTERY': None}), 'h', 1)
+    check("missing_printer_fonts(): missing vs uploadable (only those with a source file)",
+          _m == ({'ROBOTO': '/r.ttf', 'MYSTERY': None}, {'ROBOTO': '/r.ttf'}), _m)
+    _calls = []
+    def _fake_qpf(*a, **k):
+        _calls.append('asked'); return set()
+    zpl_fonts.query_printer_fonts = _fake_qpf
+    check("missing_printer_fonts(): a label with only built-in fonts never asks the printer",
+          workflow.missing_printer_fonts(_FontDoc({}), 'h', 1) == ({}, {}) and _calls == [], _calls)
+
+    _t, _d = workflow.font_problem_prompt(None)
+    check("font_problem_prompt(None): the could-not-ask wording",
+          'could not be asked' in _t and 'substitute' in _d, (_t, _d))
+    _t, _d = workflow.font_problem_prompt({'ROBOTO': '/r.ttf', 'MYSTERY': None})
+    check("font_problem_prompt(): lists each font, flagging the ones with no source",
+          'E:ROBOTO.TTF' in _d and 'E:MYSTERY.TTF   (source file unknown)' in _d, _d)
+
+    _uploaded, _progress = [], []
+    def _fake_upload(address, port, path, name, timeout=30, cancel=None):
+        _uploaded.append((name, path, cancel))
+    zpl_fonts.upload_font = _fake_upload
+    workflow.upload_fonts({'B': '/b', 'A': '/a'}, 'h', 1, _progress.append, cancel=_sentinel)
+    check("upload_fonts(): uploads each font in name order, reporting each, passing cancel through",
+          _uploaded == [('A', '/a', _sentinel), ('B', '/b', _sentinel)]
+          and _progress == ['Uploading E:A.TTF...', 'Uploading E:B.TTF...'], (_uploaded, _progress))
+    def _failing_upload(address, port, path, name, timeout=30, cancel=None):
+        raise OSError("boom")
+    zpl_fonts.upload_font = _failing_upload
+    try:
+        workflow.upload_fonts({'A': '/a'}, 'h', 1); _up_err = None
+    except OSError as e:
+        _up_err = str(e)
+    check("upload_fonts(): a failure names the font", _up_err == "Upload of A failed: boom", _up_err)
+    def _cancelled_upload(address, port, path, name, timeout=30, cancel=None):
+        raise zpl_printer_io.Cancelled("x")
+    zpl_fonts.upload_font = _cancelled_upload
+    try:
+        workflow.upload_fonts({'A': '/a'}, 'h', 1); _up_err = 'returned'
+    except zpl_printer_io.Cancelled:
+        _up_err = 'Cancelled'
+    except Exception as e:
+        _up_err = type(e).__name__
+    check("upload_fonts(): a cancel passes through, not reported as a failed upload",
+          _up_err == 'Cancelled', _up_err)
+finally:
+    zpl_fonts.query_printer_fonts, zpl_fonts.upload_font = _real_qpf, _real_upload
+
+# qtui.busy.BusyBar: the worker thread's result must land back on the GUI
+# thread, with the bar hidden again and the blocked buttons restored to the
+# state they had - not blindly enabled.
+from qtui.busy import BusyBar
+from PySide2.QtWidgets import QPushButton
+_bb_btn, _bb_off = QPushButton("a"), QPushButton("b")
+_bb_off.setEnabled(False)
+_bb_msgs, _bb_got = [], []
+_bb = BusyBar((_bb_btn, _bb_off), _bb_msgs.append)
+def _bb_work(cancel):
+    _bb.report("halfway")
+    return 42
+_bb.run(_bb_work, lambda r, e: _bb_got.append((r, e)))
+check("BusyBar.run(): shows the bar and disables the blocked buttons while out",
+      _bb.running and not _bb.isHidden() and not _bb_btn.isEnabled())
+_t0 = time.monotonic()
+while not _bb_got and time.monotonic() - _t0 < 3:
+    app.processEvents(); time.sleep(0.01)
+check("BusyBar.run(): the result comes back on the GUI thread",
+      _bb_got == [(42, None)], _bb_got)
+check("BusyBar.report(): progress text lands on the message target", _bb_msgs == ['halfway'], _bb_msgs)
+check("BusyBar: afterwards the bar hides and each button is restored to its prior state",
+      not _bb.running and _bb.isHidden() and _bb_btn.isEnabled() and not _bb_off.isEnabled())
+_bb_got.clear()
+_bb.run(lambda c: (_ for _ in ()).throw(ValueError("nope")), lambda r, e: _bb_got.append((r, type(e).__name__)))
+_t0 = time.monotonic()
+while not _bb_got and time.monotonic() - _t0 < 3:
+    app.processEvents(); time.sleep(0.01)
+check("BusyBar.run(): an exception in the worker arrives as `error`", _bb_got == [(None, 'ValueError')], _bb_got)
 
 
 # --- ^SN, ^SF, ^FC: the other ways a printer supplies a field's value -------
@@ -2859,7 +3032,7 @@ check("^PQ is no longer reported as something a save would drop",
 from zplcore import printer_io
 
 _sc_calls = []
-def _fake_send(address, port, payload, timeout, read_reply=False):
+def _fake_send(address, port, payload, timeout, read_reply=False, cancel=None):
     _sc_calls.append((address, port, payload, timeout, read_reply))
     return b'ok: \xff\xfe'  # deliberately invalid UTF-8
 

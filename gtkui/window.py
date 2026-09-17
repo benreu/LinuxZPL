@@ -11,7 +11,6 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 import os
 import base64
 import configparser
-import socket
 from pathlib import Path
 from zplcore import fields as zpl_fields
 from zplcore import fonts as zpl_fonts
@@ -30,6 +29,7 @@ from zplcore.model import (FRAME_COLOURS, ORIENTATIONS,
                            StoredGraphicElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
+from .busy import BusyBar
 from .canvas import DesignCanvas, to_pixbuf
 from PIL import Image
 import io
@@ -234,9 +234,12 @@ def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
         result_label.set_markup(
             f"<span foreground='{colour}'>"
             f"{GLib.markup_escape_text(text)}</span>")
-        # both steps block, so let the label paint before the next one
-        while Gtk.events_pending():
-            Gtk.main_iteration()
+
+    test_btn = Gtk.Button(label="Test Connection")
+    # OK is withheld while a probe is out so a half-finished one can't be
+    # accepted as an answer.
+    busy = BusyBar((test_btn, dialog.get_widget_for_response(Gtk.ResponseType.OK)),
+                   lambda text: set_result("gray", text))
 
     def on_test_clicked(btn):
         addr = address_entry.get_text().strip()
@@ -245,32 +248,37 @@ def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
             set_result("red", "Address is required")
             return
         set_result("gray", f"Connecting to {addr}:{prt}…")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)
-        try:
-            sock.connect((addr, prt))
-        except OSError as e:
-            set_result("red", f"✗ {e}")
-            return
-        finally:
-            sock.close()
-
         connected = f"✓ Connected to {addr}:{prt}"
-        set_result("gray", f"{connected} — asking its resolution…")
-        reported = zpl_fonts.query_printer_dpi(addr, prt)
-        if reported is None:
-            set_result("orange", f"{connected}, but it did not report its "
-                                 f"resolution; set the DPI manually.")
-        elif reported in zpl_fonts.SUPPORTED_DPI:
-            dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(reported))
-            set_result("green", f"{connected} — {reported} dpi")
-        else:
-            set_result("orange", f"{connected} — reports {reported} dpi, which "
-                                 f"the designer does not support.")
 
-    test_btn = Gtk.Button(label="Test Connection")
+        def probe(cancel):
+            # Connect and send nothing: reachability first, on its own, so
+            # an unreachable printer reads as that rather than as "no dpi".
+            printer_io.send(addr, prt, b'', 5, cancel=cancel)
+            busy.report(f"{connected} — asking its resolution…")
+            return zpl_fonts.query_printer_dpi(addr, prt, cancel=cancel)
+
+        def done(reported, error):
+            if isinstance(error, printer_io.Cancelled):
+                set_result("gray", "Test cancelled.")
+            elif error is not None:
+                set_result("red", f"✗ {error}")
+            elif reported is None:
+                set_result("orange", f"{connected}, but it did not report its "
+                                     f"resolution; set the DPI manually.")
+            elif reported in zpl_fonts.SUPPORTED_DPI:
+                dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(reported))
+                set_result("green", f"{connected} — {reported} dpi")
+            else:
+                set_result("orange", f"{connected} — reports {reported} dpi, "
+                                     f"which the designer does not support.")
+
+        busy.run(probe, done)
+
     test_btn.connect("clicked", on_test_clicked)
-    content.pack_start(test_btn, False, False, 0)
+    test_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    test_row.pack_start(test_btn, False, False, 0)
+    test_row.pack_end(busy, False, False, 0)
+    content.pack_start(test_row, False, False, 0)
     content.pack_start(result_label, False, False, 0)
 
     if default is not None:
@@ -287,6 +295,7 @@ def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
     content.show_all()
 
     response = dialog.run()
+    busy.abandon()
     result = None
     if response == Gtk.ResponseType.OK:
         new_address = address_entry.get_text().strip()
@@ -405,6 +414,10 @@ class ZPLViewerWindow(Gtk.Window):
             item.connect("activate", action)
             add_accel(item, accel)
             file_menu.append(item)
+            if action == self.on_print_clicked:
+                # Kept so the status bar's busy row can withhold it while a
+                # print is out.
+                self.print_item = item
 
         # A submenu rather than a flat item: this is where printer-related
         # actions beyond the one session override belong as they show up.
@@ -727,6 +740,11 @@ class ZPLViewerWindow(Gtk.Window):
         self.zoom_label = Gtk.Label()
         self.zoom_label.set_margin_end(8)
         status_row.pack_end(self.zoom_label, False, False, 0)
+        # Beside the zoom, for the one network call the main window makes
+        # itself: Print.
+        self._busy = BusyBar((self.print_item,), self.update_status)
+        self._busy.set_margin_end(8)
+        status_row.pack_end(self._busy, False, False, 0)
         main_box.pack_end(status_row, False, False, 0)
 
         self.show_all()
@@ -1110,61 +1128,84 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
-    def _confirm_printer_fonts(self) -> bool:
-        """Check the label's fonts are on the printer. False cancels printing."""
-        def ask(text, detail, uploadable):
-            dialog = Gtk.MessageDialog(parent=self, flags=0,
-                                       message_type=Gtk.MessageType.WARNING,
-                                       buttons=Gtk.ButtonsType.NONE, text=text)
-            dialog.format_secondary_text(detail)
-            dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
-            dialog.add_button("Print Anyway", Gtk.ResponseType.OK)
-            if uploadable:
-                dialog.add_button("Upload & Print", Gtk.ResponseType.APPLY)
-                dialog.set_default_response(Gtk.ResponseType.APPLY)
-            else:
-                dialog.set_default_response(Gtk.ResponseType.CANCEL)
-            response = dialog.run()
-            dialog.destroy()
-            if response == Gtk.ResponseType.APPLY:
-                return 'upload'
-            return 'print' if response == Gtk.ResponseType.OK else 'cancel'
-
-        def progress(message):
-            self.update_status(message)
-            while Gtk.events_pending():
-                Gtk.main_iteration()
-
-        proceed, error = workflow.confirm_printer_fonts(
-            self.design_canvas.document, self.printer_address,
-            self.printer_port, ask, progress)
-        if error:
-            self.show_error_dialog(error)
-        return proceed
+    def _ask_font_problem(self, text, detail, uploadable):
+        """'upload', 'print' or 'cancel' for a label whose fonts the printer
+        does not have."""
+        dialog = Gtk.MessageDialog(parent=self, flags=0,
+                                   message_type=Gtk.MessageType.WARNING,
+                                   buttons=Gtk.ButtonsType.NONE, text=text)
+        dialog.format_secondary_text(detail)
+        dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+        dialog.add_button("Print Anyway", Gtk.ResponseType.OK)
+        if uploadable:
+            dialog.add_button("Upload & Print", Gtk.ResponseType.APPLY)
+            dialog.set_default_response(Gtk.ResponseType.APPLY)
+        else:
+            dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.APPLY:
+            return 'upload'
+        return 'print' if response == Gtk.ResponseType.OK else 'cancel'
 
     def on_print_clicked(self, widget):
-        """Handle print button click."""
-        if not self._confirm_printer_fonts():
-            self.update_status("Printing cancelled")
-            return
-        printer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        printer_socket.settimeout(10)
-        try:
-            printer_socket.connect((self.printer_address, self.printer_port))
-        except OSError as e:
-            self.show_error_dialog(str(e))
-            return
+        """Print in up to three steps, each network one off the main loop
+        behind the status bar's busy row: ask the printer which fonts it has,
+        prompt if any are missing (on the main loop, as a prompt must be),
+        then upload whatever the user chose to and send the label.
+        """
         content = self.design_canvas.to_zpl(explicit_flips=True)
-        try:
-            # sendall, not send: a label with an image runs to tens of
-            # kilobytes, and send() may write only part of it.
-            printer_socket.sendall(content.encode('utf-8'))
-        except OSError as e:
-            self.show_error_dialog(str(e))
+        address, port = self.printer_address, self.printer_port
+
+        def send_label(uploadable):
+            self.update_status("Printing...")
+
+            def work(cancel):
+                if uploadable:
+                    workflow.upload_fonts(uploadable, address, port,
+                                          self._busy.report, cancel)
+                    self._busy.report("Printing...")
+                printer_io.send(address, port, content.encode('utf-8'), 10,
+                                cancel=cancel)
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    self.update_status("Printing cancelled")
+                elif error is not None:
+                    self.show_error_dialog(str(error))
+                    self.update_status("Printing failed")
+                else:
+                    self.update_status(f"Sent to {address}:{port}")
+
+            self._busy.run(work, done)
+
+        def checked(result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self.update_status("Printing cancelled")
+                return
+            if error is not None:
+                self.show_error_dialog(str(error))
+                self.update_status("Printing failed")
+                return
+            missing, uploadable = (None, {}) if result is None else result
+            if result is not None and not missing:
+                send_label({})
+                return
+            text, detail = workflow.font_problem_prompt(missing)
+            answer = self._ask_font_problem(text, detail, uploadable)
+            if answer == 'upload':
+                send_label(uploadable)
+            elif answer == 'print':
+                send_label({})
+            else:
+                self.update_status("Printing cancelled")
+
+        if not self.design_canvas.document.font_sources():
+            send_label({})
             return
-        finally:
-            printer_socket.close()
-        self.update_status(f"Sent to {self.printer_address}:{self.printer_port}")
+        self.update_status("Checking printer fonts...")
+        self._busy.run(lambda cancel: workflow.missing_printer_fonts(
+            self.design_canvas.document, address, port, cancel=cancel), checked)
     
     def _new_renderer(self) -> ZPLRenderer:
         """A renderer preloaded with the fonts this session knows about.
@@ -1223,6 +1264,8 @@ class ZPLViewerWindow(Gtk.Window):
         refresh_btn = Gtk.Button(label="Refresh")
         for b in (upload_btn, delete_btn, refresh_btn):
             buttons.pack_start(b, False, False, 0)
+        busy = BusyBar((upload_btn, delete_btn, refresh_btn), status.set_text)
+        buttons.pack_end(busy, False, False, 0)
         content.pack_start(buttons, False, False, 0)
 
         content.pack_start(Gtk.Label(label="<b>Built-in Fonts</b>",
@@ -1241,10 +1284,8 @@ class ZPLViewerWindow(Gtk.Window):
         resident_scroller.add(resident_view)
         content.pack_start(resident_scroller, True, True, 0)
 
-        def refresh_resident(*_a):
+        def show_resident(detected):
             resident_store.clear()
-            detected = zpl_fonts.query_resident_fonts(
-                self.printer_address, self.printer_port)
             if detected:
                 resident_status.set_text(
                     f"Reported by the printer at {self.printer_address}.")
@@ -1299,22 +1340,41 @@ class ZPLViewerWindow(Gtk.Window):
                 "rights)</i>")
 
         def refresh(*_a):
+            """Both lists in one trip: the stored fonts, then the resident ones."""
             store.clear()
+            resident_store.clear()
             preview.set_text("")
-            fonts = zpl_fonts.query_printer_fonts(self.printer_address, self.printer_port)
-            if fonts is None:
-                status.set_text(f"Could not reach the printer at "
-                                f"{self.printer_address}:{self.printer_port}.")
-                delete_btn.set_sensitive(False)
-                font_names.clear()
-            else:
-                font_names[:] = sorted(fonts)
-                for name in font_names:
-                    store.append([zpl_fonts.printer_font_path(name)])
-                delete_btn.set_sensitive(bool(fonts))
-                status.set_text(f"{len(fonts)} font(s) on {self.printer_address}"
-                                if fonts else "No fonts stored on the printer.")
-            refresh_resident()
+            font_names.clear()
+            delete_btn.set_sensitive(False)
+            status.set_text(f"Listing fonts on {self.printer_address}...")
+            resident_status.set_text("")
+
+            def query(cancel):
+                fonts = zpl_fonts.query_printer_fonts(
+                    self.printer_address, self.printer_port, cancel=cancel)
+                busy.report("Asking which built-in fonts it has...")
+                detected = zpl_fonts.query_resident_fonts(
+                    self.printer_address, self.printer_port, cancel=cancel)
+                return fonts, detected
+
+            def done(result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text("Listing cancelled.")
+                    return
+                fonts, detected = (None, None) if error is not None else result
+                if fonts is None:
+                    status.set_text(f"Could not reach the printer at "
+                                    f"{self.printer_address}:{self.printer_port}.")
+                else:
+                    font_names[:] = sorted(fonts)
+                    for name in font_names:
+                        store.append([zpl_fonts.printer_font_path(name)])
+                    delete_btn.set_sensitive(bool(fonts))
+                    status.set_text(f"{len(fonts)} font(s) on {self.printer_address}"
+                                    if fonts else "No fonts stored on the printer.")
+                show_resident(detected)
+
+            busy.run(query, done)
 
         view.get_selection().connect("changed", update_preview)
 
@@ -1334,14 +1394,22 @@ class ZPLViewerWindow(Gtk.Window):
             if not path:
                 return
             name = zpl_fonts.printer_font_name(path)
-            status.set_text(f"Uploading {zpl_fonts.printer_font_path(name)}...")
-            try:
-                zpl_fonts.upload_font(self.printer_address, self.printer_port, path, name)
-            except Exception as e:
-                self.show_error_dialog(f"Font upload failed: {e}")
-                return
-            self.renderer.register_font(name, path)
-            refresh()
+            shown = zpl_fonts.printer_font_path(name)
+            status.set_text(f"Uploading {shown}...")
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Upload of {shown} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Font upload failed: {error}")
+                    return
+                self.renderer.register_font(name, path)
+                refresh()
+
+            busy.run(lambda cancel: zpl_fonts.upload_font(
+                self.printer_address, self.printer_port, path, name,
+                cancel=cancel), done)
 
         def on_delete(_b):
             model, treeiter = view.get_selection().get_selected()
@@ -1349,12 +1417,19 @@ class ZPLViewerWindow(Gtk.Window):
                 return
             shown = model[treeiter][0]
             name = Path(shown).stem.split(':')[-1]
-            try:
-                zpl_fonts.delete_printer_font(self.printer_address, self.printer_port, name)
-            except Exception as e:
-                self.show_error_dialog(f"Could not delete {shown}: {e}")
-                return
-            refresh()
+            status.set_text(f"Deleting {shown}...")
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Deleting {shown} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not delete {shown}: {error}")
+                    return
+                refresh()
+
+            busy.run(lambda cancel: zpl_fonts.delete_printer_font(
+                self.printer_address, self.printer_port, name, cancel=cancel), done)
 
         upload_btn.connect("clicked", on_upload)
         delete_btn.connect("clicked", on_delete)
@@ -1363,6 +1438,7 @@ class ZPLViewerWindow(Gtk.Window):
         content.show_all()
         refresh()
         dialog.run()
+        busy.abandon()
         dialog.destroy()
 
     def _ask_device_spec(self, parent):
@@ -1525,6 +1601,9 @@ class ZPLViewerWindow(Gtk.Window):
         delete_btn.set_sensitive(False)
         for b in (store_btn, retrieve_btn, delete_btn, refresh_btn):
             buttons.pack_start(b, False, False, 0)
+        busy = BusyBar((store_btn, retrieve_btn, delete_btn, refresh_btn),
+                       status.set_text)
+        buttons.pack_end(busy, False, False, 0)
         content.pack_start(buttons, False, False, 0)
 
         entries = []
@@ -1533,27 +1612,32 @@ class ZPLViewerWindow(Gtk.Window):
         def refresh(*_a):
             nonlocal entries
             list_store.clear()
-            specs = graphic_store.query_printer_graphics(
-                self.printer_address, self.printer_port)
-            if specs is None:
-                status.set_text(f"Could not reach the printer at "
-                                f"{self.printer_address}:{self.printer_port}.")
-                entries = []
-                preview.clear()
-                retrieve_btn.set_sensitive(False)
-                delete_btn.set_sensitive(False)
-                return
-            entries = specs
-            for spec in entries:
-                cached = graphic_store.recall(spec)
-                suffix = f" ({cached.width}×{cached.height})" if cached else ""
-                list_store.append([f"{spec}{suffix}"])
-            status.set_text(
-                f"{len(entries)} graphic(s) on {self.printer_address}"
-                if entries else f"No graphics on {self.printer_address}.")
+            entries = []
             preview.clear()
             retrieve_btn.set_sensitive(False)
             delete_btn.set_sensitive(False)
+            status.set_text(f"Listing graphics on {self.printer_address}...")
+
+            def done(specs, error):
+                nonlocal entries
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text("Listing cancelled.")
+                    return
+                if specs is None or error is not None:
+                    status.set_text(f"Could not reach the printer at "
+                                    f"{self.printer_address}:{self.printer_port}.")
+                    return
+                entries = specs
+                for spec in entries:
+                    cached = graphic_store.recall(spec)
+                    suffix = f" ({cached.width}×{cached.height})" if cached else ""
+                    list_store.append([f"{spec}{suffix}"])
+                status.set_text(
+                    f"{len(entries)} graphic(s) on {self.printer_address}"
+                    if entries else f"No graphics on {self.printer_address}.")
+
+            busy.run(lambda cancel: graphic_store.query_printer_graphics(
+                self.printer_address, self.printer_port, cancel=cancel), done)
 
         def selected_entry():
             """The spec the list has selected, or None."""
@@ -1619,75 +1703,90 @@ class ZPLViewerWindow(Gtk.Window):
                 return
 
             status.set_text(f"Uploading {spec}...")
-            try:
-                graphic_store.upload_graphic(
-                    self.printer_address, self.printer_port, spec, image)
-            except Exception as e:
-                self.show_error_dialog(f"Could not store {spec}: {e}")
-                refresh()
-                return
 
-            graphic_store.store(spec, image)
-            changed_any = True
-            refresh()
+            def done(_result, error):
+                nonlocal changed_any
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Upload of {spec} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not store {spec}: {error}")
+                    refresh()
+                    return
+                graphic_store.store(spec, image)
+                changed_any = True
+                refresh()
+
+            busy.run(lambda cancel: graphic_store.upload_graphic(
+                self.printer_address, self.printer_port, spec, image,
+                cancel=cancel), done)
 
         def on_retrieve(_b):
             """Fetch the selected graphic's real bytes from the printer,
             cache them locally so ^XG/^IM/^IL resolve, and offer to save
             them to a file too."""
-            nonlocal changed_any
             spec = selected_entry()
             if spec is None:
                 return
             status.set_text(f"Retrieving {spec}...")
-            try:
-                image = graphic_store.retrieve_printer_graphic(
-                    self.printer_address, self.printer_port, spec)
-            except Exception as e:
-                self.show_error_dialog(f"Could not retrieve {spec}: {e}")
+
+            def done(image, error):
+                nonlocal changed_any
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Retrieving {spec} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not retrieve {spec}: {error}")
+                    refresh()
+                    return
+                graphic_store.store(spec, image)
+                changed_any = True
+                chooser = Gtk.FileChooserDialog(
+                    title="Save Retrieved Graphic", parent=dialog,
+                    action=Gtk.FileChooserAction.SAVE)
+                chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                                    Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
+                chooser.set_do_overwrite_confirmation(True)
+                _device, name, ext = graphic_store.split_device_spec(spec)
+                chooser.set_current_name(f"{name}.png")
+                response = chooser.run()
+                filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+                chooser.destroy()
+                if filepath:
+                    try:
+                        if not Path(filepath).suffix:
+                            filepath += '.png'
+                        image.save(filepath)
+                    except Exception as e:
+                        self.show_error_dialog(f"Could not save {filepath}: {e}")
                 refresh()
-                return
 
-            graphic_store.store(spec, image)
-            changed_any = True
-
-            chooser = Gtk.FileChooserDialog(
-                title="Save Retrieved Graphic", parent=dialog,
-                action=Gtk.FileChooserAction.SAVE)
-            chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                                Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
-            chooser.set_do_overwrite_confirmation(True)
-            _device, name, ext = graphic_store.split_device_spec(spec)
-            chooser.set_current_name(f"{name}.png")
-            response = chooser.run()
-            filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
-            chooser.destroy()
-            if filepath:
-                try:
-                    if not Path(filepath).suffix:
-                        filepath += '.png'
-                    image.save(filepath)
-                except Exception as e:
-                    self.show_error_dialog(f"Could not save {filepath}: {e}")
-            refresh()
+            busy.run(lambda cancel: graphic_store.retrieve_printer_graphic(
+                self.printer_address, self.printer_port, spec, cancel=cancel), done)
 
         def on_delete(_b):
-            nonlocal changed_any
             spec = selected_entry()
             if spec is None:
                 return
             if not self._confirm_delete_object(dialog, spec):
                 return
-            try:
-                graphic_store.delete_printer_graphic(
-                    self.printer_address, self.printer_port, spec)
-            except Exception as e:
-                self.show_error_dialog(f"Could not delete {spec}: {e}")
+            status.set_text(f"Deleting {spec}...")
+
+            def done(_result, error):
+                nonlocal changed_any
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Deleting {spec} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not delete {spec}: {error}")
+                    refresh()
+                    return
+                graphic_store.delete(spec)
+                changed_any = True
                 refresh()
-                return
-            graphic_store.delete(spec)
-            changed_any = True
-            refresh()
+
+            busy.run(lambda cancel: graphic_store.delete_printer_graphic(
+                self.printer_address, self.printer_port, spec, cancel=cancel), done)
 
         store_btn.connect("clicked", on_store)
         retrieve_btn.connect("clicked", on_retrieve)
@@ -1697,6 +1796,7 @@ class ZPLViewerWindow(Gtk.Window):
         content.show_all()
         refresh()
         dialog.run()
+        busy.abandon()
         dialog.destroy()
         # Storing/retrieving/deleting a graphic changes no Document state, so
         # this is a plain repaint - queue_draw(), never on_canvas_changed() -
@@ -1754,6 +1854,9 @@ class ZPLViewerWindow(Gtk.Window):
         delete_btn.set_sensitive(False)
         for b in (store_btn, retrieve_btn, delete_btn, refresh_btn):
             buttons.pack_start(b, False, False, 0)
+        busy = BusyBar((store_btn, retrieve_btn, delete_btn, refresh_btn),
+                       status.set_text)
+        buttons.pack_end(busy, False, False, 0)
         content.pack_start(buttons, False, False, 0)
 
         entries = []
@@ -1762,23 +1865,29 @@ class ZPLViewerWindow(Gtk.Window):
         def refresh(*_a):
             nonlocal entries
             list_store.clear()
-            specs = printer_objects.query_printer_objects(
-                self.printer_address, self.printer_port)
-            if specs is None:
-                status.set_text(f"Could not reach the printer at "
-                                f"{self.printer_address}:{self.printer_port}.")
-                entries = []
-                retrieve_btn.set_sensitive(False)
-                delete_btn.set_sensitive(False)
-                return
-            entries = specs
-            for spec in entries:
-                list_store.append([spec])
-            status.set_text(
-                f"{len(entries)} object(s) on {self.printer_address}"
-                if entries else "No objects on the printer.")
+            entries = []
             retrieve_btn.set_sensitive(False)
             delete_btn.set_sensitive(False)
+            status.set_text(f"Listing objects on {self.printer_address}...")
+
+            def done(specs, error):
+                nonlocal entries
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text("Listing cancelled.")
+                    return
+                if specs is None or error is not None:
+                    status.set_text(f"Could not reach the printer at "
+                                    f"{self.printer_address}:{self.printer_port}.")
+                    return
+                entries = specs
+                for spec in entries:
+                    list_store.append([spec])
+                status.set_text(
+                    f"{len(entries)} object(s) on {self.printer_address}"
+                    if entries else "No objects on the printer.")
+
+            busy.run(lambda cancel: printer_objects.query_printer_objects(
+                self.printer_address, self.printer_port, cancel=cancel), done)
 
         def selected_entry():
             """The spec the list has selected, or None."""
@@ -1824,69 +1933,83 @@ class ZPLViewerWindow(Gtk.Window):
                 return
 
             status.set_text(f"Uploading E:{name}.{ext}...")
-            try:
-                printer_objects.upload_printer_object(
-                    self.printer_address, self.printer_port, name, ext, data)
-            except Exception as e:
-                self.show_error_dialog(f"Could not store E:{name}.{ext}: {e}")
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Upload of E:{name}.{ext} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not store E:{name}.{ext}: {error}")
                 refresh()
-                return
-            refresh()
+
+            busy.run(lambda cancel: printer_objects.upload_printer_object(
+                self.printer_address, self.printer_port, name, ext, data,
+                cancel=cancel), done)
 
         def on_retrieve(_b):
             spec = selected_entry()
             if spec is None:
                 return
             status.set_text(f"Retrieving {spec}...")
-            try:
-                data = printer_objects.download_printer_object(
-                    self.printer_address, self.printer_port, spec)
-            except printer_objects.ObjectNotRetrievable:
-                self.show_error_dialog(
-                    "This printer does not support retrieving stored files "
-                    "(no reply to the retrieval command).")
-                refresh()
-                return
-            except Exception as e:
-                self.show_error_dialog(f"Could not retrieve {spec}: {e}")
-                refresh()
-                return
 
-            chooser = Gtk.FileChooserDialog(
-                title="Save Retrieved Object", parent=dialog,
-                action=Gtk.FileChooserAction.SAVE)
-            chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                                Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
-            chooser.set_do_overwrite_confirmation(True)
-            _device, name, ext = graphic_store.split_device_spec(spec)
-            chooser.set_current_name(f"{name}.{ext.lower()}")
-            response = chooser.run()
-            filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
-            chooser.destroy()
-            if filepath:
-                try:
-                    Path(filepath).write_bytes(data)
-                except Exception as e:
-                    self.show_error_dialog(f"Could not save {filepath}: {e}")
-            refresh()
+            def done(data, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Retrieving {spec} cancelled.")
+                    return
+                if isinstance(error, printer_objects.ObjectNotRetrievable):
+                    self.show_error_dialog(
+                        "This printer does not support retrieving stored files "
+                        "(no reply to the retrieval command).")
+                    refresh()
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not retrieve {spec}: {error}")
+                    refresh()
+                    return
+                chooser = Gtk.FileChooserDialog(
+                    title="Save Retrieved Object", parent=dialog,
+                    action=Gtk.FileChooserAction.SAVE)
+                chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                                    Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
+                chooser.set_do_overwrite_confirmation(True)
+                _device, name, ext = graphic_store.split_device_spec(spec)
+                chooser.set_current_name(f"{name}.{ext.lower()}")
+                response = chooser.run()
+                filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+                chooser.destroy()
+                if filepath:
+                    try:
+                        Path(filepath).write_bytes(data)
+                    except Exception as e:
+                        self.show_error_dialog(f"Could not save {filepath}: {e}")
+                refresh()
+
+            busy.run(lambda cancel: printer_objects.download_printer_object(
+                self.printer_address, self.printer_port, spec, cancel=cancel), done)
 
         def on_delete(_b):
-            nonlocal changed_any
             spec = selected_entry()
             if spec is None:
                 return
             if not self._confirm_delete_object(dialog, spec):
                 return
-            try:
-                printer_objects.delete_printer_object(
-                    self.printer_address, self.printer_port, spec)
-            except Exception as e:
-                self.show_error_dialog(f"Could not delete {spec}: {e}")
+            status.set_text(f"Deleting {spec}...")
+
+            def done(_result, error):
+                nonlocal changed_any
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Deleting {spec} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not delete {spec}: {error}")
+                    refresh()
+                    return
+                if graphic_store.delete(spec):
+                    changed_any = True
                 refresh()
-                return
-            if graphic_store.delete(spec):
-                changed_any = True
-            refresh()
+
+            busy.run(lambda cancel: printer_objects.delete_printer_object(
+                self.printer_address, self.printer_port, spec, cancel=cancel), done)
 
         store_btn.connect("clicked", on_store)
         retrieve_btn.connect("clicked", on_retrieve)
@@ -1896,6 +2019,7 @@ class ZPLViewerWindow(Gtk.Window):
         content.show_all()
         refresh()
         dialog.run()
+        busy.abandon()
         dialog.destroy()
         # Same reasoning as on_printer_graphics_clicked: deleting an object
         # changes no Document state, so this is a plain repaint.
@@ -1951,6 +2075,8 @@ class ZPLViewerWindow(Gtk.Window):
         close_btn = Gtk.Button(label="Close")
         buttons.pack_start(send_btn, False, False, 0)
         buttons.pack_start(close_btn, False, False, 0)
+        busy = BusyBar((send_btn,))
+        buttons.pack_end(busy, False, False, 0)
         content.pack_start(buttons, False, False, 0)
 
         log_view = Gtk.TextView()
@@ -1964,28 +2090,37 @@ class ZPLViewerWindow(Gtk.Window):
         log_scroll.add(log_view)
         content.pack_start(log_scroll, True, True, 0)
 
+        def log(entry):
+            log_buf = log_view.get_buffer()
+            log_buf.insert(log_buf.get_end_iter(), entry)
+            log_view.scroll_to_iter(log_buf.get_end_iter(), 0, False, 0, 0)
+
         def on_send(_b):
             input_buf = input_view.get_buffer()
             text = input_buf.get_text(input_buf.get_start_iter(),
                                       input_buf.get_end_iter(), False)
             if not text.strip():
                 return
-            try:
-                reply = printer_io.send_command(
-                    self.printer_address, self.printer_port, text)
-            except Exception as e:
-                self.show_error_dialog(f"Could not send command: {e}")
-                return
-            log_buf = log_view.get_buffer()
-            log_buf.insert(log_buf.get_end_iter(),
-                           f"> {text}\n{reply or '(no reply)'}\n\n")
-            log_view.scroll_to_iter(log_buf.get_end_iter(), 0, False, 0, 0)
-            input_buf.set_text("")
+            address, port = self.printer_address, self.printer_port
+
+            def done(reply, error):
+                if isinstance(error, printer_io.Cancelled):
+                    log(f"> {text}\n(cancelled)\n\n")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not send command: {error}")
+                    return
+                log(f"> {text}\n{reply or '(no reply)'}\n\n")
+                input_buf.set_text("")
+
+            busy.run(lambda cancel: printer_io.send_command(
+                address, port, text, cancel=cancel), done)
 
         send_btn.connect("clicked", on_send)
         close_btn.connect("clicked", lambda _b: window.destroy())
 
         def on_destroy(_w):
+            busy.abandon()
             self.printer_console_window = None
 
         window.connect("destroy", on_destroy)

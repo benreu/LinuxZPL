@@ -333,13 +333,14 @@ def build_font_upload(font_path: str, name: str) -> bytes:
 
 
 def upload_font(address: str, port: int, font_path: str, name: str,
-                timeout: float = 30) -> None:
+                timeout: float = 30, cancel=None) -> None:
     """Store a local font file on the printer as E:<name>.TTF."""
-    printer_io.send(address, port, build_font_upload(font_path, name), timeout)
+    printer_io.send(address, port, build_font_upload(font_path, name), timeout,
+                    cancel=cancel)
 
 
-def query_printer_fonts(address: str, port: int,
-                        timeout: float = 5) -> Optional[Set[str]]:
+def query_printer_fonts(address: str, port: int, timeout: float = 5,
+                        cancel=None) -> Optional[Set[str]]:
     """Font object names present on the printer, or None if it did not answer.
 
     None and an empty set mean different things and callers rely on the
@@ -348,7 +349,7 @@ def query_printer_fonts(address: str, port: int,
     """
     try:
         reply = printer_io.send(address, port, b'^XA^HWE:*.TTF^XZ', timeout,
-                                read_reply=True)
+                                read_reply=True, cancel=cancel)
     except OSError:
         return None
     if not reply:
@@ -357,8 +358,8 @@ def query_printer_fonts(address: str, port: int,
     return {m.group(1).upper() for m in _OBJECT_NAME.finditer(text)}
 
 
-def query_resident_fonts(address: str, port: int,
-                         timeout: float = 5) -> Optional[Set[str]]:
+def query_resident_fonts(address: str, port: int, timeout: float = 5,
+                         cancel=None) -> Optional[Set[str]]:
     """Resident font codes the printer reports on its read-only Z: memory.
 
     Best-effort: Zebra's built-in fonts (A-H, 0, GS - see RESIDENT_FONTS)
@@ -369,7 +370,7 @@ def query_resident_fonts(address: str, port: int,
     """
     try:
         reply = printer_io.send(address, port, b'^XA^HWZ:*.FNT^XZ', timeout,
-                                read_reply=True)
+                                read_reply=True, cancel=cancel)
     except OSError:
         return None
     if not reply:
@@ -378,8 +379,8 @@ def query_resident_fonts(address: str, port: int,
     return {m.group(1).upper() for m in _FONT_OBJECT_NAME.finditer(text)}
 
 
-def query_printer_dpi(address: str, port: int,
-                      timeout: float = 5) -> Optional[int]:
+def query_printer_dpi(address: str, port: int, timeout: float = 5,
+                      cancel=None) -> Optional[int]:
     """The printer's resolution in dpi, or None if it could not be asked.
 
     ~HI answers with model, firmware and the head resolution in dots per mm,
@@ -388,7 +389,8 @@ def query_printer_dpi(address: str, port: int,
     when the printer is unreachable or answers in an unexpected shape.
     """
     try:
-        reply = printer_io.send(address, port, b'~HI', timeout, read_reply=True)
+        reply = printer_io.send(address, port, b'~HI', timeout, read_reply=True,
+                                cancel=cancel)
     except OSError:
         return None
     if not reply:
@@ -402,10 +404,10 @@ def query_printer_dpi(address: str, port: int,
 
 
 def delete_printer_font(address: str, port: int, name: str,
-                        timeout: float = 10) -> None:
+                        timeout: float = 10, cancel=None) -> None:
     """Delete a font object from the printer."""
     payload = f"^XA^ID{printer_font_path(name)}^FS^XZ".encode('ascii')
-    printer_io.send(address, port, payload, timeout)
+    printer_io.send(address, port, payload, timeout, cancel=cancel)
 
 
 # --- local rendering --------------------------------------------------------

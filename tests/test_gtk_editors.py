@@ -482,6 +482,33 @@ finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
 
+# --- gtkui.busy.BusyBar: a worker thread's result lands back on the main loop
+import time
+from gtkui.busy import BusyBar
+
+bb_btn, bb_off = Gtk.Button(label="a"), Gtk.Button(label="b")
+bb_off.set_sensitive(False)
+bb_msgs, bb_got = [], []
+bb = BusyBar((bb_btn, bb_off), bb_msgs.append)
+
+def bb_work(cancel):
+    bb.report("halfway")
+    return 42
+
+bb.run(bb_work, lambda r, e: bb_got.append((r, e)))
+check("BusyBar.run(): shows the row and makes the blocked buttons insensitive while out",
+      bb.running and bb.get_visible() and not bb_btn.get_sensitive())
+t0 = time.monotonic()
+while not bb_got and time.monotonic() - t0 < 3:
+    while Gtk.events_pending():
+        Gtk.main_iteration()
+    time.sleep(0.01)
+check("BusyBar.run(): the result comes back on the main loop", bb_got == [(42, None)], bb_got)
+check("BusyBar.report(): progress text lands on the message target", bb_msgs == ['halfway'], bb_msgs)
+check("BusyBar: afterwards the row hides and each button is restored to its prior state",
+      not bb.running and not bb.get_visible() and bb_btn.get_sensitive()
+      and not bb_off.get_sensitive())
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

@@ -110,8 +110,8 @@ _OBJECT_SPEC = re.compile(r'([A-Za-z0-9_\-]{1,8})\.([A-Za-z0-9_\-]{1,8})',
                           re.IGNORECASE)
 
 
-def query_printer_graphics(address: str, port: int,
-                           timeout: float = 5) -> Optional[List[str]]:
+def query_printer_graphics(address: str, port: int, timeout: float = 5,
+                           cancel=None) -> Optional[List[str]]:
     """Every `d:o.GRF` object stored on the printer, across R:/E:/B:/A:, or
     None if it could not be asked.
 
@@ -135,7 +135,7 @@ def query_printer_graphics(address: str, port: int,
         payload = f'^XA^HW{device}:*.{GRAPHIC_EXTENSION}^XZ'.encode('ascii')
         try:
             reply = printer_io.send(address, port, payload, timeout,
-                                    read_reply=True)
+                                    read_reply=True, cancel=cancel)
         except OSError:
             if index == 0:
                 return None
@@ -176,9 +176,11 @@ def build_graphic_upload(raw_spec: str, image: PILImage.Image) -> bytes:
 
 
 def upload_graphic(address: str, port: int, raw_spec: str,
-                   image: PILImage.Image, timeout: float = 30) -> None:
+                   image: PILImage.Image, timeout: float = 30,
+                   cancel=None) -> None:
     """Store `image` on the printer as `raw_spec`. Raises on failure."""
-    printer_io.send(address, port, build_graphic_upload(raw_spec, image), timeout)
+    printer_io.send(address, port, build_graphic_upload(raw_spec, image), timeout,
+                    cancel=cancel)
 
 
 _DG_ECHO_PREFIX = b'~DG'
@@ -228,7 +230,7 @@ def parse_hg_reply(reply: bytes) -> Optional[PILImage.Image]:
 
 
 def retrieve_printer_graphic(address: str, port: int, raw_spec: str,
-                             timeout: float = 30) -> PILImage.Image:
+                             timeout: float = 30, cancel=None) -> PILImage.Image:
     """Fetch `raw_spec`'s real pixels from the printer via ^HG (Host
     Graphic) - the same request/read-reply shape ^HW already uses.
 
@@ -243,7 +245,8 @@ def retrieve_printer_graphic(address: str, port: int, raw_spec: str,
     """
     device, name, ext = split_device_spec(raw_spec)
     payload = f"^XA^HG{device}:{name.upper()}.{ext.upper()}^XZ".encode('ascii')
-    reply = printer_io.send(address, port, payload, timeout, read_reply=True)
+    reply = printer_io.send(address, port, payload, timeout, read_reply=True,
+                            cancel=cancel)
     if not reply:
         raise OSError(f"No reply retrieving {raw_spec}")
 
@@ -263,9 +266,9 @@ def retrieve_printer_graphic(address: str, port: int, raw_spec: str,
 
 
 def delete_printer_graphic(address: str, port: int, raw_spec: str,
-                           timeout: float = 10) -> None:
+                           timeout: float = 10, cancel=None) -> None:
     """Delete `raw_spec` from the printer via ^ID - the same shape
     fonts.delete_printer_font already uses. Raises on failure."""
     device, name, ext = split_device_spec(raw_spec)
     payload = f"^XA^ID{device}:{name.upper()}.{ext.upper()}^FS^XZ".encode('ascii')
-    printer_io.send(address, port, payload, timeout)
+    printer_io.send(address, port, payload, timeout, cancel=cancel)

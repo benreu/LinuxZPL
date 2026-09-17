@@ -7,7 +7,6 @@ status bar - the window owns those, so one action produces one history entry
 wherever it was started from.
 """
 
-import socket
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +31,7 @@ from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
                            TEXT_JUSTIFICATIONS, Document, FieldBlock,
                            FrameElement, TextElement)
 
+from .busy import BusyBar
 from .canvas import to_qimage
 
 IMAGE_FILTER = "Image files (*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG);;All files (*)"
@@ -1255,8 +1255,11 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
     dpi_combo = _dpi_combo(dpi)
     form.addRow("DPI:", dpi_combo)
 
+    test_row = QHBoxLayout()
     test_btn = QPushButton("Test Connection")
-    layout.addWidget(test_btn)
+    test_row.addWidget(test_btn)
+    test_row.addStretch(1)
+    layout.addLayout(test_row)
     result = QLabel()
     result.setWordWrap(True)
     layout.addWidget(result)
@@ -1264,9 +1267,13 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
     def set_result(colour, text):
         result.setStyleSheet(f"color: {colour};")
         result.setText(text)
-        # both steps block, so let the label paint before the next one
-        from PySide2.QtWidgets import QApplication
-        QApplication.processEvents()
+
+    buttons = _buttons(dialog)
+    # OK is withheld while a probe is out so a half-finished one can't be
+    # accepted as an answer.
+    busy = BusyBar((test_btn, buttons.button(QDialogButtonBox.Ok)),
+                   lambda text: set_result("gray", text), dialog)
+    test_row.addWidget(busy)
 
     def on_test():
         addr = address_edit.text().strip()
@@ -1275,30 +1282,33 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
             set_result("red", "Address is required")
             return
         set_result("gray", f"Connecting to {addr}:{prt}…")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)
-        try:
-            sock.connect((addr, prt))
-        except OSError as e:
-            set_result("red", f"✗ {e}")
-            return
-        finally:
-            sock.close()
-
         connected = f"✓ Connected to {addr}:{prt}"
-        set_result("gray", f"{connected} — asking its resolution…")
-        reported = zpl_fonts.query_printer_dpi(addr, prt)
-        if reported is None:
-            # No answer must leave the manual setting alone rather than
-            # substituting a guess.
-            set_result("orange", f"{connected}, but it did not report its "
-                                 f"resolution; set the DPI manually.")
-        elif reported in zpl_fonts.SUPPORTED_DPI:
-            dpi_combo.setCurrentIndex(list(zpl_fonts.SUPPORTED_DPI).index(reported))
-            set_result("green", f"{connected} — {reported} dpi")
-        else:
-            set_result("orange", f"{connected} — reports {reported} dpi, which "
-                                 f"the designer does not support.")
+
+        def probe(cancel):
+            # Connect and send nothing: reachability first, on its own, so
+            # an unreachable printer reads as that rather than as "no dpi".
+            printer_io.send(addr, prt, b'', 5, cancel=cancel)
+            busy.report(f"{connected} — asking its resolution…")
+            return zpl_fonts.query_printer_dpi(addr, prt, cancel=cancel)
+
+        def done(reported, error):
+            if isinstance(error, printer_io.Cancelled):
+                set_result("gray", "Test cancelled.")
+            elif error is not None:
+                set_result("red", f"✗ {error}")
+            elif reported is None:
+                # No answer must leave the manual setting alone rather than
+                # substituting a guess.
+                set_result("orange", f"{connected}, but it did not report its "
+                                     f"resolution; set the DPI manually.")
+            elif reported in zpl_fonts.SUPPORTED_DPI:
+                dpi_combo.setCurrentIndex(list(zpl_fonts.SUPPORTED_DPI).index(reported))
+                set_result("green", f"{connected} — {reported} dpi")
+            else:
+                set_result("orange", f"{connected} — reports {reported} dpi, "
+                                     f"which the designer does not support.")
+
+        busy.run(probe, done)
 
     test_btn.clicked.connect(on_test)
 
@@ -1321,9 +1331,11 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
 
         default_btn.clicked.connect(on_use_default)
 
-    layout.addWidget(_buttons(dialog))
+    layout.addWidget(buttons)
 
-    if dialog.exec_() != QDialog.Accepted:
+    accepted = dialog.exec_() == QDialog.Accepted
+    busy.abandon()
+    if not accepted:
         return None
     new_address = address_edit.text().strip()
     if not new_address:
@@ -1362,9 +1374,12 @@ class PrinterFontsDialog(QDialog):
         self._upload_btn = QPushButton("Upload…")
         self._delete_btn = QPushButton("Delete")
         self._refresh_btn = QPushButton("Refresh")
-        for b in (self._upload_btn, self._delete_btn, self._refresh_btn):
+        buttons = (self._upload_btn, self._delete_btn, self._refresh_btn)
+        for b in buttons:
             row.addWidget(b)
         row.addStretch(1)
+        self._busy = BusyBar(buttons, self._status.setText, self)
+        row.addWidget(self._busy)
         layout.addLayout(row)
 
         layout.addWidget(QLabel("<b>Built-in Fonts</b>"))
@@ -1384,29 +1399,51 @@ class PrinterFontsDialog(QDialog):
         self._list.currentRowChanged.connect(self._update_preview)
         self.refresh()
 
+    def reject(self):
+        self._busy.abandon()
+        super().reject()
+
     def refresh(self):
+        """Both lists in one trip: the stored fonts, then the resident ones."""
         self._list.clear()
         self._preview.clear()
-        fonts = zpl_fonts.query_printer_fonts(self._address, self._port)
-        if fonts is None:
-            # Not the same as "no fonts": say the printer could not be asked,
-            # rather than showing an empty list as if it had answered.
-            self._status.setText(f"Could not reach the printer at "
-                                 f"{self._address}:{self._port}.")
-            self._delete_btn.setEnabled(False)
-            self._font_names = []
-        else:
-            self._font_names = sorted(fonts)
-            for name in self._font_names:
-                self._list.addItem(zpl_fonts.printer_font_path(name))
-            self._delete_btn.setEnabled(bool(fonts))
-            self._status.setText(f"{len(fonts)} font(s) on {self._address}"
-                                 if fonts else "No fonts stored on the printer.")
-        self._refresh_resident()
-
-    def _refresh_resident(self):
         self._resident_list.clear()
-        detected = zpl_fonts.query_resident_fonts(self._address, self._port)
+        self._font_names = []
+        self._delete_btn.setEnabled(False)
+        self._status.setText(f"Listing fonts on {self._address}...")
+        self._resident_status.clear()
+
+        def query(cancel):
+            fonts = zpl_fonts.query_printer_fonts(self._address, self._port,
+                                                  cancel=cancel)
+            self._busy.report("Asking which built-in fonts it has...")
+            detected = zpl_fonts.query_resident_fonts(self._address, self._port,
+                                                      cancel=cancel)
+            return fonts, detected
+
+        def done(result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText("Listing cancelled.")
+                return
+            fonts, detected = (None, None) if error is not None else result
+            if fonts is None:
+                # Not the same as "no fonts": say the printer could not be
+                # asked, rather than showing an empty list as if it had answered.
+                self._status.setText(f"Could not reach the printer at "
+                                     f"{self._address}:{self._port}.")
+            else:
+                self._font_names = sorted(fonts)
+                for name in self._font_names:
+                    self._list.addItem(zpl_fonts.printer_font_path(name))
+                self._delete_btn.setEnabled(bool(fonts))
+                self._status.setText(f"{len(fonts)} font(s) on {self._address}"
+                                     if fonts else "No fonts stored on the printer.")
+            self._show_resident(detected)
+
+        self._busy.run(query, done)
+
+    def _show_resident(self, detected):
+        self._resident_list.clear()
         if detected:
             self._resident_status.setText(
                 f"Reported by the printer at {self._address}.")
@@ -1455,15 +1492,22 @@ class PrinterFontsDialog(QDialog):
         if not path:
             return
         name = zpl_fonts.printer_font_name(path)
-        self._status.setText(f"Uploading {zpl_fonts.printer_font_path(name)}...")
-        try:
-            zpl_fonts.upload_font(self._address, self._port, path, name)
-        except Exception as e:
-            show_error(self, f"Font upload failed: {e}")
-            return
-        if self._on_uploaded:
-            self._on_uploaded(name, path)
-        self.refresh()
+        shown = zpl_fonts.printer_font_path(name)
+        self._status.setText(f"Uploading {shown}...")
+
+        def done(_result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText(f"Upload of {shown} cancelled.")
+                return
+            if error is not None:
+                show_error(self, f"Font upload failed: {error}")
+                return
+            if self._on_uploaded:
+                self._on_uploaded(name, path)
+            self.refresh()
+
+        self._busy.run(lambda cancel: zpl_fonts.upload_font(
+            self._address, self._port, path, name, cancel=cancel), done)
 
     def _on_delete(self):
         item = self._list.currentItem()
@@ -1471,12 +1515,19 @@ class PrinterFontsDialog(QDialog):
             return
         shown = item.text()
         name = Path(shown).stem.split(':')[-1]
-        try:
-            zpl_fonts.delete_printer_font(self._address, self._port, name)
-        except Exception as e:
-            show_error(self, f"Could not delete {shown}: {e}")
-            return
-        self.refresh()
+        self._status.setText(f"Deleting {shown}...")
+
+        def done(_result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText(f"Deleting {shown} cancelled.")
+                return
+            if error is not None:
+                show_error(self, f"Could not delete {shown}: {error}")
+                return
+            self.refresh()
+
+        self._busy.run(lambda cancel: zpl_fonts.delete_printer_font(
+            self._address, self._port, name, cancel=cancel), done)
 
 
 class PrinterGraphicsDialog(QDialog):
@@ -1528,10 +1579,13 @@ class PrinterGraphicsDialog(QDialog):
         self._refresh_btn = QPushButton("Refresh")
         self._retrieve_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
-        for b in (self._store_btn, self._retrieve_btn, self._delete_btn,
-                 self._refresh_btn):
+        buttons = (self._store_btn, self._retrieve_btn, self._delete_btn,
+                   self._refresh_btn)
+        for b in buttons:
             row.addWidget(b)
         row.addStretch(1)
+        self._busy = BusyBar(buttons, self._status.setText, self)
+        row.addWidget(self._busy)
         layout.addLayout(row)
 
         close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
@@ -1545,28 +1599,37 @@ class PrinterGraphicsDialog(QDialog):
         self._list.currentRowChanged.connect(self._on_selection_changed)
         self.refresh()
 
+    def reject(self):
+        self._busy.abandon()
+        super().reject()
+
     def refresh(self):
         self._list.clear()
-        specs = graphic_store.query_printer_graphics(self._address, self._port)
-        if specs is None:
-            self._status.setText(f"Could not reach the printer at "
-                                 f"{self._address}:{self._port}.")
-            self._entries = []
-            self._preview.clear()
-            self._retrieve_btn.setEnabled(False)
-            self._delete_btn.setEnabled(False)
-            return
-        self._entries = specs
-        for spec in self._entries:
-            cached = graphic_store.recall(spec)
-            suffix = f" ({cached.width}×{cached.height})" if cached else ""
-            self._list.addItem(f"{spec}{suffix}")
-        self._status.setText(
-            f"{len(self._entries)} graphic(s) on {self._address}"
-            if self._entries else f"No graphics on {self._address}.")
+        self._entries = []
         self._preview.clear()
         self._retrieve_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
+        self._status.setText(f"Listing graphics on {self._address}...")
+
+        def done(specs, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText("Listing cancelled.")
+                return
+            if specs is None or error is not None:
+                self._status.setText(f"Could not reach the printer at "
+                                     f"{self._address}:{self._port}.")
+                return
+            self._entries = specs
+            for spec in self._entries:
+                cached = graphic_store.recall(spec)
+                suffix = f" ({cached.width}×{cached.height})" if cached else ""
+                self._list.addItem(f"{spec}{suffix}")
+            self._status.setText(
+                f"{len(self._entries)} graphic(s) on {self._address}"
+                if self._entries else f"No graphics on {self._address}.")
+
+        self._busy.run(lambda cancel: graphic_store.query_printer_graphics(
+            self._address, self._port, cancel=cancel), done)
 
     def _selected_entry(self):
         """The spec the list has selected, or None."""
@@ -1611,17 +1674,22 @@ class PrinterGraphicsDialog(QDialog):
             return
 
         self._status.setText(f"Uploading {spec}...")
-        try:
-            graphic_store.upload_graphic(self._address, self._port, spec, image)
-        except Exception as e:
-            show_error(self, f"Could not store {spec}: {e}")
-            self.refresh()
-            return
 
-        graphic_store.store(spec, image)
-        if self._on_changed:
-            self._on_changed(spec, image)
-        self.refresh()
+        def done(_result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText(f"Upload of {spec} cancelled.")
+                return
+            if error is not None:
+                show_error(self, f"Could not store {spec}: {error}")
+                self.refresh()
+                return
+            graphic_store.store(spec, image)
+            if self._on_changed:
+                self._on_changed(spec, image)
+            self.refresh()
+
+        self._busy.run(lambda cancel: graphic_store.upload_graphic(
+            self._address, self._port, spec, image, cancel=cancel), done)
 
     def _on_retrieve(self):
         """Fetch the selected graphic's real bytes from the printer, cache
@@ -1631,29 +1699,32 @@ class PrinterGraphicsDialog(QDialog):
         if spec is None:
             return
         self._status.setText(f"Retrieving {spec}...")
-        try:
-            image = graphic_store.retrieve_printer_graphic(
-                self._address, self._port, spec)
-        except Exception as e:
-            show_error(self, f"Could not retrieve {spec}: {e}")
+
+        def done(image, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText(f"Retrieving {spec} cancelled.")
+                return
+            if error is not None:
+                show_error(self, f"Could not retrieve {spec}: {error}")
+                self.refresh()
+                return
+            graphic_store.store(spec, image)
+            if self._on_changed:
+                self._on_changed(spec, image)
+            _device, name, _ext = graphic_store.split_device_spec(spec)
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save Retrieved Graphic", f"{name}.png", IMAGE_FILTER)
+            if path:
+                try:
+                    if not Path(path).suffix:
+                        path += '.png'
+                    image.save(path)
+                except Exception as e:
+                    show_error(self, f"Could not save {path}: {e}")
             self.refresh()
-            return
 
-        graphic_store.store(spec, image)
-        if self._on_changed:
-            self._on_changed(spec, image)
-
-        _device, name, _ext = graphic_store.split_device_spec(spec)
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Retrieved Graphic", f"{name}.png", IMAGE_FILTER)
-        if path:
-            try:
-                if not Path(path).suffix:
-                    path += '.png'
-                image.save(path)
-            except Exception as e:
-                show_error(self, f"Could not save {path}: {e}")
-        self.refresh()
+        self._busy.run(lambda cancel: graphic_store.retrieve_printer_graphic(
+            self._address, self._port, spec, cancel=cancel), done)
 
     def _on_delete(self):
         spec = self._selected_entry()
@@ -1661,16 +1732,23 @@ class PrinterGraphicsDialog(QDialog):
             return
         if not ask_delete_object(self, spec, self._address, self._port):
             return
-        try:
-            graphic_store.delete_printer_graphic(self._address, self._port, spec)
-        except Exception as e:
-            show_error(self, f"Could not delete {spec}: {e}")
+        self._status.setText(f"Deleting {spec}...")
+
+        def done(_result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText(f"Deleting {spec} cancelled.")
+                return
+            if error is not None:
+                show_error(self, f"Could not delete {spec}: {error}")
+                self.refresh()
+                return
+            graphic_store.delete(spec)
+            if self._on_changed:
+                self._on_changed(spec, None)
             self.refresh()
-            return
-        graphic_store.delete(spec)
-        if self._on_changed:
-            self._on_changed(spec, None)
-        self.refresh()
+
+        self._busy.run(lambda cancel: graphic_store.delete_printer_graphic(
+            self._address, self._port, spec, cancel=cancel), done)
 
 
 class PrinterObjectsDialog(QDialog):
@@ -1712,10 +1790,13 @@ class PrinterObjectsDialog(QDialog):
         self._refresh_btn = QPushButton("Refresh")
         self._retrieve_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
-        for b in (self._store_btn, self._retrieve_btn, self._delete_btn,
-                 self._refresh_btn):
+        buttons = (self._store_btn, self._retrieve_btn, self._delete_btn,
+                   self._refresh_btn)
+        for b in buttons:
             row.addWidget(b)
         row.addStretch(1)
+        self._busy = BusyBar(buttons, self._status.setText, self)
+        row.addWidget(self._busy)
         layout.addLayout(row)
 
         close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
@@ -1729,21 +1810,31 @@ class PrinterObjectsDialog(QDialog):
         self._list.currentRowChanged.connect(self._on_selection_changed)
         self.refresh()
 
+    def reject(self):
+        self._busy.abandon()
+        super().reject()
+
     def refresh(self):
         self._list.clear()
-        specs = printer_objects.query_printer_objects(self._address, self._port)
-        if specs is None:
-            self._status.setText(f"Could not reach the printer at "
-                                 f"{self._address}:{self._port}.")
-            self._retrieve_btn.setEnabled(False)
-            self._delete_btn.setEnabled(False)
-            return
-        for spec in specs:
-            self._list.addItem(spec)
-        self._status.setText(f"{len(specs)} object(s) on {self._address}"
-                             if specs else "No objects on the printer.")
         self._retrieve_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
+        self._status.setText(f"Listing objects on {self._address}...")
+
+        def done(specs, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText("Listing cancelled.")
+                return
+            if specs is None or error is not None:
+                self._status.setText(f"Could not reach the printer at "
+                                     f"{self._address}:{self._port}.")
+                return
+            for spec in specs:
+                self._list.addItem(spec)
+            self._status.setText(f"{len(specs)} object(s) on {self._address}"
+                                 if specs else "No objects on the printer.")
+
+        self._busy.run(lambda cancel: printer_objects.query_printer_objects(
+            self._address, self._port, cancel=cancel), done)
 
     def _selected_spec(self) -> Optional[str]:
         item = self._list.currentItem()
@@ -1775,43 +1866,50 @@ class PrinterObjectsDialog(QDialog):
             return
 
         self._status.setText(f"Uploading E:{name}.{ext}...")
-        try:
-            printer_objects.upload_printer_object(
-                self._address, self._port, name, ext, data)
-        except Exception as e:
-            show_error(self, f"Could not store E:{name}.{ext}: {e}")
+
+        def done(_result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText(f"Upload of E:{name}.{ext} cancelled.")
+                return
+            if error is not None:
+                show_error(self, f"Could not store E:{name}.{ext}: {error}")
             self.refresh()
-            return
-        self.refresh()
+
+        self._busy.run(lambda cancel: printer_objects.upload_printer_object(
+            self._address, self._port, name, ext, data, cancel=cancel), done)
 
     def _on_retrieve(self):
         spec = self._selected_spec()
         if spec is None:
             return
         self._status.setText(f"Retrieving {spec}...")
-        try:
-            data = printer_objects.download_printer_object(
-                self._address, self._port, spec)
-        except printer_objects.ObjectNotRetrievable:
-            show_error(self, "This printer does not support retrieving "
-                             "stored files (no reply to the retrieval "
-                             "command).")
-            self.refresh()
-            return
-        except Exception as e:
-            show_error(self, f"Could not retrieve {spec}: {e}")
-            self.refresh()
-            return
 
-        _device, name, ext = graphic_store.split_device_spec(spec)
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Retrieved Object", f"{name}.{ext.lower()}")
-        if path:
-            try:
-                Path(path).write_bytes(data)
-            except Exception as e:
-                show_error(self, f"Could not save {path}: {e}")
-        self.refresh()
+        def done(data, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText(f"Retrieving {spec} cancelled.")
+                return
+            if isinstance(error, printer_objects.ObjectNotRetrievable):
+                show_error(self, "This printer does not support retrieving "
+                                 "stored files (no reply to the retrieval "
+                                 "command).")
+                self.refresh()
+                return
+            if error is not None:
+                show_error(self, f"Could not retrieve {spec}: {error}")
+                self.refresh()
+                return
+            _device, name, ext = graphic_store.split_device_spec(spec)
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save Retrieved Object", f"{name}.{ext.lower()}")
+            if path:
+                try:
+                    Path(path).write_bytes(data)
+                except Exception as e:
+                    show_error(self, f"Could not save {path}: {e}")
+            self.refresh()
+
+        self._busy.run(lambda cancel: printer_objects.download_printer_object(
+            self._address, self._port, spec, cancel=cancel), done)
 
     def _on_delete(self):
         spec = self._selected_spec()
@@ -1819,15 +1917,22 @@ class PrinterObjectsDialog(QDialog):
             return
         if not ask_delete_object(self, spec, self._address, self._port):
             return
-        try:
-            printer_objects.delete_printer_object(self._address, self._port, spec)
-        except Exception as e:
-            show_error(self, f"Could not delete {spec}: {e}")
+        self._status.setText(f"Deleting {spec}...")
+
+        def done(_result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText(f"Deleting {spec} cancelled.")
+                return
+            if error is not None:
+                show_error(self, f"Could not delete {spec}: {error}")
+                self.refresh()
+                return
+            if graphic_store.delete(spec) and self._on_changed:
+                self._on_changed(spec, None)
             self.refresh()
-            return
-        if graphic_store.delete(spec) and self._on_changed:
-            self._on_changed(spec, None)
-        self.refresh()
+
+        self._busy.run(lambda cancel: printer_objects.delete_printer_object(
+            self._address, self._port, spec, cancel=cancel), done)
 
 
 class PrinterConsoleDialog(QDialog):
@@ -1862,6 +1967,8 @@ class PrinterConsoleDialog(QDialog):
         self._send_btn = QPushButton("Send")
         row.addWidget(self._send_btn)
         row.addStretch(1)
+        self._busy = BusyBar((self._send_btn,), parent=self)
+        row.addWidget(self._busy)
         layout.addLayout(row)
 
         self._log = QPlainTextEdit(readOnly=True)
@@ -1873,18 +1980,28 @@ class PrinterConsoleDialog(QDialog):
 
         self._send_btn.clicked.connect(self._on_send)
 
+    def reject(self):
+        self._busy.abandon()
+        super().reject()
+
     def _on_send(self):
         text = self._input.toPlainText()
         if not text.strip():
             return
-        try:
-            reply = printer_io.send_command(
-                self._parent.printer_address, self._parent.printer_port, text)
-        except Exception as e:
-            show_error(self, f"Could not send command: {e}")
-            return
-        self._log.appendPlainText(f"> {text}\n{reply or '(no reply)'}\n")
-        self._input.clear()
+        address, port = self._parent.printer_address, self._parent.printer_port
+
+        def done(reply, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._log.appendPlainText(f"> {text}\n(cancelled)\n")
+                return
+            if error is not None:
+                show_error(self, f"Could not send command: {error}")
+                return
+            self._log.appendPlainText(f"> {text}\n{reply or '(no reply)'}\n")
+            self._input.clear()
+
+        self._busy.run(lambda cancel: printer_io.send_command(
+            address, port, text, cancel=cancel), done)
 
 
 # --- prompts ----------------------------------------------------------------

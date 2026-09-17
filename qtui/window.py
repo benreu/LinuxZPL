@@ -9,7 +9,6 @@ touches a file or the printer.
 
 import configparser
 import os
-import socket
 import sys
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QLabel,
 
 from zplcore import fonts as zpl_fonts
 from zplcore import parser as zpl_parser
+from zplcore import printer_io
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore.model import (BarcodeElement, Document, FrameElement, ImageElement,
@@ -28,6 +28,7 @@ from zplcore.model import (BarcodeElement, Document, FrameElement, ImageElement,
 from zplcore.renderer import ZPLRenderer
 
 from . import dialogs as qt_dialogs
+from .busy import BusyBar
 from .canvas import DesignCanvas
 
 # The align commands, in menu order: the three horizontal, then the three
@@ -127,6 +128,10 @@ class ZPLDesignerWindow(QMainWindow):
         self._build_toolbar()
 
         # Its own widget, so a status message does not wipe the zoom away.
+        # The busy row sits beside it for the one network call the main
+        # window makes itself: Print.
+        self._busy = BusyBar((self.print_action,), self.update_status, self)
+        self.statusBar().addPermanentWidget(self._busy)
         self.zoom_label = QLabel()
         self.statusBar().addPermanentWidget(self.zoom_label)
         self.statusBar().showMessage("Ready")
@@ -952,42 +957,68 @@ class ZPLDesignerWindow(QMainWindow):
             renderer.set_font(self.renderer.custom_font_path)
         return renderer
 
-    def _confirm_printer_fonts(self) -> bool:
-        """Check the label's fonts are on the printer. False cancels printing."""
-        def ask(text, detail, uploadable):
-            return qt_dialogs.ask_font_problem(self, text, detail, uploadable)
-
-        def progress(message):
-            self.update_status(message)
-            QApplication.processEvents()
-
-        proceed, error = workflow.confirm_printer_fonts(
-            self.document, self.printer_address, self.printer_port, ask, progress)
-        if error:
-            self.show_error(error)
-        return proceed
-
     def on_print(self):
-        if not self._confirm_printer_fonts():
-            self.update_status("Printing cancelled")
-            return
+        """Print in up to three steps, each network one off the GUI thread
+        behind the status bar's busy row: ask the printer which fonts it has,
+        prompt if any are missing (on the GUI thread, as a prompt must be),
+        then upload whatever the user chose to and send the label.
+        """
         try:
             content = self.document.to_zpl(explicit_flips=True)
         except Exception as e:
             self.show_error(f"Failed to generate ZPL: {e}")
             return
+        address, port = self.printer_address, self.printer_port
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(PRINT_TIMEOUT)
-        try:
-            sock.connect((self.printer_address, self.printer_port))
-            sock.sendall(content.encode('utf-8'))
-        except OSError as e:
-            self.show_error(str(e))
+        def send_label(uploadable):
+            self.update_status("Printing...")
+
+            def work(cancel):
+                if uploadable:
+                    workflow.upload_fonts(uploadable, address, port,
+                                          self._busy.report, cancel)
+                    self._busy.report("Printing...")
+                printer_io.send(address, port, content.encode('utf-8'),
+                                PRINT_TIMEOUT, cancel=cancel)
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    self.update_status("Printing cancelled")
+                elif error is not None:
+                    self.show_error(str(error))
+                    self.update_status("Printing failed")
+                else:
+                    self.update_status(f"Sent to {address}:{port}")
+
+            self._busy.run(work, done)
+
+        def checked(result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self.update_status("Printing cancelled")
+                return
+            if error is not None:
+                self.show_error(str(error))
+                self.update_status("Printing failed")
+                return
+            missing, uploadable = (None, {}) if result is None else result
+            if result is not None and not missing:
+                send_label({})
+                return
+            text, detail = workflow.font_problem_prompt(missing)
+            answer = qt_dialogs.ask_font_problem(self, text, detail, uploadable)
+            if answer == 'upload':
+                send_label(uploadable)
+            elif answer == 'print':
+                send_label({})
+            else:
+                self.update_status("Printing cancelled")
+
+        if not self.document.font_sources():
+            send_label({})
             return
-        finally:
-            sock.close()
-        self.update_status(f"Sent to {self.printer_address}:{self.printer_port}")
+        self.update_status("Checking printer fonts...")
+        self._busy.run(lambda cancel: workflow.missing_printer_fonts(
+            self.document, address, port, cancel=cancel), checked)
 
     # --- settings file -------------------------------------------------------
 
