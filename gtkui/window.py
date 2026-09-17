@@ -582,6 +582,11 @@ class ZPLViewerWindow(Gtk.Window):
         default_printer_item.connect("activate", self.on_default_printer_clicked)
         settings_menu.append(default_printer_item)
 
+        # Local fonts menu item
+        local_fonts_item = Gtk.MenuItem(label="Local Fonts\u2026")
+        local_fonts_item.connect("activate", self.on_local_fonts_clicked)
+        settings_menu.append(local_fonts_item)
+
         settings_menu.show_all()
 
         # Content box with padding
@@ -2140,6 +2145,74 @@ class ZPLViewerWindow(Gtk.Window):
             if note:
                 self.on_canvas_changed()
                 self.update_status(note[0].upper() + note[1:])
+
+    def on_local_fonts_clicked(self, widget):
+        """Show what the directory-scan font fallback sees, and whether it's
+        in use.
+
+        fc-list is the only thing list_ttf_families() ever calls first, and
+        on most systems that's the end of it - but on a system where
+        fontconfig is missing, broken, or just not set up, every font
+        chooser would otherwise go quietly empty with nothing here to
+        explain why. Distinct from the Printer -> Fonts... dialog, which is
+        about fonts stored on the physical printer, not fonts installed on
+        this machine.
+        """
+        dialog = Gtk.Dialog(title="Local Fonts", parent=self, flags=0)
+        dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(480, 420)
+
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        status = Gtk.Label(halign=Gtk.Align.START)
+        status.set_line_wrap(True)
+        content.pack_start(status, False, False, 0)
+
+        report_view = Gtk.TextView()
+        report_view.set_editable(False)
+        report_view.set_cursor_visible(False)
+        report_view.set_monospace(True)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_shadow_type(Gtk.ShadowType.IN)
+        scroller.set_vexpand(True)
+        scroller.add(report_view)
+        content.pack_start(scroller, True, True, 0)
+
+        rescan_btn = Gtk.Button(label="Rescan")
+        content.pack_start(rescan_btn, False, False, 0)
+
+        def refresh(rescan):
+            fc_list_ok, report = zpl_fonts.font_discovery_status(refresh=rescan)
+            status.set_text(
+                "fc-list is working normally - the directory scan below is "
+                "not being used, but shows what it would find if fc-list "
+                "stopped working." if fc_list_ok else
+                "fc-list is unavailable or reports no TrueType fonts on "
+                "this system - LinuxZPL is using the directory scan below "
+                "to find fonts instead.")
+
+            lines = ["Font file scan", "-" * 60, ""]
+            for d in report.dirs:
+                lines.append(f"Scanning: {d.path}")
+                lines.append("  (directory not found)" if not d.exists else
+                             f"  Found {d.font_count} font file(s)")
+                lines.append("")
+            lines.append(f"Total: {len(report.files)} font file(s), "
+                         f"{len(report.families)} usable family(ies)")
+            report_view.get_buffer().set_text("\n".join(lines))
+
+        rescan_btn.connect("clicked", lambda _b: refresh(True))
+
+        content.show_all()
+        refresh(False)
+        dialog.run()
+        dialog.destroy()
 
     def on_session_printer_clicked(self, widget):
         """Set the printer for this session only, without touching the persisted default."""

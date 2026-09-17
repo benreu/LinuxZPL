@@ -9,7 +9,7 @@ the printer.
 import ctypes
 import re
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Set
+from typing import Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 
 from PIL import ImageFont
 
@@ -50,8 +50,33 @@ RESIDENT_FONTS = [
     {'code': 'GS', 'name': 'Font GS', 'matrix': '24 x 24', 'kind': 'Symbols'},
 ]
 
+# Where fonts live when fc-list can't be asked - fontconfig missing, broken,
+# or just not installed on a minimal system. Module-level so tests can
+# monkeypatch them without touching the real filesystem.
+FALLBACK_FONT_DIRS = ('/usr/share/fonts', '/usr/local/share/fonts',
+                      '~/.fonts', '~/.local/share/fonts')
+FALLBACK_BUNDLED_ROOT = '/opt'
+FALLBACK_BUNDLED_GLOB = '*/usr/share/fonts'
+
+
+class ScannedDir(NamedTuple):
+    """One directory the fallback scanner looked at."""
+    path: str
+    exists: bool
+    font_count: int
+
+
+class FontScanReport(NamedTuple):
+    """What the fallback directory scan found, for the fallback itself and
+    for the Local Fonts... diagnostic dialog."""
+    dirs: List[ScannedDir]
+    families: Dict[str, str]   # same shape as list_ttf_families()
+    files: List[str]           # same shape as _all_ttf_paths()
+
+
 _families_cache: Optional[Dict[str, str]] = None
 _paths_cache: Optional[list] = None
+_scan_cache: Optional[FontScanReport] = None
 
 # Font files this session has registered, and the subset Qt has been given.
 # Kept apart because Qt cannot be told about a font until it has an
@@ -62,26 +87,27 @@ _qt_registered: Set[str] = set()
 
 # --- installed system fonts -------------------------------------------------
 
-def list_ttf_families(refresh: bool = False) -> Dict[str, str]:
-    """Installed families that have a .ttf file, as family -> path.
+def _style_rank(style: str) -> int:
+    try:
+        return _PREFERRED_STYLES.index(style.lower())
+    except ValueError:
+        return len(_PREFERRED_STYLES)
+
+
+def _fc_list_families() -> Dict[str, str]:
+    """fc-list's view of installed families, family -> path.
 
     Only TrueType can be sent to the printer (~DY ...,TT,), so .otf, .pfb, .t1
     and .ttc families are deliberately left out - offering them in a chooser
-    would produce fonts that cannot be uploaded. Cached, because the chooser's
-    filter callback runs once per family.
+    would produce fonts that cannot be uploaded.
     """
-    global _families_cache
-    if _families_cache is not None and not refresh:
-        return _families_cache
-
     import subprocess
     try:
         out = subprocess.run(
             ['fc-list', '-f', '%{family[0]}\t%{style[0]}\t%{file}\n'],
             capture_output=True, text=True, timeout=15, check=False).stdout
     except (OSError, subprocess.SubprocessError):
-        _families_cache = {}
-        return _families_cache
+        return {}
 
     best: Dict[str, tuple] = {}
     for line in out.splitlines():
@@ -91,14 +117,29 @@ def list_ttf_families(refresh: bool = False) -> Dict[str, str]:
         family, style, path = (p.strip() for p in parts)
         if not family or not path.lower().endswith('.ttf'):
             continue
-        try:
-            rank = _PREFERRED_STYLES.index(style.lower())
-        except ValueError:
-            rank = len(_PREFERRED_STYLES)
+        rank = _style_rank(style)
         if family not in best or rank < best[family][0]:
             best[family] = (rank, path)
 
-    _families_cache = {family: path for family, (_, path) in best.items()}
+    return {family: path for family, (_, path) in best.items()}
+
+
+def list_ttf_families(refresh: bool = False) -> Dict[str, str]:
+    """Installed families that have a .ttf file, as family -> path.
+
+    fc-list is asked first; if it is missing, broken, or simply reports
+    nothing (a minimal or sandboxed install without fontconfig set up),
+    scan_font_directories() supplies the fallback instead. Cached, because
+    the chooser's filter callback runs once per family.
+    """
+    global _families_cache
+    if _families_cache is not None and not refresh:
+        return _families_cache
+
+    families = _fc_list_families()
+    if not families:
+        families = scan_font_directories().families
+    _families_cache = families
     return _families_cache
 
 
@@ -112,11 +153,8 @@ def file_for_family(family: str) -> Optional[str]:
     return list_ttf_families().get(family)
 
 
-def _all_ttf_paths() -> list:
-    """Every installed .ttf file, not just one per family."""
-    global _paths_cache
-    if _paths_cache is not None:
-        return _paths_cache
+def _fc_list_paths() -> List[str]:
+    """fc-list's view of every installed .ttf file, not just one per family."""
     import subprocess
     try:
         out = subprocess.run(['fc-list', '-f', '%{file}\n'],
@@ -124,8 +162,24 @@ def _all_ttf_paths() -> list:
                              check=False).stdout
     except (OSError, subprocess.SubprocessError):
         out = ''
-    _paths_cache = sorted({line.strip() for line in out.splitlines()
-                           if line.strip().lower().endswith('.ttf')})
+    return sorted({line.strip() for line in out.splitlines()
+                   if line.strip().lower().endswith('.ttf')})
+
+
+def _all_ttf_paths(refresh: bool = False) -> List[str]:
+    """Every installed .ttf file, not just one per family.
+
+    Same fc-list-first, scan_font_directories() fallback as
+    list_ttf_families(), so the two stay consistent on a system where
+    fc-list can't be asked.
+    """
+    global _paths_cache
+    if _paths_cache is not None and not refresh:
+        return _paths_cache
+    paths = _fc_list_paths()
+    if not paths:
+        paths = scan_font_directories().files
+    _paths_cache = paths
     return _paths_cache
 
 
@@ -151,9 +205,91 @@ def file_for_printer_name(name: str) -> Optional[str]:
     return matches[0]
 
 
+def _name_and_style(font_path: str) -> Tuple[str, str]:
+    """The family and style recorded inside a font file."""
+    return ImageFont.truetype(font_path, 12).getname()
+
+
 def family_for_file(font_path: str) -> str:
     """The family name recorded inside a font file."""
-    return ImageFont.truetype(font_path, 12).getname()[0]
+    return _name_and_style(font_path)[0]
+
+
+# --- fallback: scanning font directories directly ---------------------------
+
+def _fallback_directories() -> List[str]:
+    """Directories the fallback scanner checks, fixed dirs then bundled ones.
+
+    FALLBACK_FONT_DIRS and FALLBACK_BUNDLED_ROOT are module globals so a test
+    can point this at a throwaway tree instead of the real filesystem.
+    """
+    fixed = [str(Path(d).expanduser()) for d in FALLBACK_FONT_DIRS]
+    bundled = sorted(str(p) for p in
+                     Path(FALLBACK_BUNDLED_ROOT).glob(FALLBACK_BUNDLED_GLOB))
+    return fixed + bundled
+
+
+def scan_font_directories(refresh: bool = False) -> FontScanReport:
+    """Find .ttf files directly, for when fc-list can't be asked.
+
+    Used both as the actual fallback inside list_ttf_families()/
+    _all_ttf_paths() and, unconditionally, by the Local Fonts... dialog - so
+    there is exactly one place that walks the filesystem. Cached like the
+    fc-list-backed lookups; refresh=True forces a fresh walk (the dialog's
+    Rescan button).
+    """
+    global _scan_cache
+    if _scan_cache is not None and not refresh:
+        return _scan_cache
+
+    dirs: List[ScannedDir] = []
+    files: List[str] = []
+    best: Dict[str, tuple] = {}
+
+    for directory in _fallback_directories():
+        path = Path(directory)
+        exists = path.is_dir()
+        count = 0
+        if exists:
+            try:
+                found = [p for p in path.rglob('*')
+                        if p.is_file() and p.suffix.lower() == '.ttf']
+            except OSError:
+                found = []
+            for font_path in found:
+                count += 1
+                fp = str(font_path)
+                files.append(fp)
+                try:
+                    family, style = _name_and_style(fp)
+                except Exception:
+                    continue
+                if not family:
+                    continue
+                rank = _style_rank(style)
+                if family not in best or rank < best[family][0]:
+                    best[family] = (rank, fp)
+        dirs.append(ScannedDir(path=directory, exists=exists, font_count=count))
+
+    families = {family: fp for family, (_, fp) in best.items()}
+    _scan_cache = FontScanReport(dirs=dirs, families=families,
+                                 files=sorted(files))
+    return _scan_cache
+
+
+def font_discovery_status(refresh: bool = False) -> Tuple[bool, FontScanReport]:
+    """Whether fc-list is currently supplying fonts, and what the directory
+    scan finds regardless - what the Local Fonts... dialog shows.
+
+    fc-list is always re-checked live (cheap, and the point of the dialog is
+    to be trustworthy about the system's current state); the directory walk
+    itself only re-runs when refresh=True, so opening the dialog is free and
+    Rescan is the only thing that costs a fresh walk. The scan runs even when
+    fc-list is healthy, so the dialog is useful before fc-list ever breaks,
+    not just after.
+    """
+    fc_list_ok = bool(_fc_list_families())
+    return fc_list_ok, scan_font_directories(refresh=refresh)
 
 
 # --- printer object naming --------------------------------------------------

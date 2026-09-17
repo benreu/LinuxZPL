@@ -62,7 +62,9 @@ disagree.
 
 - Python 3.10+
 - Pillow >= 9.0.0, numpy >= 1.20.0
-- fontconfig (`fc-list`, used to find installed fonts)
+- fontconfig (`fc-list`) finds installed fonts when present; if it's missing or
+  finds nothing, LinuxZPL falls back to scanning the usual font directories
+  itself - Settings → Local Fonts… shows which is in effect
 - **one** GUI toolkit:
   - GTK: `apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0`
   - Qt: `apt install python3-pyside2.qtcore python3-pyside2.qtgui python3-pyside2.qtwidgets`

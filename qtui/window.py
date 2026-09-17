@@ -297,6 +297,7 @@ class ZPLDesignerWindow(QMainWindow):
 
         self.label_size_action = self._action("Label Size…", self.on_label_size)
         self.default_printer_action = self._action("Default Printer…", self.on_default_printer)
+        self.local_fonts_action = self._action("Local Fonts…", self.on_local_fonts)
         self.printer_fonts_action = self._action("Fonts…", self.on_printer_fonts)
         self.printer_graphics_action = self._action("Graphics…", self.on_printer_graphics)
         self.printer_objects_action = self._action("Objects…", self.on_printer_objects)
@@ -357,6 +358,7 @@ class ZPLDesignerWindow(QMainWindow):
         settings_menu = menubar.addMenu("&Settings")
         settings_menu.addAction(self.label_size_action)
         settings_menu.addAction(self.default_printer_action)
+        settings_menu.addAction(self.local_fonts_action)
 
     def _build_toolbar(self):
         toolbar = QToolBar("Elements", self)
@@ -690,6 +692,9 @@ class ZPLDesignerWindow(QMainWindow):
                 self.canvas._sync_size()
                 self.canvas.commit()
                 self.update_status(note[0].upper() + note[1:])
+
+    def on_local_fonts(self):
+        qt_dialogs.LocalFontsDialog(self).exec_()
 
     def on_session_printer(self):
         """Print To this session's printer, without touching the persisted default."""

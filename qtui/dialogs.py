@@ -212,6 +212,69 @@ def choose_font_family(parent, current_family=None, title="Choose Font"):
     return family, path
 
 
+class LocalFontsDialog(QDialog):
+    """What the directory-scan font fallback sees, and whether it is in use.
+
+    fc-list is the only thing list_ttf_families() ever calls first, and on
+    most systems that is the end of it - but on a system where fontconfig is
+    missing, broken, or just not set up, every font chooser would otherwise
+    go quietly empty with nothing here to explain why. This is the one place
+    to check either way: idle while fc-list answers normally, or the thing
+    actually supplying every font in the chooser when it does not.
+
+    Distinct from the Printer -> Fonts... dialog, which is about fonts
+    stored on the physical printer, not fonts installed on this machine.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Local Fonts")
+        self.resize(480, 420)
+
+        layout = QVBoxLayout(self)
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        self._report = QPlainTextEdit()
+        self._report.setReadOnly(True)
+        self._report.setFont(QFont("monospace"))
+        layout.addWidget(self._report, 1)
+
+        row = QHBoxLayout()
+        self._rescan_btn = QPushButton("Rescan")
+        row.addWidget(self._rescan_btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        close.rejected.connect(self.reject)
+        layout.addWidget(close)
+
+        self._rescan_btn.clicked.connect(lambda: self.refresh(rescan=True))
+        self.refresh(rescan=False)
+
+    def refresh(self, rescan: bool):
+        fc_list_ok, report = zpl_fonts.font_discovery_status(refresh=rescan)
+        self._status.setText(
+            "fc-list is working normally - the directory scan below is not "
+            "being used, but shows what it would find if fc-list stopped "
+            "working." if fc_list_ok else
+            "fc-list is unavailable or reports no TrueType fonts on this "
+            "system - LinuxZPL is using the directory scan below to find "
+            "fonts instead.")
+
+        lines = ["Font file scan", "-" * 60, ""]
+        for d in report.dirs:
+            lines.append(f"Scanning: {d.path}")
+            lines.append("  (directory not found)" if not d.exists else
+                         f"  Found {d.font_count} font file(s)")
+            lines.append("")
+        lines.append(f"Total: {len(report.files)} font file(s), "
+                     f"{len(report.families)} usable family(ies)")
+        self._report.setPlainText("\n".join(lines))
+
+
 # --- element editing --------------------------------------------------------
 
 def _field_number_rows(form, element):
