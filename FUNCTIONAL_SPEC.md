@@ -61,7 +61,8 @@ until one is (§13) — at the configured printer resolution (4 × 6 inches is
 
 `x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`,
 `print_enabled` (default true — see §6.6), and `reverse_print` (`^FR`, default
-false — a checkbox in the Edit Text, Edit Frame and Edit Barcode dialogs, §7).
+false — a checkbox in every element editor that edits ink; Edit Image and
+Edit Stored Graphic have none, §7).
 
 ### 3.3 Element types
 
@@ -537,8 +538,8 @@ file choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
-| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across all three of these dialogs. |
-| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) flips Colour's effect a second time (§18). |
+| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across every element editor that has one. |
+| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) inverts whatever is already on the label, ignoring Colour (§18). |
 | **Edit Barcode** | Symbology; Value; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the five choices of §3.3; the rest are that symbology's own parameters, and Ratio, Check Digit and Mode are shown only for the symbologies that have one — Check Digit's own label changes with it. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
@@ -1372,13 +1373,22 @@ rather than requirements:
   would make such a barcode a hairline on the canvas. A `^BY` that does give a
   height is always obeyed; this is the fallback when nothing in the file has
   said anything at all.
-- **`^FR` is approximated as an ink/background swap on the field's own
-  footprint, not a true sample-and-invert of whatever is already on the label
-  underneath it.** Both canvases and the preview draw the field's background
-  solid and its ink in the opposite colour, which reproduces the common case —
-  a field reversed against a solid `^GB` box already there — without any new
-  compositing machinery. The cost: a field reversed with nothing solid beneath
-  it shows as a filled box, where a real printer would show nothing at all.
+- **`^FR` inverts whatever is already on the label under the field's own ink
+  shape — glyph outlines, bar rectangles, the frame's own border or fill —
+  and touches nothing outside it, confirmed against a real printer.**
+  Inverting blank (white) label gives black, so a reversed field with
+  nothing already printed under it prints its own ink normally, the same as
+  an unreversed field; only where it overlaps something already filled in
+  (a solid `^GB` box, say) does it come out as a genuine white cutout. Both
+  canvases do this live, with `QPainter.CompositionMode_Difference` /
+  `cairo.OPERATOR_DIFFERENCE`; the offline preview does the equivalent by
+  cropping, inverting and pasting back under a mask of the field's own ink.
+  Two residual approximations: `^GB`'s `Colour` is ignored whenever `Reverse`
+  is ticked — inferred from the same hardware description rather than itself
+  hardware-tested, since `^FR` replaces the field's normal print outright and
+  leaves nothing for `Colour` to modulate — and the font-less `^FB` fallback
+  (no TrueType file at all) inverts per line's bounding box rather than per
+  glyph.
 - **`^XG`/`^IM`/`^IL` resolve a stored graphic in `graphic_store` (the local,
   in-session cache) by name and extension only — the `R:`/`E:`/`B:`/`A:`
   device prefix is preserved for round-tripping but does not distinguish

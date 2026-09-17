@@ -277,6 +277,17 @@ class LocalFontsDialog(QDialog):
 
 # --- element editing --------------------------------------------------------
 
+def _reverse_hint(form):
+    """The note under every Reverse (^FR) checkbox, worded the same way in
+    both frontends so neither editor promises something the other doesn't.
+    """
+    hint = QLabel("Inverts whatever's already printed here (e.g. a filled "
+                  "frame); prints as normal ink where there's nothing yet.")
+    hint.setStyleSheet("color: gray;")
+    hint.setWordWrap(True)
+    form.addRow("", hint)
+
+
 def _field_number_rows(form, element):
     """The ^FN controls, for a barcode.
 
@@ -365,6 +376,7 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
+    _reverse_hint(form)
 
     chosen = {'path': element.font_path, 'family': element.font_family}
 
@@ -548,6 +560,7 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
+    _reverse_hint(form)
 
     clock_check = QCheckBox("Comes from the printer's clock (^FC)")
     clock_check.setObjectName("clock_format")
@@ -636,6 +649,7 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
+    _reverse_hint(form)
 
     serial_check = QCheckBox("Auto-increments each print (^SN)")
     serial_check.setObjectName("serial_format")
@@ -732,6 +746,7 @@ def edit_numbered_dialog(parent, element: TextElement, document: Document,
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
+    _reverse_hint(form)
 
     variable_check = QCheckBox("Data comes from a numbered field (^FN)")
     variable_check.setObjectName("variable")
@@ -816,6 +831,7 @@ def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
+    _reverse_hint(form)
 
     layout.addWidget(_buttons(dialog))
 
@@ -986,6 +1002,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
+    _reverse_hint(form)
 
     apply_field_number = _field_number_rows(form, element)
 

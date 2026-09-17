@@ -1107,6 +1107,36 @@ check("reverse print set in the text dialog reaches the element",
 check("a reversed field written from the dialog carries ^FR",
       '^FR' in de.to_zpl(), de.to_zpl())
 
+from PySide2.QtGui import QColor
+
+# The canvas must invert against what a *previous* element really put down,
+# not against its own translucent "you can select this" affordance box - the
+# affordance is drawn first (so a reversed field stays visible with nothing
+# to invert yet) and was, for one build, drawn before the ink instead of
+# after, so the invert picked up its own light-blue tint rather than the
+# black frame underneath.
+rw = qt_main.ZPLDesignerWindow()
+rw.unsaved_changes = False
+rw.on_new()
+rw.document.set_label_size(200, 150)
+rbox = rw.document.add_frame_element()
+rbox.x, rbox.y, rbox.width, rbox.height, rbox.thickness = 10, 10, 180, 130, 180
+rtext = rw.document.add_text_element('Hi')
+rtext.x, rtext.y, rtext.font_height, rtext.font_width = 20, 20, 40, 40
+rtext.font_path = FONT
+rtext.reverse_print = True
+rw.document.sync_text_width(rtext)
+rw.document.clear_selection()
+rw.canvas.set_zoom(1.0)
+reversed_canvas = QImage(200, 150, QImage.Format_ARGB32); reversed_canvas.fill(Qt.white)
+rw.canvas.render(reversed_canvas)
+check("the canvas inverts a reversed field's ink against the real box beneath it",
+      QColor(reversed_canvas.pixel(30, 30)).red() > 200,
+      QColor(reversed_canvas.pixel(30, 30)).getRgb())
+check("...and leaves the rest of the box untouched",
+      QColor(reversed_canvas.pixel(15, 30)).red() < 50,
+      QColor(reversed_canvas.pixel(15, 30)).getRgb())
+
 # --- the editors are non-modal child windows --------------------------------
 # Non-modal means an editor can still be up when the element under it is
 # replaced or removed, which is the one way an edit can be silently lost.
@@ -1205,15 +1235,19 @@ check("the preview rounds a rounded frame's corners",
       rounded.getpixel((22, 22)) > 200 and rounded.getpixel((200, 21)) < 100,
       (rounded.getpixel((22, 22)), rounded.getpixel((200, 21))))
 
-# ^FR flips a frame's own colour, in the preview as on the canvas
+# ^FR inverts whatever is already there under a frame's own shape, ignoring
+# colour entirely - nothing is behind this one, so it inverts blank (white)
+# to black. Coloured 'W' (which an unreversed frame draws as invisible white
+# ink) is what tells a correctly-reversed frame apart from one that silently
+# fell back to drawing its own colour instead of inverting.
 fr_frame = ZPLRenderer(400, 300).render(
-    "^XA^PW400^LL300^FO20,20^FR^GB360,260,4^FS^XZ").convert('L')
-check("the preview draws a ^FR frame's border inverted",
-      fr_frame.getpixel((200, 21)) > 200, fr_frame.getpixel((200, 21)))
+    "^XA^PW400^LL300^FO20,20^FR^GB360,260,4,W^FS^XZ").convert('L')
+check("the preview draws a ^FR frame as a true invert, ignoring its colour",
+      fr_frame.getpixel((200, 21)) < 100, fr_frame.getpixel((200, 21)))
 check("^FR reversed on a foreign file writes back after ^GB and still renders",
       ZPLRenderer(400, 300).render(
-          "^XA^PW400^LL300^FO20,20^GB360,260,4^FR^FS^XZ"
-      ).convert('L').getpixel((200, 21)) > 200)
+          "^XA^PW400^LL300^FO20,20^GB360,260,4,W^FR^FS^XZ"
+      ).convert('L').getpixel((200, 21)) < 100)
 
 # --- text turns the way barcodes already do ---------------------------------
 

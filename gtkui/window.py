@@ -144,6 +144,18 @@ def _make_combo(choices, current):
     return combo, codes
 
 
+def _reverse_hint() -> Gtk.Label:
+    """The note under every Reverse (^FR) checkbox, worded the same way in
+    both frontends so neither editor promises something the other doesn't.
+    """
+    hint = Gtk.Label(
+        label="Inverts whatever's already printed here (e.g. a filled "
+             "frame); prints as normal ink where there's nothing yet.")
+    hint.set_halign(Gtk.Align.START)
+    hint.set_line_wrap(True)
+    return hint
+
+
 def _dpi_combo(dpi: int) -> Gtk.ComboBoxText:
     """The resolution choice, offered the same way wherever it is edited.
 
@@ -2814,6 +2826,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
 
             clock_check = Gtk.CheckButton(
                 label="Comes from the printer's clock (^FC)")
@@ -2897,6 +2910,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
 
             serial_check = Gtk.CheckButton(
                 label="Auto-increments each print (^SN)")
@@ -2990,6 +3004,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
 
             variable_check = Gtk.CheckButton(
                 label="Data comes from a numbered field (^FN)")
@@ -3065,6 +3080,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
 
             # Font chooser (installed families only)
             selected_font = [element.font_path, element.font_family]
@@ -3280,6 +3296,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
 
             apply_field_number = _make_field_number_rows(content, element)
 
@@ -3496,6 +3513,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             content.pack_start(fr_check, False, False, 0)
+            content.pack_start(_reverse_hint(), False, False, 0)
 
             content.show_all()
 

@@ -4,7 +4,7 @@ ZPL (Zebra Programming Language) Renderer
 Renders ZPL commands to PIL Image objects for display.
 """
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
 from . import fields, geometry, graphic_store, graphics, parser, textraster, transforms
@@ -133,8 +133,11 @@ class ZPLRenderer:
         # into its own image and turned as a whole.
         run = layout['run']
         stack = max(1, element.bar_height) + element.text_height()
-        # ^FR swaps the panel's background and ink, white-on-black instead of
-        # black-on-white.
+        # ^FR does not paint a background - it inverts whatever is already
+        # there under its own bars and interpretation line. A panel with a 0
+        # background and 255 ink is exactly the mask _invert_under() wants,
+        # so the same values that used to draw a (wrong) white-on-black panel
+        # now serve as that mask instead - see the paste at the end.
         bg, ink = (0, 255) if self.current_reverse else (255, 0)
         panel = Image.new('L', (max(1, run), max(1, stack)), bg)
         draw = ImageDraw.Draw(panel)
@@ -160,7 +163,26 @@ class ZPLRenderer:
 
         if layout['angle']:
             panel = panel.rotate(-layout['angle'], expand=True)
-        self.image.paste(panel, (x, y - element.height if self.typeset else y))
+        pos = (x, y - element.height if self.typeset else y)
+        if self.current_reverse:
+            self._invert_under(panel, pos)
+        else:
+            self.image.paste(panel, pos)
+
+    def _invert_under(self, mask, pos) -> None:
+        """Invert the label wherever `mask` ('L', 0-255) is non-zero.
+
+        This is what ^FR actually does on a real printer: it inverts
+        whatever is already on the label under this field's own ink -
+        nothing else - rather than painting a background of its own.
+        Inverting blank (white) label gives black, so a field with nothing
+        already printed under it prints its own ink normally; only where
+        something is already black does it come out white.
+        """
+        if mask.width <= 0 or mask.height <= 0:
+            return
+        box = (pos[0], pos[1], pos[0] + mask.width, pos[1] + mask.height)
+        self.image.paste(ImageChops.invert(self.image.crop(box)), pos, mask)
 
     def _turned(self, panel, run: int, stack: int):
         """Paste a drawn panel onto the label, turned to face the right way.
@@ -169,6 +191,11 @@ class ZPLRenderer:
         image and is turned as a whole - the same way a rotated barcode is
         drawn. The footprint transposes at a quarter turn, which is what keeps
         the preview's box the same one the canvas shows.
+
+        `panel` doubles as the ^FR mask when reversed - see _render_text and
+        _render_block, which build it with the same 0-background/255-ink
+        values _invert_under() expects, for the same reason _render_barcode's
+        panel does.
         """
         element = TextElement(self.current_x, self.current_y,
                               orientation=self.current_font_orientation)
@@ -178,7 +205,11 @@ class ZPLRenderer:
             panel = panel.rotate(-angle, expand=True)
         offset = textraster.baseline_offset(self._font_path(),
                                             self.current_font_size)
-        self.image.paste(panel, (self.current_x, self._top(offset)))
+        pos = (self.current_x, self._top(offset))
+        if self.current_reverse:
+            self._invert_under(panel, pos)
+        else:
+            self.image.paste(panel, pos)
 
     def _render_text(self, text: str):
         """A plain ^FD field, in the font and the direction ^A asked for.
@@ -204,8 +235,9 @@ class ZPLRenderer:
                    self.current_font_size)
         natural = max(1, box[2] - box[0])
         stack = max(1, box[3] - box[1])
-        # ^FR swaps the panel's background and ink, white-on-black instead of
-        # black-on-white.
+        # A 0 background and 255 ink doubles as _invert_under()'s mask when
+        # reversed - _turned() does the actual inverting - and is the normal
+        # black-on-white panel otherwise.
         bg, ink = (0, 255) if self.current_reverse else (255, 0)
         panel = Image.new('L', (natural, stack), bg)
         ImageDraw.Draw(panel).text((-box[0], -box[1]), text, fill=ink, font=font)
@@ -224,8 +256,9 @@ class ZPLRenderer:
         block = self.current_block
         font_path = self._font_path()
         font_width = self.current_font_width or self.current_font_size
-        # ^FR swaps the panel's background and ink, white-on-black instead of
-        # black-on-white.
+        # A 0 background and 255 ink doubles as _invert_under()'s mask when
+        # reversed - _turned() does the actual inverting - and is the normal
+        # black-on-white panel otherwise.
         bg, ink = (0, (255, 255, 255, 255)) if self.current_reverse \
             else (255, (0, 0, 0, 255))
         drawn = textraster.raster_block(text, font_path, self.current_font_size,
@@ -237,19 +270,24 @@ class ZPLRenderer:
             return
 
         # No usable font file, so there are no glyph metrics to raster with;
-        # the lines still go where they belong.
+        # the lines still go where they belong. There is no panel here to
+        # double as a mask, so one is built by hand, per line.
         font = self._get_font(self.current_font_size)
         step = textraster.pitch(self.current_font_size, block)
         for row, line in enumerate(textraster.wrap(
                 text, font_path, self.current_font_size, font_width, block)):
             y = self.current_y + row * step
             if self.current_reverse:
-                box = self.draw.textbbox(
-                    (self.current_x + block.indent, y), line, font=font)
-                self.draw.rectangle(box, fill='black')
-            self.draw.text((self.current_x + block.indent, y), line,
-                           fill='white' if self.current_reverse else 'black',
-                           font=font)
+                box = self.draw.textbbox((0, 0), line, font=font)
+                w = max(1, box[2] - box[0])
+                h = max(1, box[3] - box[1])
+                mask = Image.new('L', (w, h), 0)
+                ImageDraw.Draw(mask).text((-box[0], -box[1]), line,
+                                          fill=255, font=font)
+                self._invert_under(mask, (self.current_x + block.indent + box[0], y + box[1]))
+            else:
+                self.draw.text((self.current_x + block.indent, y), line,
+                               fill='black', font=font)
 
     def _render_frame(self, params: str):
         """Draw a ^GB box through the same element the canvas draws.
@@ -264,31 +302,43 @@ class ZPLRenderer:
         element = FrameElement(self.current_x, self.current_y,
                                *parser._read_frame(params))
         element.y = self._top(element.height)
-        # ^FR flips the colour again, on top of whichever colour was chosen.
-        # An RGB tuple, not a bare int: PIL packs a lone int into an RGB
-        # image's first channel rather than broadcasting it, which drew white
-        # as red.
-        white = (element.colour == 'W') != self.current_reverse
-        ink = (255, 255, 255) if white else (0, 0, 0)
         thickness = max(1, element.thickness)
-        # PIL's rectangle includes both corners, so the far edge is one dot
-        # short of the width - otherwise every ^GB drew a dot wider and a dot
-        # taller here than on the canvas, which is most visible on a rule.
-        box = [(element.x, element.y),
-               (element.x + element.width - 1, element.y + element.height - 1)]
         radius = element.corner_radius()
+
+        if self.current_reverse:
+            # ^FR replaces the field's own print outright, so colour has
+            # nothing left to choose between - the box is drawn into a mask,
+            # local to its own top-left, and _invert_under() inverts
+            # whatever the label already has under it rather than this
+            # painting a flat colour of its own.
+            mask = Image.new('L', (element.width, element.height), 0)
+            draw, ink = ImageDraw.Draw(mask), 255
+            box = [(0, 0), (element.width - 1, element.height - 1)]
+        else:
+            # An RGB tuple, not a bare int: PIL packs a lone int into an RGB
+            # image's first channel rather than broadcasting it, which drew
+            # white as red.
+            draw, ink = self.draw, (255, 255, 255) if element.colour == 'W' else (0, 0, 0)
+            # PIL's rectangle includes both corners, so the far edge is one
+            # dot short of the width - otherwise every ^GB drew a dot wider
+            # and a dot taller here than on the canvas, which is most visible
+            # on a rule.
+            box = [(element.x, element.y),
+                   (element.x + element.width - 1, element.y + element.height - 1)]
 
         if 2 * thickness >= min(element.width, element.height):
             # ^GB fills solid once the border meets in the middle
             if radius > 0:
-                self.draw.rounded_rectangle(box, radius=radius, fill=ink)
+                draw.rounded_rectangle(box, radius=radius, fill=ink)
             else:
-                self.draw.rectangle(box, fill=ink)
+                draw.rectangle(box, fill=ink)
         elif radius > 0:
-            self.draw.rounded_rectangle(box, radius=radius, outline=ink,
-                                        width=thickness)
+            draw.rounded_rectangle(box, radius=radius, outline=ink, width=thickness)
         else:
-            self.draw.rectangle(box, outline=ink, width=thickness)
+            draw.rectangle(box, outline=ink, width=thickness)
+
+        if self.current_reverse:
+            self._invert_under(mask, (element.x, element.y))
 
     def _render_graphic(self, params: str):
         """Render a ^GF graphic field, in whichever encoding it arrived in.

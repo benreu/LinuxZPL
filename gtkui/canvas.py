@@ -493,29 +493,35 @@ class DesignCanvas(Gtk.DrawingArea):
     def _draw_text_element(self, context, element, selected: bool):
         """Draw a text element."""
         reverse = element.reverse_print
-        if reverse:
-            # ^FR: this field prints in reverse, so the box is drawn solid
-            # rather than as the usual translucent editing affordance - a
-            # reversed field with nothing under it would otherwise vanish.
-            context.set_source_rgb(0, 0, 0)
-        else:
-            # Translucent background: it is a designer affordance, and must
-            # not hide anything underneath that will still print.
-            context.set_source_rgba(0.95, 0.95, 1, 0.35)
-        context.rectangle(element.x, element.y, element.width, element.height)
-        context.fill()
 
-        # Draw border
-        if selected:
-            context.set_source_rgb(0, 0, 1)
-            context.set_line_width(2)
-        else:
-            context.set_source_rgb(0.5, 0.5, 1)
-            context.set_line_width(1)
-        context.rectangle(element.x, element.y, element.width, element.height)
-        context.stroke()
+        def draw_affordance():
+            # Translucent background: it is a designer affordance, and must
+            # not hide anything underneath that will still print - true
+            # regardless of reverse_print, so a reversed field is still
+            # visible and selectable even where it has nothing (yet) to
+            # invert. Drawn after the ink when reversed, or it would be
+            # inverted along with the real content beneath it instead of
+            # just tinting it.
+            context.set_source_rgba(0.95, 0.95, 1, 0.35)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.fill()
+
+            if selected:
+                context.set_source_rgb(0, 0, 1)
+                context.set_line_width(2)
+            else:
+                context.set_source_rgb(0.5, 0.5, 1)
+                context.set_line_width(1)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.stroke()
+
+        if not reverse:
+            draw_affordance()
 
         # Draw text using PIL when a custom font is set, otherwise Cairo toy font
+        # ^FR: white ink under an OPERATOR_DIFFERENCE invert whatever is
+        # already on the canvas under the glyphs, rather than being painted
+        # a flat colour of its own.
         ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
         context.set_source_rgb(*(c / 255 for c in ink[:3]))
         font_path = element.font_path or self.font_path
@@ -530,6 +536,8 @@ class DesignCanvas(Gtk.DrawingArea):
                           element.y + facing['offset'][1])
         if facing['angle']:
             context.rotate(math.radians(facing['angle']))
+        if reverse:
+            context.set_operator(cairo.OPERATOR_DIFFERENCE)
 
         pil_rendered = False
         if font_path:
@@ -567,7 +575,12 @@ class DesignCanvas(Gtk.DrawingArea):
             context.show_text(shown)
             context.restore()
 
+        if reverse:
+            context.set_operator(cairo.OPERATOR_OVER)
         context.restore()
+
+        if reverse:
+            draw_affordance()
 
         if selected:
             self._draw_handles(context, element)
@@ -620,12 +633,21 @@ class DesignCanvas(Gtk.DrawingArea):
             context.rectangle(element.x, element.y, element.width, element.height)
             context.stroke()
 
-        # ^GB's colour: white is what the printer leaves unburnt, so it shows
-        # only over something already black - drawing it black instead was the
-        # one case where the canvas showed the opposite of what prints.
-        # ^FR flips it again, on top of whichever colour was chosen.
-        white = (getattr(element, 'colour', 'B') == 'W') != element.reverse_print
-        context.set_source_rgb(1, 1, 1) if white else context.set_source_rgb(0, 0, 0)
+        reverse = element.reverse_print
+        if reverse:
+            # ^FR replaces the field's own print outright, so colour has
+            # nothing left to choose between - white drawn under
+            # OPERATOR_DIFFERENCE inverts whatever the canvas already has
+            # here, rather than picking a flat colour of its own.
+            context.set_operator(cairo.OPERATOR_DIFFERENCE)
+            context.set_source_rgb(1, 1, 1)
+        else:
+            # ^GB's colour: white is what the printer leaves unburnt, so it
+            # shows only over something already black - drawing it black
+            # instead was the one case where the canvas showed the opposite
+            # of what prints.
+            white = getattr(element, 'colour', 'B') == 'W'
+            context.set_source_rgb(1, 1, 1) if white else context.set_source_rgb(0, 0, 0)
         radius = element.corner_radius() if hasattr(element, 'corner_radius') else 0
 
         if 2 * t >= min(element.width, element.height):
@@ -643,7 +665,9 @@ class DesignCanvas(Gtk.DrawingArea):
                           max(0.0, radius - t / 2))
             context.stroke()
 
-        
+        if reverse:
+            context.set_operator(cairo.OPERATOR_OVER)
+
         if selected:
             self._draw_handles(context, element)
     
@@ -701,14 +725,23 @@ class DesignCanvas(Gtk.DrawingArea):
         if layout['angle']:
             context.rotate(math.radians(layout['angle']))
 
-        # White behind the symbol: a barcode the printer cannot read is worse
-        # than one that covers something, so it is deliberately opaque.
-        # ^FR swaps it for black-behind-white, same as everywhere else.
         reverse = element.reverse_print
-        bg, fg = ((0, 0, 0), (1, 1, 1)) if reverse else ((1, 1, 1), (0, 0, 0))
-        context.set_source_rgb(*bg)
-        context.rectangle(0, 0, run, stack)
-        context.fill()
+        if reverse:
+            # ^FR: white bars drawn under OPERATOR_DIFFERENCE invert
+            # whatever the canvas already has under them, rather than a
+            # background of their own - inverting blank white gives black
+            # bars, same as an unreversed barcode, unless something already
+            # printed (a filled ^GB, say) is under it.
+            context.set_operator(cairo.OPERATOR_DIFFERENCE)
+            fg = (1, 1, 1)
+        else:
+            # White behind the symbol: a barcode the printer cannot read is
+            # worse than one that covers something, so it is deliberately
+            # opaque.
+            context.set_source_rgb(1, 1, 1)
+            context.rectangle(0, 0, run, stack)
+            context.fill()
+            fg = (0, 0, 0)
 
         bar_x, bar_y, bar_w, bar_h = layout['bars']
         mods = element.modules()
@@ -723,6 +756,8 @@ class DesignCanvas(Gtk.DrawingArea):
 
         if layout['text']:
             self._draw_barcode_text(context, layout, reverse)
+        if reverse:
+            context.set_operator(cairo.OPERATOR_OVER)
         context.restore()
 
         # The selection border follows the footprint, which is axis-aligned at

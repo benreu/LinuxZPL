@@ -124,15 +124,29 @@ w.load_zpl_file(p)
 check("a file with no recorded dpi is assumed 203, and says so",
       answers == [(203, 300, True)], answers)
 
-# --- 18.x  ^FR is approximated as an ink/background swap ---------------------
+# --- 18.x  ^FR truly inverts whatever is already there, not a flat box ------
+# Confirmed against a real printer: with nothing already printed under it, a
+# reversed field prints its own ink normally (inverting blank white gives
+# black) rather than either a flat box or nothing at all. Only over
+# something already filled in does it show as a genuine white cutout.
 from zplcore.renderer import ZPLRenderer
 
-reversed_field = ZPLRenderer(200, 150).render(
+blank = ZPLRenderer(200, 150).render(
     "^XA^PW200^LL150^FO20,20^FR^A0N,40,40^FDHi^FS^XZ").convert('L')
-check("18.x a ^FR field with nothing behind it draws a solid dark box, "
-      "rather than the nothing a real printer would show there",
-      reversed_field.getpixel((25, 25)) < 100,
-      reversed_field.getpixel((25, 25)))
+check("18.x a ^FR field over blank label prints its own ink, not a box",
+      blank.getpixel((30, 30)) < 100, blank.getpixel((30, 30)))
+check("18.x ...and nothing outside its own ink shape",
+      blank.getpixel((18, 30)) > 200, blank.getpixel((18, 30)))
+
+over_box = ZPLRenderer(200, 150).render(
+    "^XA^PW200^LL150"
+    "^FO10,10^GB180,130,180^FS"
+    "^FO20,20^FR^A0N,40,40^FDHi^FS"
+    "^XZ").convert('L')
+check("18.x a ^FR field over a filled box inverts the box at its own ink",
+      over_box.getpixel((30, 30)) > 200, over_box.getpixel((30, 30)))
+check("18.x ...and leaves the rest of the box untouched",
+      over_box.getpixel((18, 30)) < 100, over_box.getpixel((18, 30)))
 
 print()
 print("ALL DEVIATION CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}")

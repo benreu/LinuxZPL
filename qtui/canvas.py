@@ -273,25 +273,29 @@ class DesignCanvas(QWidget):
 
     def _draw_text_element(self, painter, element, selected: bool):
         reverse = element.reverse_print
-        if reverse:
-            # ^FR: this field prints in reverse, so the box is drawn solid
-            # rather than as the usual translucent editing affordance - a
-            # reversed field with nothing under it would otherwise vanish.
-            painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
-                             QColor(0, 0, 0))
-        else:
+
+        def draw_affordance():
             # Translucent background: a designer affordance must not hide
-            # anything underneath it that will still print.
+            # anything underneath it that will still print - true regardless
+            # of reverse_print, so a reversed field is still visible and
+            # selectable even where it has nothing (yet) to invert. Drawn
+            # after the ink when reversed, or it would be inverted along
+            # with the real content beneath it instead of just tinting it.
             painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
                              QColor(242, 242, 255, 89))
+            painter.setPen(QPen(QColor(0, 0, 255), 2) if selected
+                           else QPen(QColor(128, 128, 255), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
-        painter.setPen(QPen(QColor(0, 0, 255), 2) if selected
-                       else QPen(QColor(128, 128, 255), 1))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
+        if not reverse:
+            draw_affordance()
 
         font_path = element.font_path or self.document.font_path
         block = getattr(element, 'block', None)
+        # ^FR: white glyphs drawn under a Difference composition invert
+        # whatever is already on the canvas under them, rather than being
+        # painted a flat colour of their own.
         ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
 
         # Everything below draws the text in its own upright frame; the frame
@@ -303,6 +307,8 @@ class DesignCanvas(QWidget):
                           element.y + facing['offset'][1])
         if facing['angle']:
             painter.rotate(facing['angle'])
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_Difference)
 
         raster = None
         if block is not None:
@@ -315,7 +321,11 @@ class DesignCanvas(QWidget):
                 painter.drawImage(QPointF(0, 0), wrapped)
             else:
                 self._draw_text_block(painter, element, font_path, block, reverse)
+            if reverse:
+                painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
             painter.restore()
+            if reverse:
+                draw_affordance()
             if selected:
                 self._draw_handles(painter, element)
             return
@@ -338,7 +348,12 @@ class DesignCanvas(QWidget):
         else:
             self._draw_text_fallback(painter, element, font_path, reverse)
 
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         painter.restore()
+
+        if reverse:
+            draw_affordance()
 
         if selected:
             self._draw_handles(painter, element)
@@ -423,12 +438,21 @@ class DesignCanvas(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
-        # ^GB's colour: white is what the printer leaves unburnt, so it shows
-        # only over something already black - drawing it black instead was the
-        # one case where the canvas showed the opposite of what prints.
-        # ^FR flips it again, on top of whichever colour was chosen.
-        white = (getattr(element, 'colour', 'B') == 'W') != element.reverse_print
-        ink = QColor(255, 255, 255) if white else QColor(0, 0, 0)
+        reverse = element.reverse_print
+        if reverse:
+            # ^FR replaces the field's own print outright, so colour has
+            # nothing left to choose between - white drawn under a
+            # Difference composition inverts whatever the canvas already
+            # has here, rather than picking a flat colour of its own.
+            painter.setCompositionMode(QPainter.CompositionMode_Difference)
+            ink = QColor(255, 255, 255)
+        else:
+            # ^GB's colour: white is what the printer leaves unburnt, so it
+            # shows only over something already black - drawing it black
+            # instead was the one case where the canvas showed the opposite
+            # of what prints.
+            white = getattr(element, 'colour', 'B') == 'W'
+            ink = QColor(255, 255, 255) if white else QColor(0, 0, 0)
         radius = element.corner_radius() if hasattr(element, 'corner_radius') else 0
 
         if 2 * t >= min(element.width, element.height):
@@ -458,6 +482,9 @@ class DesignCanvas(QWidget):
             else:
                 painter.drawRect(box)
 
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
         if selected:
             self._draw_handles(painter, element)
 
@@ -480,13 +507,21 @@ class DesignCanvas(QWidget):
         if layout['angle']:
             painter.rotate(layout['angle'])
 
-        # White behind the symbol: a barcode the printer cannot read is worse
-        # than one that covers something, so it is deliberately opaque.
-        # ^FR swaps it for black-behind-white, same as everywhere else.
         reverse = element.reverse_print
-        bg, fg = (QColor(0, 0, 0), QColor(255, 255, 255)) if reverse \
-            else (QColor(255, 255, 255), QColor(0, 0, 0))
-        painter.fillRect(QRectF(0, 0, run, stack), bg)
+        if reverse:
+            # ^FR: white bars drawn under a Difference composition invert
+            # whatever the canvas already has under them, rather than a
+            # background of their own - inverting blank white gives black
+            # bars, same as an unreversed barcode, unless something already
+            # printed (a filled ^GB, say) is under it.
+            painter.setCompositionMode(QPainter.CompositionMode_Difference)
+            fg = QColor(255, 255, 255)
+        else:
+            # White behind the symbol: a barcode the printer cannot read is
+            # worse than one that covers something, so it is deliberately
+            # opaque.
+            painter.fillRect(QRectF(0, 0, run, stack), QColor(255, 255, 255))
+            fg = QColor(0, 0, 0)
 
         bar_x, bar_y, bar_w, bar_h = layout['bars']
         mods = element.modules()
@@ -502,6 +537,8 @@ class DesignCanvas(QWidget):
 
         if layout['text']:
             self._draw_barcode_text(painter, layout, reverse)
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         painter.restore()
 
         # The selection border follows the footprint, which is axis-aligned at
