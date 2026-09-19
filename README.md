@@ -47,7 +47,8 @@ disagree.
 - **Network Printing**: straight over TCP to a Zebra, no printing subsystem
   involved
 - **Select more than one**: shift-click, or drag a band across the canvas, and
-  the whole selection moves together
+  the whole selection moves together; Select All, Deselect All and Invert
+  Selection are in the Edit menu
 - **Group and ungroup**: Ctrl+G makes a selection one unit that any click,
   band, drag, align or z-order command treats as a whole, saved in the file
   and undone a level at a time with Ctrl+Shift+G; groups nest, Ctrl-click
@@ -122,8 +123,8 @@ Identical in both frontends.
 | Ctrl+Shift+S | Save As | Ctrl+G / Ctrl+Shift+G | Group / Ungroup |
 | Ctrl+P | Print | Ctrl+] / Ctrl+Shift+] | Bring Forward / to Front |
 | Ctrl+Q | Quit | Ctrl+[ / Ctrl+Shift+[ | Send Backward / to Back |
-| | | Ctrl++ / Ctrl+- | Zoom In / Out |
-| | | Ctrl+0 / Ctrl+9 / Ctrl+1 | Fit Label / Fit Width / 1:1 |
+| Ctrl+A | Select All | Ctrl++ / Ctrl+- | Zoom In / Out |
+| Ctrl+Shift+A | Deselect All | Ctrl+0 / Ctrl+9 / Ctrl+1 | Fit Label / Fit Width / 1:1 |
 
 ## Settings
 

@@ -348,7 +348,8 @@ pinned.
   is in one — to the selection, or takes it out again if it is already in. A
   plain click on an element that is already selected keeps the whole
   selection, so a group can be picked up by any of its members; a click on
-  empty canvas is what reduces a group back to nothing.
+  empty canvas, or Deselect All (§6.2), is what reduces a group back to
+  nothing.
 - **Ctrl-click** is a *direct pick*: exactly the element under the pointer,
   even one inside a group, and nothing else. It narrows a selected group down
   to that one member. It is a pick, not a toggle, so it starts a drag like a
@@ -498,11 +499,22 @@ must report the real error and leave the flag set.
 
 ### 6.2 Edit
 
-Undo, Redo, Delete, then Group / Ungroup / Remove from Group, then Bring to
-Front / Bring Forward / Send Backward / Send to Back, then an **Align** submenu. Delete and the four
-z-order items are disabled when nothing is selected; the raise pair is disabled
-when the selection is already on top and the lower pair when it is already at
-the bottom. Sensitivity is re-evaluated each time the menu opens.
+Undo, Redo, Delete, then Select All / Deselect All / Invert Selection, then
+Group / Ungroup / Remove from Group, then Bring to Front / Bring Forward / Send
+Backward / Send to Back, then an **Align** submenu. Delete and the four z-order
+items are disabled when nothing is selected; the raise pair is disabled when
+the selection is already on top and the lower pair when it is already at the
+bottom. Sensitivity is re-evaluated each time the menu opens.
+
+**Select All** (Ctrl+A) selects every element, whole groups included, with the
+topmost element as the primary; it is enabled while anything is left
+unselected. **Deselect All** (Ctrl+Shift+A) clears the selection, and is
+enabled while there is one. **Invert Selection** selects exactly what was not
+selected — widened to whole groups, so a member picked directly (§5) comes
+back with the rest of its group — and is enabled whenever there are elements;
+inverting everything leaves nothing, inverting nothing selects everything. All
+three change the selection and never the document, so none records an undo
+entry (§12), and a shortcut that arrives with nothing to do does nothing.
 
 **Group** (Ctrl+G) wraps the selection in a new group. It is enabled when the
 selection holds two or more *units* — a unit being a loose element or a whole
@@ -1308,8 +1320,8 @@ to come back as the group.
   dialog, toggling Print This Element, and changing the label size (including
   the element clamping that a smaller label causes).
 - Changing the **selection** is not a document change and is not undoable: a
-  click, a shift-click and a rubber band record no entry. An align that moves
-  nothing records none either.
+  click, a shift-click, a rubber band, Select All, Deselect All and Invert
+  Selection record no entry. An align that moves nothing records none either.
 - Performing a new action after undoing discards the redo branch.
 - History is capped at 50 entries, oldest discarded.
 - Loading a file clears the history — undo never crosses a file boundary.
@@ -1384,6 +1396,7 @@ treated as corrupt and falls back too.
 
 | Shortcut | Action |
 |---|---|
+| Ctrl+N | New |
 | Ctrl+O | Open |
 | Ctrl+S | Save |
 | Ctrl+Shift+S | Save As |
@@ -1392,6 +1405,8 @@ treated as corrupt and falls back too.
 | Ctrl+Z | Undo |
 | Ctrl+Shift+Z, Ctrl+Y | Redo |
 | Delete | Delete selected element |
+| Ctrl+A | Select All |
+| Ctrl+Shift+A | Deselect All |
 | Ctrl+G | Group |
 | Ctrl+Shift+G | Ungroup |
 | Ctrl+] | Bring Forward |
@@ -1408,7 +1423,10 @@ Three notes for a port:
 
 - Shortcuts are global to the window, not only active while a menu is open —
   which is why Page Up / Home were avoided for the z-order actions: they would
-  be taken away from scrolling the canvas.
+  be taken away from scrolling the canvas. For the same reason Ctrl+A means
+  the main window must never hold a text entry of its own: the binding would
+  take select-all-text away from it. The element editors are windows of their
+  own and keep theirs.
 - A shortcut is subject to the same enable/disable rules as its menu item. Ctrl+Y
   does nothing when there is nothing to redo, and Delete does nothing with no
   selection; neither is an error.

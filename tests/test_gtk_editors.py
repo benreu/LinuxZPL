@@ -220,6 +220,28 @@ check("Remove from Group records one undo entry and leaves both loose",
 window.on_undo()
 check("and undo puts the group back",
       sum(1 for element in document.elements if element.group) == 2)
+
+# --- Select All, Deselect All, Invert Selection -----------------------------
+document.select_many([document.elements[0]])
+window._update_edit_menu(None)
+check("Select All is offered while something is left unselected, Deselect All too",
+      window.select_all_item.get_sensitive() and window.deselect_all_item.get_sensitive()
+      and window.invert_selection_item.get_sensitive())
+depth = len(window._undo_stack)
+window.on_select_all_clicked(None)
+window._update_edit_menu(None)
+check("once everything is selected Select All is not, and no undo entry was recorded",
+      not window.select_all_item.get_sensitive()
+      and len(document.selection) == len(document.elements)
+      and len(window._undo_stack) == depth)
+window.on_invert_selection_clicked(None)
+window._update_edit_menu(None)
+check("inverting a full selection leaves nothing, so Deselect All is not offered",
+      not document.selection and not window.deselect_all_item.get_sensitive()
+      and len(window._undo_stack) == depth)
+window.on_select_all_clicked(None); window.on_deselect_all_clicked(None)
+check("Deselect All clears it and records nothing",
+      not document.selection and len(window._undo_stack) == depth)
 for element in list(document.elements):
     document.elements.remove(element)
 

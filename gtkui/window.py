@@ -479,6 +479,25 @@ class ZPLViewerWindow(Gtk.Window):
 
         edit_menu.append(Gtk.SeparatorMenuItem())
 
+        # Ctrl+A is matched before any focused widget sees it, so the main
+        # window must never hold a text entry of its own - the editors are
+        # windows of their own, and keep their select-all-text.
+        self.select_all_item = Gtk.MenuItem.new_with_mnemonic("_Select All")
+        self.select_all_item.connect("activate", self.on_select_all_clicked)
+        add_accel(self.select_all_item, "<Control>a")
+        edit_menu.append(self.select_all_item)
+
+        self.deselect_all_item = Gtk.MenuItem.new_with_mnemonic("Dese_lect All")
+        self.deselect_all_item.connect("activate", self.on_deselect_all_clicked)
+        add_accel(self.deselect_all_item, "<Control><Shift>a")
+        edit_menu.append(self.deselect_all_item)
+
+        self.invert_selection_item = Gtk.MenuItem.new_with_mnemonic("_Invert Selection")
+        self.invert_selection_item.connect("activate", self.on_invert_selection_clicked)
+        edit_menu.append(self.invert_selection_item)
+
+        edit_menu.append(Gtk.SeparatorMenuItem())
+
         self.group_item = Gtk.MenuItem.new_with_mnemonic("_Group")
         self.group_item.connect("activate", self.on_group_clicked)
         add_accel(self.group_item, "<Control>g")
@@ -2660,6 +2679,9 @@ class ZPLViewerWindow(Gtk.Window):
         """Grey out the actions that need a selected element."""
         doc = self.design_canvas.document
         self.delete_item.set_sensitive(doc.selected_element is not None)
+        self.select_all_item.set_sensitive(len(doc.selection) < len(doc.elements))
+        self.deselect_all_item.set_sensitive(bool(doc.selection))
+        self.invert_selection_item.set_sensitive(bool(doc.elements))
         self.group_item.set_sensitive(doc.can_group())
         self.ungroup_item.set_sensitive(doc.can_ungroup())
         self.remove_from_group_item.set_sensitive(doc.can_remove_from_group())
@@ -2743,6 +2765,23 @@ class ZPLViewerWindow(Gtk.Window):
     def on_add_stored_graphic_clicked(self, widget):
         """Handle add stored graphic element button click."""
         self.design_canvas.add_stored_graphic_element()
+
+    # Selection commands change the selection and never the document, so
+    # they repaint and record nothing - the same as a click or a band.
+
+    def on_select_all_clicked(self, widget):
+        if self.design_canvas.document.select_all():
+            self.design_canvas.queue_draw()
+
+    def on_deselect_all_clicked(self, widget):
+        document = self.design_canvas.document
+        if document.selection:
+            document.clear_selection()
+            self.design_canvas.queue_draw()
+
+    def on_invert_selection_clicked(self, widget):
+        if self.design_canvas.document.invert_selection():
+            self.design_canvas.queue_draw()
 
     def on_group_clicked(self, widget):
         self.design_canvas.group_selected()

@@ -269,6 +269,14 @@ class ZPLDesignerWindow(QMainWindow):
 
         self.delete_action = self._action("&Delete", self.on_delete, QKeySequence.Delete)
 
+        # Literal keys rather than QKeySequence.SelectAll / Deselect: the
+        # second is bound on X11 only, and the two frontends have to agree.
+        self.select_all_action = self._action("&Select All", self.on_select_all, "Ctrl+A")
+        self.deselect_all_action = self._action("Dese&lect All", self.on_deselect_all,
+                                                "Ctrl+Shift+A")
+        self.invert_selection_action = self._action("&Invert Selection",
+                                                    self.on_invert_selection)
+
         self.group_action = self._action("&Group", self.on_group, "Ctrl+G")
         self.ungroup_action = self._action("&Ungroup", self.on_ungroup, "Ctrl+Shift+G")
         # No shortcut: one more window-wide binding for a command reached
@@ -341,6 +349,10 @@ class ZPLDesignerWindow(QMainWindow):
         edit_menu.addAction(self.redo_action)
         edit_menu.addSeparator()
         edit_menu.addAction(self.delete_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.select_all_action)
+        edit_menu.addAction(self.deselect_all_action)
+        edit_menu.addAction(self.invert_selection_action)
         edit_menu.addSeparator()
         edit_menu.addAction(self.group_action)
         edit_menu.addAction(self.ungroup_action)
@@ -430,6 +442,9 @@ class ZPLDesignerWindow(QMainWindow):
         """Grey out the actions that need a selection, or a place to move to."""
         doc = self.document
         self.delete_action.setEnabled(bool(doc.selection))
+        self.select_all_action.setEnabled(len(doc.selection) < len(doc.elements))
+        self.deselect_all_action.setEnabled(bool(doc.selection))
+        self.invert_selection_action.setEnabled(bool(doc.elements))
         self.group_action.setEnabled(doc.can_group())
         self.ungroup_action.setEnabled(doc.can_ungroup())
         self.remove_from_group_action.setEnabled(doc.can_remove_from_group())
@@ -538,6 +553,22 @@ class ZPLDesignerWindow(QMainWindow):
             for element in doomed:
                 self._close_editor_for(element)
             self.canvas.commit()
+
+    # Selection commands change the selection and never the document, so
+    # they repaint and record nothing - the same as a click or a band.
+
+    def on_select_all(self):
+        if self.document.select_all():
+            self.canvas.update()
+
+    def on_deselect_all(self):
+        if self.document.selection:
+            self.document.clear_selection()
+            self.canvas.update()
+
+    def on_invert_selection(self):
+        if self.document.invert_selection():
+            self.canvas.update()
 
     def _reorder(self, moved: bool):
         if moved:

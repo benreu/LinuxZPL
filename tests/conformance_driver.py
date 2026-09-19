@@ -301,6 +301,15 @@ class GtkDriver:
     def remove_from_group(self):
         self.window.on_remove_from_group_clicked(None)
 
+    def select_all(self):
+        self.window.on_select_all_clicked(None)
+
+    def deselect_all(self):
+        self.window.on_deselect_all_clicked(None)
+
+    def invert_selection(self):
+        self.window.on_invert_selection_clicked(None)
+
     def resize_target(self):
         return self.canvas.document.resize_target()
 
@@ -561,6 +570,15 @@ class QtDriver:
     def remove_from_group(self):
         self.window.on_remove_from_group()
 
+    def select_all(self):
+        self.window.on_select_all()
+
+    def deselect_all(self):
+        self.window.on_deselect_all()
+
+    def invert_selection(self):
+        self.window.on_invert_selection()
+
     def resize_target(self):
         return self.document.resize_target()
 
@@ -711,6 +729,20 @@ def sequence(driver, record):
     driver.fresh_gesture()
     driver.shift_click(frame.x + frame.width // 2, frame.y + frame.height // 2)
     record('a click then a shift-click selects: ' + json.dumps(driver.selection()))
+
+    # The selection commands, through each window's own handlers. None of
+    # them touches the design, so what is recorded is the selection.
+    driver.select_all()
+    record('select all selects: ' + json.dumps(driver.selection()))
+    driver.invert_selection()
+    record('inverting that selects: ' + json.dumps(driver.selection()))
+    driver.invert_selection()
+    record('and inverting again selects: ' + json.dumps(driver.selection()))
+    driver.deselect_all()
+    record('deselect all selects: ' + json.dumps(driver.selection()))
+    driver.select(barcode)
+    driver.invert_selection()
+    record('inverting one element selects the rest: ' + json.dumps(driver.selection()))
 
     # Alignment. A group lines up against its own bounding box and a lone
     # element against the label, so both rules are compared; the group drag

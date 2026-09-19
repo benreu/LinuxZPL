@@ -1085,6 +1085,22 @@ class Document:
     def clear_selection(self) -> None:
         self.selection = []
 
+    def select_all(self) -> bool:
+        """Select every element; returns whether that changed anything."""
+        if len(self.selection) == len(self.elements):
+            return False
+        self.select_many(self.elements)
+        return True
+
+    def invert_selection(self) -> bool:
+        """Select what is not selected, whole groups included - a member
+        picked directly comes back with the rest of its group. Returns
+        whether there was anything to invert."""
+        if not self.elements:
+            return False
+        self.select_many([el for el in self.elements if el not in self.selection])
+        return True
+
     def is_selected(self, element) -> bool:
         return element in self.selection
 

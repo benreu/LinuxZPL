@@ -694,6 +694,38 @@ w.on_remove_from_group()
 check("Remove from Group does nothing, and records nothing, on a group picked whole",
       len(w._undo_stack) == depth and all(x.group for x in w.document.elements))
 
+# --- select all, deselect all, invert ---------------------------------------
+d, a, b, c, e, (outer, inner) = nest()                # [b, a, c, e]; a,c,e nested
+check("select all selects everything, the topmost element primary",
+      d.select_all() and set(d.selection) == {a, b, c, e} and d.selected_element is e)
+check("and says so only when it changed something", not d.select_all())
+d.clear_selection()
+check("clear_selection is deselect all", not d.selection)
+check("invert of nothing is everything", d.invert_selection() and len(d.selection) == 4)
+check("invert of everything is nothing", d.invert_selection() and not d.selection)
+d.select(b)
+d.invert_selection()
+check("invert is the complement", set(d.selection) == {a, c, e}, order(d))
+d.select(a, direct=True)
+d.invert_selection()
+check("invert of a member picked directly brings its whole group back with the rest",
+      set(d.selection) == {a, b, c, e}, order(d))
+empty = Document(400, 400)
+check("on an empty document none of the three does anything",
+      not empty.select_all() and not empty.invert_selection() and not empty.selection)
+
+w.unsaved_changes = False; w.on_new()
+w.document.add_text_element('sa'); w.document.add_frame_element()
+depth = len(w._undo_stack)
+w.on_select_all()
+check("Select All in the window selects everything and records no undo entry",
+      len(w.document.selection) == 2 and len(w._undo_stack) == depth)
+w.on_invert_selection()
+check("Invert Selection records none either",
+      not w.document.selection and len(w._undo_stack) == depth)
+w.on_select_all(); w.on_deselect_all()
+check("nor does Deselect All", not w.document.selection and len(w._undo_stack) == depth)
+
 # --- the resize target ------------------------------------------------------
 def box_of(element):
     return (element.x, element.y, element.width, element.height)
