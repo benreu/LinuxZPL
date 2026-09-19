@@ -504,13 +504,17 @@ for bad in ('1,x', '1,,2', ',1'):
     check(f"a marker of {bad!r} is ignored as a whole",
           zpl_parser.parse_zpl(f"^XA^FXDESIGNER_GROUP:{bad}\n^FO1,1^GB10,10,1^FS^XZ")[0].elements[0].group is None)
 
-# a level with one member is not a group and is not written
+# a level with one member is not a group: a direct delete dissolves it, and
+# one a file hands over is not written
 d, a, b, c, e, (outer, inner) = nest()
 d.select(c, direct=True); d.remove_selected()
+check("deleting one of an inner pair directly dissolves that level",
+      a.group == (outer,) and e.group == (outer,), [x.group for x in d.elements])
+a.group = (outer, inner)
 out = d.to_zpl()
 markers = re.findall(r'\^FXDESIGNER_GROUP:([\d,]+)', out)
 check("an inner level left with one member is dropped from the path",
-      markers == ['1', '1'] and a.group == (outer, inner), markers)
+      markers == ['1', '1'], markers)
 check("and that round trip is stable too", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
 
 # a hand-edited file that puts one id at two depths neither raises nor drifts
@@ -603,8 +607,266 @@ d.select_many([a, c]); d.group_selected()
 pb = geometry.selection_bounds([a, c])
 check("a plain pair draws the box it always did",
       d.group_outlines() == [(pb[0] - 2, pb[1] - 2, pb[2] + 4, pb[3] + 4)])
-d.select(c, direct=True); d.remove_selected(); d.select(a)
-check("a group of one draws nothing", d.group_outlines() == [])
+d.elements.remove(c); d.select(a)
+check("a group of one draws nothing", a.group is not None and d.group_outlines() == [])
+
+# --- remove from group ------------------------------------------------------
+d, a, b, c, e = quad()
+d.select_many([a, c]); d.group_selected()             # run [b, a, c, e]
+d.select(a, direct=True)
+check("a directly picked member can be removed from its group", d.can_remove_from_group())
+check("a plain click on the group cannot", (d.select(c), not d.can_remove_from_group())[1])
+check("nor a group plus a loose element",
+      (d.select(b, additive=True), not d.can_remove_from_group())[1])
+check("Ungroup and Remove are never both offered on a plain click",
+      (d.select(c), d.can_ungroup() and not d.can_remove_from_group())[1])
+d.select(a, direct=True); d.select(b, additive=True, direct=True)
+check("a direct member plus a loose element can", d.can_remove_from_group())
+d.clear_selection()
+check("nothing selected cannot, and nothing happens",
+      not d.can_remove_from_group() and not d.remove_from_group())
+d.select(b)
+check("a loose element alone cannot", not d.can_remove_from_group())
+d.select(a, direct=True)
+check("remove lifts the member to just above the group it left, selection kept",
+      d.remove_from_group() and d.elements == [b, c, a, e] and d.selection == [a],
+      ([d.elements.index(x) for x in (a, b, c, e)], order(d)))
+check("a pair loses its group when one member leaves", a.group is None and c.group is None)
+
+d, a, b, c, e = quad()
+d.select_many([a, b, c]); d.group_selected()          # [a, b, c, e]
+d.select(b, direct=True); d.remove_from_group()
+check("the middle member lifted lands above the last, the others keep the group",
+      d.elements == [a, c, b, e] and b.group is None and a.group == c.group and a.group,
+      [d.elements.index(x) for x in (a, b, c, e)])
+
+d, P, X, Q, Y = quad()
+d.select_many([P, X, Q, Y]); d.group_selected()
+d.select(X, direct=True); d.select(Y, additive=True, direct=True); d.remove_from_group()
+check("two members lifted at once keep their order, above the rest",
+      d.elements == [P, Q, X, Y] and X.group is None and Y.group is None and P.group == Q.group,
+      [d.elements.index(x) for x in (P, X, Q, Y)])
+
+d, a, b, c, e, (outer, inner) = nest()                # [b, a, c, e]
+d.select(a, direct=True); d.remove_from_group()
+check("lifting a member out of the inner pair re-parents it and dissolves the pair",
+      a.group == (outer,) and c.group == (outer,) and e.group == (outer,)
+      and d.elements == [b, c, a, e], ([x.group for x in d.elements]))
+d, a, b, c, e, (outer, inner) = nest()
+d.select(e, direct=True); d.remove_from_group()
+check("lifting the loose member out of the nest leaves both ids on the pair",
+      e.group is None and a.group == c.group == (outer, inner) and d.elements == [b, a, c, e])
+d, a, b, c, e, (outer, inner) = nest()
+d.select(a, direct=True); d.select(c, additive=True, direct=True)
+check("every member of the inner pair picked directly is the pair, which can be lifted",
+      d.can_remove_from_group())
+d.remove_from_group()
+check("lifting the pair takes it out of the nest whole, keeping its own id",
+      a.group == c.group == (inner,) and e.group is None and d.elements == [b, e, a, c],
+      ([x.group for x in d.elements], [d.elements.index(x) for x in (a, b, c, e)]))
+
+d = Document(400, 400)
+t1, t2, t3, t4 = [FrameElement(20, 20 + i * 90, 60, 40) for i in range(4)]
+d.elements.extend([t1, t2, t3, t4])
+d.select_many([t1, t2]); d.group_selected(); A = t1.group[0]
+d.select_many([t1, t3]); d.group_selected(); B = t1.group[0]
+d.select_many([t1, t4]); d.group_selected(); C = t1.group[0]
+d.select(t1, direct=True); d.select(t2, additive=True, direct=True); d.remove_from_group()
+check("a middle group lifted out of a three-level nest keeps its inner id",
+      t1.group == t2.group == (C, A) and t3.group == (C,) and t4.group == (C,),
+      [x.group for x in d.elements])
+
+w.unsaved_changes = False; w.on_new()
+ra = w.document.add_text_element('ra'); rb = w.document.add_frame_element()
+w.document.select_many([ra, rb]); w.on_group()
+w.document.select(ra, direct=True)
+depth = len(w._undo_stack)
+w.on_remove_from_group()
+check("Remove from Group in the window records one undo entry",
+      len(w._undo_stack) == depth + 1 and ra.group is None and rb.group is None
+      and w.document.elements == [rb, ra])
+w.on_undo()
+check("and undo restores the group and the order",
+      [x.group for x in w.document.elements] == [(1,), (1,)]
+      and w.document.elements[0].element_type == 'text')
+w.document.select_many([ra])
+w.on_remove_from_group()
+check("Remove from Group does nothing, and records nothing, on a group picked whole",
+      len(w._undo_stack) == depth and all(x.group for x in w.document.elements))
+
+# --- the resize target ------------------------------------------------------
+def box_of(element):
+    return (element.x, element.y, element.width, element.height)
+
+d, a, b, c, e, (outer, inner) = nest()
+d.select(b)
+check("one element is its own resize target", d.resize_target() is b)
+d.select(a, direct=True)
+check("a directly picked member is the target, not its group", d.resize_target() is a)
+d.select_many([a])
+t = d.resize_target()
+check("a click-selected nest resizes as the outer group",
+      isinstance(t, geometry.GroupBox) and t.members == [a, c, e]
+      and (t.x, t.y, t.width, t.height) == geometry.selection_bounds([a, c, e]))
+check("handles of a group come from its joint box",
+      geometry.handles(t)['br'] == (t.x + t.width, t.y + t.height))
+d.select(a, direct=True); d.select(c, additive=True, direct=True)
+t = d.resize_target()
+check("every member of the inner pair picked directly resizes the pair",
+      isinstance(t, geometry.GroupBox) and t.members == [a, c])
+d.select(a, direct=True); d.select(e, additive=True, direct=True)
+check("a partial pick has no target", d.resize_target() is None)
+d.clear_selection()
+check("nothing selected has none", d.resize_target() is None)
+d2, p, q, r, s_ = quad(); d2.select_many([p, q])
+check("two loose elements have none", d2.resize_target() is None)
+
+# --- resizing a group -------------------------------------------------------
+def frame_pair():
+    """Two frames whose joint box is (40, 40, 180, 140), grouped and selected."""
+    d = Document(400, 400)
+    f1, f2 = FrameElement(40, 40, 60, 40), FrameElement(140, 120, 80, 60)
+    d.elements.extend([f1, f2])
+    d.select_many([f1, f2]); d.group_selected(); d.select(f1)
+    return d, f1, f2
+
+for handle, dx, dy, expect in (
+        ('br', 20, 10, (40, 40, 200, 150)), ('tl', 20, 10, (60, 50, 160, 130)),
+        ('tr', 20, 10, (40, 50, 200, 130)), ('bl', 20, 10, (60, 40, 160, 150)),
+        ('tm', 0, 10, (40, 50, 180, 130)), ('bm', 0, 10, (40, 40, 180, 150)),
+        ('ml', 20, 0, (60, 40, 160, 140)), ('mr', 20, 0, (40, 40, 200, 140))):
+    d, f1, f2 = frame_pair()
+    geometry.resize_by_handle(d, d.resize_target(), handle, dx, dy)
+    got = geometry.selection_bounds([f1, f2])
+    ex, ey, ew, eh = expect
+    fixed_ok = ((got[0] == ex) if handle[1] != 'l' else True) and \
+               ((got[1] == ey) if handle[0] != 't' else True) and \
+               ((got[0] + got[2] == ex + ew) if handle[1] == 'l' else True) and \
+               ((got[1] + got[3] == ey + eh) if handle[0] == 't' else True)
+    moving_ok = abs(got[2] - ew) <= 1 and abs(got[3] - eh) <= 1
+    check(f"resizing a group by {handle} keeps the fixed edges and moves the others",
+          fixed_ok and moving_ok, (got, expect))
+
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'br', 180, 140)   # exactly x2
+check("members scale about the anchor, positions and sizes alike",
+      (f1.x, f1.y, f1.width, f1.height) == (40, 40, 120, 80)
+      and (f2.x, f2.y, f2.width, f2.height) == (240, 200, 160, 120),
+      (box_of(f1), box_of(f2)))
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'mr', 180, 0)
+check("a side handle leaves the other axis alone",
+      (f2.y, f2.height, f1.height) == (120, 60, 40) and f2.width == 160)
+
+def text_and_frame(orientation='N'):
+    d = Document(812, 1218, dpi=203)
+    t = d.add_text_element('Scale me'); t.font_path = FONT
+    t.orientation = orientation; d.sync_text_width(t)
+    t.x, t.y = 100, 100
+    f = FrameElement(100, 300, 200, 100); d.elements.append(f)
+    d.select_many([t, f]); d.group_selected(); d.select(t)
+    return d, t, f
+
+d, t, f = text_and_frame()
+fh, fw, box = t.font_height, t.font_width, geometry.selection_bounds([t, f])
+geometry.resize_by_handle(d, d.resize_target(), 'br', box[2], box[3] // 2)   # x2 across, x1.5 down
+check("a text member's font scales, height with the stack and width with the run",
+      t.font_height == round(fh * 1.5) and t.font_width == fw * 2, (fh, fw, t.font_height, t.font_width))
+check("and its box comes back from the metrics",
+      t.width == t.printed_width(d.font_path, d.display_text(t)) and t.height == t.font_height)
+got = geometry.selection_bounds([t, f])
+check("the anchored corner of a snapping group is exact", (got[0], got[1]) == (box[0], box[1]), (got, box))
+
+d, t, f = text_and_frame('R')
+fh, fw, box = t.font_height, t.font_width, geometry.selection_bounds([t, f])
+geometry.resize_by_handle(d, d.resize_target(), 'mr', box[2], 0)             # x2 across only
+check("a rotated text member's font height follows the run across the label",
+      t.font_height == fh * 2 and t.font_width == fw, (fh, fw, t.font_height, t.font_width))
+check("and its box stays transposed", t.width == t.font_height)
+
+def barcode_and_frame(orientation='N'):
+    d = Document(812, 1218, dpi=203)
+    bc = d.add_barcode_element(); bc.orientation = orientation
+    bc.font = ('0', 20, 10); bc.sync_box()
+    f = FrameElement(50, 600, 200, 100); d.elements.append(f)
+    d.select_many([bc, f]); d.group_selected(); d.select(bc)
+    return d, bc, f
+
+d, bc, f = barcode_and_frame()
+mw, bh, font, box = bc.module_width, bc.bar_height, bc.font, geometry.selection_bounds([bc, f])
+geometry.resize_by_handle(d, d.resize_target(), 'br', box[2], box[3])       # x2 both
+check("a barcode member's modules and bars scale, and its font with them",
+      bc.module_width == mw * 2 and bc.bar_height == bh * 2
+      and bc.font == (font[0], font[1] * 2, font[2] * 2), (mw, bh, font, bc.module_width, bc.bar_height, bc.font))
+check("and its box is what those print", bc.width == bc.printed_width()
+      and bc.height == bc.bar_height + bc.text_height())
+d, bc, f = barcode_and_frame('R')
+mw, bh, box = bc.module_width, bc.bar_height, geometry.selection_bounds([bc, f])
+geometry.resize_by_handle(d, d.resize_target(), 'mr', box[2], 0)
+check("a rotated barcode's bars follow the run across the label, its modules the stack",
+      bc.bar_height == bh * 2 and bc.module_width == mw, (mw, bh, bc.module_width, bc.bar_height))
+
+d = Document(812, 1218, dpi=203)
+blk = d.add_text_element('one two three four five six seven eight nine ten eleven twelve')
+blk.font_path = FONT; blk.block = zpl_model.FieldBlock(300, 4); blk.block.line_spacing = 4; blk.block.indent = 10
+d.sync_text_width(blk)
+f = FrameElement(50, 300, 200, 100); d.elements.append(f)
+d.select_many([blk, f]); d.group_selected(); d.select(blk)
+box = geometry.selection_bounds([blk, f])
+geometry.resize_by_handle(d, d.resize_target(), 'br', box[2], box[3])       # x2 both
+check("a block member's wrap width, spacing and indent scale and its line count does not",
+      blk.block.width == 600 and blk.block.line_spacing == 8 and blk.block.indent == 20
+      and blk.block.max_lines == 4, (blk.block.width, blk.block.line_spacing, blk.block.indent, blk.block.max_lines))
+
+d, f1, f2 = frame_pair()
+f1.thickness = 10; f2.thickness = 25
+geometry.resize_by_handle(d, d.resize_target(), 'br', 180, 70)              # x2 across, x1.5 down
+check("a frame's thickness scales by the smaller factor and stays within its box",
+      f1.thickness == 15 and f2.thickness <= f2.max_thickness(), (f1.thickness, f2.thickness, f2.max_thickness()))
+
+d = Document(812, 1218, dpi=203)
+im = ImageElement(20, 20, 60, 60, _pil_image=Image.new('RGB', (60, 60), (128, 128, 128)))
+d.elements.append(im); f = FrameElement(200, 200, 100, 100); d.elements.append(f)
+d.select_many([im, f]); d.group_selected(); d.select(im)
+im.get_print_render(lambda rgba: rgba)
+geometry.resize_by_handle(d, d.resize_target(), 'br', 280, 280)             # x2
+check("an image member's box scales and its bitmap re-dithers at the new size",
+      (im.width, im.height) == (120, 120) and im.get_print_render(lambda rgba: rgba).size == (120, 120)
+      and im._pil_image.size == (60, 60), (im.width, im.height))
+
+d, t, f = text_and_frame()
+t.typeset = 30; box = geometry.selection_bounds([t, f])
+geometry.resize_by_handle(d, d.resize_target(), 'bm', 0, box[3])            # x2 down
+check("a ^FT baseline offset scales down the label", t.typeset == 60, t.typeset)
+
+d, a, b, c, e, (outer, inner) = nest()
+d.select(a); was = box_of(c)
+geometry.resize_by_handle(d, d.resize_target(), 'br', 100, 100)
+check("resizing a nest scales the members of the inner group too", box_of(c) != was)
+
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'br', -5000, -5000)
+got = geometry.selection_bounds([f1, f2])
+check("a group cannot be dragged below the minimum size",
+      got[2] >= geometry.MIN_SIZE and got[3] >= geometry.MIN_SIZE
+      and all(el.width >= 1 and el.height >= 1 for el in (f1, f2)), got)
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'br', 99999, 99999)
+got = geometry.selection_bounds([f1, f2])
+check("nor past the label", got[0] + got[2] <= 400 and got[1] + got[3] <= 400 and got[0] >= 0, got)
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'ml', -500, 0)
+got = geometry.selection_bounds([f1, f2])
+check("a left handle dragged past the edge keeps the right edge where it was",
+      got[0] == 0 and got[0] + got[2] == 220, got)
+d = Document(812, 1218, dpi=203)
+tiny = d.add_text_element('tiny'); tiny.font_path = FONT; tiny.font_height = 12; tiny.font_width = 12
+d.sync_text_width(tiny); tiny.x, tiny.y = 100, 100
+f = FrameElement(100, 200, 200, 100); d.elements.append(f)
+d.select_many([tiny, f]); d.group_selected(); d.select(tiny)
+geometry.resize_by_handle(d, d.resize_target(), 'br', -100, -100)
+check("a group holding a 12-dot text still shrinks", tiny.font_height < 12 and f.height < 100,
+      (tiny.font_height, f.height))
 
 # paint every element type without exceptions
 w.unsaved_changes = False; w.on_new()
@@ -666,9 +928,6 @@ def drag_slowly(document, element, handle, dx, dy, steps=20):
                                   dx * step // steps, dy * step // steps,
                                   origin=origin)
 
-def box_of(element):
-    return (element.x, element.y, element.width, element.height)
-
 def dragged_both_ways(build, handle, dx, dy):
     """The same drag delivered both ways, on two copies of the one element."""
     slow_doc, slow_el = build()
@@ -714,6 +973,27 @@ _unmoved_doc, unmoved = plain_text()
 widened, _fast = dragged_both_ways(plain_text, 'mr', 120, 0)
 check("a slow drag of a text element's width actually widens it",
       widened.width > unmoved.width, (unmoved.width, widened.width))
+
+# A group is dragged the same way: from the press, every member put back and
+# scaled again on every event.
+def text_barcode_group():
+    d = Document(812, 1218, dpi=203)
+    t = d.add_text_element('Slowly'); t.font_path = FONT; d.sync_text_width(t)
+    bc = d.add_barcode_element()
+    d.select_many([t, bc]); d.group_selected(); d.select(t)
+    return d, d.resize_target()
+
+slow_doc, slow_target = text_barcode_group()
+drag_slowly(slow_doc, slow_target, 'br', 150, 90)
+fast_doc, fast_target = text_barcode_group()
+geometry.resize_by_handle(fast_doc, fast_target, 'br', 150, 90)
+check("dragging a group slowly lands where dragging it fast does",
+      [box_of(el) for el in slow_target.members] == [box_of(el) for el in fast_target.members],
+      ([box_of(el) for el in slow_target.members], [box_of(el) for el in fast_target.members]))
+still_doc, still_target = text_barcode_group()
+check("and the slow drag actually moved something",
+      [box_of(el) for el in slow_target.members] != [box_of(el) for el in still_target.members])
+
 
 # The bottom handle of a block asks for a line count, and the block keeps every
 # line it is left with. Recomputed from a height that had already snapped back,

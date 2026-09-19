@@ -150,6 +150,26 @@ def units_of(elements):
     return units
 
 
+def members_of(elements, gid):
+    """Every element under group `gid`, at whatever depth, in the order given."""
+    return [el for el in elements if el.group and gid in el.group]
+
+
+class GroupBox:
+    """A whole selected group, as the one thing the resize handles belong to.
+
+    Nothing more than the members' joint box with the four fields handles(),
+    handle_at_point() and resize_by_handle() read, plus the members so the
+    resize can reach them. Never an element: it is not in the document, is
+    not drawn, and lives only as long as the selection it describes.
+    """
+    element_type = 'group'
+
+    def __init__(self, members):
+        self.members = list(members)
+        self.x, self.y, self.width, self.height = selection_bounds(self.members)
+
+
 def group_outlines(elements, selected):
     """The boxes to draw around the selected groups, outermost first.
 
@@ -168,8 +188,7 @@ def group_outlines(elements, selected):
     for element in selected:
         for depth, gid in enumerate(element.group or ()):
             if gid not in groups:
-                members = [el for el in elements if el.group and gid in el.group]
-                groups[gid] = (depth, members)
+                groups[gid] = (depth, members_of(elements, gid))
     drawn = {gid: (depth, members) for gid, (depth, members) in groups.items()
              if len(members) >= 2 and all(id(el) in picked for el in members)}
     if not drawn:
@@ -298,8 +317,149 @@ def resize_origin(element) -> dict:
     from the press the same snap is harmless, because the next event starts from
     this box again rather than from the snapped one.
     """
-    return {'x': element.x, 'y': element.y,
-            'width': element.width, 'height': element.height}
+    origin = {'x': element.x, 'y': element.y,
+              'width': element.width, 'height': element.height}
+    if isinstance(element, GroupBox):
+        # Every member as it was, for the same reason: each event scales
+        # the members from here, not from where the last event left them.
+        origin['members'] = [(el, scale_state(el)) for el in element.members]
+    return origin
+
+
+# --- scaling -------------------------------------------------------------
+#
+# What changes when an element is made bigger or smaller by a factor: the
+# one list, used both to rescale a whole design for another head resolution
+# and to resize a group by a handle. Written once so the two cannot drift.
+
+# The attributes a scale touches, on whichever element types have them.
+SCALED_ATTRIBUTES = ('x', 'y', 'width', 'height', 'typeset', 'font_height',
+                     'font_width', 'thickness', 'module_width', 'bar_height',
+                     'font')
+
+
+def scale_state(element) -> dict:
+    """What a scale would change on this element, as it is now."""
+    state = {name: getattr(element, name) for name in SCALED_ATTRIBUTES
+             if hasattr(element, name)}
+    block = getattr(element, 'block', None)
+    if block is not None:
+        # An object the resize mutates in place, so a copy - or the state
+        # would follow the element it is meant to put back.
+        state['block'] = block.copy()
+    return state
+
+
+def restore_state(element, state: dict) -> None:
+    """Put an element back to a scale_state() taken earlier."""
+    for name, value in state.items():
+        if name == 'block':
+            element.block = value.copy()
+        else:
+            setattr(element, name, value)
+
+
+def _scaled(value, factor) -> int:
+    """A size scaled and rounded to whole dots, never below one."""
+    return max(1, int(round(value * factor)))
+
+
+def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> None:
+    """Scale one element by `sx` across and `sy` down, about the point
+    (ax, ay).
+
+    Positions and box scale outright; what is derived is re-derived. A text
+    element's font height goes with the stack of its lines and its font width
+    with the run, which is what ZPL's independent font sizes are for, and a
+    barcode's module width with its run and bar height with its stack - the
+    two swapping axes at a quarter turn. Their boxes then come back from the
+    metrics, so the outline is the one that prints. A block keeps its line
+    count: a scale is a scale, not a re-wrap. An image is not re-read here;
+    its bitmap is keyed by size and re-dithers on the next paint.
+    """
+    element.x = ax + int(round((element.x - ax) * sx))
+    element.y = ay + int(round((element.y - ay) * sy))
+    element.width = _scaled(element.width, sx)
+    element.height = _scaled(element.height, sy)
+    if element.typeset is not None:
+        # The gap to the ^FT baseline is in dots down the label
+        element.typeset = int(round(element.typeset * sy))
+
+    kind = element.element_type
+    if kind in ('text', 'barcode'):
+        run, stack = (sy, sx) if element.rotated() else (sx, sy)
+    if kind == 'text':
+        element.font_height = _scaled(element.font_height, stack)
+        element.font_width = _scaled(element.font_width, run)
+        if element.block is not None:
+            # The wrap width is in dots like everything else, so a block
+            # left unscaled would re-wrap at the old physical width -
+            # narrower text in a box the same size on paper.
+            element.block.width = _scaled(element.block.width, run)
+            element.block.line_spacing = int(round(element.block.line_spacing * stack))
+            element.block.indent = int(round(element.block.indent * run))
+        # text width is derived from font metrics, not scaled directly
+        document.sync_text_width(element)
+    elif kind == 'frame':
+        element.thickness = _scaled(element.thickness, min(sx, sy))
+    elif kind == 'barcode':
+        # A module is a whole number of dots, so 2 becomes 3 rather than
+        # 2.96 going 203 -> 300 dpi. Positions and heights scale exactly; a
+        # barcode's width cannot.
+        element.module_width = _scaled(element.module_width, run)
+        element.bar_height = _scaled(element.bar_height, stack)
+        if element.font:
+            code, fh, fw = element.font
+            element.font = (code, _scaled(fh, stack), _scaled(fw, run))
+        element.sync_box()
+
+
+def _resize_group(document, handle: str, dx: int, dy: int, origin: dict) -> None:
+    """Resize a whole group by one of its handles: scale every member.
+
+    The handle's untouched corner or edge is the anchor, and the moving
+    edge may go as far as the room its fixed edge leaves, so the anchor
+    never has to move. The members are put back to the press and scaled
+    from there, so the result depends only on how far the pointer has come.
+    Their boxes then snap to what will print, which moves the joint box a
+    little off the one dragged; the group is shifted back so the anchored
+    edge stays put, then held inside the label as one, the way a drag is.
+    """
+    ox, oy, ow, oh = origin['x'], origin['y'], origin['width'], origin['height']
+    left, right = handle in ('tl', 'ml', 'bl'), handle in ('tr', 'mr', 'br')
+    top, bottom = handle in ('tl', 'tm', 'tr'), handle in ('bl', 'bm', 'br')
+
+    width, height = ow, oh
+    if left:
+        width = max(MIN_SIZE, min(ow - dx, ox + ow))
+    elif right:
+        width = max(MIN_SIZE, min(ow + dx, document.label_width - ox))
+    if top:
+        height = max(MIN_SIZE, min(oh - dy, oy + oh))
+    elif bottom:
+        height = max(MIN_SIZE, min(oh + dy, document.label_height - oy))
+    sx, sy = width / max(1, ow), height / max(1, oh)
+    ax = ox + ow if left else ox
+    ay = oy + oh if top else oy
+
+    for element, state in origin['members']:
+        restore_state(element, state)
+        scale_element(document, element, ax, ay, sx, sy)
+        if element.element_type == 'frame':
+            element.thickness = max(1, min(element.thickness, element.max_thickness()))
+
+    members = [el for el, _ in origin['members']]
+    bx, by, bw, bh = selection_bounds(members)
+    ddx = (ox + ow) - (bx + bw) if left else ox - bx
+    ddy = (oy + oh) - (by + bh) if top else oy - by
+    bx, by = bx + ddx, by + ddy
+    # The same clamp a group drag gets: one delta, the left and top edges
+    # winning when the group is larger than the label.
+    ddx += max(-bx, min(0, document.label_width - bw - bx))
+    ddy += max(-by, min(0, document.label_height - bh - by))
+    for element in members:
+        element.x += ddx
+        element.y += ddy
 
 
 def _clamp_resized(document, element) -> None:
@@ -333,6 +493,9 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
     where the element is now, which is what a single scripted resize wants.
     """
     box = origin if origin is not None else resize_origin(element)
+    if isinstance(element, GroupBox):
+        _resize_group(document, handle, dx, dy, box)
+        return
     x, y = box['x'], box['y']
     width, height = box['width'], box['height']
 

@@ -361,15 +361,21 @@ pinned.
   holding Ctrl takes the catch exactly, without widening a member to its group.
   A band changes only the selection, never the document, so it is not undoable.
 - The selection is **ordered by when each element was picked**. Its last member
-  is the *primary*: the one that carries the resize handles and the one the
-  z-order commands move.
+  is the *primary*: the one that carries the resize handles when it is the only
+  element selected, and the one the z-order commands move.
 - **Drag** moves the selection. A single element is clamped so it stays inside
   the label: `0 ≤ x ≤ label_width − width`, likewise for y. A group moves by one
   shared delta, clamped against the group's own bounding box — clamping each
   element separately would let the ones still inside carry on while the one
   against the edge stopped, and the group would come apart.
-- **Eight resize handles** on a selection of exactly one — four corners, four
-  edge midpoints — drawn as small filled squares. A group gets none: there is no
+- **Eight resize handles** on the *resize target* — four corners, four edge
+  midpoints — drawn as small filled squares, once, after every element, so
+  nothing drawn above the target covers them. The target is the one selected
+  element when exactly one is selected, or the selected **group** when the
+  selection is exactly every member of some group at any depth — a nest picked
+  by a click resizes as its outer group, every member of an inner pair picked
+  directly resizes the pair — and its handles sit on the members' joint box. A
+  loose multi-selection, or a partial pick of a group, gets none: there is no
   single box to resize, and a handle on each member would offer a drag with
   nowhere to go. A handle is **8 screen pixels**, drawn and hit-tested at
   `8 / scale` dots, so it is the same size to the pointer at every zoom. A handle
@@ -406,13 +412,34 @@ pinned.
     turn the box is transposed, so the font height comes from the side across the
     text and the font width is solved along it, exactly as a rotated barcode
     takes its module width from its run
+- **Resizing a group scales its members.** The handle's untouched corner or
+  edge is the anchor; a corner scales both axes, a side handle one, each freely
+  — as a single element resizes, and as ZPL's independent font height and width
+  allow. The moving edge may go as far as the room its fixed edge leaves, so the
+  anchor never has to move, and the joint box is held to the same **20 × 20
+  minimum**. Every member is put back to how it was at the press and scaled
+  from there, about the anchor, by the same rule a change of print resolution
+  applies (§11) with one factor per axis: positions and boxes outright; a text
+  element's font height by the factor across its lines and its font width by
+  the one along them, a barcode's bar height and module width likewise, the two
+  swapping axes at a quarter turn, and their boxes then coming back from the
+  metrics; a block's wrap width and indent along, its line spacing across, its
+  line count kept — a scale is a scale, not a re-wrap; a frame's thickness by
+  the smaller factor, then held under half its shorter side; an image's box,
+  its bitmap re-dithering at the new size on the next paint. Members have no
+  minimum of their own — a group holding a 12-dot text still shrinks — only a
+  floor of one dot on every size. Because the members snap to what will print,
+  their joint box drifts a little from the one dragged, so the group is shifted
+  back to put the anchored edge where the press had it, then held inside the
+  label as one, the way a drag is.
 - **Double click** (same element, within 500 ms) opens that element's edit
   dialog. A modified click is a selection gesture and never a double click.
 - **Right click** selects the element under the pointer and opens a context menu
   (§6.6). If that element is part of a group the rest of the group is kept, and
   the element becomes the primary — so the z-order commands in the menu act on
   the element that was actually pointed at.
-- **Delete** removes every selected element, not only the primary.
+- **Delete** removes every selected element, not only the primary. A group left
+  with one member by it is no group and is dissolved.
 - **A grouped element is never selected on its own except by a direct pick.**
   Every other way into the selection widens a pick of one member to its whole
   outermost group: a plain click on a member selects the group with that member
@@ -437,8 +464,9 @@ pinned.
   enclosing it sits 2 dots further out again, so a nested box is always inside
   its parent's. A group only some of whose members are selected has no outline
   (a box around the picked ones would say the group is those), and neither has
-  a group of one. Each member keeps its own selection rectangle. A group gets
-  no resize handles, for the reason a multi-selection gets none.
+  a group of one. Each member keeps its own selection rectangle; the handles,
+  when the selection is a whole group, sit on the members' joint box with the
+  outline 2 dots outside them.
 - **Double click on a member** opens that member's editor, and **Print This
   Element** on a member toggles that member alone — both name one element and
   act on one.
@@ -470,8 +498,8 @@ must report the real error and leave the flag set.
 
 ### 6.2 Edit
 
-Undo, Redo, Delete, then Group / Ungroup, then Bring to Front / Bring Forward
-/ Send Backward / Send to Back, then an **Align** submenu. Delete and the four
+Undo, Redo, Delete, then Group / Ungroup / Remove from Group, then Bring to
+Front / Bring Forward / Send Backward / Send to Back, then an **Align** submenu. Delete and the four
 z-order items are disabled when nothing is selected; the raise pair is disabled
 when the selection is already on top and the lower pair when it is already at
 the bottom. Sensitivity is re-evaluated each time the menu opens.
@@ -493,6 +521,24 @@ element — for every member of that group, not only the selected ones — so
 groups nested inside it become groups of their own, which another Ungroup
 peels in turn. It is enabled when any selected element is grouped; the
 selection is left as it was. Both are document changes and undoable.
+
+**Remove from Group** takes the selected *unit* out of the group around it,
+one level up. The unit is what the outline says is selected (§5): an element
+picked directly on its own, or a whole group every member of which is picked —
+so a directly picked member leaves its innermost group, and a nested pair
+picked entirely leaves the group around it, keeping its own id. Walking each
+selected element's path from the outside in, the first group wholly inside the
+selection is that unit; none means the element is; one at the very top means
+the whole top-level group is selected and there is nothing to lift it out of.
+The command is enabled when some selected element is grouped and its whole
+top-level group is not inside the selection — so a plain click on a group
+lights Ungroup and never this, and a Ctrl-click lights this. What is lifted
+lands just above the last member it leaves behind in the z-order, so every
+group's run stays one run and the lifted element stays on top of what it left,
+where it was; several are lifted from the top down so they keep their order
+among themselves. A group left with one member is no group and is dissolved.
+The selection is left as it was; one undo entry; no keyboard shortcut, since it
+is reached after a Ctrl-click, which the context menu (§6.6) is already under.
 
 The z-order commands move the **unit holding the primary** element: the primary
 alone, or its whole group as one run. Not the rest of a loose multi-selection —
@@ -560,7 +606,8 @@ text-labelled, and the icon theme has no object-align icons to label six with.
   in the design and in the saved file but leaves it off the printed label. This
   is how a user suppresses an element that would otherwise print through an
   image covering it.
-- **Group / Ungroup**, under the same rules as in the Edit menu (§6.2).
+- **Group / Ungroup / Remove from Group**, under the same rules as in the Edit
+  menu (§6.2).
 - **Bring to Front / Bring Forward / Send Backward / Send to Back**, disabled at
   the ends of the z-order — of the units, so a group at the top offers neither
   raise even when the member right-clicked is not the last element (§6.2).
@@ -1056,7 +1103,9 @@ from either dialog — offer three choices:
 Rescaling multiplies positions, sizes, label dimensions, font height and width,
 frame thickness and barcode module width, rounding to whole dots; text widths
 are then recomputed from font metrics rather than scaled, and images re-dither
-from their source at the new size.
+from their source at the new size. It is the one rule for scaling an element
+that resizing a group (§5) applies too, there with a factor per axis and about
+the group's anchor rather than the label's origin.
 
 **A file with no recorded resolution is assumed to be 203 dpi**, not the
 printer's current setting. Adopting the printer's setting would stamp a guess
@@ -1504,18 +1553,19 @@ rather than requirements:
   the edge end up closer together than they were — the label changed, not the
   group, and a multi-selection behaves the same way. A drag or an align keeps
   the shape; only the label size does not.
-- **Groups have no resize handles.** Scaling a group means scaling text and
-  barcodes, whose sizes snap to a font width, a line count or a module width
-  (§5), so there is no exact proportional resize to offer. A decision about
-  this version rather than about groups.
+- **A group resizes freely, never proportionally.** Each axis scales on its
+  own, as a single element's does; there is no Shift-held proportional drag.
+  And a group scale rounds each member to whole dots, so a group scaled up and
+  back down again is not always the group it was.
 - **A group cannot be split by grouping, and Ungroup dissolves only the
   outermost level.** Group always wraps whole top-level groups, so two members
   picked directly out of a group cannot be sub-grouped in place — ungroup
-  first, or build the nest from the inside out. There is no "remove from
-  group": a directly picked member can be moved, resized or deleted on its own,
-  but taking it out of its group means ungrouping. And the z-order commands on
-  a directly picked member move its whole top-level group, since a group has
-  one depth.
+  first, or build the nest from the inside out. Remove from Group lifts the
+  selected unit one level and no further; an inner group cannot be dissolved
+  in place (lift it out, then Ungroup it), and lifting the only loose member
+  out of a nest can leave two group ids over the same pair — legal, and two
+  Ungroups clear it. The z-order commands on a directly picked member move
+  its whole top-level group, since a group has one depth.
 - **`^XG`/`^IM`/`^IL` resolve a stored graphic in `graphic_store` (the local,
   in-session cache) by name and extension only — the `R:`/`E:`/`B:`/`A:`
   device prefix is preserved for round-tripping but does not distinguish

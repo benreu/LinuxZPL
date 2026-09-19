@@ -50,8 +50,10 @@ disagree.
   the whole selection moves together
 - **Group and ungroup**: Ctrl+G makes a selection one unit that any click,
   band, drag, align or z-order command treats as a whole, saved in the file
-  and undone a level at a time with Ctrl+Shift+G; groups nest, and Ctrl-click
-  picks one element inside a group without ungrouping it
+  and undone a level at a time with Ctrl+Shift+G; groups nest, Ctrl-click
+  picks one element inside a group without ungrouping it, Remove from Group
+  takes it out, and a selected group has resize handles that scale every
+  member
 - **Align**: line a selection up on any edge, or centre it on either axis; a
   group moves as one box, and a single element lines up against the label itself
 - **Per-element Print Toggle**: keep an element in the design and in the saved

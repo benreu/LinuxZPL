@@ -298,6 +298,12 @@ class GtkDriver:
     def ungroup(self):
         self.window.on_ungroup_clicked(None)
 
+    def remove_from_group(self):
+        self.window.on_remove_from_group_clicked(None)
+
+    def resize_target(self):
+        return self.canvas.document.resize_target()
+
     def move_group(self, dx, dy):
         self.geometry.move_selection(self.canvas.document,
                                      self.canvas.document.selection, dx, dy)
@@ -551,6 +557,12 @@ class QtDriver:
 
     def ungroup(self):
         self.window.on_ungroup()
+
+    def remove_from_group(self):
+        self.window.on_remove_from_group()
+
+    def resize_target(self):
+        return self.document.resize_target()
 
     def move_group(self, dx, dy):
         self.geometry.move_selection(self.document, self.document.selection,
@@ -807,6 +819,42 @@ def sequence(driver, record):
            + json.dumps(driver.selection()))
     driver.ungroup()
     record('the pair ungrouped again')
+
+    # Resizing a group. The handles belong to the pair as one box; a resize
+    # by any of them scales both members - the text's font, the frame's
+    # thickness - and the pointer path through each canvas's handle branch
+    # is what the drag step drives.
+    driver.select_many([text, frame])
+    driver.group()
+    record('handles of the group: ' + json.dumps(
+        {k: list(v) for k, v in sorted(driver.handles(driver.resize_target()).items())}))
+    driver.resize(driver.resize_target(), 'br', 40, 30)
+    record('the group resized by its bottom-right handle')
+    driver.resize(driver.resize_target(), 'tl', -20, -10)
+    record('and by its top-left handle')
+    corner = driver.handles(driver.resize_target())['br']
+    driver.fresh_gesture()
+    driver.drag_pointer(corner[0], corner[1], 30, 20)
+    record('a pointer drag on a group handle scales the group')
+    driver.select_many([text, barcode])
+    driver.group()
+    driver.resize(driver.resize_target(), 'ml', 25, 0)
+    record('a nest resized by its left handle')
+
+    # Remove from Group lifts the directly picked member out and leaves the
+    # rest grouped; then everything back to loose for the steps that follow.
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    driver.ctrl_click(frame.x + 10, frame.y + frame.height - 10)
+    driver.remove_from_group()
+    record('the frame removed from its group, selecting: '
+           + json.dumps(driver.selection()))
+    driver.select(text)
+    driver.ungroup()
+    driver.select(text)
+    driver.ungroup()
+    record('everything ungrouped again')
 
     driver.select(barcode)
     for edge in ('right', 'bottom', 'center', 'middle'):

@@ -1187,6 +1187,87 @@ class Document:
                 element.group = element.group[1:] or None
         return True
 
+    def _members_of(self, gid) -> List[DesignElement]:
+        return geometry.members_of(self.elements, gid)
+
+    def _lifts(self) -> list:
+        """(element, id of the group it would leave) for every selected
+        element that Remove from Group would move.
+
+        What is lifted is the selected unit - the thing the outline says is
+        selected: an element picked on its own, or a whole group every
+        member of which is picked - and it goes one level up, out of the
+        group just outside it. Walking the path from the outside in, the
+        first group wholly in the selection is that unit; none means the
+        element is; one at the top means the whole top-level group is
+        selected, and there is nothing to lift it out of.
+        """
+        picked = {id(el) for el in self.selection}
+        lifts = []
+        for element in self.selection:
+            path = element.group or ()
+            unit = len(path)
+            for depth, gid in enumerate(path):
+                if all(id(m) in picked for m in self._members_of(gid)):
+                    unit = depth
+                    break
+            if unit > 0:
+                lifts.append((element, path[unit - 1]))
+        return lifts
+
+    def can_remove_from_group(self) -> bool:
+        return bool(self._lifts())
+
+    def remove_from_group(self) -> bool:
+        """Take the selected unit out of the group around it; the selection
+        stays.
+
+        What is lifted lands just above the last member it leaves behind, so
+        every group's run stays one run and the lifted element stays on top
+        of what it left, where it was. Lifts are done from the top of the
+        z-order down, so several keep their order among themselves. A group
+        left with one member is no group and is dissolved.
+        """
+        lifts = self._lifts()
+        if not lifts:
+            return False
+        for element, gid in sorted(lifts, key=lambda lift: self.elements.index(lift[0]),
+                                   reverse=True):
+            element.group = tuple(g for g in element.group if g != gid) or None
+            remaining = [m for m in self._members_of(gid) if m is not element]
+            self.elements.remove(element)
+            self.elements.insert(self.elements.index(remaining[-1]) + 1, element)
+        self._dissolve_singletons({gid for _, gid in lifts})
+        return True
+
+    def _dissolve_singletons(self, ids) -> None:
+        """Strip any of these group ids that only one element is left in."""
+        for gid in ids:
+            members = self._members_of(gid)
+            if len(members) == 1:
+                members[0].group = tuple(g for g in members[0].group if g != gid) or None
+
+    def resize_target(self):
+        """What the resize handles belong to: the one selected element, a
+        whole selected group - the selection being exactly every member of
+        some group, at whatever depth - or None for a selection that is
+        neither, which gets no handles.
+
+        From the inside out, so that every member of a nested pair picked
+        directly resizes the pair and not the group around it; a plain click
+        on the nest, which selects all of it, resizes the outer group.
+        """
+        if len(self.selection) == 1:
+            return self.selection[0]
+        if not self.selection:
+            return None
+        picked = {id(el) for el in self.selection}
+        for gid in reversed(self.selection[0].group or ()):
+            members = self._members_of(gid)
+            if len(members) >= 2 and {id(el) for el in members} == picked:
+                return geometry.GroupBox(members)
+        return None
+
     # --- adding and removing -------------------------------------------------
 
     def _stagger(self, step: int) -> int:
@@ -1300,6 +1381,10 @@ class Document:
         for element in doomed:
             self.elements.remove(element)
         self.clear_selection()
+        # A member picked directly and deleted can leave its group with one
+        # element, which is no group - and would keep Ungroup lit on what
+        # looks like a loose element.
+        self._dissolve_singletons({gid for el in doomed for gid in (el.group or ())})
         return True
 
     def clear(self):
@@ -1459,6 +1544,8 @@ class Document:
 
         Used when a label drawn for one head resolution is opened for another:
         ZPL is in dots, so 812 dots is 4in at 203dpi but 2.7in at 300dpi.
+        What each element does with the factor is geometry.scale_element's -
+        the same rule a group resize applies - about the label's origin.
         """
         if factor <= 0 or factor == 1.0:
             return
@@ -1470,42 +1557,10 @@ class Document:
         self.label_height = s(self.label_height)
 
         for el in self.elements:
-            el.x = int(round(el.x * factor))
-            el.y = int(round(el.y * factor))
-            el.width = s(el.width)
-            el.height = s(el.height)
-            if el.typeset is not None:
-                # The gap to the ^FT baseline is in dots like everything else
-                el.typeset = int(round(el.typeset * factor))
-            if el.element_type == 'text':
-                el.font_height = s(el.font_height)
-                el.font_width = s(el.font_width)
-                if el.block is not None:
-                    # The wrap width is in dots like everything else, so a
-                    # block left unscaled would re-wrap at the old physical
-                    # width - narrower text in a box the same size on paper.
-                    el.block.width = s(el.block.width)
-                    el.block.line_spacing = int(round(el.block.line_spacing * factor))
-                    el.block.indent = int(round(el.block.indent * factor))
-            elif el.element_type == 'frame':
-                el.thickness = s(el.thickness)
-            elif el.element_type == 'barcode':
-                # A module is a whole number of dots, so 2 becomes 3 rather
-                # than 2.96 going 203 -> 300 dpi. Positions and heights scale
-                # exactly; a barcode's width cannot.
-                el.module_width = s(el.module_width)
-                el.bar_height = s(el.bar_height)
-                if el.font:
-                    code, fh, fw = el.font
-                    el.font = (code, s(fh), s(fw))
-                el.sync_box()
-            elif el.element_type == 'image':
+            geometry.scale_element(self, el, 0, 0, factor, factor)
+            if el.element_type == 'image':
                 # the bitmap re-dithers from the source at the new size
                 el.reload()
-
-        # text width is derived from font metrics, not scaled directly
-        for el in self.elements:
-            self.sync_text_width(el)
 
     # --- fonts ---------------------------------------------------------------
 

@@ -202,6 +202,9 @@ class DesignCanvas(QWidget):
         painter.setOpacity(1.0)
 
         self._draw_group_outlines(painter, scale)
+        target = self.document.resize_target()
+        if target is not None:
+            self._draw_handles(painter, target)
         self._draw_band(painter, scale)
 
         painter.restore()
@@ -273,19 +276,15 @@ class DesignCanvas(QWidget):
         for x, y, w, h in boxes:
             painter.drawRect(QRectF(x, y, w, h))
 
-    def _draw_handles(self, painter, element: DesignElement):
-        """The eight resize handles, as small filled squares.
-
-        Only ever on a selection of one. A group has no single box to resize,
-        and handles on each member would offer a drag with nowhere to go.
-        """
-        if len(self.document.selection) != 1:
-            return
+    def _draw_handles(self, painter, target):
+        """The eight resize handles of what the document says can be resized:
+        the one selected element, or a whole selected group. Drawn once,
+        after every element, so nothing above the target covers them."""
         painter.setPen(QPen(QColor(0, 0, 255), 1))
         painter.setBrush(QColor(0, 128, 255))
         size = geometry.handle_size(self._scale())
         half = size / 2
-        for _, (hx, hy) in geometry.handles(element).items():
+        for _, (hx, hy) in geometry.handles(target).items():
             painter.drawRect(QRectF(hx - half, hy - half, size, size))
         painter.setBrush(Qt.NoBrush)
 
@@ -346,8 +345,6 @@ class DesignCanvas(QWidget):
             painter.restore()
             if reverse:
                 draw_affordance()
-            if selected:
-                self._draw_handles(painter, element)
             return
         if font_path:
             raster = to_qimage(
@@ -375,8 +372,6 @@ class DesignCanvas(QWidget):
         if reverse:
             draw_affordance()
 
-        if selected:
-            self._draw_handles(painter, element)
 
     def _draw_text_block(self, painter, element, font_path, block, reverse=False):
         """Wrap with a Qt face when the block cannot be rasterised.
@@ -505,8 +500,6 @@ class DesignCanvas(QWidget):
         if reverse:
             painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
 
-        if selected:
-            self._draw_handles(painter, element)
 
     # --- barcode -------------------------------------------------------------
 
@@ -570,8 +563,6 @@ class DesignCanvas(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
-        if selected:
-            self._draw_handles(painter, element)
 
     def _draw_barcode_text(self, painter, layout, reverse=False):
         """The interpretation line, in dots - not at a constant screen size.
@@ -604,7 +595,7 @@ class DesignCanvas(QWidget):
         # being dragged reuse the last bitmap stretched to the new bounds; the
         # exact one is regenerated on release.
         image = None
-        if self.active_handle is not None and element is self.document.selected_element:
+        if self.active_handle is not None and self.document.is_selected(element):
             image = element.peek_print_render()
         if image is None:
             image = element.get_print_render(to_qimage)
@@ -632,8 +623,6 @@ class DesignCanvas(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
-        if selected:
-            self._draw_handles(painter, element)
 
     def _draw_stored_graphic_element(self, painter, element, selected: bool):
         """Draw a ^XG/^IM reference: the real image if this session has it,
@@ -667,8 +656,6 @@ class DesignCanvas(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
-        if selected:
-            self._draw_handles(painter, element)
 
     # --- mouse ---------------------------------------------------------------
 
@@ -689,13 +676,14 @@ class DesignCanvas(QWidget):
         additive = bool(event.modifiers() & Qt.ShiftModifier)
         direct = bool(event.modifiers() & Qt.ControlModifier)
 
-        # A handle of the selected element wins over anything under the pointer
-        if len(doc.selection) == 1:
-            handle = geometry.handle_at_point(lx, ly, doc.selected_element,
-                                             self._scale())
+        # A handle of the resize target - the selected element, or a whole
+        # selected group - wins over anything under the pointer
+        target = doc.resize_target()
+        if target is not None:
+            handle = geometry.handle_at_point(lx, ly, target, self._scale())
             if handle:
                 self.active_handle = handle
-                self.resize_origin = geometry.resize_origin(doc.selected_element)
+                self.resize_origin = geometry.resize_origin(target)
                 self.drag_start = (lx, ly)
                 return
 
@@ -761,7 +749,7 @@ class DesignCanvas(QWidget):
         if self.active_handle:
             # Measured from the press, so the whole drag is still in the delta
             # after the box has snapped back to its printed size.
-            geometry.resize_by_handle(doc, doc.selected_element,
+            geometry.resize_by_handle(doc, doc.resize_target(),
                                       self.active_handle, dx, dy,
                                       origin=self.resize_origin)
         else:
@@ -834,11 +822,10 @@ class DesignCanvas(QWidget):
             self._set_cursor(self.HANDLE_CURSORS.get(self.active_handle))
             return
         shape = None
-        if len(self.document.selection) == 1:
+        target = self.document.resize_target()
+        if target is not None:
             lx, ly = self._screen_to_label(event.x(), event.y())
-            handle = geometry.handle_at_point(lx, ly,
-                                             self.document.selected_element,
-                                             self._scale())
+            handle = geometry.handle_at_point(lx, ly, target, self._scale())
             if handle:
                 shape = self.HANDLE_CURSORS.get(handle)
         self._set_cursor(shape)
@@ -865,8 +852,10 @@ class DesignCanvas(QWidget):
 
         group = menu.addAction("Group")
         ungroup = menu.addAction("Ungroup")
+        remove = menu.addAction("Remove from Group")
         group.setEnabled(doc.can_group())
         ungroup.setEnabled(doc.can_ungroup())
+        remove.setEnabled(doc.can_remove_from_group())
         menu.addSeparator()
 
         front = menu.addAction("Bring to Front")
@@ -892,6 +881,8 @@ class DesignCanvas(QWidget):
             doc.group_selected()
         elif chosen is ungroup:
             doc.ungroup_selected()
+        elif chosen is remove:
+            doc.remove_from_group()
         elif chosen is front:
             doc.bring_to_front()
         elif chosen is forward:

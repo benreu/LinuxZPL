@@ -489,6 +489,12 @@ class ZPLViewerWindow(Gtk.Window):
         add_accel(self.ungroup_item, "<Control><Shift>g")
         edit_menu.append(self.ungroup_item)
 
+        # No accelerator: one more window-wide binding for a command reached
+        # after a Ctrl-click, which the context menu is already under.
+        self.remove_from_group_item = Gtk.MenuItem.new_with_mnemonic("Remove _from Group")
+        self.remove_from_group_item.connect("activate", self.on_remove_from_group_clicked)
+        edit_menu.append(self.remove_from_group_item)
+
         edit_menu.append(Gtk.SeparatorMenuItem())
 
         # Same actions as the canvas right-click menu, on the bracket
@@ -2656,6 +2662,7 @@ class ZPLViewerWindow(Gtk.Window):
         self.delete_item.set_sensitive(doc.selected_element is not None)
         self.group_item.set_sensitive(doc.can_group())
         self.ungroup_item.set_sensitive(doc.can_ungroup())
+        self.remove_from_group_item.set_sensitive(doc.can_remove_from_group())
         self._update_align_items()
         # From the model, as the Qt window does: a group is one depth, and
         # only the model knows where the run holding the primary ends.
@@ -2742,6 +2749,9 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_ungroup_clicked(self, widget):
         self.design_canvas.ungroup_selected()
+
+    def on_remove_from_group_clicked(self, widget):
+        self.design_canvas.remove_from_group()
 
     def on_delete_clicked(self, widget):
         """Handle delete selected element button click."""

@@ -25,6 +25,7 @@ from gi.repository import Gtk
 
 from gtkui import window as gtk_main
 from gtkui.window import ZPLViewerWindow
+from zplcore import geometry
 
 fails = []
 
@@ -193,7 +194,33 @@ check("Ungroup peels the outer level and leaves the pair grouped",
 window.on_ungroup_clicked(None)
 check("and a second Ungroup clears the tags",
       all(element.group is None for element in document.elements))
-for element in grouped + [third]:
+
+# --- Remove from Group, and the handles a group gets ------------------------
+document.select_many(grouped)
+window._update_edit_menu(None)
+check("Remove from Group is not offered for two loose elements",
+      not window.remove_from_group_item.get_sensitive())
+window.on_group_clicked(None)
+window._update_edit_menu(None)
+check("nor for a group picked whole, where Ungroup is",
+      window.ungroup_item.get_sensitive() and not window.remove_from_group_item.get_sensitive())
+check("a selected group is the resize target",
+      isinstance(document.resize_target(), geometry.GroupBox))
+canvas.on_draw(canvas, cairo.Context(surface))
+check("a selected group's handles paint without raising", True)
+document.select(grouped[0], direct=True)
+window._update_edit_menu(None)
+check("a directly picked member can be removed from its group",
+      window.remove_from_group_item.get_sensitive())
+depth = len(window._undo_stack)
+window.on_remove_from_group_clicked(None)
+check("Remove from Group records one undo entry and leaves both loose",
+      len(window._undo_stack) == depth + 1
+      and all(element.group is None for element in grouped))
+window.on_undo()
+check("and undo puts the group back",
+      sum(1 for element in document.elements if element.group) == 2)
+for element in list(document.elements):
     document.elements.remove(element)
 
 # --- a wrapped block paints its lines where it wraps them -------------------

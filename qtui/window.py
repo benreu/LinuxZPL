@@ -271,6 +271,10 @@ class ZPLDesignerWindow(QMainWindow):
 
         self.group_action = self._action("&Group", self.on_group, "Ctrl+G")
         self.ungroup_action = self._action("&Ungroup", self.on_ungroup, "Ctrl+Shift+G")
+        # No shortcut: one more window-wide binding for a command reached
+        # after a Ctrl-click, which the context menu is already under.
+        self.remove_from_group_action = self._action("Remove &from Group",
+                                                     self.on_remove_from_group)
 
         self.front_action = self._action("Bring to Front", self.on_bring_to_front, "Ctrl+Shift+]")
         self.forward_action = self._action("Bring Forward", self.on_bring_forward, "Ctrl+]")
@@ -340,6 +344,7 @@ class ZPLDesignerWindow(QMainWindow):
         edit_menu.addSeparator()
         edit_menu.addAction(self.group_action)
         edit_menu.addAction(self.ungroup_action)
+        edit_menu.addAction(self.remove_from_group_action)
         edit_menu.addSeparator()
         for action in (self.front_action, self.forward_action,
                        self.backward_action, self.back_action):
@@ -427,6 +432,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.delete_action.setEnabled(bool(doc.selection))
         self.group_action.setEnabled(doc.can_group())
         self.ungroup_action.setEnabled(doc.can_ungroup())
+        self.remove_from_group_action.setEnabled(doc.can_remove_from_group())
         for action in self.align_actions:
             action.setEnabled(bool(doc.selection))
         for action in (self.front_action, self.forward_action):
@@ -559,6 +565,10 @@ class ZPLDesignerWindow(QMainWindow):
 
     def on_ungroup(self):
         if self.document.ungroup_selected():
+            self.canvas.commit()
+
+    def on_remove_from_group(self):
+        if self.document.remove_from_group():
             self.canvas.commit()
 
     def on_element_double_clicked(self, element):

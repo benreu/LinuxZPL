@@ -271,6 +271,10 @@ class DesignCanvas(Gtk.DrawingArea):
         if self.document.ungroup_selected():
             self._changed()
 
+    def remove_from_group(self):
+        if self.document.remove_from_group():
+            self._changed()
+
     def snapshot(self):
         return self.document.snapshot()
 
@@ -456,6 +460,9 @@ class DesignCanvas(Gtk.DrawingArea):
                 context.paint_with_alpha(0.35)
 
         self._draw_group_outlines(context, scale_factor)
+        target = self.document.resize_target()
+        if target is not None:
+            self._draw_handles(context, target)
         self._draw_band(context, scale_factor)
 
         context.restore()
@@ -592,8 +599,6 @@ class DesignCanvas(Gtk.DrawingArea):
         if reverse:
             draw_affordance()
 
-        if selected:
-            self._draw_handles(context, element)
 
     def _draw_text_block(self, context, element, font_path, block):
         """Wrap with the Cairo toy font when the block cannot be rasterised.
@@ -678,8 +683,6 @@ class DesignCanvas(Gtk.DrawingArea):
         if reverse:
             context.set_operator(cairo.OPERATOR_OVER)
 
-        if selected:
-            self._draw_handles(context, element)
     
     def _draw_band(self, context, scale: float):
         """The rubber band, while one is being dragged."""
@@ -715,18 +718,14 @@ class DesignCanvas(Gtk.DrawingArea):
             context.stroke()
         context.set_dash([], 0)
 
-    def _draw_handles(self, context, element):
-        """The eight resize handles of the selected element.
-
-        Only ever on a selection of one. A group has no single box to resize,
-        and handles on each member would offer a drag with nowhere to go.
-        """
-        if len(self.document.selection) != 1:
-            return
+    def _draw_handles(self, context, target):
+        """The eight resize handles of what the document says can be resized:
+        the one selected element, or a whole selected group. Drawn once,
+        after every element, so nothing above the target covers them."""
         scale = self._scale()
         size = geometry.handle_size(scale)
         half = size / 2
-        for _name, (hx, hy) in geometry.handles(element).items():
+        for _name, (hx, hy) in geometry.handles(target).items():
             context.set_source_rgb(0, 0.5, 1)
             context.rectangle(hx - half, hy - half, size, size)
             context.fill()
@@ -799,8 +798,6 @@ class DesignCanvas(Gtk.DrawingArea):
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
 
-        if selected:
-            self._draw_handles(context, element)
 
     def _draw_barcode_text(self, context, layout, reverse=False):
         """The interpretation line, in dots - not at a constant screen size.
@@ -836,7 +833,7 @@ class DesignCanvas(Gtk.DrawingArea):
         # being dragged reuse the last bitmap stretched to the new bounds; the
         # exact one is regenerated on release.
         pixbuf = None
-        if self.active_handle is not None and element is self.selected_element:
+        if self.active_handle is not None and self.document.is_selected(element):
             pixbuf = element.peek_print_render()
         if pixbuf is None:
             pixbuf = element.get_print_render(to_pixbuf)
@@ -872,8 +869,6 @@ class DesignCanvas(Gtk.DrawingArea):
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
 
-        if selected:
-            self._draw_handles(context, element)
 
     def _draw_stored_graphic_element(self, context, element, selected: bool):
         """Draw a ^XG/^IM reference: the real image if this session has it,
@@ -915,8 +910,6 @@ class DesignCanvas(Gtk.DrawingArea):
         context.stroke()
         context.set_dash([], 0)
 
-        if selected:
-            self._draw_handles(context, element)
 
     def _show_context_menu(self, event, element):
         """Show right-click context menu for element reordering."""
@@ -944,6 +937,11 @@ class DesignCanvas(Gtk.DrawingArea):
         item_ungroup.connect("activate", lambda _: self.ungroup_selected())
         item_ungroup.set_sensitive(self.document.can_ungroup())
         menu.append(item_ungroup)
+
+        item_remove = Gtk.MenuItem(label="Remove from Group")
+        item_remove.connect("activate", lambda _: self.remove_from_group())
+        item_remove.set_sensitive(self.document.can_remove_from_group())
+        menu.append(item_remove)
         menu.append(Gtk.SeparatorMenuItem())
 
         item_front = Gtk.MenuItem(label="Bring to Front")
@@ -1004,13 +1002,14 @@ class DesignCanvas(Gtk.DrawingArea):
         additive = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
         direct = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
 
-        # Check if clicking on a resize handle of the selected element
-        if len(self.document.selection) == 1:
-            handle = geometry.handle_at_point(lx, ly, self.selected_element,
-                                             self._scale())
+        # A handle of the resize target - the selected element, or a whole
+        # selected group - wins over anything under the pointer
+        target = self.document.resize_target()
+        if target is not None:
+            handle = geometry.handle_at_point(lx, ly, target, self._scale())
             if handle:
                 self.active_handle = handle
-                self.resize_origin = geometry.resize_origin(self.selected_element)
+                self.resize_origin = geometry.resize_origin(target)
                 self.drag_start = (lx, ly)
                 return
 
@@ -1105,10 +1104,10 @@ class DesignCanvas(Gtk.DrawingArea):
             self._set_cursor(self.HANDLE_CURSORS.get(self.active_handle))
             return
         name = None
-        if len(self.document.selection) == 1:
+        target = self.document.resize_target()
+        if target is not None:
             lx, ly = self._screen_to_label(event.x, event.y)
-            handle = geometry.handle_at_point(lx, ly, self.selected_element,
-                                             self._scale())
+            handle = geometry.handle_at_point(lx, ly, target, self._scale())
             if handle:
                 name = self.HANDLE_CURSORS.get(handle)
         self._set_cursor(name)
@@ -1154,7 +1153,7 @@ class DesignCanvas(Gtk.DrawingArea):
         if self.active_handle:
             # Measured from the press, so the whole drag is still in the delta
             # after the box has snapped back to its printed size.
-            geometry.resize_by_handle(self.document, self.selected_element,
+            geometry.resize_by_handle(self.document, self.document.resize_target(),
                                       self.active_handle, dx, dy,
                                       origin=self.resize_origin)
         else:
