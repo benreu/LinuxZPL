@@ -293,6 +293,163 @@ d, one, two = pair()
 check("delete takes the whole selection", d.remove_selected() and not d.elements)
 check("and leaves nothing selected", not d.selection)
 
+# --- groups -----------------------------------------------------------------
+def quad():
+    """Four frames in a column, none selected, so grouping can be tried on
+    any subset and the z-order read back by position."""
+    d = Document(400, 400)
+    made = [FrameElement(20, 20 + i * 90, 60, 40) for i in range(4)]
+    d.elements.extend(made)
+    return (d, *made)
+
+def order(d):
+    return [d.elements.index(el) for el in d.selection]
+
+check("an element belongs to no group until put in one",
+      FrameElement(0, 0, 10, 10).group is None)
+
+d, a, b, c, e = quad()
+d.select_many([a, c])
+check("two loose elements can be grouped", d.can_group())
+check("group returns True when it did something", d.group_selected())
+check("the members share one group id",
+      a.group is not None and a.group == c.group and b.group is None and e.group is None)
+check("grouping makes the members one run, where the topmost member was",
+      d.elements == [b, a, c, e], [d.elements.index(x) for x in (a, b, c, e)])
+check("exactly one group selected cannot be grouped again", not d.can_group())
+check("but can be ungrouped", d.can_ungroup())
+check("a lone element has nothing to group with",
+      (d.select(b), not d.can_group())[1])
+
+# every way into the selection widens a member to its group
+d.select(a)
+check("a plain click on a member selects the group, clicked member primary",
+      set(d.selection) == {a, c} and d.selected_element is a, order(d))
+d.select(c)
+check("a click on another member keeps the group and moves the primary",
+      set(d.selection) == {a, c} and d.selected_element is c, order(d))
+d.select(c, additive=True)
+check("a shift-click on a selected member drops the whole group", not d.selection)
+d.select(b)
+d.select(a, additive=True)
+check("a shift-click on a member adds the whole group, clicked member primary",
+      d.selection == [b, c, a], order(d))
+d.select_many([c])
+check("select_many of one member is the group", set(d.selection) == {a, c})
+d.selected_element = a
+check("assigning the singular name is the group too", set(d.selection) == {a, c})
+d.clear_selection()
+d.extend_selection([c])
+check("extend_selection of one member is the group", set(d.selection) == {a, c})
+caught = geometry.elements_in_box(d.elements, 0, 0, 100, 30)
+d.select_many(caught)
+check("a rubber band touching one member selects the group",
+      caught == [a] and set(d.selection) == {a, c}, (len(caught), order(d)))
+
+# the group is one unit for the z-order commands
+d.select(a)
+check("a group at the bottom cannot go lower", d.can_lower() and d.can_raise())
+d.bring_forward()
+check("bring forward moves the run past the next unit", d.elements == [b, e, a, c])
+check("and now the group is on top", not d.can_raise())
+d.send_to_back()
+check("send to back moves the run to the bottom", d.elements == [a, c, b, e])
+d.select(b); d.bring_forward()
+check("a loose element steps over a group as a whole", d.elements == [a, c, e, b])
+d.send_backward()
+check("and back again", d.elements == [a, c, b, e])
+
+# merge, ungroup, delete
+d.select(a); d.select(e, additive=True)
+check("a group plus a loose element can be grouped", d.can_group())
+d.group_selected()
+check("grouping folds the old group into the new one",
+      a.group == c.group == e.group and b.group is None,
+      [x.group for x in d.elements])
+check("the merged run is contiguous, where the topmost member was",
+      d.elements == [b, a, c, e], [d.elements.index(x) for x in (a, b, c, e)])
+d.select(b); d.select(a, additive=True)
+check("ungroup returns True and clears every tag in the selection",
+      d.ungroup_selected() and all(x.group is None for x in d.elements))
+check("ungroup leaves the selection as it was", set(d.selection) == {a, b, c, e})
+check("nothing grouped cannot be ungrouped", not d.can_ungroup())
+d.select_many([a, c]); d.group_selected(); d.select(a)
+check("delete takes the whole group", d.remove_selected() and d.elements == [b, e])
+
+# align treats a group as one rigid box
+d, a, b, c, e = quad()
+a.x, c.x = 50, 120
+d.select_many([a, c]); d.group_selected()
+d.select(a); d.select(e, additive=True)
+shape = (c.x - a.x, c.y - a.y)
+check("align left moves the group as one, keeping its shape",
+      d.align_selected('left') and (c.x - a.x, c.y - a.y) == shape and a.x == e.x == 20,
+      (a.x, c.x, e.x))
+d.select_many([a])
+d.align_selected('right')
+check("a lone group aligns against the label",
+      c.x + c.width == 400 and (c.x - a.x, c.y - a.y) == shape, (a.x, c.x))
+check("units_of gives z-order groups and loners",
+      [len(u) for u in geometry.units_of(d.elements)] == [1, 2, 1] or
+      [len(u) for u in geometry.units_of(d.elements)] == [2, 1, 1],
+      [len(u) for u in geometry.units_of(d.elements)])
+
+# undo carries the tag, as a scalar copied with the element
+d, a, b, c, e = quad()
+snap = d.snapshot()
+d.select_many([a, c]); d.group_selected()
+d.restore(snap)
+check("restoring a snapshot from before the group undoes it",
+      all(x.group is None for x in d.elements))
+w.unsaved_changes = False; w.on_new()
+ga = w.document.add_text_element('ga'); gb = w.document.add_frame_element()
+w.document.select_many([ga, gb])
+depth = len(w._undo_stack)
+w.on_group()
+check("Group in the window records an undo entry",
+      ga.group is not None and len(w._undo_stack) == depth + 1)
+w.on_undo()
+check("and undo takes the group away", all(x.group is None for x in w.document.elements))
+w.on_redo()
+check("and redo brings it back, as one group",
+      len({x.group for x in w.document.elements}) == 1
+      and w.document.elements[0].group is not None)
+w.on_ungroup()
+check("Ungroup in the window is undoable too",
+      all(x.group is None for x in w.document.elements) and len(w._undo_stack) == depth + 2)
+
+# round trip: markers before each member, numbered 1.. by first appearance,
+# a singleton not written, a hidden member still hidden
+d = Document(400, 400)
+t1 = d.add_text_element('one'); t2 = d.add_text_element('two')
+f1 = d.add_frame_element(); f2 = d.add_frame_element(); lone = d.add_text_element('lone')
+d.select_many([f1, f2]); d.group_selected()
+d.select_many([t1, t2]); d.group_selected()
+lone.group = 99
+t2.print_enabled = False
+out = d.to_zpl()
+markers = re.findall(r'\^FXDESIGNER_GROUP:(\d+)', out)
+check("a marker precedes each member, numbered from 1 in file order",
+      markers == ['1', '1', '2', '2'], markers)
+check("a group of one is not written", '^FXDESIGNER_GROUP:99' not in out)
+check("the marker sits ahead of a hidden member's payload line",
+      re.search(r'\^FXDESIGNER_GROUP:1\n\^FXDESIGNER_NOPRINT:', out) is not None)
+back, _ = zpl_parser.parse_zpl(out)
+tags = [(el.group, el.print_enabled) for el in back.elements]
+check("groups survive a round trip, and so does the hidden member",
+      tags == [(1, True), (1, False), (2, True), (2, True), (None, True)], tags)
+check("the round trip is stable", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
+
+# markers ahead of a field the model cannot hold are used up by it
+leak = ("^XA^PW400^LL400\n^FXDESIGNER_GROUP:7\n^FXDESIGNER_NOPRINT\n"
+        "^FO10,10^BQN,2,3^FDqr^FS\n^FO20,20^A0N,30,30^FDafter^FS\n^XZ")
+back, _ = zpl_parser.parse_zpl(leak)
+check("neither marker leaks onto the next supported field",
+      len(back.elements) == 1 and back.elements[0].group is None
+      and back.elements[0].print_enabled, [(e.group, e.print_enabled) for e in back.elements])
+check("a marker with no number is ignored",
+      zpl_parser.parse_zpl("^XA^FXDESIGNER_GROUP:x\n^FO1,1^GB10,10,1^FS^XZ")[0].elements[0].group is None)
+
 # paint every element type without exceptions
 w.unsaved_changes = False; w.on_new()
 w.document.add_text_element('paint me')

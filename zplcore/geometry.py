@@ -25,6 +25,10 @@ HANDLE_NAMES = ('tl', 'tm', 'tr', 'ml', 'mr', 'bl', 'bm', 'br')
 # The alignments, in menu order: the three horizontal, then the three vertical
 ALIGNMENTS = ('left', 'center', 'right', 'top', 'middle', 'bottom')
 
+# How far outside its members' joint box a selected group's outline is drawn,
+# in dots, so it clears the members' own selection rectangles
+GROUP_OUTLINE_PAD = 2
+
 
 def handles(element) -> dict:
     """Positions of the resize handles for any element type."""
@@ -108,6 +112,31 @@ def selection_bounds(elements):
     return (left, top, right - left, bottom - top)
 
 
+def units_of(elements):
+    """Partition elements into the units they move as: whole groups and loners.
+
+    A grouped element brings every other element with the same group id along
+    the first time one of them is met, in the order they were given, so a unit
+    is a list whose order is the order of its input. An ungrouped element is a
+    unit of one. Each element appears in exactly one unit, and the units come
+    out in the order their first member did - which is z-order when given the
+    document's elements, and pick order when given a selection.
+    """
+    elements = [el for el in elements if el is not None]
+    units = []
+    placed = set()
+    for element in elements:
+        if id(element) in placed:
+            continue
+        if element.group is None:
+            unit = [element]
+        else:
+            unit = [el for el in elements if el.group == element.group]
+        units.append(unit)
+        placed.update(id(el) for el in unit)
+    return units
+
+
 def move_selection(document, elements, dx: int, dy: int) -> None:
     """Drag a group, keeping its shape and keeping all of it inside the label.
 
@@ -153,46 +182,53 @@ def elements_in_box(elements, x0: int, y0: int, x1: int, y1: int):
 def align_elements(document, elements, edge: str) -> bool:
     """Line a group up on one edge, or centre it on one axis.
 
-    Each alignment moves one axis and leaves the other alone. What the group is
-    lined up against depends on how much of it there is: two or more elements
-    line up against each other's bounding box, and a single element - which has
-    nothing else to line up with - against the label.
+    Each alignment moves one axis and leaves the other alone. What is lined up
+    is each unit (see units_of): a grouped set moves as one rigid box, so
+    aligning left does not stack its members at the same x and undo the very
+    arrangement grouping was meant to keep. What the units are lined up
+    against depends on how many there are: two or more line up against their
+    joint bounding box, and a single unit - one element, or one whole group,
+    which has nothing else to line up with - against the label.
 
     Returns whether anything actually moved, so an align that changes nothing
     records no undo entry.
     """
-    elements = [el for el in elements if el is not None]
-    if not elements or edge not in ALIGNMENTS:
+    units = units_of(elements)
+    if not units or edge not in ALIGNMENTS:
         return False
 
-    if len(elements) > 1:
-        box = selection_bounds(elements)
+    if len(units) > 1:
+        box = selection_bounds([el for unit in units for el in unit])
     else:
         box = (0, 0, document.label_width, document.label_height)
     bx, by, bw, bh = box
 
     moved = False
-    for element in elements:
-        x, y = element.x, element.y
+    for unit in units:
+        ux, uy, uw, uh = selection_bounds(unit)
+        x, y = ux, uy
         if edge == 'left':
             x = bx
         elif edge == 'center':
-            x = bx + (bw - element.width) // 2
+            x = bx + (bw - uw) // 2
         elif edge == 'right':
-            x = bx + bw - element.width
+            x = bx + bw - uw
         elif edge == 'top':
             y = by
         elif edge == 'middle':
-            y = by + (bh - element.height) // 2
+            y = by + (bh - uh) // 2
         elif edge == 'bottom':
-            y = by + bh - element.height
+            y = by + bh - uh
 
-        # Clamped the way a drag is, so an element larger than the label lands
+        # Clamped the way a drag is, so a unit larger than the label lands
         # against the edge rather than at a negative coordinate.
-        x = max(0, min(x, document.label_width - element.width))
-        y = max(0, min(y, document.label_height - element.height))
-        if (x, y) != (element.x, element.y):
-            element.x, element.y = x, y
+        x = max(0, min(x, document.label_width - uw))
+        y = max(0, min(y, document.label_height - uh))
+        dx, dy = x - ux, y - uy
+        if dx or dy:
+            for element in unit:
+                element.x += dx
+                element.y += dy
             moved = True
     return moved
 

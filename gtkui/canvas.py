@@ -262,6 +262,14 @@ class DesignCanvas(Gtk.DrawingArea):
         if self.document.align_selected(edge):
             self._changed()
 
+    def group_selected(self):
+        if self.document.group_selected():
+            self._changed()
+
+    def ungroup_selected(self):
+        if self.document.ungroup_selected():
+            self._changed()
+
     def snapshot(self):
         return self.document.snapshot()
 
@@ -446,6 +454,7 @@ class DesignCanvas(Gtk.DrawingArea):
                 context.pop_group_to_source()
                 context.paint_with_alpha(0.35)
 
+        self._draw_group_outlines(context, scale_factor)
         self._draw_band(context, scale_factor)
 
         context.restore()
@@ -688,6 +697,25 @@ class DesignCanvas(Gtk.DrawingArea):
         context.stroke()
         context.set_dash([], 0)
 
+    def _draw_group_outlines(self, context, scale: float):
+        """A dashed box around each selected group, so a group can be told
+        from a selection that merely holds several elements. Drawn a little
+        outside the members' joint box, with a longer dash than the band so
+        the two never read as one."""
+        doc = self.document
+        units = [unit for unit in doc.units(doc.selection) if len(unit) > 1]
+        if not units:
+            return
+        context.set_source_rgb(0, 0.5, 1)
+        context.set_line_width(1 / max(1e-6, scale))
+        context.set_dash([8, 4], 0)
+        pad = geometry.GROUP_OUTLINE_PAD
+        for unit in units:
+            x, y, w, h = geometry.selection_bounds(unit)
+            context.rectangle(x - pad, y - pad, w + 2 * pad, h + 2 * pad)
+            context.stroke()
+        context.set_dash([], 0)
+
     def _draw_handles(self, context, element):
         """The eight resize handles of the selected element.
 
@@ -908,6 +936,17 @@ class DesignCanvas(Gtk.DrawingArea):
         menu.append(item_print)
         menu.append(Gtk.SeparatorMenuItem())
 
+        item_group = Gtk.MenuItem(label="Group")
+        item_group.connect("activate", lambda _: self.group_selected())
+        item_group.set_sensitive(self.document.can_group())
+        menu.append(item_group)
+
+        item_ungroup = Gtk.MenuItem(label="Ungroup")
+        item_ungroup.connect("activate", lambda _: self.ungroup_selected())
+        item_ungroup.set_sensitive(self.document.can_ungroup())
+        menu.append(item_ungroup)
+        menu.append(Gtk.SeparatorMenuItem())
+
         item_front = Gtk.MenuItem(label="Bring to Front")
         item_front.connect("activate", lambda _: self.bring_to_front())
         menu.append(item_front)
@@ -924,11 +963,13 @@ class DesignCanvas(Gtk.DrawingArea):
         item_back.connect("activate", lambda _: self.send_to_back())
         menu.append(item_back)
 
-        idx = self.elements.index(element)
-        item_front.set_sensitive(idx < len(self.elements) - 1)
-        item_forward.set_sensitive(idx < len(self.elements) - 1)
-        item_backward.set_sensitive(idx > 0)
-        item_back.set_sensitive(idx > 0)
+        # From the model, as the Qt canvas does: a group is one depth, and
+        # only the model knows where the run holding this element ends.
+        can_raise, can_lower = self.document.can_raise(), self.document.can_lower()
+        item_front.set_sensitive(can_raise)
+        item_forward.set_sensitive(can_raise)
+        item_backward.set_sensitive(can_lower)
+        item_back.set_sensitive(can_lower)
 
         menu.show_all()
         menu.popup_at_pointer(event)

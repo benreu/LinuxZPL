@@ -278,6 +278,13 @@ class GtkDriver:
     def align(self, edge):
         self.canvas.align_selected(edge)
 
+    def group(self):
+        """Edit > Group, through the window's handler as the menu would."""
+        self.window.on_group_clicked(None)
+
+    def ungroup(self):
+        self.window.on_ungroup_clicked(None)
+
     def move_group(self, dx, dy):
         self.geometry.move_selection(self.canvas.document,
                                      self.canvas.document.selection, dx, dy)
@@ -511,6 +518,13 @@ class QtDriver:
     def align(self, edge):
         self.document.align_selected(edge)
 
+    def group(self):
+        """Edit > Group, through the window's handler as the menu would."""
+        self.window.on_group()
+
+    def ungroup(self):
+        self.window.on_ungroup()
+
     def move_group(self, dx, dy):
         self.geometry.move_selection(self.document, self.document.selection,
                                      dx, dy)
@@ -668,6 +682,48 @@ def sequence(driver, record):
         record(f'the pair aligned {edge}')
     driver.move_group(-9999, -9999)
     record('the pair dragged into the corner as one box')
+
+    # Grouping. The pair becomes one unit, and every selection gesture is
+    # driven through the frontend's own handlers again, since each of them
+    # has to widen a pick of one member to the pair: a click, a band touching
+    # a member, a shift-click. The align with a loose element moves the pair
+    # as one box, the z-order command moves the pair as one run, and the
+    # ^FXDESIGNER_GROUP markers are in the ZPL every step records.
+    driver.select_many([text, frame])
+    driver.group()
+    record('the pair grouped')
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    driver.click(frame.x + frame.width // 2, frame.y + frame.height // 2)
+    record('a click on one member of the group selects: '
+           + json.dumps(driver.selection()))
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    # From empty canvas just right of the frame, reaching a few dots into
+    # its top corner - which the text below does not extend up to.
+    driver.band(frame.x + frame.width + 40, frame.y + 10,
+                frame.x + frame.width - 4, frame.y + 20)
+    record('a band reaching one member of the group selects: '
+           + json.dumps(driver.selection()))
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    driver.shift_click(text.x + text.width // 2, text.y + text.height // 2)
+    record('a shift-click on one member of the group selects: '
+           + json.dumps(driver.selection()))
+    driver.select_many([text, barcode])
+    record('selecting a member and a loose element selects: '
+           + json.dumps(driver.selection()))
+    for edge in ('right', 'bottom'):
+        driver.align(edge)
+        record(f'the group and a loose element aligned {edge}')
+    driver.select(text)
+    driver.bring_forward()
+    record('bring the group forward, as one run')
+    driver.ungroup()
+    record('the pair ungrouped')
 
     driver.select(barcode)
     for edge in ('right', 'bottom', 'center', 'middle'):

@@ -269,6 +269,9 @@ class ZPLDesignerWindow(QMainWindow):
 
         self.delete_action = self._action("&Delete", self.on_delete, QKeySequence.Delete)
 
+        self.group_action = self._action("&Group", self.on_group, "Ctrl+G")
+        self.ungroup_action = self._action("&Ungroup", self.on_ungroup, "Ctrl+Shift+G")
+
         self.front_action = self._action("Bring to Front", self.on_bring_to_front, "Ctrl+Shift+]")
         self.forward_action = self._action("Bring Forward", self.on_bring_forward, "Ctrl+]")
         self.backward_action = self._action("Send Backward", self.on_send_backward, "Ctrl+[")
@@ -334,6 +337,9 @@ class ZPLDesignerWindow(QMainWindow):
         edit_menu.addAction(self.redo_action)
         edit_menu.addSeparator()
         edit_menu.addAction(self.delete_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.group_action)
+        edit_menu.addAction(self.ungroup_action)
         edit_menu.addSeparator()
         for action in (self.front_action, self.forward_action,
                        self.backward_action, self.back_action):
@@ -419,6 +425,8 @@ class ZPLDesignerWindow(QMainWindow):
         """Grey out the actions that need a selection, or a place to move to."""
         doc = self.document
         self.delete_action.setEnabled(bool(doc.selection))
+        self.group_action.setEnabled(doc.can_group())
+        self.ungroup_action.setEnabled(doc.can_ungroup())
         for action in self.align_actions:
             action.setEnabled(bool(doc.selection))
         for action in (self.front_action, self.forward_action):
@@ -543,6 +551,14 @@ class ZPLDesignerWindow(QMainWindow):
 
     def on_align(self, edge: str):
         if self.document.align_selected(edge):
+            self.canvas.commit()
+
+    def on_group(self):
+        if self.document.group_selected():
+            self.canvas.commit()
+
+    def on_ungroup(self):
+        if self.document.ungroup_selected():
             self.canvas.commit()
 
     def on_element_double_clicked(self, element):

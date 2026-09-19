@@ -200,6 +200,7 @@ class DesignCanvas(QWidget):
             self._draw_element(painter, element, selected)
         painter.setOpacity(1.0)
 
+        self._draw_group_outlines(painter, scale)
         self._draw_band(painter, scale)
 
         painter.restore()
@@ -252,6 +253,26 @@ class DesignCanvas(QWidget):
         painter.drawRect(QRectF(min(x0, x1), min(y0, y1),
                                 abs(x1 - x0), abs(y1 - y0)))
         painter.setBrush(Qt.NoBrush)
+
+    def _draw_group_outlines(self, painter, scale: float):
+        """A dashed box around each selected group, so a group can be told
+        from a selection that merely holds several elements. Drawn a little
+        outside the members' joint box, with a longer dash than the band so
+        the two never read as one."""
+        doc = self.document
+        units = [unit for unit in doc.units(doc.selection) if len(unit) > 1]
+        if not units:
+            return
+        pen = QPen(QColor(0, 128, 255))
+        pen.setWidthF(1.0 / max(1e-6, scale))
+        pen.setStyle(Qt.CustomDashLine)
+        pen.setDashPattern([8, 4])
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        pad = geometry.GROUP_OUTLINE_PAD
+        for unit in units:
+            x, y, w, h = geometry.selection_bounds(unit)
+            painter.drawRect(QRectF(x - pad, y - pad, w + 2 * pad, h + 2 * pad))
 
     def _draw_handles(self, painter, element: DesignElement):
         """The eight resize handles, as small filled squares.
@@ -838,6 +859,12 @@ class DesignCanvas(QWidget):
         print_action.setChecked(element.print_enabled)
         menu.addSeparator()
 
+        group = menu.addAction("Group")
+        ungroup = menu.addAction("Ungroup")
+        group.setEnabled(doc.can_group())
+        ungroup.setEnabled(doc.can_ungroup())
+        menu.addSeparator()
+
         front = menu.addAction("Bring to Front")
         forward = menu.addAction("Bring Forward")
         backward = menu.addAction("Send Backward")
@@ -857,6 +884,10 @@ class DesignCanvas(QWidget):
             # printed label - how a user suppresses something that would
             # otherwise print through an image covering it.
             element.print_enabled = print_action.isChecked()
+        elif chosen is group:
+            doc.group_selected()
+        elif chosen is ungroup:
+            doc.ungroup_selected()
         elif chosen is front:
             doc.bring_to_front()
         elif chosen is forward:

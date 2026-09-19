@@ -47,9 +47,12 @@ disagree.
 - **Network Printing**: straight over TCP to a Zebra, no printing subsystem
   involved
 - **Select more than one**: shift-click, or drag a band across the canvas, and
-  the whole group moves together
-- **Align**: line a group up on any edge, or centre it on either axis; a single
-  element lines up against the label itself
+  the whole selection moves together
+- **Group and ungroup**: Ctrl+G makes a selection one unit that any click,
+  band, drag, align or z-order command treats as a whole, saved in the file
+  and undone with Ctrl+Shift+G
+- **Align**: line a selection up on any edge, or centre it on either axis; a
+  group moves as one box, and a single element lines up against the label itself
 - **Per-element Print Toggle**: keep an element in the design and in the saved
   file, but leave it off the printed label
 - **203, 300 and 600 dpi**: label size is set in inches, and a label drawn for
@@ -113,9 +116,10 @@ Identical in both frontends.
 | Ctrl+N | New | Ctrl+Z | Undo |
 | Ctrl+O | Open | Ctrl+Shift+Z, Ctrl+Y | Redo |
 | Ctrl+S | Save | Delete | Delete element |
-| Ctrl+Shift+S | Save As | Ctrl+] / Ctrl+Shift+] | Bring Forward / to Front |
-| Ctrl+P | Print | Ctrl+[ / Ctrl+Shift+[ | Send Backward / to Back |
-| Ctrl+Q | Quit | Ctrl++ / Ctrl+- | Zoom In / Out |
+| Ctrl+Shift+S | Save As | Ctrl+G / Ctrl+Shift+G | Group / Ungroup |
+| Ctrl+P | Print | Ctrl+] / Ctrl+Shift+] | Bring Forward / to Front |
+| Ctrl+Q | Quit | Ctrl+[ / Ctrl+Shift+[ | Send Backward / to Back |
+| | | Ctrl++ / Ctrl+- | Zoom In / Out |
 | | | Ctrl+0 / Ctrl+9 / Ctrl+1 | Fit Label / Fit Width / 1:1 |
 
 ## Settings
@@ -188,7 +192,7 @@ Read when loading a file and written when saving:
 - `^PQ` - Print quantity (copies), set from Label Settings
 - `^FX` - Comment, used for the designer's own metadata
 
-Four `^FX` keys carry what ZPL itself has nowhere to put, and printers ignore
+Five `^FX` keys carry what ZPL itself has nowhere to put, and printers ignore
 them:
 
 | Key | Holds |
@@ -197,6 +201,7 @@ them:
 | `^FXDESIGNER_PREVIEW:` | the image at original quality, base64 JPEG |
 | `^FXDESIGNER_PATH:` | where the image came from |
 | `^FXDESIGNER_NOPRINT:` | an element kept in the design but not printed |
+| `^FXDESIGNER_GROUP:` | which group the element after it belongs to |
 
 A `^FX` comment ends at the next caret rather than at the end of the line, so
 any payload that could contain one is base64 encoded - otherwise a hidden

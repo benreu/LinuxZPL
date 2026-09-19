@@ -60,9 +60,18 @@ until one is (§13) — at the configured printer resolution (4 × 6 inches is
 ### 3.2 Properties common to every element
 
 `x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`,
-`print_enabled` (default true — see §6.6), and `reverse_print` (`^FR`, default
+`print_enabled` (default true — see §6.6), `reverse_print` (`^FR`, default
 false — a checkbox in every element editor that edits ink; Edit Image and
-Edit Stored Graphic have none, §7).
+Edit Stored Graphic have none, §7), and `group` (default none — the id of the
+group the element is in, §5; a scalar, so that a snapshot's shallow copy
+carries it and undo cannot leave a group pointing at replaced elements).
+
+A **group** is nothing more than the same `group` id on each of its members.
+The members stay ordinary elements in the one flat z-ordered list; the ZPL
+they write, the way they paint and the editors that open on them know nothing
+of it. What a group changes is selection (§5), alignment and depth (§6.2).
+Groups do not nest: grouping a selection that holds a group folds it into the
+new one.
 
 ### 3.3 Element types
 
@@ -395,6 +404,23 @@ pinned.
   the element becomes the primary — so the z-order commands in the menu act on
   the element that was actually pointed at.
 - **Delete** removes every selected element, not only the primary.
+- **A grouped element is never selected on its own.** Every way into the
+  selection widens a pick of one member to its whole group: a plain click on a
+  member selects the group with that member as the primary; a shift-click on a
+  member adds the whole group, again with that member primary, or drops the
+  whole group if it was selected; a rubber band that overlaps one member catches
+  the group; and assigning a single element programmatically selects its group.
+  Dragging, Delete and Align then treat the group as one because the selection
+  *is* the group. The widening is done in the model, not the canvas, so the two
+  frontends cannot disagree about it.
+- **A selected group is outlined**: a dashed rectangle 2 dots outside the
+  members' joint bounding box, in the rubber band's blue with a longer dash
+  (8 on, 4 off) so the two never read as one. Each member keeps its own
+  selection rectangle. A group gets no resize handles, for the reason a
+  multi-selection gets none.
+- **Double click on a member** opens that member's editor, and **Print This
+  Element** on a member toggles that member alone — both name one element and
+  act on one.
 
 ---
 
@@ -423,15 +449,35 @@ must report the real error and leave the flag set.
 
 ### 6.2 Edit
 
-Undo, Redo, Delete, then Bring to Front / Bring Forward / Send Backward / Send
-to Back, then an **Align** submenu. Delete and the four z-order items are
-disabled when nothing is selected; the raise pair is disabled when the selection
-is already on top and the lower pair when it is already at the bottom.
-Sensitivity is re-evaluated each time the menu opens.
+Undo, Redo, Delete, then Group / Ungroup, then Bring to Front / Bring Forward
+/ Send Backward / Send to Back, then an **Align** submenu. Delete and the four
+z-order items are disabled when nothing is selected; the raise pair is disabled
+when the selection is already on top and the lower pair when it is already at
+the bottom. Sensitivity is re-evaluated each time the menu opens.
 
-The z-order commands move the **primary** element only, even while a group is
-selected: what "bring forward" should mean for three elements at different
-depths is a question of its own, and answering it badly is worse than leaving it.
+**Group** (Ctrl+G) makes the selection one group. It is enabled when the
+selection holds two or more *units* — a unit being a loose element or a whole
+group — so two loose elements, a group plus a loose element, or two groups can
+be grouped, and exactly one group on its own cannot. Every selected element
+gets one fresh id, which is how a group inside the selection is folded into the
+new one rather than nested. Grouping also makes the members **one contiguous
+run in the z-order**, keeping their order among themselves and placing the run
+where the topmost member was, so the group stays above everything that member
+was above. **Ungroup** (Ctrl+Shift+G) clears the id on every selected element
+and is enabled when any selected element is grouped; the selection is left as
+it was. Both are document changes and undoable.
+
+The z-order commands move the **unit holding the primary** element: the primary
+alone, or its whole group as one run. Not the rest of a loose multi-selection —
+what "bring forward" should mean for three elements at different depths is a
+question of its own, and answering it badly is worse than leaving it. A group is
+different: it has one depth by construction. Stepping past a neighbouring group
+steps past all of it, so that group's run survives too. The raise and lower
+pairs are enabled from the units, not from the primary's own index: a group
+whose run is at the top cannot go higher even when the primary is not the last
+element in the list. Changing the depth of anything rebuilds the list from its
+units, which also mends a group whose members a hand-edited file left
+scattered.
 
 **Align** holds six commands, in this order: Align Left, Centre Horizontally,
 Align Right, Align Top, Centre Vertically, Align Bottom. Each moves one axis and
@@ -439,11 +485,16 @@ leaves the other alone, and all six are disabled when nothing is selected.
 
 | Selection | What it lines up against |
 |---|---|
-| Two or more elements | The selection's own bounding box — Align Left takes every member to the leftmost x in the group, Centre Horizontally puts every member's centre on the group's centre |
-| Exactly one element | The label, which is the only other thing there is to line it up with — Align Left is `x = 0`, Centre Horizontally is `(label_width − width) / 2`, Align Right is `label_width − width` |
+| Two or more units | The selection's own bounding box — Align Left takes every unit to the leftmost x in the selection, Centre Horizontally puts every unit's centre on the selection's centre |
+| Exactly one unit | The label, which is the only other thing there is to line it up with — Align Left is `x = 0`, Centre Horizontally is `(label_width − width) / 2`, Align Right is `label_width − width` |
 
-Results are clamped into the label the way a drag is, so an element larger than
-the label lands against the edge rather than at a negative coordinate. An align
+What is lined up is each **unit** — a loose element, or a whole group moved as
+one rigid box by one shared delta — so aligning left does not stack a group's
+members at the same x and undo the very arrangement grouping was meant to keep.
+A group selected on its own is one unit and lines up against the label.
+
+Results are clamped into the label the way a drag is, so a unit larger than the
+label lands against the edge rather than at a negative coordinate. An align
 that moves nothing records no undo entry. Nothing else about an element changes:
 a field placed by `^FT` is written back as `^FT` at its new position, and a
 rotated element aligns by its footprint, which is axis-aligned at every quarter
@@ -482,8 +533,10 @@ text-labelled, and the icon theme has no object-align icons to label six with.
   in the design and in the saved file but leaves it off the printed label. This
   is how a user suppresses an element that would otherwise print through an
   image covering it.
+- **Group / Ungroup**, under the same rules as in the Edit menu (§6.2).
 - **Bring to Front / Bring Forward / Send Backward / Send to Back**, disabled at
-  the ends of the z-order.
+  the ends of the z-order — of the units, so a group at the top offers neither
+  raise even when the member right-clicked is not the last element (§6.2).
 
 ### 6.7 The unsaved-changes prompt
 
@@ -619,7 +672,7 @@ nothing.
 
 ### 8.2 Designer metadata
 
-Four `^FX` comment keys, which printers ignore:
+Five `^FX` comment keys, which printers ignore:
 
 | Key | Payload | Purpose |
 |---|---|---|
@@ -627,6 +680,16 @@ Four `^FX` comment keys, which printers ignore:
 | `^FXDESIGNER_PREVIEW:` | base64 JPEG | The image at original quality, so a reopened file need not be rebuilt from the 1-bit data |
 | `^FXDESIGNER_PATH:` | plain filesystem path | Where the image came from |
 | `^FXDESIGNER_NOPRINT:` | base64 of a whole element block | An element kept in the design but not printed |
+| `^FXDESIGNER_GROUP:` | integer | The group the next field belongs to (§5) |
+
+The group marker is written on its own line immediately before each member's
+block — before the `^FXDESIGNER_NOPRINT:` line of a hidden member, and outside
+its payload, so the payload stays exactly the element's own ZPL. Groups are
+numbered 1, 2, 3… in order of first appearance in the file, whatever ids a
+session's grouping and ungrouping left in memory, and a group of one element is
+not written at all. An element that writes nothing (an image with no source)
+gets no marker either, since the marker would otherwise attach to whatever
+field came next.
 
 **`^FX` comments end at the next caret, not at the end of the line.** Any
 payload that could contain a caret must therefore be base64 encoded — otherwise
@@ -640,7 +703,7 @@ path are caret-free and are stored as-is.
 `^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
-`^PO`, `^PM`, `^LR`), `^PQ`, and the four metadata keys.
+`^PO`, `^PM`, `^LR`), `^PQ`, and the five metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -737,6 +800,16 @@ commands it could not model.
 Before parsing, `^FXDESIGNER_NOPRINT` payloads are decoded and expanded back
 into the line stream in place, preceded by a marker, so hidden elements keep
 their z-order position.
+
+**A marker ahead of a field is used up by that field, whatever it builds.** The
+no-print marker and the group marker both flag "the next field"; a field that
+turns out to be one the model cannot hold (§3.3) consumes them all the same, so
+neither can fall through to the supported field after it and hide or group one
+the file never meant. Only a marker the `^FO` has not yet followed is carried.
+A group marker whose value is not an integer is ignored; duplicate ids in a
+hand-edited file simply mean the same group; members a file leaves scattered
+through the z-order are not moved on load (the file opens as it is), and are
+gathered into one run the first time their depth is changed (§6.2).
 
 **Restoring an image**, in order of preference:
 
@@ -1147,9 +1220,9 @@ to come back as the group.
 - **One entry per user action.** A drag or a resize is one entry, recorded when
   the mouse is released — not one per motion event.
 - Every document change is undoable: adding, deleting, moving, resizing,
-  reordering, aligning, editing an element through its dialog, toggling Print
-  This Element, and changing the label size (including the element clamping that
-  a smaller label causes).
+  reordering, aligning, grouping and ungrouping, editing an element through its
+  dialog, toggling Print This Element, and changing the label size (including
+  the element clamping that a smaller label causes).
 - Changing the **selection** is not a document change and is not undoable: a
   click, a shift-click and a rubber band record no entry. An align that moves
   nothing records none either.
@@ -1235,6 +1308,8 @@ treated as corrupt and falls back too.
 | Ctrl+Z | Undo |
 | Ctrl+Shift+Z, Ctrl+Y | Redo |
 | Delete | Delete selected element |
+| Ctrl+G | Group |
+| Ctrl+Shift+G | Ungroup |
 | Ctrl+] | Bring Forward |
 | Ctrl+Shift+] | Bring to Front |
 | Ctrl+[ | Send Backward |
@@ -1389,6 +1464,16 @@ rather than requirements:
   leaves nothing for `Colour` to modulate — and the font-less `^FB` fallback
   (no TrueType file at all) inverts per line's bounding box rather than per
   glyph.
+- **A label made smaller can squash a group.** Shrinking the label (§7) clamps
+  every element into the new bounds one by one, so two members that both hit
+  the edge end up closer together than they were — the label changed, not the
+  group, and a multi-selection behaves the same way. A drag or an align keeps
+  the shape; only the label size does not.
+- **Groups have no resize handles and do not nest.** Scaling a group means
+  scaling text and barcodes, whose sizes snap to a font width, a line count or a
+  module width (§5), so there is no exact proportional resize to offer; and the
+  id-per-element representation (§3.2) has no room for a group inside a group.
+  Both are decisions about this version rather than about groups.
 - **`^XG`/`^IM`/`^IL` resolve a stored graphic in `graphic_store` (the local,
   in-session cache) by name and extension only — the `R:`/`E:`/`B:`/`A:`
   device prefix is preserved for round-tripping but does not distinguish

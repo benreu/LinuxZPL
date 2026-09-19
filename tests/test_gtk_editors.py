@@ -161,6 +161,29 @@ canvas.on_draw(canvas, cairo.Context(surface))
 canvas.band_origin = canvas.band_now = None
 check("a group selection and a rubber band paint without raising", True)
 
+# --- Group and Ungroup: the Edit menu's rules, and the outline paints -------
+# The conformance suite proves the two frontends agree on what grouping does;
+# the sensitivity of the two items is one thing the ZPL cannot show.
+
+grouped = [document.add_text_element('one'), document.add_frame_element()]
+document.select_many(grouped)
+window._update_edit_menu(None)
+check("Group is offered for two loose elements, Ungroup is not",
+      window.group_item.get_sensitive() and not window.ungroup_item.get_sensitive())
+window.on_group_clicked(None)
+window._update_edit_menu(None)
+check("once grouped, Ungroup is offered and Group is not",
+      window.ungroup_item.get_sensitive() and not window.group_item.get_sensitive())
+check("the group's z-order items come from the model",
+      window.zorder_items[0].get_sensitive() == document.can_raise())
+canvas.on_draw(canvas, cairo.Context(surface))
+check("a selected group's outline paints without raising", True)
+window.on_ungroup_clicked(None)
+check("Ungroup clears the tags",
+      all(element.group is None for element in document.elements))
+for element in grouped:
+    document.elements.remove(element)
+
 # --- a wrapped block paints its lines where it wraps them -------------------
 # The conformance suite compares ZPL, and the ZPL for a block is right whether
 # or not the canvas draws it wrapped - which is how a block came to print

@@ -25,6 +25,7 @@ NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
 DPI_KEY = '^FXDESIGNER_DPI:'
 PREVIEW_KEY = '^FXDESIGNER_PREVIEW:'
 PATH_KEY = '^FXDESIGNER_PATH:'
+GROUP_KEY = '^FXDESIGNER_GROUP:'
 
 # The same keys as the tokeniser sees them: ^FX is the command, the rest is
 # its parameters.
@@ -32,6 +33,11 @@ NOPRINT_PARAM = NOPRINT_MARKER[len('^FX'):]
 DPI_PARAM = DPI_KEY[len('^FX'):]
 PREVIEW_PARAM = PREVIEW_KEY[len('^FX'):]
 PATH_PARAM = PATH_KEY[len('^FX'):]
+GROUP_PARAM = GROUP_KEY[len('^FX'):]
+
+# (no-print flag, group id) - what the designer markers ahead of a field ask
+# of it, and the value of having asked nothing.
+_NO_PENDING = (False, None)
 
 
 def parse_label_size(zpl_content: str) -> Tuple[Optional[int], Optional[int]]:
@@ -259,7 +265,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     token_offsets = [m.start() for m in COMMAND.finditer(expanded)]
     doc.fields = read_field_table(tokens)
     loaded_dpi = None
-    pending_no_print = False
+    # Designer markers written in front of a field, held until it is built.
+    pending = _NO_PENDING
     field = None            # commands gathered since the last ^FO
     # ^CF sets the font for every field that does not name one of its own, so
     # it has to be carried between fields rather than gathered into one. ^BY is
@@ -281,7 +288,12 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 except ValueError:
                     pass
             elif key == NOPRINT_PARAM:
-                pending_no_print = True
+                pending = (True, pending[1])
+            elif key.startswith(GROUP_PARAM):
+                try:
+                    pending = (pending[0], int(key[len(GROUP_PARAM):]))
+                except ValueError:
+                    pass
             elif field is not None and key.startswith(PREVIEW_PARAM):
                 field['preview'] = key[len(PREVIEW_PARAM):]
             elif field is not None and key.startswith(PATH_PARAM):
@@ -389,7 +401,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
 
         if cmd in ('^FO', '^FT'):
             # A field that never saw ^FS still ends here, at the next one
-            pending_no_print = _flush(field, doc, renderer, pending_no_print)
+            pending = _flush(field, doc, renderer, pending)
             match = re.match(r'\s*(-?\d+),(-?\d+)', params)
             field = _new_field(int(match.group(1)) + origin[0],
                                int(match.group(2)) + origin[1],
@@ -403,7 +415,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             continue
 
         if cmd == '^FS':
-            pending_no_print = _flush(field, doc, renderer, pending_no_print)
+            pending = _flush(field, doc, renderer, pending)
             field = None
             continue
 
@@ -459,7 +471,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             # it as data is what stops such a field vanishing outright.
             field['data'] = params
 
-    _flush(field, doc, renderer, pending_no_print)
+    _flush(field, doc, renderer, pending)
 
     doc.selected_element = None
     return doc, loaded_dpi
@@ -698,11 +710,19 @@ def _read_barcode(cmd: str, params: str, default_height=None) -> dict:
                         fields.get('e', ''), fields.get('m', ''))}
 
 
-def _flush(field, doc, renderer, pending_no_print: bool) -> bool:
-    """Turn a gathered field into an element. Returns the no-print flag."""
-    if field is None:
-        return pending_no_print
+def _flush(field, doc, renderer, pending) -> tuple:
+    """Turn a gathered field into an element. Returns the markers still pending.
 
+    The markers are for the next field, whatever it builds: a field that turns
+    out to be something the model cannot hold uses them up all the same, so
+    they cannot fall through to the supported field after it and hide or
+    group one the file never meant. Only a marker with no field yet at all -
+    the ^FO has not arrived - is carried.
+    """
+    if field is None:
+        return pending
+
+    no_print, group = pending
     before = len(doc.elements)
     element = _build_element(field, doc, renderer)
     if element is not None:
@@ -710,11 +730,11 @@ def _flush(field, doc, renderer, pending_no_print: bool) -> bool:
             _apply_typeset(element, doc)
         element.reverse_print = field['reverse']
         doc.elements.append(element)
-    if pending_no_print and len(doc.elements) > before:
-        for el in doc.elements[before:]:
+    for el in doc.elements[before:]:
+        if no_print:
             el.print_enabled = False
-        return False
-    return pending_no_print
+        el.group = group
+    return _NO_PENDING
 
 
 def _apply_typeset(element, doc) -> None:

@@ -52,6 +52,11 @@ class DesignElement:
     # ^FR: this field prints in reverse - white where the label would
     # otherwise be black, and vice versa.
     reverse_print = False
+    # Which group this element belongs to, or None for none. A scalar rather
+    # than a reference to the other members, so a snapshot's shallow copy
+    # carries it and undo cannot leave a group pointing at elements that were
+    # replaced. The group itself is derived: every element with the same id.
+    group = None
 
     def origin_zpl(self, offset=(0, 0)) -> str:
         """The ^FO or ^FT that places this element.
@@ -1001,6 +1006,11 @@ class Document:
     # singular name as a property over the list means everything that only ever
     # wants one element - the editors, the context menu, the parser - is
     # unchanged by there being more than one.
+    #
+    # A grouped element (see `group_selected`) is never selected on its own:
+    # every way into the selection widens a pick of one member to the whole
+    # group, here rather than in the canvases, so a click, a rubber band and a
+    # test's assignment all agree on it and neither frontend can forget.
 
     @property
     def selected_element(self) -> Optional[DesignElement]:
@@ -1008,7 +1018,7 @@ class Document:
 
     @selected_element.setter
     def selected_element(self, element: Optional[DesignElement]):
-        self.selection = [element] if element is not None else []
+        self.selection = self._expand([element]) if element is not None else []
 
     def select(self, element: Optional[DesignElement], additive: bool = False):
         """Pick an element, or add one to the selection and take it out again.
@@ -1016,25 +1026,31 @@ class Document:
         A plain pick of an element already in the selection keeps the whole
         selection, so a group can be dragged by any of its members; an additive
         pick of one takes it out, which is how a member is dropped.
+
+        Picking a grouped element picks its group, with the element pointed at
+        as the primary; dropping one drops its group.
         """
         if element is None:
             if not additive:
                 self.clear_selection()
             return
+        members = self.group_members(element)
         if not additive:
             if element not in self.selection:
-                self.selection = [element]
-            else:
-                # The picked element becomes the primary even though the group
-                # survives, so the commands that act on one element - the
-                # z-order four, reached by right-clicking a member - act on the
-                # element the user actually pointed at.
-                self.make_primary(element)
+                self.selection = members
+            # The picked element becomes the primary even though the group
+            # survives, so the commands that act on one element - the z-order
+            # four, reached by right-clicking a member - act on the element
+            # the user actually pointed at.
+            self.make_primary(element)
             return
         if element in self.selection:
-            self.selection.remove(element)
+            for member in members:
+                if member in self.selection:
+                    self.selection.remove(member)
         else:
-            self.selection.append(element)
+            self.selection.extend(m for m in members if m not in self.selection)
+            self.make_primary(element)
 
     def make_primary(self, element) -> None:
         """Move a selected element to the end, making it the primary."""
@@ -1044,7 +1060,7 @@ class Document:
 
     def select_many(self, elements) -> None:
         """Select exactly these, ignoring any that are not in the document."""
-        self.selection = [el for el in elements if el in self.elements]
+        self.selection = self._expand(elements)
 
     def extend_selection(self, elements) -> None:
         """Add these to the selection, leaving what is already in it alone.
@@ -1053,8 +1069,8 @@ class Document:
         wants: a band dragged over a group to pick up one more element should
         not drop every element it passed on the way.
         """
-        for element in elements:
-            if element in self.elements and element not in self.selection:
+        for element in self._expand(elements):
+            if element not in self.selection:
                 self.selection.append(element)
 
     def clear_selection(self) -> None:
@@ -1062,6 +1078,74 @@ class Document:
 
     def is_selected(self, element) -> bool:
         return element in self.selection
+
+    def _expand(self, elements) -> List[DesignElement]:
+        """These elements, each grouped one widened to its whole group.
+
+        In the order given, each group where its first member was, with no
+        element twice; anything not in the document is left out.
+        """
+        picked = [el for el in elements if el is not None and el in self.elements]
+        expanded: List[DesignElement] = []
+        for element in picked:
+            for member in self.group_members(element):
+                if member not in expanded:
+                    expanded.append(member)
+        return expanded
+
+    # --- groups --------------------------------------------------------------
+    #
+    # A group is a set of elements that select, move and change depth as one.
+    # It is nothing more than the same `group` id on each member: the members
+    # stay ordinary elements in the one flat z-ordered list, so the ZPL, the
+    # painting and the editors know nothing about it. Groups do not nest -
+    # grouping a selection that holds a group folds it into the new one.
+
+    def group_members(self, element) -> List[DesignElement]:
+        """Every element in this element's group, in z-order - or just it."""
+        if element.group is None:
+            return [element]
+        return [el for el in self.elements if el.group == element.group]
+
+    def units(self, elements=None) -> List[List[DesignElement]]:
+        """The document (or these elements) as the units that move together."""
+        return geometry.units_of(self.elements if elements is None else elements)
+
+    def can_group(self) -> bool:
+        """Two or more units are selected: something to join to something."""
+        return len(self.units(self.selection)) >= 2
+
+    def can_ungroup(self) -> bool:
+        return any(el.group is not None for el in self.selection)
+
+    def group_selected(self) -> bool:
+        """Make the selection one group, and one run in the z-order.
+
+        Contiguous so that the group has one depth for the z-order commands
+        to move. The run lands where the topmost member was, so the group
+        stays above everything that member was above; the members keep their
+        order within it.
+        """
+        if not self.can_group():
+            return False
+        members = [el for el in self.elements if el in self.selection]
+        top = self.elements.index(members[-1])
+        for element in members:
+            self.elements.remove(element)
+        self.elements[top - len(members) + 1:top - len(members) + 1] = members
+        fresh = max((el.group for el in self.elements if el.group is not None),
+                    default=0) + 1
+        for element in members:
+            element.group = fresh
+        return True
+
+    def ungroup_selected(self) -> bool:
+        """Dissolve every group the selection touches; the selection stays."""
+        if not self.can_ungroup():
+            return False
+        for element in self.selection:
+            element.group = None
+        return True
 
     # --- adding and removing -------------------------------------------------
 
@@ -1185,46 +1269,65 @@ class Document:
 
     # --- z-order -------------------------------------------------------------
     #
-    # These move the primary element only, even while a group is selected: what
-    # "bring forward" should mean for three elements at different depths is a
-    # question of its own, and answering it badly is worse than leaving it.
+    # These move the unit holding the primary element: the primary alone, or
+    # its whole group as one run. Not the rest of a loose multi-selection -
+    # what "bring forward" should mean for three elements at different depths
+    # is a question of its own, and answering it badly is worse than leaving
+    # it. A group is different: it has one depth by construction.
+    #
+    # Rebuilding the list from its units also mends a group whose members a
+    # hand-edited file left scattered, the first time its depth is changed.
+
+    def _primary_unit(self):
+        """(units, index of the one holding the primary), or (units, None)."""
+        units = self.units()
+        primary = self.selected_element
+        for i, unit in enumerate(units):
+            if primary in unit:
+                return units, i
+        return units, None
 
     def can_raise(self) -> bool:
-        return (self.selected_element is not None
-                and self.elements
-                and self.elements[-1] is not self.selected_element)
+        units, i = self._primary_unit()
+        return i is not None and i < len(units) - 1
 
     def can_lower(self) -> bool:
-        return (self.selected_element is not None
-                and self.elements
-                and self.elements[0] is not self.selected_element)
+        units, i = self._primary_unit()
+        return i is not None and i > 0
+
+    def _reorder_units(self, units) -> None:
+        self.elements = [el for unit in units for el in unit]
 
     def bring_forward(self) -> bool:
         if not self.can_raise():
             return False
-        i = self.elements.index(self.selected_element)
-        self.elements[i], self.elements[i + 1] = self.elements[i + 1], self.elements[i]
+        units, i = self._primary_unit()
+        units[i], units[i + 1] = units[i + 1], units[i]
+        self._reorder_units(units)
         return True
 
     def send_backward(self) -> bool:
         if not self.can_lower():
             return False
-        i = self.elements.index(self.selected_element)
-        self.elements[i], self.elements[i - 1] = self.elements[i - 1], self.elements[i]
+        units, i = self._primary_unit()
+        units[i], units[i - 1] = units[i - 1], units[i]
+        self._reorder_units(units)
         return True
 
     def bring_to_front(self) -> bool:
         if not self.can_raise():
             return False
-        self.elements.remove(self.selected_element)
-        self.elements.append(self.selected_element)
+        units, i = self._primary_unit()
+        units.append(units.pop(i))
+        self._reorder_units(units)
         return True
 
     def send_to_back(self) -> bool:
         if not self.can_lower():
             return False
-        self.elements.remove(self.selected_element)
-        self.elements.insert(0, self.selected_element)
+        units, i = self._primary_unit()
+        units.insert(0, units.pop(i))
+        self._reorder_units(units)
         return True
 
     def element_at(self, x: int, y: int) -> Optional[DesignElement]:
@@ -1426,6 +1529,22 @@ class Document:
 
     # --- serialisation -------------------------------------------------------
 
+    def _group_numbers(self) -> dict:
+        """Group id -> the number it is written as: 1, 2, 3 in order of first
+        appearance, so a saved file does not carry whatever ids a session's
+        grouping and ungrouping left behind. A group of one is not a group
+        and is not written."""
+        counts: dict = {}
+        for element in self.elements:
+            if element.group is not None:
+                counts[element.group] = counts.get(element.group, 0) + 1
+        numbers: dict = {}
+        for element in self.elements:
+            gid = element.group
+            if gid is not None and counts[gid] > 1 and gid not in numbers:
+                numbers[gid] = len(numbers) + 1
+        return numbers
+
     def to_zpl(self, *, explicit_flips: bool = False) -> str:
         """Generate ZPL code from the elements, with the label size settings.
 
@@ -1456,6 +1575,7 @@ class Document:
         # Printers ignore ^FX, and the value has no caret to end the comment early.
         zpl += f"^FXDESIGNER_DPI:{self.dpi}\n"
         offset = placed.field_offset()
+        groups = self._group_numbers()
         for element in self.elements:
             if self.printer_font_name and element.element_type == 'text':
                 body = element.to_zpl(printer_font_name=self.printer_font_name,
@@ -1464,6 +1584,11 @@ class Document:
                 # By keyword: a text element's first parameter is its printer
                 # font name, and a positional offset landed there instead.
                 body = element.to_zpl(offset=offset)
+            # The marker flags the next field the parser builds, so it goes
+            # only in front of a field that will be there - an element with
+            # nothing to write would hand its group to whatever came next.
+            if body and element.group in groups:
+                zpl += f"^FXDESIGNER_GROUP:{groups[element.group]}\n"
             if element.print_enabled:
                 zpl += body
             elif body:

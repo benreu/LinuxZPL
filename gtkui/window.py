@@ -479,6 +479,18 @@ class ZPLViewerWindow(Gtk.Window):
 
         edit_menu.append(Gtk.SeparatorMenuItem())
 
+        self.group_item = Gtk.MenuItem.new_with_mnemonic("_Group")
+        self.group_item.connect("activate", self.on_group_clicked)
+        add_accel(self.group_item, "<Control>g")
+        edit_menu.append(self.group_item)
+
+        self.ungroup_item = Gtk.MenuItem.new_with_mnemonic("_Ungroup")
+        self.ungroup_item.connect("activate", self.on_ungroup_clicked)
+        add_accel(self.ungroup_item, "<Control><Shift>g")
+        edit_menu.append(self.ungroup_item)
+
+        edit_menu.append(Gtk.SeparatorMenuItem())
+
         # Same actions as the canvas right-click menu, on the bracket
         # shortcuts drawing programs use. Page Up and Home would collide with
         # scrolling the canvas, since accelerators are matched before the
@@ -2640,16 +2652,18 @@ class ZPLViewerWindow(Gtk.Window):
 
     def _update_edit_menu(self, menu):
         """Grey out the actions that need a selected element."""
-        element = self.design_canvas.selected_element
-        self.delete_item.set_sensitive(element is not None)
+        doc = self.design_canvas.document
+        self.delete_item.set_sensitive(doc.selected_element is not None)
+        self.group_item.set_sensitive(doc.can_group())
+        self.ungroup_item.set_sensitive(doc.can_ungroup())
         self._update_align_items()
-        elements = self.design_canvas.elements
-        idx = elements.index(element) if element in elements else None
+        # From the model, as the Qt window does: a group is one depth, and
+        # only the model knows where the run holding the primary ends.
         front, forward, backward, back = self.zorder_items
         for item in (front, forward):
-            item.set_sensitive(idx is not None and idx < len(elements) - 1)
+            item.set_sensitive(doc.can_raise())
         for item in (backward, back):
-            item.set_sensitive(idx is not None and idx > 0)
+            item.set_sensitive(doc.can_lower())
     
     def _build_align_menu(self) -> Gtk.Menu:
         """One copy of the align commands, for a menu or a popup."""
@@ -2722,6 +2736,12 @@ class ZPLViewerWindow(Gtk.Window):
     def on_add_stored_graphic_clicked(self, widget):
         """Handle add stored graphic element button click."""
         self.design_canvas.add_stored_graphic_element()
+
+    def on_group_clicked(self, widget):
+        self.design_canvas.group_selected()
+
+    def on_ungroup_clicked(self, widget):
+        self.design_canvas.ungroup_selected()
 
     def on_delete_clicked(self, widget):
         """Handle delete selected element button click."""
