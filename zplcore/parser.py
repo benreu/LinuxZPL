@@ -290,10 +290,14 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             elif key == NOPRINT_PARAM:
                 pending = (True, pending[1])
             elif key.startswith(GROUP_PARAM):
+                # The path of groups the next field is in, outermost first;
+                # a marker that is not all integers is ignored as a whole.
                 try:
-                    pending = (pending[0], int(key[len(GROUP_PARAM):]))
+                    path = tuple(int(p) for p in key[len(GROUP_PARAM):].split(','))
                 except ValueError:
                     pass
+                else:
+                    pending = (pending[0], path)
             elif field is not None and key.startswith(PREVIEW_PARAM):
                 field['preview'] = key[len(PREVIEW_PARAM):]
             elif field is not None and key.startswith(PATH_PARAM):

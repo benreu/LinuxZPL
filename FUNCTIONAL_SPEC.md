@@ -62,16 +62,19 @@ until one is (§13) — at the configured printer resolution (4 × 6 inches is
 `x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`,
 `print_enabled` (default true — see §6.6), `reverse_print` (`^FR`, default
 false — a checkbox in every element editor that edits ink; Edit Image and
-Edit Stored Graphic have none, §7), and `group` (default none — the id of the
-group the element is in, §5; a scalar, so that a snapshot's shallow copy
+Edit Stored Graphic have none, §7), and `group` (default none — the *path* of
+group ids the element is in, outermost first, as a tuple: `(3, 7)` is "in group
+7, which is inside group 3"; immutable, so that a snapshot's shallow copy
 carries it and undo cannot leave a group pointing at replaced elements).
 
-A **group** is nothing more than the same `group` id on each of its members.
-The members stay ordinary elements in the one flat z-ordered list; the ZPL
-they write, the way they paint and the editors that open on them know nothing
-of it. What a group changes is selection (§5), alignment and depth (§6.2).
-Groups do not nest: grouping a selection that holds a group folds it into the
-new one.
+A **group** is nothing more than its id in each of its members' paths, and it
+sits inside another group when its members' paths hold that one's id first.
+Ids are unique across the document at every depth. The members stay ordinary
+elements in the one flat z-ordered list; the ZPL they write, the way they
+paint and the editors that open on them know nothing of it. What a group
+changes is selection (§5), alignment and depth (§6.2). Groups nest by
+wrapping: grouping a selection that holds a group puts a new id in front of
+every member's path, and ungrouping takes the outermost id off again (§6.2).
 
 ### 3.3 Element types
 
@@ -341,15 +344,21 @@ pinned.
 
 - **Left click** selects the topmost element containing the point, or clears the
   selection.
-- **Shift-click or Ctrl-click** adds the element under the pointer to the
-  selection, or takes it out again if it is already in. A plain click on an
-  element that is already selected keeps the whole selection, so a group can be
-  picked up by any of its members; a click on empty canvas is what reduces a
-  group back to nothing.
+- **Shift-click** adds the element under the pointer — its whole group, if it
+  is in one — to the selection, or takes it out again if it is already in. A
+  plain click on an element that is already selected keeps the whole
+  selection, so a group can be picked up by any of its members; a click on
+  empty canvas is what reduces a group back to nothing.
+- **Ctrl-click** is a *direct pick*: exactly the element under the pointer,
+  even one inside a group, and nothing else. It narrows a selected group down
+  to that one member. It is a pick, not a toggle, so it starts a drag like a
+  plain click does — which is how a member is moved on its own without
+  ungrouping. **Ctrl+Shift-click** adds or removes exactly that element.
 - **Dragging on empty canvas** draws a rubber band, and everything its rectangle
   **overlaps** is selected when the button comes up — overlapping, not
   containing, so an element running to the edge of the label can still be caught.
-  Holding Shift or Ctrl adds the catch to the selection instead of replacing it.
+  Holding Shift adds the catch to the selection instead of replacing it;
+  holding Ctrl takes the catch exactly, without widening a member to its group.
   A band changes only the selection, never the document, so it is not undoable.
 - The selection is **ordered by when each element was picked**. Its last member
   is the *primary*: the one that carries the resize handles and the one the
@@ -404,20 +413,32 @@ pinned.
   the element becomes the primary — so the z-order commands in the menu act on
   the element that was actually pointed at.
 - **Delete** removes every selected element, not only the primary.
-- **A grouped element is never selected on its own.** Every way into the
-  selection widens a pick of one member to its whole group: a plain click on a
-  member selects the group with that member as the primary; a shift-click on a
-  member adds the whole group, again with that member primary, or drops the
-  whole group if it was selected; a rubber band that overlaps one member catches
-  the group; and assigning a single element programmatically selects its group.
-  Dragging, Delete and Align then treat the group as one because the selection
-  *is* the group. The widening is done in the model, not the canvas, so the two
-  frontends cannot disagree about it.
-- **A selected group is outlined**: a dashed rectangle 2 dots outside the
-  members' joint bounding box, in the rubber band's blue with a longer dash
-  (8 on, 4 off) so the two never read as one. Each member keeps its own
-  selection rectangle. A group gets no resize handles, for the reason a
-  multi-selection gets none.
+- **A grouped element is never selected on its own except by a direct pick.**
+  Every other way into the selection widens a pick of one member to its whole
+  outermost group: a plain click on a member selects the group with that member
+  as the primary; a shift-click on a member adds the whole group, again with
+  that member primary, or drops the whole group if it was selected; a rubber
+  band that overlaps one member catches the group; and assigning a single
+  element programmatically selects its group. Dragging, Delete and Align then
+  treat the group as one because the selection *is* the group. The widening is
+  done in the model, not the canvas — the canvases only say which keys were
+  down — so the two frontends cannot disagree about it.
+- **A directly picked element behaves as a loose one** for as long as it is
+  selected: handles, resize, drag, Delete and Align act on it alone (Align
+  treats it as a unit of its own beside whatever else is selected), and its
+  editor opens as ever. Its group is still seen by the z-order commands, which
+  move the whole top-level group it is in (§6.2), and by Group and Ungroup
+  (§6.2). A plain click on it keeps the pick; a plain click on another member
+  of its group selects the whole group again.
+- **A selected group is outlined**: a dashed rectangle outside the members'
+  joint bounding box, in the rubber band's blue with a longer dash (8 on, 4
+  off) so the two never read as one — and so is each group nested inside it.
+  The innermost outline drawn sits 2 dots outside its members, and each level
+  enclosing it sits 2 dots further out again, so a nested box is always inside
+  its parent's. A group only some of whose members are selected has no outline
+  (a box around the picked ones would say the group is those), and neither has
+  a group of one. Each member keeps its own selection rectangle. A group gets
+  no resize handles, for the reason a multi-selection gets none.
 - **Double click on a member** opens that member's editor, and **Print This
   Element** on a member toggles that member alone — both name one element and
   act on one.
@@ -455,17 +476,23 @@ z-order items are disabled when nothing is selected; the raise pair is disabled
 when the selection is already on top and the lower pair when it is already at
 the bottom. Sensitivity is re-evaluated each time the menu opens.
 
-**Group** (Ctrl+G) makes the selection one group. It is enabled when the
+**Group** (Ctrl+G) wraps the selection in a new group. It is enabled when the
 selection holds two or more *units* — a unit being a loose element or a whole
-group — so two loose elements, a group plus a loose element, or two groups can
-be grouped, and exactly one group on its own cannot. Every selected element
-gets one fresh id, which is how a group inside the selection is folded into the
-new one rather than nested. Grouping also makes the members **one contiguous
-run in the z-order**, keeping their order among themselves and placing the run
-where the topmost member was, so the group stays above everything that member
-was above. **Ungroup** (Ctrl+Shift+G) clears the id on every selected element
-and is enabled when any selected element is grouped; the selection is left as
-it was. Both are document changes and undoable.
+top-level group — so two loose elements, a group plus a loose element, or two
+groups can be grouped, and exactly one group on its own cannot. Every member
+gets a fresh id put in front of its path, which is how a group inside the
+selection is **nested** in the new one rather than folded into it. Whole
+top-level groups go in, even where the selection holds only a directly picked
+member of one (§5): a group cannot be split by grouping, and afterwards the
+selection is the whole new group. Grouping also makes the members **one
+contiguous run in the z-order**, keeping their order among themselves — so a
+group already among them keeps its own run — and placing the run where the
+topmost member was, so the group stays above everything that member was above.
+**Ungroup** (Ctrl+Shift+G) dissolves the outermost group of every selected
+element — for every member of that group, not only the selected ones — so
+groups nested inside it become groups of their own, which another Ungroup
+peels in turn. It is enabled when any selected element is grouped; the
+selection is left as it was. Both are document changes and undoable.
 
 The z-order commands move the **unit holding the primary** element: the primary
 alone, or its whole group as one run. Not the rest of a loose multi-selection —
@@ -680,16 +707,20 @@ Five `^FX` comment keys, which printers ignore:
 | `^FXDESIGNER_PREVIEW:` | base64 JPEG | The image at original quality, so a reopened file need not be rebuilt from the 1-bit data |
 | `^FXDESIGNER_PATH:` | plain filesystem path | Where the image came from |
 | `^FXDESIGNER_NOPRINT:` | base64 of a whole element block | An element kept in the design but not printed |
-| `^FXDESIGNER_GROUP:` | integer | The group the next field belongs to (§5) |
+| `^FXDESIGNER_GROUP:` | comma-separated integers | The groups the next field belongs to, outermost first (§3.2, §5) |
 
 The group marker is written on its own line immediately before each member's
 block — before the `^FXDESIGNER_NOPRINT:` line of a hidden member, and outside
-its payload, so the payload stays exactly the element's own ZPL. Groups are
-numbered 1, 2, 3… in order of first appearance in the file, whatever ids a
-session's grouping and ungrouping left in memory, and a group of one element is
-not written at all. An element that writes nothing (an image with no source)
-gets no marker either, since the marker would otherwise attach to whatever
-field came next.
+its payload, so the payload stays exactly the element's own ZPL. Its value is
+the member's whole path: `1,2` is "in group 2, inside group 1". Groups are
+numbered 1, 2, 3… in order of first appearance, walking the fields in file
+order and each path from the outside in, whatever ids a session's grouping and
+ungrouping left in memory. A level with only one member is not a group and is
+left out of the path, and if nothing is left the marker is not written. An
+element that writes nothing (an image with no source) gets no marker either,
+since the marker would otherwise attach to whatever field came next. A file
+from a build before groups could nest reads back unchanged — its single
+integer is a path of one — and such a build ignores a nested marker as a whole.
 
 **`^FX` comments end at the next caret, not at the end of the line.** Any
 payload that could contain a caret must therefore be base64 encoded — otherwise
@@ -806,8 +837,12 @@ no-print marker and the group marker both flag "the next field"; a field that
 turns out to be one the model cannot hold (§3.3) consumes them all the same, so
 neither can fall through to the supported field after it and hide or group one
 the file never meant. Only a marker the `^FO` has not yet followed is carried.
-A group marker whose value is not an integer is ignored; duplicate ids in a
-hand-edited file simply mean the same group; members a file leaves scattered
+A group marker whose value is not a comma-separated list of integers is
+ignored as a whole; duplicate ids in a hand-edited file simply mean the same
+group; a path that disagrees with another member's — the same id at two depths
+— is kept as it is, since selection and units go by the outermost id and at
+worst such elements do not group, and the next save renumbers what is
+consistent and drops what is not a group; members a file leaves scattered
 through the z-order are not moved on load (the file opens as it is), and are
 gathered into one run the first time their depth is changed (§6.2).
 
@@ -1469,11 +1504,18 @@ rather than requirements:
   the edge end up closer together than they were — the label changed, not the
   group, and a multi-selection behaves the same way. A drag or an align keeps
   the shape; only the label size does not.
-- **Groups have no resize handles and do not nest.** Scaling a group means
-  scaling text and barcodes, whose sizes snap to a font width, a line count or a
-  module width (§5), so there is no exact proportional resize to offer; and the
-  id-per-element representation (§3.2) has no room for a group inside a group.
-  Both are decisions about this version rather than about groups.
+- **Groups have no resize handles.** Scaling a group means scaling text and
+  barcodes, whose sizes snap to a font width, a line count or a module width
+  (§5), so there is no exact proportional resize to offer. A decision about
+  this version rather than about groups.
+- **A group cannot be split by grouping, and Ungroup dissolves only the
+  outermost level.** Group always wraps whole top-level groups, so two members
+  picked directly out of a group cannot be sub-grouped in place — ungroup
+  first, or build the nest from the inside out. There is no "remove from
+  group": a directly picked member can be moved, resized or deleted on its own,
+  but taking it out of its group means ungrouping. And the z-order commands on
+  a directly picked member move its whole top-level group, since a group has
+  one depth.
 - **`^XG`/`^IM`/`^IL` resolve a stored graphic in `graphic_store` (the local,
   in-session cache) by name and extension only — the `R:`/`E:`/`B:`/`A:`
   device prefix is preserved for round-tripping but does not distinguish

@@ -112,15 +112,27 @@ def selection_bounds(elements):
     return (left, top, right - left, bottom - top)
 
 
-def units_of(elements):
-    """Partition elements into the units they move as: whole groups and loners.
+def top_group(element):
+    """The id of the outermost group the element is in, or None.
 
-    A grouped element brings every other element with the same group id along
-    the first time one of them is met, in the order they were given, so a unit
-    is a list whose order is the order of its input. An ungrouped element is a
-    unit of one. Each element appears in exactly one unit, and the units come
-    out in the order their first member did - which is z-order when given the
-    document's elements, and pick order when given a selection.
+    Written once, because it is the one rule everything about groups keys
+    off: what a click selects, what moves together, what the z-order
+    commands move. A group inside another is reached only by a direct pick
+    (Document.select) or by ungrouping the outer one.
+    """
+    return element.group[0] if element.group else None
+
+
+def units_of(elements):
+    """Partition elements into the units they move as: whole top-level groups
+    and loners.
+
+    A grouped element brings every other element in the same outermost group
+    along the first time one of them is met, in the order they were given, so
+    a unit is a list whose order is the order of its input. An ungrouped
+    element is a unit of one. Each element appears in exactly one unit, and
+    the units come out in the order their first member did - which is z-order
+    when given the document's elements, and pick order when given a selection.
     """
     elements = [el for el in elements if el is not None]
     units = []
@@ -128,13 +140,53 @@ def units_of(elements):
     for element in elements:
         if id(element) in placed:
             continue
-        if element.group is None:
+        top = top_group(element)
+        if top is None:
             unit = [element]
         else:
-            unit = [el for el in elements if el.group == element.group]
+            unit = [el for el in elements if top_group(el) == top]
         units.append(unit)
         placed.update(id(el) for el in unit)
     return units
+
+
+def group_outlines(elements, selected):
+    """The boxes to draw around the selected groups, outermost first.
+
+    One box per group, at every depth, whose members are all selected and
+    number two or more: a group only some of whose members are picked has
+    no outline, since a box around the picked ones would say the group is
+    those, and a group of one is not a group. Each box is already padded:
+    the innermost level GROUP_OUTLINE_PAD outside its members' joint box,
+    each level enclosing it that much further out again, so a nested box
+    always sits inside its parent's and never on top of it.
+    """
+    selected = [el for el in selected if el is not None]
+    picked = set(id(el) for el in selected)
+    # id -> (depth, members), for every id any selected element is under
+    groups = {}
+    for element in selected:
+        for depth, gid in enumerate(element.group or ()):
+            if gid not in groups:
+                members = [el for el in elements if el.group and gid in el.group]
+                groups[gid] = (depth, members)
+    drawn = {gid: (depth, members) for gid, (depth, members) in groups.items()
+             if len(members) >= 2 and all(id(el) in picked for el in members)}
+    if not drawn:
+        return []
+    # Pad by how many drawn levels sit inside this one, so the pad is the
+    # same 2 dots for a plain pair as it was before groups could nest.
+    deepest = {}
+    for gid, (depth, members) in drawn.items():
+        inner = max(d for d, m in drawn.values()
+                    if set(id(el) for el in m) <= set(id(el) for el in members))
+        deepest[gid] = inner
+    boxes = []
+    for gid, (depth, members) in sorted(drawn.items(), key=lambda kv: kv[1][0]):
+        pad = GROUP_OUTLINE_PAD * (deepest[gid] - depth + 1)
+        x, y, w, h = selection_bounds(members)
+        boxes.append((x - pad, y - pad, w + 2 * pad, h + 2 * pad))
+    return boxes
 
 
 def move_selection(document, elements, dx: int, dy: int) -> None:

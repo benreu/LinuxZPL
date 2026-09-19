@@ -312,8 +312,9 @@ d, a, b, c, e = quad()
 d.select_many([a, c])
 check("two loose elements can be grouped", d.can_group())
 check("group returns True when it did something", d.group_selected())
-check("the members share one group id",
-      a.group is not None and a.group == c.group and b.group is None and e.group is None)
+check("the members share one group id, one level deep",
+      a.group is not None and a.group == c.group and len(a.group) == 1
+      and b.group is None and e.group is None, (a.group, c.group))
 check("grouping makes the members one run, where the topmost member was",
       d.elements == [b, a, c, e], [d.elements.index(x) for x in (a, b, c, e)])
 check("exactly one group selected cannot be grouped again", not d.can_group())
@@ -359,19 +360,28 @@ check("a loose element steps over a group as a whole", d.elements == [a, c, e, b
 d.send_backward()
 check("and back again", d.elements == [a, c, b, e])
 
-# merge, ungroup, delete
+# nest, ungroup, delete
 d.select(a); d.select(e, additive=True)
 check("a group plus a loose element can be grouped", d.can_group())
+inner = a.group
 d.group_selected()
-check("grouping folds the old group into the new one",
-      a.group == c.group == e.group and b.group is None,
-      [x.group for x in d.elements])
-check("the merged run is contiguous, where the topmost member was",
+check("grouping wraps the old group inside the new one",
+      a.group == c.group == (a.group[0], inner[0]) and e.group == (a.group[0],)
+      and b.group is None, [x.group for x in d.elements])
+check("the new run is contiguous, where the topmost member was",
       d.elements == [b, a, c, e], [d.elements.index(x) for x in (a, b, c, e)])
+check("a click on any member selects the whole nest",
+      (d.select(e), set(d.selection) == {a, c, e})[1])
 d.select(b); d.select(a, additive=True)
-check("ungroup returns True and clears every tag in the selection",
-      d.ungroup_selected() and all(x.group is None for x in d.elements))
+check("ungroup returns True and peels the outermost level only",
+      d.ungroup_selected() and a.group == c.group == inner and e.group is None
+      and b.group is None, [x.group for x in d.elements])
 check("ungroup leaves the selection as it was", set(d.selection) == {a, b, c, e})
+check("what was inside is a group of its own now",
+      (d.select_many([a]), set(d.selection) == {a, c})[1])
+d.select(b); d.select(a, additive=True)
+check("a second ungroup clears the rest",
+      d.ungroup_selected() and all(x.group is None for x in d.elements))
 check("nothing grouped cannot be ungrouped", not d.can_ungroup())
 d.select_many([a, c]); d.group_selected(); d.select(a)
 check("delete takes the whole group", d.remove_selected() and d.elements == [b, e])
@@ -425,10 +435,10 @@ t1 = d.add_text_element('one'); t2 = d.add_text_element('two')
 f1 = d.add_frame_element(); f2 = d.add_frame_element(); lone = d.add_text_element('lone')
 d.select_many([f1, f2]); d.group_selected()
 d.select_many([t1, t2]); d.group_selected()
-lone.group = 99
+lone.group = (99,)
 t2.print_enabled = False
 out = d.to_zpl()
-markers = re.findall(r'\^FXDESIGNER_GROUP:(\d+)', out)
+markers = re.findall(r'\^FXDESIGNER_GROUP:([\d,]+)', out)
 check("a marker precedes each member, numbered from 1 in file order",
       markers == ['1', '1', '2', '2'], markers)
 check("a group of one is not written", '^FXDESIGNER_GROUP:99' not in out)
@@ -437,7 +447,8 @@ check("the marker sits ahead of a hidden member's payload line",
 back, _ = zpl_parser.parse_zpl(out)
 tags = [(el.group, el.print_enabled) for el in back.elements]
 check("groups survive a round trip, and so does the hidden member",
-      tags == [(1, True), (1, False), (2, True), (2, True), (None, True)], tags)
+      tags == [((1,), True), ((1,), False), ((2,), True), ((2,), True), (None, True)],
+      tags)
 check("the round trip is stable", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
 
 # markers ahead of a field the model cannot hold are used up by it
@@ -449,6 +460,151 @@ check("neither marker leaks onto the next supported field",
       and back.elements[0].print_enabled, [(e.group, e.print_enabled) for e in back.elements])
 check("a marker with no number is ignored",
       zpl_parser.parse_zpl("^XA^FXDESIGNER_GROUP:x\n^FO1,1^GB10,10,1^FS^XZ")[0].elements[0].group is None)
+
+# --- nested groups ----------------------------------------------------------
+def nest():
+    """Four frames; a and c grouped, then that pair grouped with e. Returns
+    the document, the four, and the (outer, inner) ids."""
+    d, a, b, c, e = quad()
+    d.select_many([a, c]); d.group_selected()
+    d.select_many([a, e]); d.group_selected()
+    return d, a, b, c, e, a.group
+
+d, a, b, c, e, (outer, inner) = nest()
+check("paths run from the outermost group in",
+      a.group == c.group == (outer, inner) and e.group == (outer,), [x.group for x in d.elements])
+check("a fresh id is above every id at every depth",
+      d._fresh_group_id() > max(outer, inner))
+check("units go by the outermost group",
+      [len(u) for u in geometry.units_of(d.elements)] == [1, 3] or
+      [len(u) for u in geometry.units_of(d.elements)] == [3, 1],
+      [len(u) for u in geometry.units_of(d.elements)])
+check("the nest cannot be grouped on its own", (d.select(a), not d.can_group())[1])
+check("the members of a nested pair cannot be sub-grouped in place",
+      (d.select(a, direct=True), d.select(c, additive=True, direct=True),
+       not d.can_group())[2])
+
+# the nest in the file: outer id first, numbered by first appearance
+d, a, b, c, e, (outer, inner) = nest()
+c.print_enabled = False
+out = d.to_zpl()
+markers = re.findall(r'\^FXDESIGNER_GROUP:([\d,]+)', out)
+check("a nested member writes its whole path, outermost first",
+      markers == ['1,2', '1,2', '1'], markers)
+check("the marker of a hidden nested member sits ahead of its payload line",
+      re.search(r'\^FXDESIGNER_GROUP:1,2\n\^FXDESIGNER_NOPRINT:', out) is not None)
+back, _ = zpl_parser.parse_zpl(out)
+check("the nest survives a round trip",
+      [x.group for x in back.elements] == [None, (1, 2), (1, 2), (1,)]
+      and back.elements[2].print_enabled is False, [x.group for x in back.elements])
+check("and the round trip is stable", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
+check("a file from before nesting reads as a path of one",
+      zpl_parser.parse_zpl("^XA^FXDESIGNER_GROUP:3\n^FO1,1^GB10,10,1^FS^XZ")[0].elements[0].group == (3,))
+for bad in ('1,x', '1,,2', ',1'):
+    check(f"a marker of {bad!r} is ignored as a whole",
+          zpl_parser.parse_zpl(f"^XA^FXDESIGNER_GROUP:{bad}\n^FO1,1^GB10,10,1^FS^XZ")[0].elements[0].group is None)
+
+# a level with one member is not a group and is not written
+d, a, b, c, e, (outer, inner) = nest()
+d.select(c, direct=True); d.remove_selected()
+out = d.to_zpl()
+markers = re.findall(r'\^FXDESIGNER_GROUP:([\d,]+)', out)
+check("an inner level left with one member is dropped from the path",
+      markers == ['1', '1'] and a.group == (outer, inner), markers)
+check("and that round trip is stable too", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
+
+# a hand-edited file that puts one id at two depths neither raises nor drifts
+odd = ("^XA^PW400^LL400\n^FXDESIGNER_GROUP:1,2\n^FO10,10^GB20,20,1^FS\n"
+       "^FXDESIGNER_GROUP:2\n^FO50,50^GB20,20,1^FS\n^XZ")
+back, _ = zpl_parser.parse_zpl(odd)
+once = back.to_zpl()
+check("an inconsistent file loads as written",
+      [x.group for x in back.elements] == [(1, 2), (2,)])
+check("and saves the same way twice", zpl_parser.parse_zpl(once)[0].to_zpl() == once)
+
+# --- direct picks: Ctrl-click reaches one element inside a group ------------
+d, a, b, c, e, (outer, inner) = nest()
+d.select(a)
+d.select(c, direct=True)
+check("a direct pick narrows a selected group to the one element",
+      d.selection == [c])
+d.select(c)
+check("a plain pick of a directly picked element keeps the pick", d.selection == [c])
+d.select(a)
+check("a plain pick of another member widens back to the group",
+      set(d.selection) == {a, c, e} and d.selected_element is a)
+d.select(c, additive=True, direct=True)
+check("an additive direct pick of a selected member drops exactly it",
+      set(d.selection) == {a, e}, order(d))
+d.select(c, additive=True, direct=True)
+check("and adds exactly it back, as the primary",
+      set(d.selection) == {a, c, e} and d.selected_element is c)
+d.select(b, direct=True)
+d.select(c, additive=True, direct=True)
+check("a partial pick built directly stays partial", d.selection == [b, c])
+d.select(c, additive=True)
+check("a widening drop from a partial pick drops the whole group's members that are in it",
+      d.selection == [b])
+d.select_many([c], direct=True)
+check("select_many direct is exactly these", d.selection == [c])
+d.extend_selection([a], direct=True)
+check("extend_selection direct adds exactly these", d.selection == [c, a])
+d.select_many([c])
+check("select_many without direct still widens", set(d.selection) == {a, c, e})
+d.select(c, direct=True)
+at = d.elements.index(c)
+d.restore(d.snapshot())
+check("a snapshot keeps a direct pick direct",
+      d.selection == [d.elements[at]] and d.elements[at].group == (outer, inner))
+
+# what a direct pick can do on its own
+d, a, b, c, e, (outer, inner) = nest()
+d.select(c, direct=True)
+before = (a.x, a.y, e.x, e.y)
+geometry.move_selection(d, d.selection, 5, 7)
+check("a drag moves the directly picked member alone",
+      (a.x, a.y, e.x, e.y) == before and (c.x, c.y) == (25, 27 + 180), (c.x, c.y))
+b.x, c.x = 40, 100
+d.select(b); d.select(c, additive=True, direct=True)
+d.align_selected('left')
+check("align treats the directly picked member as a unit of its own",
+      (b.x, c.x, a.x, e.x) == (40, 40, 20, 20), (b.x, c.x, a.x, e.x))
+d.select(c, direct=True)
+check("a direct member's group still is what the z-order moves",
+      d.elements == [b, a, c, e] and d.can_lower() and d.send_to_back()
+      and d.elements == [a, c, e, b], [d.elements.index(x) for x in (a, b, c, e)])
+d.select(c, direct=True)
+check("ungroup from a direct member peels the whole outer group",
+      d.ungroup_selected() and a.group == c.group == (inner,) and e.group is None)
+d.select(c, direct=True); d.select(b, additive=True, direct=True)
+check("group with a direct member wraps its whole group",
+      d.group_selected() and a.group == c.group and len(a.group) == 2 and b.group == (a.group[0],)
+      and set(d.selection) == {a, b, c} and d.selected_element is b,
+      ([x.group for x in d.elements], order(d)))
+d.select(c, direct=True)
+check("delete of a direct member takes it alone",
+      d.remove_selected() and c not in d.elements and a in d.elements and b in d.elements)
+
+# outlines: one box per whole selected group, nested boxes inside their parent
+d, a, b, c, e, (outer, inner) = nest()
+d.select(a)
+boxes = d.group_outlines()
+ib = geometry.selection_bounds([a, c]); ob = geometry.selection_bounds([a, c, e])
+check("a selected nest draws its outer box and its inner box, outer first",
+      boxes == [(ob[0] - 4, ob[1] - 4, ob[2] + 8, ob[3] + 8),
+                (ib[0] - 2, ib[1] - 2, ib[2] + 4, ib[3] + 4)], boxes)
+d.select(c, direct=True)
+check("a direct pick of one member draws no group box", d.group_outlines() == [])
+d.select(a, direct=True); d.select(c, additive=True, direct=True)
+check("a direct pick of every member of the inner pair draws its box alone, at the plain pad",
+      d.group_outlines() == [(ib[0] - 2, ib[1] - 2, ib[2] + 4, ib[3] + 4)], d.group_outlines())
+d, a, b, c, e = quad()
+d.select_many([a, c]); d.group_selected()
+pb = geometry.selection_bounds([a, c])
+check("a plain pair draws the box it always did",
+      d.group_outlines() == [(pb[0] - 2, pb[1] - 2, pb[2] + 4, pb[3] + 4)])
+d.select(c, direct=True); d.remove_selected(); d.select(a)
+check("a group of one draws nothing", d.group_outlines() == [])
 
 # paint every element type without exceptions
 w.unsaved_changes = False; w.on_new()

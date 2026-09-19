@@ -52,10 +52,13 @@ class DesignElement:
     # ^FR: this field prints in reverse - white where the label would
     # otherwise be black, and vice versa.
     reverse_print = False
-    # Which group this element belongs to, or None for none. A scalar rather
-    # than a reference to the other members, so a snapshot's shallow copy
-    # carries it and undo cannot leave a group pointing at elements that were
-    # replaced. The group itself is derived: every element with the same id.
+    # The groups this element is in, as a tuple of ids from the outermost
+    # in, or None for none: (3, 7) is "in group 7, which is inside group 3".
+    # Ids are unique across the document at every depth. A tuple rather than
+    # a reference to the other members, so a snapshot's shallow copy carries
+    # it and undo cannot leave a group pointing at elements that were
+    # replaced. A group itself is derived: every element whose path holds
+    # its id.
     group = None
 
     def origin_zpl(self, offset=(0, 0)) -> str:
@@ -1007,10 +1010,12 @@ class Document:
     # wants one element - the editors, the context menu, the parser - is
     # unchanged by there being more than one.
     #
-    # A grouped element (see `group_selected`) is never selected on its own:
-    # every way into the selection widens a pick of one member to the whole
-    # group, here rather than in the canvases, so a click, a rubber band and a
-    # test's assignment all agree on it and neither frontend can forget.
+    # A grouped element (see `group_selected`) is never selected on its own
+    # except by a direct pick: every other way into the selection widens a
+    # pick of one member to its whole outermost group, here rather than in
+    # the canvases, so a click, a rubber band and a test's assignment all
+    # agree on it and neither frontend can forget. A direct pick - Ctrl-click
+    # - is the way to one element inside a group without ungrouping it.
 
     @property
     def selected_element(self) -> Optional[DesignElement]:
@@ -1020,23 +1025,27 @@ class Document:
     def selected_element(self, element: Optional[DesignElement]):
         self.selection = self._expand([element]) if element is not None else []
 
-    def select(self, element: Optional[DesignElement], additive: bool = False):
+    def select(self, element: Optional[DesignElement], additive: bool = False,
+               direct: bool = False):
         """Pick an element, or add one to the selection and take it out again.
 
         A plain pick of an element already in the selection keeps the whole
         selection, so a group can be dragged by any of its members; an additive
         pick of one takes it out, which is how a member is dropped.
 
-        Picking a grouped element picks its group, with the element pointed at
-        as the primary; dropping one drops its group.
+        Picking a grouped element picks its outermost group, with the element
+        pointed at as the primary; dropping one drops its group. A direct pick
+        is exactly the element and nothing else - it narrows a selected group
+        down to the one member, and an additive direct pick adds or drops that
+        one member alone.
         """
         if element is None:
             if not additive:
                 self.clear_selection()
             return
-        members = self.group_members(element)
+        members = [element] if direct else self.group_members(element)
         if not additive:
-            if element not in self.selection:
+            if direct or element not in self.selection:
                 self.selection = members
             # The picked element becomes the primary even though the group
             # survives, so the commands that act on one element - the z-order
@@ -1058,18 +1067,18 @@ class Document:
             self.selection.remove(element)
             self.selection.append(element)
 
-    def select_many(self, elements) -> None:
+    def select_many(self, elements, direct: bool = False) -> None:
         """Select exactly these, ignoring any that are not in the document."""
-        self.selection = self._expand(elements)
+        self.selection = self._expand(elements, direct)
 
-    def extend_selection(self, elements) -> None:
+    def extend_selection(self, elements, direct: bool = False) -> None:
         """Add these to the selection, leaving what is already in it alone.
 
         Adding rather than toggling, which is what an additive rubber band
         wants: a band dragged over a group to pick up one more element should
         not drop every element it passed on the way.
         """
-        for element in self._expand(elements):
+        for element in self._expand(elements, direct):
             if element not in self.selection:
                 self.selection.append(element)
 
@@ -1079,16 +1088,17 @@ class Document:
     def is_selected(self, element) -> bool:
         return element in self.selection
 
-    def _expand(self, elements) -> List[DesignElement]:
-        """These elements, each grouped one widened to its whole group.
+    def _expand(self, elements, direct: bool = False) -> List[DesignElement]:
+        """These elements, each grouped one widened to its outermost group.
 
         In the order given, each group where its first member was, with no
-        element twice; anything not in the document is left out.
+        element twice; anything not in the document is left out. A direct
+        expansion widens nothing - it is the same filtering, and no more.
         """
         picked = [el for el in elements if el is not None and el in self.elements]
         expanded: List[DesignElement] = []
         for element in picked:
-            for member in self.group_members(element):
+            for member in ([element] if direct else self.group_members(element)):
                 if member not in expanded:
                     expanded.append(member)
         return expanded
@@ -1096,55 +1106,85 @@ class Document:
     # --- groups --------------------------------------------------------------
     #
     # A group is a set of elements that select, move and change depth as one.
-    # It is nothing more than the same `group` id on each member: the members
-    # stay ordinary elements in the one flat z-ordered list, so the ZPL, the
-    # painting and the editors know nothing about it. Groups do not nest -
-    # grouping a selection that holds a group folds it into the new one.
+    # It is nothing more than the same id in each member's `group` path: the
+    # members stay ordinary elements in the one flat z-ordered list, so the
+    # ZPL, the painting and the editors know nothing about it. Groups nest by
+    # wrapping - grouping a selection that holds a group puts a new id in
+    # front of every member's path, and ungrouping takes the outermost id
+    # off again, so what was inside comes back out as a group of its own.
 
     def group_members(self, element) -> List[DesignElement]:
-        """Every element in this element's group, in z-order - or just it."""
-        if element.group is None:
+        """Every element in this element's outermost group, in z-order - or
+        just it."""
+        top = geometry.top_group(element)
+        if top is None:
             return [element]
-        return [el for el in self.elements if el.group == element.group]
+        return [el for el in self.elements if geometry.top_group(el) == top]
 
     def units(self, elements=None) -> List[List[DesignElement]]:
         """The document (or these elements) as the units that move together."""
         return geometry.units_of(self.elements if elements is None else elements)
+
+    def group_outlines(self):
+        """The boxes to draw around the selected groups (geometry.group_outlines)."""
+        return geometry.group_outlines(self.elements, self.selection)
 
     def can_group(self) -> bool:
         """Two or more units are selected: something to join to something."""
         return len(self.units(self.selection)) >= 2
 
     def can_ungroup(self) -> bool:
-        return any(el.group is not None for el in self.selection)
+        return any(el.group for el in self.selection)
+
+    def _fresh_group_id(self) -> int:
+        """One more than any id in use at any depth."""
+        used = [gid for el in self.elements for gid in (el.group or ())]
+        return max(used, default=0) + 1
 
     def group_selected(self) -> bool:
-        """Make the selection one group, and one run in the z-order.
+        """Wrap the selection in a new group, and make it one run in the
+        z-order.
 
+        Whole top-level groups go in, even where the selection holds only a
+        directly picked member of one: a group cannot be split by grouping.
         Contiguous so that the group has one depth for the z-order commands
         to move. The run lands where the topmost member was, so the group
         stays above everything that member was above; the members keep their
-        order within it.
+        order within it, and so any group already among them keeps its run.
         """
         if not self.can_group():
             return False
-        members = [el for el in self.elements if el in self.selection]
+        primary = self.selected_element
+        chosen = self._expand(self.selection)
+        members = [el for el in self.elements if el in chosen]
         top = self.elements.index(members[-1])
         for element in members:
             self.elements.remove(element)
         self.elements[top - len(members) + 1:top - len(members) + 1] = members
-        fresh = max((el.group for el in self.elements if el.group is not None),
-                    default=0) + 1
+        fresh = self._fresh_group_id()
         for element in members:
-            element.group = fresh
+            element.group = (fresh,) + (element.group or ())
+        # The selection is now the whole new group, which it was not if a
+        # member had been picked directly.
+        self.selection = members
+        self.make_primary(primary)
         return True
 
     def ungroup_selected(self) -> bool:
-        """Dissolve every group the selection touches; the selection stays."""
-        if not self.can_ungroup():
+        """Dissolve the outermost group of every selected element; the
+        selection stays.
+
+        Of every member of that group, not only the selected ones - Ungroup
+        is a command on a group, and a directly picked member names its group
+        as well as any. What was nested inside comes out as a group of its
+        own; another Ungroup peels that.
+        """
+        tops = {geometry.top_group(el) for el in self.selection if el.group}
+        if not tops:
             return False
-        for element in self.selection:
-            element.group = None
+        for element in self.elements:
+            if geometry.top_group(element) in tops:
+                element.group = element.group[1:] or None
         return True
 
     # --- adding and removing -------------------------------------------------
@@ -1531,19 +1571,30 @@ class Document:
 
     def _group_numbers(self) -> dict:
         """Group id -> the number it is written as: 1, 2, 3 in order of first
-        appearance, so a saved file does not carry whatever ids a session's
+        appearance, walking the elements in z-order and each path from the
+        outside in, so a saved file does not carry whatever ids a session's
         grouping and ungrouping left behind. A group of one is not a group
-        and is not written."""
+        and gets no number, at whatever depth it sits."""
         counts: dict = {}
         for element in self.elements:
-            if element.group is not None:
-                counts[element.group] = counts.get(element.group, 0) + 1
+            for gid in set(element.group or ()):
+                counts[gid] = counts.get(gid, 0) + 1
         numbers: dict = {}
         for element in self.elements:
-            gid = element.group
-            if gid is not None and counts[gid] > 1 and gid not in numbers:
-                numbers[gid] = len(numbers) + 1
+            for gid in element.group or ():
+                if counts[gid] > 1 and gid not in numbers:
+                    numbers[gid] = len(numbers) + 1
         return numbers
+
+    @staticmethod
+    def _group_marker(element, numbers: dict) -> str:
+        """The ^FXDESIGNER_GROUP line for this element, or '' for none: its
+        path as written numbers, outermost first, the levels that are not
+        groups left out."""
+        path = [numbers[gid] for gid in element.group or () if gid in numbers]
+        if not path:
+            return ''
+        return "^FXDESIGNER_GROUP:" + ",".join(str(n) for n in path) + "\n"
 
     def to_zpl(self, *, explicit_flips: bool = False) -> str:
         """Generate ZPL code from the elements, with the label size settings.
@@ -1587,8 +1638,8 @@ class Document:
             # The marker flags the next field the parser builds, so it goes
             # only in front of a field that will be there - an element with
             # nothing to write would hand its group to whatever came next.
-            if body and element.group in groups:
-                zpl += f"^FXDESIGNER_GROUP:{groups[element.group]}\n"
+            if body:
+                zpl += self._group_marker(element, groups)
             if element.print_enabled:
                 zpl += body
             elif body:

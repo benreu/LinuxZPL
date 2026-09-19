@@ -178,10 +178,22 @@ check("the group's z-order items come from the model",
       window.zorder_items[0].get_sensitive() == document.can_raise())
 canvas.on_draw(canvas, cairo.Context(surface))
 check("a selected group's outline paints without raising", True)
+third = document.add_barcode_element()
+document.select_many([grouped[0], third])
+window.on_group_clicked(None)
+check("grouping a group with another element nests it",
+      len(grouped[0].group) == 2 and third.group == (grouped[0].group[0],))
+document.select_many([third])
+check("a nested selection has an outline per level", len(document.group_outlines()) == 2)
+canvas.on_draw(canvas, cairo.Context(surface))
+check("a nested group's outlines paint without raising", True)
 window.on_ungroup_clicked(None)
-check("Ungroup clears the tags",
+check("Ungroup peels the outer level and leaves the pair grouped",
+      third.group is None and len(grouped[0].group) == 1)
+window.on_ungroup_clicked(None)
+check("and a second Ungroup clears the tags",
       all(element.group is None for element in document.elements))
-for element in grouped:
+for element in grouped + [third]:
     document.elements.remove(element)
 
 # --- a wrapped block paints its lines where it wraps them -------------------

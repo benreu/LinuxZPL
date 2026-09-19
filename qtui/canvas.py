@@ -89,6 +89,7 @@ class DesignCanvas(QWidget):
         self.band_origin = None
         self.band_now = None
         self.band_additive = False
+        self.band_direct = False
         self.last_click_time = 0.0
         self.last_click_element = None
         self._cursor_shape = None
@@ -256,12 +257,12 @@ class DesignCanvas(QWidget):
 
     def _draw_group_outlines(self, painter, scale: float):
         """A dashed box around each selected group, so a group can be told
-        from a selection that merely holds several elements. Drawn a little
-        outside the members' joint box, with a longer dash than the band so
-        the two never read as one."""
-        doc = self.document
-        units = [unit for unit in doc.units(doc.selection) if len(unit) > 1]
-        if not units:
+        from a selection that merely holds several elements - and a group
+        inside a group from its parent. Which boxes, and how far outside
+        the members they sit, is the document's to say; drawn with a longer
+        dash than the band so the two never read as one."""
+        boxes = self.document.group_outlines()
+        if not boxes:
             return
         pen = QPen(QColor(0, 128, 255))
         pen.setWidthF(1.0 / max(1e-6, scale))
@@ -269,10 +270,8 @@ class DesignCanvas(QWidget):
         pen.setDashPattern([8, 4])
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-        pad = geometry.GROUP_OUTLINE_PAD
-        for unit in units:
-            x, y, w, h = geometry.selection_bounds(unit)
-            painter.drawRect(QRectF(x - pad, y - pad, w + 2 * pad, h + 2 * pad))
+        for x, y, w, h in boxes:
+            painter.drawRect(QRectF(x, y, w, h))
 
     def _draw_handles(self, painter, element: DesignElement):
         """The eight resize handles, as small filled squares.
@@ -683,8 +682,12 @@ class DesignCanvas(QWidget):
             return
 
         self.active_handle = None
-        # Shift or Ctrl adds to the selection instead of replacing it.
-        additive = bool(event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier))
+        # Shift adds to the selection instead of replacing it; Ctrl picks
+        # exactly the element under the pointer, one inside a group included,
+        # rather than its whole group. The rules are the document's - the
+        # canvas only says which keys were down.
+        additive = bool(event.modifiers() & Qt.ShiftModifier)
+        direct = bool(event.modifiers() & Qt.ControlModifier)
 
         # A handle of the selected element wins over anything under the pointer
         if len(doc.selection) == 1:
@@ -703,6 +706,7 @@ class DesignCanvas(QWidget):
         if clicked_element is None:
             self.band_origin = self.band_now = (lx, ly)
             self.band_additive = additive
+            self.band_direct = direct
             self.last_click_element = None
             if not additive:
                 doc.clear_selection()
@@ -712,7 +716,7 @@ class DesignCanvas(QWidget):
         # Double click, tracked here rather than left to the toolkit so the
         # interval stays the 500ms the spec names, on the same element.
         now = time.time()
-        if (not additive
+        if (not additive and not direct
                 and self.last_click_element is clicked_element
                 and clicked_element is not None
                 and (now - self.last_click_time) < 0.5):
@@ -724,7 +728,7 @@ class DesignCanvas(QWidget):
         self.last_click_time = now
         self.last_click_element = clicked_element
 
-        doc.select(clicked_element, additive)
+        doc.select(clicked_element, additive, direct)
         # An additive click is a selection gesture, not the start of a drag:
         # picking up the group on the same click would move it by whatever the
         # pointer wandered before the button came back up.
@@ -804,9 +808,9 @@ class DesignCanvas(QWidget):
         self.band_origin = self.band_now = None
         caught = geometry.elements_in_box(doc.elements, x0, y0, x1, y1)
         if self.band_additive:
-            doc.extend_selection(caught)
+            doc.extend_selection(caught, self.band_direct)
         else:
-            doc.select_many(caught)
+            doc.select_many(caught, self.band_direct)
         # A band changes the selection, never the document, so it is not a
         # change to undo - only a redraw.
         self.update()

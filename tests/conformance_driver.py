@@ -222,11 +222,24 @@ class GtkDriver:
     def shift_click(self, lx, ly):
         """Press and release with Shift held, which adds to the selection."""
         from gi.repository import Gdk
+        self._modified_click(lx, ly, Gdk.ModifierType.SHIFT_MASK)
+
+    def ctrl_click(self, lx, ly):
+        """Press and release with Ctrl held: exactly the element under it."""
+        from gi.repository import Gdk
+        self._modified_click(lx, ly, Gdk.ModifierType.CONTROL_MASK)
+
+    def ctrl_shift_click(self, lx, ly):
+        """Ctrl and Shift: add or drop exactly the element under it."""
+        from gi.repository import Gdk
+        self._modified_click(lx, ly, Gdk.ModifierType.CONTROL_MASK
+                             | Gdk.ModifierType.SHIFT_MASK)
+
+    def _modified_click(self, lx, ly, state):
         scale = self.canvas._scale()
-        shifted = self._Event(lx * scale, ly * scale,
-                              state=Gdk.ModifierType.SHIFT_MASK)
-        self.canvas.on_button_press(self.canvas, shifted)
-        self.canvas.on_button_release(self.canvas, shifted)
+        event = self._Event(lx * scale, ly * scale, state=state)
+        self.canvas.on_button_press(self.canvas, event)
+        self.canvas.on_button_release(self.canvas, event)
 
     def band(self, from_x, from_y, to_x, to_y):
         """Drag a rubber band across the canvas, from one point to another."""
@@ -466,11 +479,25 @@ class QtDriver:
 
     def shift_click(self, lx, ly):
         """Press and release with Shift held, which adds to the selection."""
-        from PySide2.QtCore import QEvent, Qt
+        from PySide2.QtCore import Qt
+        self._modified_click(lx, ly, Qt.ShiftModifier)
+
+    def ctrl_click(self, lx, ly):
+        """Press and release with Ctrl held: exactly the element under it."""
+        from PySide2.QtCore import Qt
+        self._modified_click(lx, ly, Qt.ControlModifier)
+
+    def ctrl_shift_click(self, lx, ly):
+        """Ctrl and Shift: add or drop exactly the element under it."""
+        from PySide2.QtCore import Qt
+        self._modified_click(lx, ly, Qt.ControlModifier | Qt.ShiftModifier)
+
+    def _modified_click(self, lx, ly, modifiers):
+        from PySide2.QtCore import QEvent
         self.canvas.mousePressEvent(
-            self._event(QEvent.MouseButtonPress, lx, ly, Qt.ShiftModifier))
+            self._event(QEvent.MouseButtonPress, lx, ly, modifiers))
         self.canvas.mouseReleaseEvent(
-            self._event(QEvent.MouseButtonRelease, lx, ly, Qt.ShiftModifier))
+            self._event(QEvent.MouseButtonRelease, lx, ly, modifiers))
 
     def band(self, from_x, from_y, to_x, to_y):
         """Drag a rubber band across the canvas, from one point to another."""
@@ -722,8 +749,64 @@ def sequence(driver, record):
     driver.select(text)
     driver.bring_forward()
     record('bring the group forward, as one run')
+
+    # A direct pick. Ctrl-click reaches one member of the group, through
+    # each frontend's own modifier reading, and what follows it - a drag, an
+    # align - acts on that member alone, while the z-order commands and
+    # Ungroup still take its whole group.
+    # At 1:1, as every pointer drag here is, so the two frontends quantise
+    # the pointer to the same dots.
+    driver.set_zoom(1.0)
+    # Points inside one element only, and away from the handles a directly
+    # picked element grows - a press on one of those is a resize, not a pick.
+    fx, fy = frame.x + 30, frame.y + 30
+    driver.fresh_gesture()
+    driver.ctrl_click(fx, fy)
+    record('a ctrl-click on one member selects: ' + json.dumps(driver.selection()))
+    driver.fresh_gesture()
+    driver.drag_pointer(fx, fy, 30, 20)
+    record('and a drag after it moves that member alone')
+    driver.fresh_gesture()
+    driver.ctrl_shift_click(barcode.x + 20, barcode.y + 20)
+    record('a ctrl-shift-click adds exactly the element under it: '
+           + json.dumps(driver.selection()))
+    driver.align('left')
+    record('the member and the loose element aligned left, the member alone')
+    driver.fresh_gesture()
+    driver.ctrl_click(text.x + text.width // 2, text.y + text.height // 2)
+    driver.send_to_back()
+    record('send to back from a directly picked member moves its whole group')
     driver.ungroup()
-    record('the pair ungrouped')
+    record('the pair ungrouped, from a directly picked member')
+
+    # Nesting: the pair grouped again, then that group with the barcode. A
+    # click anywhere in it selects the nest; Ungroup from inside peels the
+    # outer group and leaves the pair a group of its own.
+    driver.select_many([text, frame])
+    driver.group()
+    driver.select_many([text, barcode])
+    driver.group()
+    record('the pair grouped, then grouped with the barcode: a nest')
+    # The frame's bottom edge is the one place the barcode and the text,
+    # which sit over the rest of it by now, do not reach.
+    px, py = frame.x + 10, frame.y + frame.height - 10
+    driver.fresh_gesture()
+    driver.click(px, py)
+    record('a click on a member of the inner pair selects the whole nest: '
+           + json.dumps(driver.selection()))
+    driver.fresh_gesture()
+    driver.ctrl_click(px, py)
+    record('a ctrl-click inside the nest selects: ' + json.dumps(driver.selection()))
+    driver.ungroup()
+    record('ungroup from inside peels the outer group, the pair keeps its own')
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    driver.click(px, py)
+    record('a click on the pair now selects just the pair: '
+           + json.dumps(driver.selection()))
+    driver.ungroup()
+    record('the pair ungrouped again')
 
     driver.select(barcode)
     for edge in ('right', 'bottom', 'center', 'middle'):

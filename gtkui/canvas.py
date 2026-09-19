@@ -121,6 +121,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self.band_origin: Optional[Tuple[int, int]] = None
         self.band_now: Optional[Tuple[int, int]] = None
         self.band_additive = False
+        self.band_direct = False
         self._cursor_name: Optional[str] = None   # cursor currently set
         self._cursor_cache = {}
 
@@ -699,20 +700,18 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def _draw_group_outlines(self, context, scale: float):
         """A dashed box around each selected group, so a group can be told
-        from a selection that merely holds several elements. Drawn a little
-        outside the members' joint box, with a longer dash than the band so
-        the two never read as one."""
-        doc = self.document
-        units = [unit for unit in doc.units(doc.selection) if len(unit) > 1]
-        if not units:
+        from a selection that merely holds several elements - and a group
+        inside a group from its parent. Which boxes, and how far outside
+        the members they sit, is the document's to say; drawn with a longer
+        dash than the band so the two never read as one."""
+        boxes = self.document.group_outlines()
+        if not boxes:
             return
         context.set_source_rgb(0, 0.5, 1)
         context.set_line_width(1 / max(1e-6, scale))
         context.set_dash([8, 4], 0)
-        pad = geometry.GROUP_OUTLINE_PAD
-        for unit in units:
-            x, y, w, h = geometry.selection_bounds(unit)
-            context.rectangle(x - pad, y - pad, w + 2 * pad, h + 2 * pad)
+        for x, y, w, h in boxes:
+            context.rectangle(x, y, w, h)
             context.stroke()
         context.set_dash([], 0)
 
@@ -998,9 +997,12 @@ class DesignCanvas(Gtk.DrawingArea):
         # Reset active handle for new click
         self.active_handle = None
 
-        # Shift or Ctrl adds to the selection instead of replacing it.
-        additive = bool(event.state & (Gdk.ModifierType.SHIFT_MASK |
-                                       Gdk.ModifierType.CONTROL_MASK))
+        # Shift adds to the selection instead of replacing it; Ctrl picks
+        # exactly the element under the pointer, one inside a group included,
+        # rather than its whole group. The rules are the document's - the
+        # canvas only says which keys were down.
+        additive = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
+        direct = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
 
         # Check if clicking on a resize handle of the selected element
         if len(self.document.selection) == 1:
@@ -1024,6 +1026,7 @@ class DesignCanvas(Gtk.DrawingArea):
         if clicked_element is None:
             self.band_origin = self.band_now = (lx, ly)
             self.band_additive = additive
+            self.band_direct = direct
             self.last_click_element = None
             if not additive:
                 self.document.clear_selection()
@@ -1032,7 +1035,7 @@ class DesignCanvas(Gtk.DrawingArea):
 
         # Check for double-click (within 500ms and same element)
         current_time = time.time()
-        if (not additive and
+        if (not additive and not direct and
             self.last_click_element == clicked_element and 
             clicked_element is not None and 
             (current_time - self.last_click_time) < 0.5):
@@ -1047,7 +1050,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self.last_click_element = clicked_element
         
         # Single click selection
-        self.document.select(clicked_element, additive)
+        self.document.select(clicked_element, additive, direct)
         # An additive click is a selection gesture, not the start of a drag:
         # picking up the group on the same click would move it by whatever the
         # pointer wandered before the button came back up.
@@ -1077,9 +1080,9 @@ class DesignCanvas(Gtk.DrawingArea):
         self.band_origin = self.band_now = None
         caught = geometry.elements_in_box(self.elements, x0, y0, x1, y1)
         if self.band_additive:
-            self.document.extend_selection(caught)
+            self.document.extend_selection(caught, self.band_direct)
         else:
-            self.document.select_many(caught)
+            self.document.select_many(caught, self.band_direct)
         # A band changes the selection, never the document, so it is not a
         # change to undo - only a redraw.
         self.queue_draw()

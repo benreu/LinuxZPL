@@ -50,7 +50,8 @@ disagree.
   the whole selection moves together
 - **Group and ungroup**: Ctrl+G makes a selection one unit that any click,
   band, drag, align or z-order command treats as a whole, saved in the file
-  and undone with Ctrl+Shift+G
+  and undone a level at a time with Ctrl+Shift+G; groups nest, and Ctrl-click
+  picks one element inside a group without ungrouping it
 - **Align**: line a selection up on any edge, or centre it on either axis; a
   group moves as one box, and a single element lines up against the label itself
 - **Per-element Print Toggle**: keep an element in the design and in the saved
@@ -201,7 +202,7 @@ them:
 | `^FXDESIGNER_PREVIEW:` | the image at original quality, base64 JPEG |
 | `^FXDESIGNER_PATH:` | where the image came from |
 | `^FXDESIGNER_NOPRINT:` | an element kept in the design but not printed |
-| `^FXDESIGNER_GROUP:` | which group the element after it belongs to |
+| `^FXDESIGNER_GROUP:` | the groups the element after it belongs to, outermost first |
 
 A `^FX` comment ends at the next caret rather than at the end of the line, so
 any payload that could contain one is base64 encoded - otherwise a hidden
