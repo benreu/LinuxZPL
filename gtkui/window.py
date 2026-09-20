@@ -11,21 +11,26 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 import os
 import base64
 import configparser
-import socket
 from pathlib import Path
 from zplcore import fields as zpl_fields
 from zplcore import fonts as zpl_fonts
+from zplcore import graphic_store
+from zplcore import printer_io
+from zplcore import printer_objects
 from zplcore import model
 from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import textraster
-from zplcore.model import (FRAME_COLOURS, ORIENTATIONS, TEXT_JUSTIFICATIONS,
-                           BarcodeElement, Document, FieldBlock, FrameElement,
-                           ImageElement, TextElement)
+from zplcore.model import (FRAME_COLOURS, ORIENTATIONS,
+                           STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
+                           TEXT_JUSTIFICATIONS, BarcodeElement, Document,
+                           FieldBlock, FrameElement, ImageElement,
+                           StoredGraphicElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
-from .canvas import DesignCanvas
+from .busy import BusyBar
+from .canvas import DesignCanvas, to_pixbuf
 from PIL import Image
 import io
 
@@ -49,7 +54,12 @@ ALIGN_ITEMS = (
 
 
 def _make_row(content, label_text, widget, label_width: int = 130):
-    """One labelled row in a dialog's content area."""
+    """One labelled row in a dialog's content area.
+
+    Returns the row and its label, so a caller that needs to hide the row
+    later (a barcode dialog whose fields depend on the symbology chosen) or
+    relabel it does not have to reach back into `content` to find it.
+    """
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     label = Gtk.Label(label=label_text)
     label.set_size_request(label_width, -1)
@@ -57,6 +67,7 @@ def _make_row(content, label_text, widget, label_width: int = 130):
     row.pack_start(label, False, False, 0)
     row.pack_start(widget, True, True, 0)
     content.pack_start(row, False, False, 0)
+    return row, label
 
 
 def _make_spin(value, lower, upper):
@@ -68,13 +79,30 @@ def _make_spin(value, lower, upper):
     return spin
 
 
-def _make_field_number_rows(content, element, label_width: int = 130):
-    """The ^FN controls, identical for text and for a barcode.
+def _make_ratio_spin(value, lower, upper):
+    """A one-decimal spin button, for a barcode's wide-to-narrow ratio."""
+    spin = Gtk.SpinButton()
+    spin.set_adjustment(Gtk.Adjustment(value=value, lower=lower,
+                                       upper=upper, step_increment=0.1))
+    spin.set_digits(1)
+    spin.set_numeric(True)
+    return spin
 
-    A field either prints a literal or takes its data from a numbered field the
-    printer fills in, so this is a tick rather than a number that has to mean
-    "none" - 0 is a field number ZPL allows. Returns the function that applies
-    them, so the two editors cannot disagree about what OK does.
+
+def _make_field_number_rows(content, element, label_width: int = 130):
+    """The ^FN controls, for a barcode.
+
+    Text no longer uses this: a numbered text field gets its own creation
+    button and its own dedicated editor - the same way ^SN and ^FC already
+    got one - see on_element_double_clicked's field_number branch. ^FN stays
+    here for a barcode, though: a recalled stored-format barcode is common
+    and already tested, unlike a serialized or clock-substituted one, so it
+    keeps a row rather than moving out entirely.
+
+    A barcode either prints a literal or takes its data from a numbered field
+    the printer fills in, so this is a tick rather than a number that has to
+    mean "none" - 0 is a field number ZPL allows. Returns the function that
+    applies it, so the two editors cannot disagree about what OK does.
     """
     check = Gtk.CheckButton(label="Data comes from a numbered field (^FN)")
     check.set_active(element.field_number is not None)
@@ -114,6 +142,18 @@ def _make_combo(choices, current):
     codes = [code for _l, code in choices]
     combo.set_active(codes.index(current) if current in codes else 0)
     return combo, codes
+
+
+def _reverse_hint() -> Gtk.Label:
+    """The note under every Reverse (^FR) checkbox, worded the same way in
+    both frontends so neither editor promises something the other doesn't.
+    """
+    hint = Gtk.Label(
+        label="Inverts whatever's already printed here (e.g. a filled "
+             "frame); prints as normal ink where there's nothing yet.")
+    hint.set_halign(Gtk.Align.START)
+    hint.set_line_wrap(True)
+    return hint
 
 
 def _dpi_combo(dpi: int) -> Gtk.ComboBoxText:
@@ -206,9 +246,12 @@ def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
         result_label.set_markup(
             f"<span foreground='{colour}'>"
             f"{GLib.markup_escape_text(text)}</span>")
-        # both steps block, so let the label paint before the next one
-        while Gtk.events_pending():
-            Gtk.main_iteration()
+
+    test_btn = Gtk.Button(label="Test Connection")
+    # OK is withheld while a probe is out so a half-finished one can't be
+    # accepted as an answer.
+    busy = BusyBar((test_btn, dialog.get_widget_for_response(Gtk.ResponseType.OK)),
+                   lambda text: set_result("gray", text))
 
     def on_test_clicked(btn):
         addr = address_entry.get_text().strip()
@@ -217,32 +260,37 @@ def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
             set_result("red", "Address is required")
             return
         set_result("gray", f"Connecting to {addr}:{prt}…")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)
-        try:
-            sock.connect((addr, prt))
-        except OSError as e:
-            set_result("red", f"✗ {e}")
-            return
-        finally:
-            sock.close()
-
         connected = f"✓ Connected to {addr}:{prt}"
-        set_result("gray", f"{connected} — asking its resolution…")
-        reported = zpl_fonts.query_printer_dpi(addr, prt)
-        if reported is None:
-            set_result("orange", f"{connected}, but it did not report its "
-                                 f"resolution; set the DPI manually.")
-        elif reported in zpl_fonts.SUPPORTED_DPI:
-            dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(reported))
-            set_result("green", f"{connected} — {reported} dpi")
-        else:
-            set_result("orange", f"{connected} — reports {reported} dpi, which "
-                                 f"the designer does not support.")
 
-    test_btn = Gtk.Button(label="Test Connection")
+        def probe(cancel):
+            # Connect and send nothing: reachability first, on its own, so
+            # an unreachable printer reads as that rather than as "no dpi".
+            printer_io.send(addr, prt, b'', 5, cancel=cancel)
+            busy.report(f"{connected} — asking its resolution…")
+            return zpl_fonts.query_printer_dpi(addr, prt, cancel=cancel)
+
+        def done(reported, error):
+            if isinstance(error, printer_io.Cancelled):
+                set_result("gray", "Test cancelled.")
+            elif error is not None:
+                set_result("red", f"✗ {error}")
+            elif reported is None:
+                set_result("orange", f"{connected}, but it did not report its "
+                                     f"resolution; set the DPI manually.")
+            elif reported in zpl_fonts.SUPPORTED_DPI:
+                dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(reported))
+                set_result("green", f"{connected} — {reported} dpi")
+            else:
+                set_result("orange", f"{connected} — reports {reported} dpi, "
+                                     f"which the designer does not support.")
+
+        busy.run(probe, done)
+
     test_btn.connect("clicked", on_test_clicked)
-    content.pack_start(test_btn, False, False, 0)
+    test_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    test_row.pack_start(test_btn, False, False, 0)
+    test_row.pack_end(busy, False, False, 0)
+    content.pack_start(test_row, False, False, 0)
     content.pack_start(result_label, False, False, 0)
 
     if default is not None:
@@ -259,6 +307,7 @@ def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
     content.show_all()
 
     response = dialog.run()
+    busy.abandon()
     result = None
     if response == Gtk.ResponseType.OK:
         new_address = address_entry.get_text().strip()
@@ -303,6 +352,8 @@ class ZPLViewerWindow(Gtk.Window):
         self.printer_address = DEFAULT_PRINTER_ADDRESS
         self.printer_port = DEFAULT_PRINTER_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        # The one non-modal printer window - see on_printer_console_clicked.
+        self.printer_console_window = None
         # The size last chosen in Label Settings, also persisted. Held in
         # inches because the resolution it converts with is itself a setting
         # that can change between sessions.
@@ -375,6 +426,10 @@ class ZPLViewerWindow(Gtk.Window):
             item.connect("activate", action)
             add_accel(item, accel)
             file_menu.append(item)
+            if action == self.on_print_clicked:
+                # Kept so the status bar's busy row can withhold it while a
+                # print is out.
+                self.print_item = item
 
         # A submenu rather than a flat item: this is where printer-related
         # actions beyond the one session override belong as they show up.
@@ -421,6 +476,43 @@ class ZPLViewerWindow(Gtk.Window):
         self.delete_item.connect("activate", self.on_delete_clicked)
         add_accel(self.delete_item, "Delete")
         edit_menu.append(self.delete_item)
+
+        edit_menu.append(Gtk.SeparatorMenuItem())
+
+        # Ctrl+A is matched before any focused widget sees it, so the main
+        # window must never hold a text entry of its own - the editors are
+        # windows of their own, and keep their select-all-text.
+        self.select_all_item = Gtk.MenuItem.new_with_mnemonic("_Select All")
+        self.select_all_item.connect("activate", self.on_select_all_clicked)
+        add_accel(self.select_all_item, "<Control>a")
+        edit_menu.append(self.select_all_item)
+
+        self.deselect_all_item = Gtk.MenuItem.new_with_mnemonic("Dese_lect All")
+        self.deselect_all_item.connect("activate", self.on_deselect_all_clicked)
+        add_accel(self.deselect_all_item, "<Control><Shift>a")
+        edit_menu.append(self.deselect_all_item)
+
+        self.invert_selection_item = Gtk.MenuItem.new_with_mnemonic("_Invert Selection")
+        self.invert_selection_item.connect("activate", self.on_invert_selection_clicked)
+        edit_menu.append(self.invert_selection_item)
+
+        edit_menu.append(Gtk.SeparatorMenuItem())
+
+        self.group_item = Gtk.MenuItem.new_with_mnemonic("_Group")
+        self.group_item.connect("activate", self.on_group_clicked)
+        add_accel(self.group_item, "<Control>g")
+        edit_menu.append(self.group_item)
+
+        self.ungroup_item = Gtk.MenuItem.new_with_mnemonic("_Ungroup")
+        self.ungroup_item.connect("activate", self.on_ungroup_clicked)
+        add_accel(self.ungroup_item, "<Control><Shift>g")
+        edit_menu.append(self.ungroup_item)
+
+        # No accelerator: one more window-wide binding for a command reached
+        # after a Ctrl-click, which the context menu is already under.
+        self.remove_from_group_item = Gtk.MenuItem.new_with_mnemonic("Remove _from Group")
+        self.remove_from_group_item.connect("activate", self.on_remove_from_group_clicked)
+        edit_menu.append(self.remove_from_group_item)
 
         edit_menu.append(Gtk.SeparatorMenuItem())
 
@@ -491,6 +583,31 @@ class ZPLViewerWindow(Gtk.Window):
 
         view_menu.show_all()
 
+        # Printer menu
+        printer_menu = Gtk.Menu()
+        printer_menu_item = Gtk.MenuItem.new_with_mnemonic("_Printer")
+        printer_menu_item.set_submenu(printer_menu)
+        menu_bar.append(printer_menu_item)
+
+        printer_graphics_item = Gtk.MenuItem(label="Graphics…")
+        printer_graphics_item.connect("activate", self.on_printer_graphics_clicked)
+        printer_menu.append(printer_graphics_item)
+
+        # Printer fonts menu item
+        printer_fonts_item = Gtk.MenuItem(label="Fonts…")
+        printer_fonts_item.connect("activate", self.on_printer_fonts_clicked)
+        printer_menu.append(printer_fonts_item)
+
+        printer_objects_item = Gtk.MenuItem(label="Objects…")
+        printer_objects_item.connect("activate", self.on_printer_objects_clicked)
+        printer_menu.append(printer_objects_item)
+
+        printer_console_item = Gtk.MenuItem(label="Console…")
+        printer_console_item.connect("activate", self.on_printer_console_clicked)
+        printer_menu.append(printer_console_item)
+
+        printer_menu.show_all()
+
         # Undo/redo buttons at the far end of the header bar. pack_end fills
         # right to left, so redo goes in first to read undo then redo.
         button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -527,13 +644,13 @@ class ZPLViewerWindow(Gtk.Window):
         default_printer_item.connect("activate", self.on_default_printer_clicked)
         settings_menu.append(default_printer_item)
 
-        # Printer fonts menu item
-        printer_fonts_item = Gtk.MenuItem(label="Printer Fonts\u2026")
-        printer_fonts_item.connect("activate", self.on_printer_fonts_clicked)
-        settings_menu.append(printer_fonts_item)
+        # Local fonts menu item
+        local_fonts_item = Gtk.MenuItem(label="Local Fonts\u2026")
+        local_fonts_item.connect("activate", self.on_local_fonts_clicked)
+        settings_menu.append(local_fonts_item)
 
         settings_menu.show_all()
-        
+
         # Content box with padding
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         content_box.set_margin_top(10)
@@ -554,7 +671,22 @@ class ZPLViewerWindow(Gtk.Window):
         add_text_btn = Gtk.Button(label="+ Text")
         add_text_btn.connect("clicked", self.on_add_text_clicked)
         toolbar_box.pack_start(add_text_btn, False, False, 0)
-        
+
+        # Add time button
+        add_time_btn = Gtk.Button(label="+ Time")
+        add_time_btn.connect("clicked", self.on_add_time_clicked)
+        toolbar_box.pack_start(add_time_btn, False, False, 0)
+
+        # Add serial button
+        add_serial_btn = Gtk.Button(label="+ Serial")
+        add_serial_btn.connect("clicked", self.on_add_serial_clicked)
+        toolbar_box.pack_start(add_serial_btn, False, False, 0)
+
+        # Add numbered button
+        add_numbered_btn = Gtk.Button(label="+ Numbered")
+        add_numbered_btn.connect("clicked", self.on_add_numbered_clicked)
+        toolbar_box.pack_start(add_numbered_btn, False, False, 0)
+
         # Add frame button
         add_frame_btn = Gtk.Button(label="+ Frame")
         add_frame_btn.connect("clicked", self.on_add_frame_clicked)
@@ -569,6 +701,11 @@ class ZPLViewerWindow(Gtk.Window):
         add_image_btn = Gtk.Button(label="+ Image")
         add_image_btn.connect("clicked", self.on_add_image_clicked)
         toolbar_box.pack_start(add_image_btn, False, False, 0)
+
+        # Add stored graphic button
+        add_stored_graphic_btn = Gtk.Button(label="+ Graphic")
+        add_stored_graphic_btn.connect("clicked", self.on_add_stored_graphic_clicked)
+        toolbar_box.pack_start(add_stored_graphic_btn, False, False, 0)
 
         # Zoom controls
         zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -652,6 +789,11 @@ class ZPLViewerWindow(Gtk.Window):
         self.zoom_label = Gtk.Label()
         self.zoom_label.set_margin_end(8)
         status_row.pack_end(self.zoom_label, False, False, 0)
+        # Beside the zoom, for the one network call the main window makes
+        # itself: Print.
+        self._busy = BusyBar((self.print_item,), self.update_status)
+        self._busy.set_margin_end(8)
+        status_row.pack_end(self._busy, False, False, 0)
         main_box.pack_end(status_row, False, False, 0)
 
         self.show_all()
@@ -1017,7 +1159,8 @@ class ZPLViewerWindow(Gtk.Window):
             # went on recording the resolution it was drawn for.
             self.unsaved_changes = bool(rescaled)
             self._reset_history()
-            workflow.warn_unsupported(content, self._warn_unsupported)
+            workflow.warn_unsupported(content, self._warn_unsupported,
+                                      self._warn_control_redefined)
 
         except Exception as e:
             self.show_error_dialog(f"Failed to load file: {e}")
@@ -1035,61 +1178,98 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
-    def _confirm_printer_fonts(self) -> bool:
-        """Check the label's fonts are on the printer. False cancels printing."""
-        def ask(text, detail, uploadable):
-            dialog = Gtk.MessageDialog(parent=self, flags=0,
-                                       message_type=Gtk.MessageType.WARNING,
-                                       buttons=Gtk.ButtonsType.NONE, text=text)
-            dialog.format_secondary_text(detail)
-            dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
-            dialog.add_button("Print Anyway", Gtk.ResponseType.OK)
-            if uploadable:
-                dialog.add_button("Upload & Print", Gtk.ResponseType.APPLY)
-                dialog.set_default_response(Gtk.ResponseType.APPLY)
-            else:
-                dialog.set_default_response(Gtk.ResponseType.CANCEL)
-            response = dialog.run()
-            dialog.destroy()
-            if response == Gtk.ResponseType.APPLY:
-                return 'upload'
-            return 'print' if response == Gtk.ResponseType.OK else 'cancel'
+    def _warn_control_redefined(self, spellings):
+        """Say that this file moved ZPL's control characters, and what a save does."""
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="This label redefines ZPL's control characters.")
+        dialog.format_secondary_text(
+            f"{', '.join(spellings)}\n\nIt has been read with them in force. "
+            f"Saving writes the standard ^, ~ and , in their place and leaves "
+            f"the redefinition out, so the saved file prints the same label "
+            f"but no longer changes the printer's control characters.")
+        dialog.run()
+        dialog.destroy()
 
-        def progress(message):
-            self.update_status(message)
-            while Gtk.events_pending():
-                Gtk.main_iteration()
-
-        proceed, error = workflow.confirm_printer_fonts(
-            self.design_canvas.document, self.printer_address,
-            self.printer_port, ask, progress)
-        if error:
-            self.show_error_dialog(error)
-        return proceed
+    def _ask_font_problem(self, text, detail, uploadable):
+        """'upload', 'print' or 'cancel' for a label whose fonts the printer
+        does not have."""
+        dialog = Gtk.MessageDialog(parent=self, flags=0,
+                                   message_type=Gtk.MessageType.WARNING,
+                                   buttons=Gtk.ButtonsType.NONE, text=text)
+        dialog.format_secondary_text(detail)
+        dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+        dialog.add_button("Print Anyway", Gtk.ResponseType.OK)
+        if uploadable:
+            dialog.add_button("Upload & Print", Gtk.ResponseType.APPLY)
+            dialog.set_default_response(Gtk.ResponseType.APPLY)
+        else:
+            dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.APPLY:
+            return 'upload'
+        return 'print' if response == Gtk.ResponseType.OK else 'cancel'
 
     def on_print_clicked(self, widget):
-        """Handle print button click."""
-        if not self._confirm_printer_fonts():
-            self.update_status("Printing cancelled")
+        """Print in up to three steps, each network one off the main loop
+        behind the status bar's busy row: ask the printer which fonts it has,
+        prompt if any are missing (on the main loop, as a prompt must be),
+        then upload whatever the user chose to and send the label.
+        """
+        content = self.design_canvas.to_zpl(explicit_flips=True)
+        address, port = self.printer_address, self.printer_port
+
+        def send_label(uploadable):
+            self.update_status("Printing...")
+
+            def work(cancel):
+                if uploadable:
+                    workflow.upload_fonts(uploadable, address, port,
+                                          self._busy.report, cancel)
+                    self._busy.report("Printing...")
+                printer_io.send(address, port, content.encode('utf-8'), 10,
+                                cancel=cancel)
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    self.update_status("Printing cancelled")
+                elif error is not None:
+                    self.show_error_dialog(str(error))
+                    self.update_status("Printing failed")
+                else:
+                    self.update_status(f"Sent to {address}:{port}")
+
+            self._busy.run(work, done)
+
+        def checked(result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self.update_status("Printing cancelled")
+                return
+            if error is not None:
+                self.show_error_dialog(str(error))
+                self.update_status("Printing failed")
+                return
+            missing, uploadable = (None, {}) if result is None else result
+            if result is not None and not missing:
+                send_label({})
+                return
+            text, detail = workflow.font_problem_prompt(missing)
+            answer = self._ask_font_problem(text, detail, uploadable)
+            if answer == 'upload':
+                send_label(uploadable)
+            elif answer == 'print':
+                send_label({})
+            else:
+                self.update_status("Printing cancelled")
+
+        if not self.design_canvas.document.font_sources():
+            send_label({})
             return
-        printer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        printer_socket.settimeout(10)
-        try:
-            printer_socket.connect((self.printer_address, self.printer_port))
-        except OSError as e:
-            self.show_error_dialog(str(e))
-            return
-        content = self.design_canvas.to_zpl()
-        try:
-            # sendall, not send: a label with an image runs to tens of
-            # kilobytes, and send() may write only part of it.
-            printer_socket.sendall(content.encode('utf-8'))
-        except OSError as e:
-            self.show_error_dialog(str(e))
-            return
-        finally:
-            printer_socket.close()
-        self.update_status(f"Sent to {self.printer_address}:{self.printer_port}")
+        self.update_status("Checking printer fonts...")
+        self._busy.run(lambda cancel: workflow.missing_printer_fonts(
+            self.design_canvas.document, address, port, cancel=cancel), checked)
     
     def _new_renderer(self) -> ZPLRenderer:
         """A renderer preloaded with the fonts this session knows about.
@@ -1113,7 +1293,7 @@ class ZPLViewerWindow(Gtk.Window):
         """Show the fonts stored on the printer, and add or remove them."""
         dialog = Gtk.Dialog(title="Printer Fonts", parent=self, flags=0)
         dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
-        dialog.set_default_size(360, 280)
+        dialog.set_default_size(420, 560)
 
         content = dialog.get_content_area()
         content.set_spacing(8)
@@ -1122,10 +1302,14 @@ class ZPLViewerWindow(Gtk.Window):
         content.set_margin_top(8)
         content.set_margin_bottom(8)
 
+        content.pack_start(Gtk.Label(label="<b>Uploaded Fonts</b>",
+                                     use_markup=True, halign=Gtk.Align.START),
+                           False, False, 0)
         status = Gtk.Label(halign=Gtk.Align.START)
         status.set_line_wrap(True)
         content.pack_start(status, False, False, 0)
 
+        font_names = []
         store = Gtk.ListStore(str)
         view = Gtk.TreeView(model=store)
         view.append_column(Gtk.TreeViewColumn("Font", Gtk.CellRendererText(), text=0))
@@ -1134,27 +1318,129 @@ class ZPLViewerWindow(Gtk.Window):
         scroller.add(view)
         content.pack_start(scroller, True, True, 0)
 
+        preview = Gtk.Label(halign=Gtk.Align.START)
+        preview.set_line_wrap(True)
+        content.pack_start(preview, False, False, 0)
+
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         upload_btn = Gtk.Button(label="Upload\u2026")
         delete_btn = Gtk.Button(label="Delete")
         refresh_btn = Gtk.Button(label="Refresh")
         for b in (upload_btn, delete_btn, refresh_btn):
             buttons.pack_start(b, False, False, 0)
+        busy = BusyBar((upload_btn, delete_btn, refresh_btn), status.set_text)
+        buttons.pack_end(busy, False, False, 0)
         content.pack_start(buttons, False, False, 0)
 
-        def refresh(*_a):
-            store.clear()
-            fonts = zpl_fonts.query_printer_fonts(self.printer_address, self.printer_port)
-            if fonts is None:
-                status.set_text(f"Could not reach the printer at "
-                                f"{self.printer_address}:{self.printer_port}.")
-                delete_btn.set_sensitive(False)
+        content.pack_start(Gtk.Label(label="<b>Built-in Fonts</b>",
+                                     use_markup=True, halign=Gtk.Align.START),
+                           False, False, 0)
+        resident_status = Gtk.Label(halign=Gtk.Align.START)
+        resident_status.set_line_wrap(True)
+        content.pack_start(resident_status, False, False, 0)
+
+        resident_store = Gtk.ListStore(str)
+        resident_view = Gtk.TreeView(model=resident_store)
+        resident_view.append_column(
+            Gtk.TreeViewColumn("Font", Gtk.CellRendererText(), text=0))
+        resident_scroller = Gtk.ScrolledWindow()
+        resident_scroller.set_vexpand(True)
+        resident_scroller.add(resident_view)
+        content.pack_start(resident_scroller, True, True, 0)
+
+        def show_resident(detected):
+            resident_store.clear()
+            if detected:
+                resident_status.set_text(
+                    f"Reported by the printer at {self.printer_address}.")
+            elif detected is None:
+                resident_status.set_text(
+                    "Could not confirm which are present - showing the "
+                    "standard set. Sizes and styles are as published, not "
+                    "rendered.")
+            else:
+                resident_status.set_text(
+                    "Printer reported none of the standard set - showing "
+                    "it anyway. Sizes and styles are as published, not "
+                    "rendered.")
+            for font in zpl_fonts.RESIDENT_FONTS:
+                label = (f"{font['code']} \u2014 {font['name']} "
+                        f"({font['matrix']}, {font['kind']})")
+                if detected and font['code'].upper() in detected:
+                    label += " \u2014 detected on this printer"
+                resident_store.append([label])
+
+        def show_preview(path):
+            zpl_fonts.register_app_font(path)
+            family = zpl_fonts.family_for_file(path)
+            escaped = GLib.markup_escape_text("The quick brown fox 0123456789")
+            preview.set_markup(
+                f'<span font_desc="{GLib.markup_escape_text(family)} 16">'
+                f'{escaped}</span>')
+
+        def update_preview(selection):
+            model_, treeiter = selection.get_selected()
+            if treeiter is None:
+                preview.set_text("")
                 return
-            for name in sorted(fonts):
-                store.append([zpl_fonts.printer_font_path(name)])
-            delete_btn.set_sensitive(bool(fonts))
-            status.set_text(f"{len(fonts)} font(s) on {self.printer_address}"
-                            if fonts else "No fonts stored on the printer.")
+            row = model_.get_path(treeiter).get_indices()[0]
+            if not (0 <= row < len(font_names)):
+                preview.set_text("")
+                return
+            name = font_names[row]
+            path = zpl_fonts.file_for_printer_name(name)
+            if path:
+                show_preview(path)
+                return
+            # Printers won't hand a font's bytes back once uploaded -
+            # confirmed live (SGD retrieval gets no reply at all, and a
+            # printer's own FTP server, where present, answers with a plain
+            # 550 Permission denied for a .TTF while other stored files
+            # download fine) - so there is nothing to try here, only this
+            # to say.
+            preview.set_markup(
+                "<i>(preview unavailable \u2014 printers block "
+                "downloading fonts to protect font distribution "
+                "rights)</i>")
+
+        def refresh(*_a):
+            """Both lists in one trip: the stored fonts, then the resident ones."""
+            store.clear()
+            resident_store.clear()
+            preview.set_text("")
+            font_names.clear()
+            delete_btn.set_sensitive(False)
+            status.set_text(f"Listing fonts on {self.printer_address}...")
+            resident_status.set_text("")
+
+            def query(cancel):
+                fonts = zpl_fonts.query_printer_fonts(
+                    self.printer_address, self.printer_port, cancel=cancel)
+                busy.report("Asking which built-in fonts it has...")
+                detected = zpl_fonts.query_resident_fonts(
+                    self.printer_address, self.printer_port, cancel=cancel)
+                return fonts, detected
+
+            def done(result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text("Listing cancelled.")
+                    return
+                fonts, detected = (None, None) if error is not None else result
+                if fonts is None:
+                    status.set_text(f"Could not reach the printer at "
+                                    f"{self.printer_address}:{self.printer_port}.")
+                else:
+                    font_names[:] = sorted(fonts)
+                    for name in font_names:
+                        store.append([zpl_fonts.printer_font_path(name)])
+                    delete_btn.set_sensitive(bool(fonts))
+                    status.set_text(f"{len(fonts)} font(s) on {self.printer_address}"
+                                    if fonts else "No fonts stored on the printer.")
+                show_resident(detected)
+
+            busy.run(query, done)
+
+        view.get_selection().connect("changed", update_preview)
 
         def on_upload(_b):
             families = zpl_fonts.list_ttf_families()
@@ -1172,14 +1458,22 @@ class ZPLViewerWindow(Gtk.Window):
             if not path:
                 return
             name = zpl_fonts.printer_font_name(path)
-            status.set_text(f"Uploading {zpl_fonts.printer_font_path(name)}...")
-            try:
-                zpl_fonts.upload_font(self.printer_address, self.printer_port, path, name)
-            except Exception as e:
-                self.show_error_dialog(f"Font upload failed: {e}")
-                return
-            self.renderer.register_font(name, path)
-            refresh()
+            shown = zpl_fonts.printer_font_path(name)
+            status.set_text(f"Uploading {shown}...")
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Upload of {shown} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Font upload failed: {error}")
+                    return
+                self.renderer.register_font(name, path)
+                refresh()
+
+            busy.run(lambda cancel: zpl_fonts.upload_font(
+                self.printer_address, self.printer_port, path, name,
+                cancel=cancel), done)
 
         def on_delete(_b):
             model, treeiter = view.get_selection().get_selected()
@@ -1187,12 +1481,19 @@ class ZPLViewerWindow(Gtk.Window):
                 return
             shown = model[treeiter][0]
             name = Path(shown).stem.split(':')[-1]
-            try:
-                zpl_fonts.delete_printer_font(self.printer_address, self.printer_port, name)
-            except Exception as e:
-                self.show_error_dialog(f"Could not delete {shown}: {e}")
-                return
-            refresh()
+            status.set_text(f"Deleting {shown}...")
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Deleting {shown} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not delete {shown}: {error}")
+                    return
+                refresh()
+
+            busy.run(lambda cancel: zpl_fonts.delete_printer_font(
+                self.printer_address, self.printer_port, name, cancel=cancel), done)
 
         upload_btn.connect("clicked", on_upload)
         delete_btn.connect("clicked", on_delete)
@@ -1201,7 +1502,695 @@ class ZPLViewerWindow(Gtk.Window):
         content.show_all()
         refresh()
         dialog.run()
+        busy.abandon()
         dialog.destroy()
+
+    def _ask_device_spec(self, parent):
+        """Prompt for device / name / extension. None if cancelled.
+
+        The same three fields "Edit Stored Graphic" asks for, minus command
+        and magnification - those describe an ^XG/^IM reference, not the
+        object being stored.
+        """
+        dialog = Gtk.Dialog(title="Store Graphic As", parent=parent, flags=0)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+        content = dialog.get_content_area()
+        content.set_spacing(4)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        device_combo, device_codes = _make_combo(STORED_GRAPHIC_DEVICES, 'R')
+        _make_row(content, "Device:", device_combo)
+
+        name_entry = Gtk.Entry()
+        name_entry.set_text("LOGO")
+        name_entry.set_max_length(8)
+        _make_row(content, "Name:", name_entry)
+
+        ext_entry = Gtk.Entry()
+        ext_entry.set_text("GRF")
+        _make_row(content, "Extension:", ext_entry)
+
+        content.show_all()
+        response = dialog.run()
+        spec = None
+        if response == Gtk.ResponseType.OK:
+            device_code = device_codes[device_combo.get_active()]
+            object_name = (name_entry.get_text().strip() or 'UNKNOWN').upper()
+            extension = (ext_entry.get_text().strip() or 'GRF').upper()
+            spec = f"{device_code}:{object_name}.{extension}"
+        dialog.destroy()
+        return spec
+
+    def _ask_object_name(self, parent, default_name: str, default_ext: str):
+        """Ask for the name and extension an arbitrary local file should be
+        stored under on the printer's E: drive - the only device
+        printer_objects.upload_printer_object can target, so unlike
+        _ask_device_spec this asks for no device. Case is left exactly as
+        typed rather than forced to upper, unlike _ask_device_spec: a
+        CISDFCRC16-stored object is not necessarily an upper-case 8.3 ZPL
+        object (the manual's own examples include privkey.nrd, feedback.get),
+        and file.type's retrieval is case sensitive - see
+        zplcore.printer_objects. Returns (name, ext), or None if cancelled.
+        """
+        dialog = Gtk.Dialog(title="Store Object As", parent=parent, flags=0)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+        content = dialog.get_content_area()
+        content.set_spacing(4)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        name_entry = Gtk.Entry()
+        name_entry.set_text(default_name)
+        name_entry.set_max_length(8)
+        _make_row(content, "Name (on E:):", name_entry)
+
+        ext_entry = Gtk.Entry()
+        ext_entry.set_text(default_ext)
+        _make_row(content, "Extension:", ext_entry)
+
+        content.show_all()
+        response = dialog.run()
+        result = None
+        if response == Gtk.ResponseType.OK:
+            name = name_entry.get_text().strip() or 'UNKNOWN'
+            ext = ext_entry.get_text().strip() or 'DAT'
+            result = (name, ext)
+        dialog.destroy()
+        return result
+
+    def _confirm_delete_object(self, parent, spec: str) -> bool:
+        """Whether to really delete `spec` from the printer - the same
+        shape as _confirm_overwrite, for the same reason: a destructive
+        action against real state needs a way back that "just don't click
+        it again" cannot offer, since this one cannot be undone from here.
+        Shared by the Graphics and Objects dialogs, since neither the
+        wording nor the reasoning is specific to graphics.
+        """
+        dialog = Gtk.MessageDialog(
+            parent=parent, flags=0, message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"Delete {spec} from the printer?")
+        dialog.format_secondary_text(
+            f"This removes it from {self.printer_address}:{self.printer_port} "
+            "itself, not just this list. It cannot be undone from here.")
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           "Delete", Gtk.ResponseType.ACCEPT)
+        response = dialog.run()
+        dialog.destroy()
+        return response == Gtk.ResponseType.ACCEPT
+
+    def on_printer_graphics_clicked(self, widget):
+        """View, store, retrieve and delete graphics on the real printer -
+        whichever one is actually in effect this session
+        (self.printer_address/self.printer_port, which a session override
+        moves without touching the persisted default - see
+        self._default_printer), the same target Printer Fonts already uses.
+
+        Modelled closely on on_printer_fonts_clicked: refresh() queries the
+        printer live and reports when it cannot be reached, exactly as that
+        one does for ^HW. The one thing this keeps that Fonts has no need
+        for is graphic_store, the in-session local cache ^XG/^IM/^IL already
+        read from - Store and Retrieve mirror a successful network result
+        into it (the same way upload_font's caller also registers the font
+        locally), purely so an already-placed reference on the canvas
+        updates without a second round trip to the printer.
+        """
+        dialog = Gtk.Dialog(title="Printer Graphics", parent=self, flags=0)
+        dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(420, 340)
+
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        status = Gtk.Label(halign=Gtk.Align.START)
+        status.set_line_wrap(True)
+        content.pack_start(status, False, False, 0)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        content.pack_start(body, True, True, 0)
+
+        list_store = Gtk.ListStore(str)
+        tree_view = Gtk.TreeView(model=list_store)
+        tree_view.append_column(
+            Gtk.TreeViewColumn("Graphic", Gtk.CellRendererText(), text=0))
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        scroller.set_size_request(220, -1)
+        scroller.add(tree_view)
+        body.pack_start(scroller, True, True, 0)
+
+        preview = Gtk.Image()
+        preview.set_size_request(160, 160)
+        body.pack_start(preview, False, False, 0)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        store_btn = Gtk.Button(label="Store…")
+        retrieve_btn = Gtk.Button(label="Retrieve…")
+        delete_btn = Gtk.Button(label="Delete")
+        refresh_btn = Gtk.Button(label="Refresh")
+        retrieve_btn.set_sensitive(False)
+        delete_btn.set_sensitive(False)
+        for b in (store_btn, retrieve_btn, delete_btn, refresh_btn):
+            buttons.pack_start(b, False, False, 0)
+        busy = BusyBar((store_btn, retrieve_btn, delete_btn, refresh_btn),
+                       status.set_text)
+        buttons.pack_end(busy, False, False, 0)
+        content.pack_start(buttons, False, False, 0)
+
+        entries = []
+        changed_any = False
+
+        def refresh(*_a):
+            nonlocal entries
+            list_store.clear()
+            entries = []
+            preview.clear()
+            retrieve_btn.set_sensitive(False)
+            delete_btn.set_sensitive(False)
+            status.set_text(f"Listing graphics on {self.printer_address}...")
+
+            def done(specs, error):
+                nonlocal entries
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text("Listing cancelled.")
+                    return
+                if specs is None or error is not None:
+                    status.set_text(f"Could not reach the printer at "
+                                    f"{self.printer_address}:{self.printer_port}.")
+                    return
+                entries = specs
+                for spec in entries:
+                    cached = graphic_store.recall(spec)
+                    suffix = f" ({cached.width}×{cached.height})" if cached else ""
+                    list_store.append([f"{spec}{suffix}"])
+                status.set_text(
+                    f"{len(entries)} graphic(s) on {self.printer_address}"
+                    if entries else f"No graphics on {self.printer_address}.")
+
+            busy.run(lambda cancel: graphic_store.query_printer_graphics(
+                self.printer_address, self.printer_port, cancel=cancel), done)
+
+        def selected_entry():
+            """The spec the list has selected, or None."""
+            model, treeiter = tree_view.get_selection().get_selected()
+            if treeiter is None:
+                return None
+            index = model.get_path(treeiter).get_indices()[0]
+            return entries[index] if index < len(entries) else None
+
+        def on_selection_changed(_selection):
+            spec = selected_entry()
+            retrieve_btn.set_sensitive(spec is not None)
+            delete_btn.set_sensitive(spec is not None)
+            if spec is None:
+                preview.clear()
+                return
+            image = graphic_store.recall(spec)
+            if image is None:
+                # Not fetched this session yet - Retrieve first.
+                preview.clear()
+                return
+            pixbuf = to_pixbuf(image.convert('RGBA'))
+            if pixbuf is None:
+                preview.clear()
+                return
+            scale = min(1.0, 150 / max(pixbuf.get_width(), pixbuf.get_height()))
+            w = max(1, int(pixbuf.get_width() * scale))
+            h = max(1, int(pixbuf.get_height() * scale))
+            preview.set_from_pixbuf(
+                pixbuf.scale_simple(w, h, GdkPixbuf.InterpType.BILINEAR))
+
+        tree_view.get_selection().connect("changed", on_selection_changed)
+
+        def on_store(_b):
+            nonlocal changed_any
+            chooser = Gtk.FileChooserDialog(
+                title="Store Graphic", parent=dialog,
+                action=Gtk.FileChooserAction.OPEN)
+            chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                                Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+            filter_img = Gtk.FileFilter()
+            filter_img.set_name("Image files (*.jpg, *.jpeg, *.png)")
+            for pat in ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG"):
+                filter_img.add_pattern(pat)
+            chooser.add_filter(filter_img)
+            response = chooser.run()
+            filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+            chooser.destroy()
+            if not filepath:
+                return
+
+            spec = self._ask_device_spec(dialog)
+            if spec is None:
+                return
+
+            try:
+                image = Image.open(filepath)
+                image.load()
+                if image.mode not in ('RGB', 'L'):
+                    image = image.convert('RGB')
+            except Exception as e:
+                self.show_error_dialog(f"Could not open {filepath}: {e}")
+                return
+
+            status.set_text(f"Uploading {spec}...")
+
+            def done(_result, error):
+                nonlocal changed_any
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Upload of {spec} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not store {spec}: {error}")
+                    refresh()
+                    return
+                graphic_store.store(spec, image)
+                changed_any = True
+                refresh()
+
+            busy.run(lambda cancel: graphic_store.upload_graphic(
+                self.printer_address, self.printer_port, spec, image,
+                cancel=cancel), done)
+
+        def on_retrieve(_b):
+            """Fetch the selected graphic's real bytes from the printer,
+            cache them locally so ^XG/^IM/^IL resolve, and offer to save
+            them to a file too."""
+            spec = selected_entry()
+            if spec is None:
+                return
+            status.set_text(f"Retrieving {spec}...")
+
+            def done(image, error):
+                nonlocal changed_any
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Retrieving {spec} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not retrieve {spec}: {error}")
+                    refresh()
+                    return
+                graphic_store.store(spec, image)
+                changed_any = True
+                chooser = Gtk.FileChooserDialog(
+                    title="Save Retrieved Graphic", parent=dialog,
+                    action=Gtk.FileChooserAction.SAVE)
+                chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                                    Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
+                chooser.set_do_overwrite_confirmation(True)
+                _device, name, ext = graphic_store.split_device_spec(spec)
+                chooser.set_current_name(f"{name}.png")
+                response = chooser.run()
+                filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+                chooser.destroy()
+                if filepath:
+                    try:
+                        if not Path(filepath).suffix:
+                            filepath += '.png'
+                        image.save(filepath)
+                    except Exception as e:
+                        self.show_error_dialog(f"Could not save {filepath}: {e}")
+                refresh()
+
+            busy.run(lambda cancel: graphic_store.retrieve_printer_graphic(
+                self.printer_address, self.printer_port, spec, cancel=cancel), done)
+
+        def on_delete(_b):
+            spec = selected_entry()
+            if spec is None:
+                return
+            if not self._confirm_delete_object(dialog, spec):
+                return
+            status.set_text(f"Deleting {spec}...")
+
+            def done(_result, error):
+                nonlocal changed_any
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Deleting {spec} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not delete {spec}: {error}")
+                    refresh()
+                    return
+                graphic_store.delete(spec)
+                changed_any = True
+                refresh()
+
+            busy.run(lambda cancel: graphic_store.delete_printer_graphic(
+                self.printer_address, self.printer_port, spec, cancel=cancel), done)
+
+        store_btn.connect("clicked", on_store)
+        retrieve_btn.connect("clicked", on_retrieve)
+        delete_btn.connect("clicked", on_delete)
+        refresh_btn.connect("clicked", refresh)
+
+        content.show_all()
+        refresh()
+        dialog.run()
+        busy.abandon()
+        dialog.destroy()
+        # Storing/retrieving/deleting a graphic changes no Document state, so
+        # this is a plain repaint - queue_draw(), never on_canvas_changed() -
+        # so an ^XG/^IM/^IL that now resolves differently is shown without
+        # marking the file dirty or pushing a bogus undo entry.
+        if changed_any:
+            self.design_canvas.queue_draw()
+
+    def on_printer_objects_clicked(self, widget):
+        """Every object on the real printer, across R:/E:/B:/A:/Z: and any
+        extension - not just the fonts and graphics on_printer_fonts_clicked
+        and on_printer_graphics_clicked already manage. Modelled on those:
+        no preview, since most objects here are not images. Store and
+        Retrieve both exist here because both have a genuinely generic
+        printer command behind them - CISDFCRC16 and file.type - unlike
+        ~DY/~DG/^HG, which are each locked to one format and stay with the
+        two dialogs that already know it.
+
+        Store always writes to E: - CISDFCRC16 gives no device choice - so
+        its prompt asks only for a name and extension, never a device. Z:
+        is read-only factory content ^ID cannot delete (see
+        printer_objects.DEVICES), so Delete is withheld for a Z: selection
+        even though it is listed and can still be Retrieved.
+        """
+        dialog = Gtk.Dialog(title="Printer Objects", parent=self, flags=0)
+        dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(380, 340)
+
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        status = Gtk.Label(halign=Gtk.Align.START)
+        status.set_line_wrap(True)
+        content.pack_start(status, False, False, 0)
+
+        list_store = Gtk.ListStore(str)
+        tree_view = Gtk.TreeView(model=list_store)
+        tree_view.append_column(
+            Gtk.TreeViewColumn("Object", Gtk.CellRendererText(), text=0))
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        scroller.add(tree_view)
+        content.pack_start(scroller, True, True, 0)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        store_btn = Gtk.Button(label="Store…")
+        retrieve_btn = Gtk.Button(label="Retrieve…")
+        delete_btn = Gtk.Button(label="Delete")
+        refresh_btn = Gtk.Button(label="Refresh")
+        retrieve_btn.set_sensitive(False)
+        delete_btn.set_sensitive(False)
+        for b in (store_btn, retrieve_btn, delete_btn, refresh_btn):
+            buttons.pack_start(b, False, False, 0)
+        busy = BusyBar((store_btn, retrieve_btn, delete_btn, refresh_btn),
+                       status.set_text)
+        buttons.pack_end(busy, False, False, 0)
+        content.pack_start(buttons, False, False, 0)
+
+        entries = []
+        changed_any = False
+
+        def refresh(*_a):
+            nonlocal entries
+            list_store.clear()
+            entries = []
+            retrieve_btn.set_sensitive(False)
+            delete_btn.set_sensitive(False)
+            status.set_text(f"Listing objects on {self.printer_address}...")
+
+            def done(specs, error):
+                nonlocal entries
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text("Listing cancelled.")
+                    return
+                if specs is None or error is not None:
+                    status.set_text(f"Could not reach the printer at "
+                                    f"{self.printer_address}:{self.printer_port}.")
+                    return
+                entries = specs
+                for spec in entries:
+                    list_store.append([spec])
+                status.set_text(
+                    f"{len(entries)} object(s) on {self.printer_address}"
+                    if entries else "No objects on the printer.")
+
+            busy.run(lambda cancel: printer_objects.query_printer_objects(
+                self.printer_address, self.printer_port, cancel=cancel), done)
+
+        def selected_entry():
+            """The spec the list has selected, or None."""
+            model, treeiter = tree_view.get_selection().get_selected()
+            if treeiter is None:
+                return None
+            index = model.get_path(treeiter).get_indices()[0]
+            return entries[index] if index < len(entries) else None
+
+        def on_selection_changed(_selection):
+            spec = selected_entry()
+            retrieve_btn.set_sensitive(spec is not None)
+            # ^ID silently ignores Z: (read-only factory content), so
+            # Delete would report success and change nothing - withhold it
+            # rather than let that happen.
+            delete_btn.set_sensitive(spec is not None and not spec.startswith('Z:'))
+
+        tree_view.get_selection().connect("changed", on_selection_changed)
+
+        def on_store(_b):
+            chooser = Gtk.FileChooserDialog(
+                title="Store Object", parent=dialog,
+                action=Gtk.FileChooserAction.OPEN)
+            chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                                Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+            response = chooser.run()
+            filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+            chooser.destroy()
+            if not filepath:
+                return
+
+            src = Path(filepath)
+            result = self._ask_object_name(
+                dialog, src.stem[:8] or 'UNKNOWN', src.suffix.lstrip('.') or 'DAT')
+            if result is None:
+                return
+            name, ext = result
+
+            try:
+                data = src.read_bytes()
+            except Exception as e:
+                self.show_error_dialog(f"Could not read {filepath}: {e}")
+                return
+
+            status.set_text(f"Uploading E:{name}.{ext}...")
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Upload of E:{name}.{ext} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not store E:{name}.{ext}: {error}")
+                refresh()
+
+            busy.run(lambda cancel: printer_objects.upload_printer_object(
+                self.printer_address, self.printer_port, name, ext, data,
+                cancel=cancel), done)
+
+        def on_retrieve(_b):
+            spec = selected_entry()
+            if spec is None:
+                return
+            status.set_text(f"Retrieving {spec}...")
+
+            def done(data, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Retrieving {spec} cancelled.")
+                    return
+                if isinstance(error, printer_objects.ObjectNotRetrievable):
+                    self.show_error_dialog(
+                        "This printer does not support retrieving stored files "
+                        "(no reply to the retrieval command).")
+                    refresh()
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not retrieve {spec}: {error}")
+                    refresh()
+                    return
+                chooser = Gtk.FileChooserDialog(
+                    title="Save Retrieved Object", parent=dialog,
+                    action=Gtk.FileChooserAction.SAVE)
+                chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                                    Gtk.STOCK_SAVE, Gtk.ResponseType.OK)
+                chooser.set_do_overwrite_confirmation(True)
+                _device, name, ext = graphic_store.split_device_spec(spec)
+                chooser.set_current_name(f"{name}.{ext.lower()}")
+                response = chooser.run()
+                filepath = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+                chooser.destroy()
+                if filepath:
+                    try:
+                        Path(filepath).write_bytes(data)
+                    except Exception as e:
+                        self.show_error_dialog(f"Could not save {filepath}: {e}")
+                refresh()
+
+            busy.run(lambda cancel: printer_objects.download_printer_object(
+                self.printer_address, self.printer_port, spec, cancel=cancel), done)
+
+        def on_delete(_b):
+            spec = selected_entry()
+            if spec is None:
+                return
+            if not self._confirm_delete_object(dialog, spec):
+                return
+            status.set_text(f"Deleting {spec}...")
+
+            def done(_result, error):
+                nonlocal changed_any
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(f"Deleting {spec} cancelled.")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not delete {spec}: {error}")
+                    refresh()
+                    return
+                if graphic_store.delete(spec):
+                    changed_any = True
+                refresh()
+
+            busy.run(lambda cancel: printer_objects.delete_printer_object(
+                self.printer_address, self.printer_port, spec, cancel=cancel), done)
+
+        store_btn.connect("clicked", on_store)
+        retrieve_btn.connect("clicked", on_retrieve)
+        delete_btn.connect("clicked", on_delete)
+        refresh_btn.connect("clicked", refresh)
+
+        content.show_all()
+        refresh()
+        dialog.run()
+        busy.abandon()
+        dialog.destroy()
+        # Same reasoning as on_printer_graphics_clicked: deleting an object
+        # changes no Document state, so this is a plain repaint.
+        if changed_any:
+            self.design_canvas.queue_draw()
+
+    def on_printer_console_clicked(self, widget):
+        """A free-form send/reply console for whatever the type-specific
+        managers (Fonts/Graphics/Objects) don't cover - one-off diagnostics
+        like ~HS host status or ~HI host identification, or an SGD
+        getvar/setvar not wrapped by any dialog. Text is sent to the printer
+        exactly as typed, no ^XA/^XZ wrapping added, so both immediate
+        commands and full formats work unchanged.
+
+        A plain top-level Gtk.Window, not a Gtk.Dialog run modally: unlike
+        the other printer managers, this one is meant to stay open while the
+        user keeps working in the main window (watching status while editing
+        a label, say), so it is shown with show_all() rather than blocking
+        on run(). Only one is ever open at a time - a second click presents
+        the existing window instead of stacking another one. on_send reads
+        self.printer_address/self.printer_port fresh on every send rather
+        than a value captured at open time, so a printer changed via Printer
+        Settings while this window is open takes effect immediately.
+        """
+        if self.printer_console_window is not None:
+            self.printer_console_window.present()
+            return
+
+        window = Gtk.Window(title="Printer Console")
+        window.set_transient_for(self)
+        window.set_destroy_with_parent(True)
+        window.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        window.set_default_size(480, 420)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+        window.add(content)
+
+        input_view = Gtk.TextView()
+        input_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        input_scroll = Gtk.ScrolledWindow()
+        input_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        input_scroll.set_shadow_type(Gtk.ShadowType.IN)
+        input_scroll.set_size_request(-1, 90)
+        input_scroll.add(input_view)
+        content.pack_start(input_scroll, False, False, 0)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        send_btn = Gtk.Button(label="Send")
+        close_btn = Gtk.Button(label="Close")
+        buttons.pack_start(send_btn, False, False, 0)
+        buttons.pack_start(close_btn, False, False, 0)
+        busy = BusyBar((send_btn,))
+        buttons.pack_end(busy, False, False, 0)
+        content.pack_start(buttons, False, False, 0)
+
+        log_view = Gtk.TextView()
+        log_view.set_editable(False)
+        log_view.set_cursor_visible(False)
+        log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        log_scroll = Gtk.ScrolledWindow()
+        log_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        log_scroll.set_shadow_type(Gtk.ShadowType.IN)
+        log_scroll.set_vexpand(True)
+        log_scroll.add(log_view)
+        content.pack_start(log_scroll, True, True, 0)
+
+        def log(entry):
+            log_buf = log_view.get_buffer()
+            log_buf.insert(log_buf.get_end_iter(), entry)
+            log_view.scroll_to_iter(log_buf.get_end_iter(), 0, False, 0, 0)
+
+        def on_send(_b):
+            input_buf = input_view.get_buffer()
+            text = input_buf.get_text(input_buf.get_start_iter(),
+                                      input_buf.get_end_iter(), False)
+            if not text.strip():
+                return
+            address, port = self.printer_address, self.printer_port
+
+            def done(reply, error):
+                if isinstance(error, printer_io.Cancelled):
+                    log(f"> {text}\n(cancelled)\n\n")
+                    return
+                if error is not None:
+                    self.show_error_dialog(f"Could not send command: {error}")
+                    return
+                log(f"> {text}\n{reply or '(no reply)'}\n\n")
+                input_buf.set_text("")
+
+            busy.run(lambda cancel: printer_io.send_command(
+                address, port, text, cancel=cancel), done)
+
+        send_btn.connect("clicked", on_send)
+        close_btn.connect("clicked", lambda _b: window.destroy())
+
+        def on_destroy(_w):
+            busy.abandon()
+            self.printer_console_window = None
+
+        window.connect("destroy", on_destroy)
+
+        self.printer_console_window = window
+        window.show_all()
 
     def _offer_dpi_rescale(self, loaded_dpi=workflow._FROM_DOCUMENT):
         """If the file was drawn for another resolution, offer to rescale it.
@@ -1289,9 +2278,15 @@ class ZPLViewerWindow(Gtk.Window):
                 parser.read(path)
                 if not parser.has_section('printer'):
                     parser.add_section('printer')
-                parser.set('printer', 'address', self.printer_address)
-                parser.set('printer', 'port', str(self.printer_port))
-                parser.set('printer', 'dpi', str(self.printer_dpi))
+                # The persisted default, not self.printer_address/_port/_dpi:
+                # those are whatever is active for printing right now, which a
+                # session override (Printer Settings) deliberately changes
+                # without this ever running. Only Default Printer and Label
+                # Settings are allowed to move self._default_printer, and they
+                # do so before calling this.
+                parser.set('printer', 'address', self._default_printer[0])
+                parser.set('printer', 'port', str(self._default_printer[1]))
+                parser.set('printer', 'dpi', str(self._default_printer[2]))
                 if not parser.has_section('label'):
                     parser.add_section('label')
                 # Inches, not dots: dots only mean a size once a resolution is
@@ -1330,8 +2325,8 @@ class ZPLViewerWindow(Gtk.Window):
         self.printer_address, self.printer_port, new_dpi = result
         old_dpi = self.printer_dpi
         self.printer_dpi = new_dpi
-        self._save_settings()
         self._default_printer = (self.printer_address, self.printer_port, self.printer_dpi)
+        self._save_settings()
         self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
         if self.printer_dpi != old_dpi:
             # Pointing at a printer with a different head changes what the
@@ -1343,6 +2338,74 @@ class ZPLViewerWindow(Gtk.Window):
             if note:
                 self.on_canvas_changed()
                 self.update_status(note[0].upper() + note[1:])
+
+    def on_local_fonts_clicked(self, widget):
+        """Show what the directory-scan font fallback sees, and whether it's
+        in use.
+
+        fc-list is the only thing list_ttf_families() ever calls first, and
+        on most systems that's the end of it - but on a system where
+        fontconfig is missing, broken, or just not set up, every font
+        chooser would otherwise go quietly empty with nothing here to
+        explain why. Distinct from the Printer -> Fonts... dialog, which is
+        about fonts stored on the physical printer, not fonts installed on
+        this machine.
+        """
+        dialog = Gtk.Dialog(title="Local Fonts", parent=self, flags=0)
+        dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(480, 420)
+
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        status = Gtk.Label(halign=Gtk.Align.START)
+        status.set_line_wrap(True)
+        content.pack_start(status, False, False, 0)
+
+        report_view = Gtk.TextView()
+        report_view.set_editable(False)
+        report_view.set_cursor_visible(False)
+        report_view.set_monospace(True)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_shadow_type(Gtk.ShadowType.IN)
+        scroller.set_vexpand(True)
+        scroller.add(report_view)
+        content.pack_start(scroller, True, True, 0)
+
+        rescan_btn = Gtk.Button(label="Rescan")
+        content.pack_start(rescan_btn, False, False, 0)
+
+        def refresh(rescan):
+            fc_list_ok, report = zpl_fonts.font_discovery_status(refresh=rescan)
+            status.set_text(
+                "fc-list is working normally - the directory scan below is "
+                "not being used, but shows what it would find if fc-list "
+                "stopped working." if fc_list_ok else
+                "fc-list is unavailable or reports no TrueType fonts on "
+                "this system - LinuxZPL is using the directory scan below "
+                "to find fonts instead.")
+
+            lines = ["Font file scan", "-" * 60, ""]
+            for d in report.dirs:
+                lines.append(f"Scanning: {d.path}")
+                lines.append("  (directory not found)" if not d.exists else
+                             f"  Found {d.font_count} font file(s)")
+                lines.append("")
+            lines.append(f"Total: {len(report.files)} font file(s), "
+                         f"{len(report.families)} usable family(ies)")
+            report_view.get_buffer().set_text("\n".join(lines))
+
+        rescan_btn.connect("clicked", lambda _b: refresh(True))
+
+        content.show_all()
+        refresh(False)
+        dialog.run()
+        dialog.destroy()
 
     def on_session_printer_clicked(self, widget):
         """Set the printer for this session only, without touching the persisted default."""
@@ -1447,6 +2510,10 @@ class ZPLViewerWindow(Gtk.Window):
         dpi_combo = _dpi_combo(self.printer_dpi)
         dpi_box.pack_start(dpi_combo, True, True, 0)
 
+        quantity_spin = _make_spin(
+            self.design_canvas.document.print_quantity, 1, 99999999)
+        _make_row(content, "Copies (^PQ):", quantity_spin)
+
         # ^LH: the origin every field is placed from. Its use is preprinted
         # stock - moving the printable area below a pre-printed header - so it
         # belongs beside the size rather than among the printer settings.
@@ -1518,10 +2585,10 @@ class ZPLViewerWindow(Gtk.Window):
         chosen_transform.reverse = reverse_check.get_active()
         dialog.destroy()
         self.apply_label_settings(new_width, new_height, new_dpi, w_in, h_in,
-                                  chosen_transform)
+                                  chosen_transform, int(quantity_spin.get_value()))
 
     def apply_label_settings(self, width, height, dpi, w_in, h_in,
-                             transform=None):
+                             transform=None, quantity=None):
         """One accepted visit to Label Settings, whatever it changed.
 
         The resolution and the size can both have moved in the same visit, and
@@ -1534,9 +2601,15 @@ class ZPLViewerWindow(Gtk.Window):
         """
         old_dpi = self.printer_dpi
         self.printer_dpi = dpi
+        # Only the DPI slot of the default moves - address/port stay whatever
+        # the persisted default already was, so a session override on those
+        # (Printer Settings) survives a Label Settings visit untouched.
+        self._default_printer = (self._default_printer[0], self._default_printer[1], dpi)
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.design_canvas.document.transform = transform
+        if quantity is not None:
+            self.design_canvas.document.print_quantity = quantity
         # Written before the prompt, as the printer dialog writes its own: the
         # prompt is modal and can be dismissed by the window manager, and the
         # choice the user already made should be on disk by then.
@@ -1619,16 +2692,22 @@ class ZPLViewerWindow(Gtk.Window):
 
     def _update_edit_menu(self, menu):
         """Grey out the actions that need a selected element."""
-        element = self.design_canvas.selected_element
-        self.delete_item.set_sensitive(element is not None)
+        doc = self.design_canvas.document
+        self.delete_item.set_sensitive(doc.selected_element is not None)
+        self.select_all_item.set_sensitive(len(doc.selection) < len(doc.elements))
+        self.deselect_all_item.set_sensitive(bool(doc.selection))
+        self.invert_selection_item.set_sensitive(bool(doc.elements))
+        self.group_item.set_sensitive(doc.can_group())
+        self.ungroup_item.set_sensitive(doc.can_ungroup())
+        self.remove_from_group_item.set_sensitive(doc.can_remove_from_group())
         self._update_align_items()
-        elements = self.design_canvas.elements
-        idx = elements.index(element) if element in elements else None
+        # From the model, as the Qt window does: a group is one depth, and
+        # only the model knows where the run holding the primary ends.
         front, forward, backward, back = self.zorder_items
         for item in (front, forward):
-            item.set_sensitive(idx is not None and idx < len(elements) - 1)
+            item.set_sensitive(doc.can_raise())
         for item in (backward, back):
-            item.set_sensitive(idx is not None and idx > 0)
+            item.set_sensitive(doc.can_lower())
     
     def _build_align_menu(self) -> Gtk.Menu:
         """One copy of the align commands, for a menu or a popup."""
@@ -1648,7 +2727,19 @@ class ZPLViewerWindow(Gtk.Window):
     def on_add_text_clicked(self, widget):
         """Handle add text element button click."""
         self.design_canvas.add_text_element("New Text")
-    
+
+    def on_add_time_clicked(self, widget):
+        """Handle add time element button click."""
+        self.design_canvas.add_time_element()
+
+    def on_add_serial_clicked(self, widget):
+        """Handle add serial element button click."""
+        self.design_canvas.add_serial_element()
+
+    def on_add_numbered_clicked(self, widget):
+        """Handle add numbered element button click."""
+        self.design_canvas.add_numbered_element()
+
     def on_add_frame_clicked(self, widget):
         """Handle add frame element button click."""
         self.design_canvas.add_frame_element()
@@ -1685,6 +2776,36 @@ class ZPLViewerWindow(Gtk.Window):
             self.design_canvas.add_image_element(filepath)
         else:
             dialog.destroy()
+
+    def on_add_stored_graphic_clicked(self, widget):
+        """Handle add stored graphic element button click."""
+        self.design_canvas.add_stored_graphic_element()
+
+    # Selection commands change the selection and never the document, so
+    # they repaint and record nothing - the same as a click or a band.
+
+    def on_select_all_clicked(self, widget):
+        if self.design_canvas.document.select_all():
+            self.design_canvas.queue_draw()
+
+    def on_deselect_all_clicked(self, widget):
+        document = self.design_canvas.document
+        if document.selection:
+            document.clear_selection()
+            self.design_canvas.queue_draw()
+
+    def on_invert_selection_clicked(self, widget):
+        if self.design_canvas.document.invert_selection():
+            self.design_canvas.queue_draw()
+
+    def on_group_clicked(self, widget):
+        self.design_canvas.group_selected()
+
+    def on_ungroup_clicked(self, widget):
+        self.design_canvas.ungroup_selected()
+
+    def on_remove_from_group_clicked(self, widget):
+        self.design_canvas.remove_from_group()
 
     def on_delete_clicked(self, widget):
         """Handle delete selected element button click."""
@@ -1745,7 +2866,263 @@ class ZPLViewerWindow(Gtk.Window):
             open_editor.present()
             return
 
-        if isinstance(element, TextElement):
+        if isinstance(element, TextElement) and element.clock_format:
+            # Show time (^FC) edit dialog - deliberately smaller than the
+            # text editor below: no wrap/block section, no Data Source
+            # selector, since this dialog *is* the ^FC source. The plain
+            # text editor carries no field-source mechanism of its own at
+            # all any more: ^FN, ^SN and ^FC each moved out to their own
+            # dialog. Unticking the clock checkbox turns the element back
+            # into a plain static text field, and the next double-click then
+            # falls through to the regular text editor instead of here.
+            dialog = Gtk.Dialog(title="Edit Time Field", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                              Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                _make_row(content, label_text, widget)
+
+            text_entry = Gtk.Entry()
+            text_entry.set_text(element.text)
+            make_row("Format:", text_entry)
+
+            hint = Gtk.Label(label="e.g. %m/%d/%y → date, %H:%M:%S → time")
+            hint.set_halign(Gtk.Align.START)
+            content.pack_start(hint, False, False, 0)
+
+            height_spin = _make_spin(element.font_height, 8, 500)
+            make_row("Font Height:", height_spin)
+
+            width_spin = _make_spin(element.font_width, 8, 500)
+            make_row("Font Width:", width_spin)
+
+            orientation_combo, orientation_codes = _make_combo(
+                ORIENTATIONS, element.orientation)
+            make_row("Orientation:", orientation_combo)
+
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
+
+            clock_check = Gtk.CheckButton(
+                label="Comes from the printer's clock (^FC)")
+            clock_check.set_active(element.clock_format)
+            make_row("Clock:", clock_check)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.text = text_entry.get_text()
+                    element.font_height = int(height_spin.get_value())
+                    element.font_width = int(width_spin.get_value())
+                    element.orientation = orientation_codes[
+                        orientation_combo.get_active()]
+                    element.height = element.font_height
+                    element.reverse_print = fr_check.get_active()
+                    if clock_check.get_active():
+                        element.clock_format = True
+                    else:
+                        # Off - any custom trigger characters the field had
+                        # no longer mean anything once it is plain text.
+                        element.clock_format = False
+                        element.clock_chars = None
+                    # Last, because the box is measured from what the canvas
+                    # will draw, and that is the wrapped marker for as long
+                    # as this stays a clock field.
+                    self.design_canvas.document.sync_text_width(element)
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
+
+        elif isinstance(element, TextElement) and element.serial_increment is not None:
+            # Show serial (^SN) edit dialog - deliberately smaller than the
+            # text editor below: no wrap/block section, no Data Source
+            # selector, since this dialog *is* the ^SN source. The plain
+            # text editor carries no field-source mechanism of its own at
+            # all any more: ^FN, ^SN and ^FC each moved out to their own
+            # dialog. Unticking the serial checkbox turns the element back
+            # into a plain static text field, and the next double-click then
+            # falls through to the regular text editor instead of here.
+            dialog = Gtk.Dialog(title="Edit Serial Field", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                              Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                _make_row(content, label_text, widget)
+
+            text_entry = Gtk.Entry()
+            text_entry.set_text(element.text)
+            make_row("Start Value:", text_entry)
+
+            increment_spin = _make_spin(
+                element.serial_increment if element.serial_increment is not None
+                else 1, -999999, 999999)
+            make_row("Increment:", increment_spin)
+
+            leading_zero_check = Gtk.CheckButton(label="Add leading zeros")
+            leading_zero_check.set_active(element.serial_leading_zero)
+            make_row("", leading_zero_check)
+
+            height_spin = _make_spin(element.font_height, 8, 500)
+            make_row("Font Height:", height_spin)
+
+            width_spin = _make_spin(element.font_width, 8, 500)
+            make_row("Font Width:", width_spin)
+
+            orientation_combo, orientation_codes = _make_combo(
+                ORIENTATIONS, element.orientation)
+            make_row("Orientation:", orientation_combo)
+
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
+
+            serial_check = Gtk.CheckButton(
+                label="Auto-increments each print (^SN)")
+            serial_check.set_active(element.serial_increment is not None)
+            make_row("Serial:", serial_check)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.text = text_entry.get_text()
+                    element.font_height = int(height_spin.get_value())
+                    element.font_width = int(width_spin.get_value())
+                    element.orientation = orientation_codes[
+                        orientation_combo.get_active()]
+                    element.height = element.font_height
+                    element.reverse_print = fr_check.get_active()
+                    if serial_check.get_active():
+                        element.serial_start = element.text
+                        element.serial_increment = int(increment_spin.get_value())
+                        element.serial_leading_zero = leading_zero_check.get_active()
+                    else:
+                        # Off - the field is plain static text now, showing
+                        # whatever value it last had.
+                        element.serial_start = None
+                        element.serial_increment = None
+                        element.serial_leading_zero = False
+                    # Last, because the box is measured from what the canvas
+                    # will draw, and that is the wrapped marker for as long
+                    # as this stays a serial field.
+                    self.design_canvas.document.sync_text_width(element)
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
+
+        elif isinstance(element, TextElement) and element.field_number is not None:
+            # Show numbered (^FN) edit dialog - deliberately smaller than the
+            # text editor below: no wrap/block section (a numbered field's
+            # own literal, when it has one, is short in every fixture this
+            # designer ships with) and no Data Source selector, since this
+            # dialog *is* the ^FN source. Unticking the variable checkbox
+            # turns the element back into a plain static text field, and the
+            # next double-click then falls through to the regular text
+            # editor instead of here. ^FN is still available on a barcode,
+            # through _make_field_number_rows in the barcode branch below -
+            # unlike ^SN/^FC, a recalled stored-format barcode is common and
+            # already tested, so it keeps a row there rather than moving out
+            # entirely.
+            dialog = Gtk.Dialog(title="Edit Numbered Field", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                              Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                _make_row(content, label_text, widget)
+
+            text_entry = Gtk.Entry()
+            text_entry.set_text(element.text)
+            text_entry.set_placeholder_text(
+                "optional - shared with every other field carrying the same number")
+            make_row("Text:", text_entry)
+
+            number_spin = _make_spin(element.field_number or 0, 0,
+                                     zpl_fields.MAX_NUMBER)
+            make_row("Field Number:", number_spin)
+
+            prompt_entry = Gtk.Entry()
+            prompt_entry.set_text(element.field_prompt or '')
+            prompt_entry.set_placeholder_text(
+                "shown on the canvas and on a printer keypad")
+            make_row("Field Name:", prompt_entry)
+
+            height_spin = _make_spin(element.font_height, 8, 500)
+            make_row("Font Height:", height_spin)
+
+            width_spin = _make_spin(element.font_width, 8, 500)
+            make_row("Font Width:", width_spin)
+
+            orientation_combo, orientation_codes = _make_combo(
+                ORIENTATIONS, element.orientation)
+            make_row("Orientation:", orientation_combo)
+
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
+
+            variable_check = Gtk.CheckButton(
+                label="Data comes from a numbered field (^FN)")
+            variable_check.set_active(element.field_number is not None)
+            make_row("Variable:", variable_check)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.text = text_entry.get_text()
+                    element.font_height = int(height_spin.get_value())
+                    element.font_width = int(width_spin.get_value())
+                    element.orientation = orientation_codes[
+                        orientation_combo.get_active()]
+                    element.height = element.font_height
+                    element.reverse_print = fr_check.get_active()
+                    if variable_check.get_active():
+                        element.field_number = int(number_spin.get_value())
+                        element.field_prompt = prompt_entry.get_text() or None
+                    else:
+                        element.field_number = None
+                        element.field_prompt = None
+                    # Last, because the box is measured from what the canvas
+                    # will draw, and that is the placeholder for as long as
+                    # this stays a numbered field with no literal of its own.
+                    self.design_canvas.document.sync_text_width(element)
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
+
+        elif isinstance(element, TextElement):
             # Show text edit dialog
             dialog = Gtk.Dialog(title="Edit Text", parent=self, flags=0)
             dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
@@ -1787,6 +3164,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
 
             # Font chooser (installed families only)
             selected_font = [element.font_path, element.font_family]
@@ -1874,8 +3252,6 @@ class ZPLViewerWindow(Gtk.Window):
             indent_spin = _make_spin(block.indent, 0, 2000)
             make_row("Indent:", indent_spin)
 
-            apply_field_number = _make_field_number_rows(content, element)
-
             block_fields = (block_width_spin, max_lines_spin, spacing_spin,
                             justify_combo, indent_spin)
 
@@ -1937,10 +3313,6 @@ class ZPLViewerWindow(Gtk.Window):
                             element.printer_font_name = None
                             self.design_canvas.queue_draw()
 
-                    apply_field_number(element)
-                    # Last, because the box is measured from what the canvas will
-                    # draw, and that is the placeholder once the field is a
-                    # numbered one.
                     self.design_canvas.document.sync_text_width(element)
 
                     self.on_canvas_changed()
@@ -1963,9 +3335,13 @@ class ZPLViewerWindow(Gtk.Window):
             content.set_margin_bottom(8)
 
             def make_row(label_text, widget):
-                _make_row(content, label_text, widget)
+                return _make_row(content, label_text, widget)
 
             make_spin, make_combo = _make_spin, _make_combo
+
+            symbology_combo, symbology_codes = make_combo(
+                model.BARCODE_SYMBOLOGIES, element.symbology)
+            make_row("Symbology:", symbology_combo)
 
             value_entry = Gtk.Entry()
             value_entry.set_text(element.barcode_value)
@@ -1976,6 +3352,9 @@ class ZPLViewerWindow(Gtk.Window):
 
             module_spin = make_spin(element.module_width, 1, 20)
             make_row("Module Width:", module_spin)
+
+            ratio_spin = _make_ratio_spin(element.ratio, 2.0, 3.0)
+            ratio_row, _ratio_label = make_row("Ratio:", ratio_spin)
 
             orientation_combo, orientation_codes = make_combo(
                 model.BARCODE_ORIENTATIONS,
@@ -1992,25 +3371,45 @@ class ZPLViewerWindow(Gtk.Window):
 
             check_combo, check_codes = make_combo(model.BARCODE_CHECK_DIGIT,
                                                   element.check_digit)
-            make_row("UCC Check Digit:", check_combo)
+            check_row, check_label = make_row("Check Digit:", check_combo)
 
             mode_combo, mode_codes = make_combo(model.BARCODE_MODES,
                                                 element.mode)
-            make_row("Mode:", mode_combo)
+            mode_row, _mode_label = make_row("Mode:", mode_combo)
 
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
 
             apply_field_number = _make_field_number_rows(content, element)
 
-            content.show_all()
+            def on_symbology_changed(_combo):
+                # Each symbology carries a different subset of these rows -
+                # Code 128's mode, a check digit only some of them have (and
+                # call something different), a ratio that only matters for
+                # the two not drawn at a fixed one. Showing every row for
+                # every symbology would offer a Mode a Code 39 barcode has
+                # no ZPL parameter for at all.
+                features = model.BARCODE_FEATURES[symbology_codes[symbology_combo.get_active()]]
+                mode_row.set_visible(features['mode'])
+                ratio_row.set_visible(features['ratio'])
+                check_row.set_visible(features['check_digit'] is not None)
+                if features['check_digit'] is not None:
+                    check_label.set_text(features['check_digit'] + ":")
+                # A dialog GTK already grew to fit more rows does not shrink
+                # back on its own just because some of them hid.
+                dialog.resize(1, 1)
+
+            symbology_combo.connect('changed', on_symbology_changed)
 
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
+                    element.symbology = symbology_codes[symbology_combo.get_active()]
                     element.barcode_value = value_entry.get_text()
                     element.bar_height = int(height_spin.get_value())
                     element.module_width = int(module_spin.get_value())
+                    element.ratio = ratio_spin.get_value()
                     element.orientation = orientation_codes[orientation_combo.get_active()]
                     element.show_text, element.text_above = text_codes[text_combo.get_active()]
                     apply_field_number(element)
@@ -2031,7 +3430,11 @@ class ZPLViewerWindow(Gtk.Window):
                 _dialog.destroy()
 
             self._open_editor(element, dialog, on_response)
-        
+            # _open_editor's own show_all() would otherwise re-show every row
+            # this just hid - so the symbology-dependent ones only get their
+            # first visibility pass once it has already run.
+            on_symbology_changed(symbology_combo)
+
         elif isinstance(element, ImageElement):
             dialog = Gtk.FileChooserDialog(
                 title="Replace Image",
@@ -2061,6 +3464,76 @@ class ZPLViewerWindow(Gtk.Window):
                 self.on_canvas_changed()
             else:
                 dialog.destroy()
+
+        elif isinstance(element, StoredGraphicElement):
+            # ^XG/^IM name an image the printer holds, not one this file
+            # carries the bytes for - see zplcore/graphic_store.py. Editing
+            # this element only ever changes which name it recalls.
+            dialog = Gtk.Dialog(title="Edit Stored Graphic", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                              Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                _make_row(content, label_text, widget)
+
+            command_combo, command_codes = _make_combo(
+                STORED_GRAPHIC_COMMANDS, element.command)
+            make_row("Command:", command_combo)
+
+            device, name, ext = graphic_store.split_device_spec(element.device_spec)
+            device_combo, device_codes = _make_combo(STORED_GRAPHIC_DEVICES, device)
+            make_row("Device:", device_combo)
+
+            name_entry = Gtk.Entry()
+            name_entry.set_text(name)
+            name_entry.set_max_length(8)
+            make_row("Name:", name_entry)
+
+            ext_entry = Gtk.Entry()
+            ext_entry.set_text(ext)
+            make_row("Extension:", ext_entry)
+
+            mag_x_spin = _make_spin(element.mag_x, 1, 10)
+            make_row("Magnification X:", mag_x_spin)
+
+            mag_y_spin = _make_spin(element.mag_y, 1, 10)
+            make_row("Magnification Y:", mag_y_spin)
+
+            def on_command_changed(_combo):
+                # ^IM has no magnification of its own - always 1,1.
+                is_xg = command_codes[command_combo.get_active()] == 'XG'
+                mag_x_spin.set_sensitive(is_xg)
+                mag_y_spin.set_sensitive(is_xg)
+
+            on_command_changed(command_combo)
+            command_combo.connect("changed", on_command_changed)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.command = command_codes[command_combo.get_active()]
+                    device_code = device_codes[device_combo.get_active()]
+                    object_name = (name_entry.get_text().strip() or 'UNKNOWN').upper()
+                    extension = (ext_entry.get_text().strip() or 'GRF').upper()
+                    element.device_spec = f"{device_code}:{object_name}.{extension}"
+                    if element.command == 'XG':
+                        element.mag_x = int(mag_x_spin.get_value())
+                        element.mag_y = int(mag_y_spin.get_value())
+                    else:
+                        element.mag_x = element.mag_y = 1
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
 
         elif isinstance(element, FrameElement):
             # Show Frame edit dialog
@@ -2124,6 +3597,7 @@ class ZPLViewerWindow(Gtk.Window):
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             content.pack_start(fr_check, False, False, 0)
+            content.pack_start(_reverse_hint(), False, False, 0)
 
             content.show_all()
 

@@ -23,7 +23,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import _isolate  # a throwaway settings file, before any frontend is imported
-from zplcore import transforms
+from PIL import Image
+from zplcore import graphic_store, transforms
 FIXTURE_300 = ROOT / 'tests' / 'fixtures' / 'sample_300dpi.zpl'
 # ZPL as another tool writes it: ^A0, ^FB and two commands on one line
 FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'
@@ -43,6 +44,12 @@ FIXTURE_COMPRESSED = ROOT / 'tests' / 'fixtures' / 'compressed_logo.zpl'
 FIXTURE_STORED = ROOT / 'tests' / 'fixtures' / 'stored_format.zpl'
 FIXTURE_RECALL = ROOT / 'tests' / 'fixtures' / 'recall_format.zpl'
 FIXTURE_NAMED = ROOT / 'tests' / 'fixtures' / 'named_fields.zpl'
+# The graphic counterpart: ^IS saves a rendered snapshot, ^XG/^IM/^IL recall
+# it - within this one process, so loading the save fixture first lets the
+# recall/load fixtures resolve for real.
+FIXTURE_GRAPHIC_SAVE = ROOT / 'tests' / 'fixtures' / 'stored_graphic_save.zpl'
+FIXTURE_GRAPHIC_RECALL = ROOT / 'tests' / 'fixtures' / 'stored_graphic_recall.zpl'
+FIXTURE_GRAPHIC_LOAD = ROOT / 'tests' / 'fixtures' / 'stored_graphic_load.zpl'
 # The commands that move or flip a whole label
 FIXTURE_HOME = ROOT / 'tests' / 'fixtures' / 'label_home.zpl'
 FIXTURE_FLIPPED = ROOT / 'tests' / 'fixtures' / 'flipped_label.zpl'
@@ -130,6 +137,7 @@ class GtkDriver:
         # A fixture carrying a command the model cannot keep would otherwise
         # stop the run on a modal nobody is there to dismiss.
         self.window._warn_unsupported = lambda commands: None
+        self.window._warn_control_redefined = lambda spellings: None
 
     # -- document ---------------------------------------------------------
     @property
@@ -142,8 +150,26 @@ class GtkDriver:
     def add_text(self, text):
         return self.canvas.add_text_element(text)
 
+    def add_time(self, text):
+        return self.canvas.add_time_element(text)
+
+    def add_serial(self, text):
+        return self.canvas.add_serial_element(text)
+
+    def add_numbered(self, number, prompt=None):
+        return self.canvas.add_numbered_element(number, prompt)
+
     def add_frame(self):
         return self.canvas.add_frame_element()
+
+    def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
+        return self.canvas.add_stored_graphic_element(command, device_spec)
+
+    def store_graphic(self, device_spec, image):
+        """What Printer -> Graphics... 'Store...' does, bypassing its
+        dialogs - graphic_store is core, so both frontends do the same
+        thing here."""
+        graphic_store.store(device_spec, image)
 
     def add_barcode(self):
         return self.canvas.add_barcode_element()
@@ -197,11 +223,24 @@ class GtkDriver:
     def shift_click(self, lx, ly):
         """Press and release with Shift held, which adds to the selection."""
         from gi.repository import Gdk
+        self._modified_click(lx, ly, Gdk.ModifierType.SHIFT_MASK)
+
+    def ctrl_click(self, lx, ly):
+        """Press and release with Ctrl held: exactly the element under it."""
+        from gi.repository import Gdk
+        self._modified_click(lx, ly, Gdk.ModifierType.CONTROL_MASK)
+
+    def ctrl_shift_click(self, lx, ly):
+        """Ctrl and Shift: add or drop exactly the element under it."""
+        from gi.repository import Gdk
+        self._modified_click(lx, ly, Gdk.ModifierType.CONTROL_MASK
+                             | Gdk.ModifierType.SHIFT_MASK)
+
+    def _modified_click(self, lx, ly, state):
         scale = self.canvas._scale()
-        shifted = self._Event(lx * scale, ly * scale,
-                              state=Gdk.ModifierType.SHIFT_MASK)
-        self.canvas.on_button_press(self.canvas, shifted)
-        self.canvas.on_button_release(self.canvas, shifted)
+        event = self._Event(lx * scale, ly * scale, state=state)
+        self.canvas.on_button_press(self.canvas, event)
+        self.canvas.on_button_release(self.canvas, event)
 
     def band(self, from_x, from_y, to_x, to_y):
         """Drag a rubber band across the canvas, from one point to another."""
@@ -252,6 +291,28 @@ class GtkDriver:
 
     def align(self, edge):
         self.canvas.align_selected(edge)
+
+    def group(self):
+        """Edit > Group, through the window's handler as the menu would."""
+        self.window.on_group_clicked(None)
+
+    def ungroup(self):
+        self.window.on_ungroup_clicked(None)
+
+    def remove_from_group(self):
+        self.window.on_remove_from_group_clicked(None)
+
+    def select_all(self):
+        self.window.on_select_all_clicked(None)
+
+    def deselect_all(self):
+        self.window.on_deselect_all_clicked(None)
+
+    def invert_selection(self):
+        self.window.on_invert_selection_clicked(None)
+
+    def resize_target(self):
+        return self.canvas.document.resize_target()
 
     def move_group(self, dx, dy):
         self.geometry.move_selection(self.canvas.document,
@@ -344,6 +405,7 @@ class QtDriver:
         # A fixture carrying a command the model cannot keep would otherwise
         # stop the run on a modal nobody is there to dismiss.
         dialogs.warn_unsupported = lambda *a, **k: None
+        dialogs.warn_control_redefined = lambda *a, **k: None
         self.window = window.ZPLDesignerWindow()
         self.window._save_settings = lambda *a: None
         self.window.printer_dpi = 203
@@ -363,8 +425,26 @@ class QtDriver:
     def add_text(self, text):
         return self.document.add_text_element(text)
 
+    def add_time(self, text):
+        return self.document.add_time_element(text)
+
+    def add_serial(self, text):
+        return self.document.add_serial_element(text)
+
+    def add_numbered(self, number, prompt=None):
+        return self.document.add_numbered_element(number, prompt)
+
     def add_frame(self):
         return self.document.add_frame_element()
+
+    def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
+        return self.document.add_stored_graphic_element(command, device_spec)
+
+    def store_graphic(self, device_spec, image):
+        """What Printer -> Graphics... 'Store...' does, bypassing its
+        dialogs - graphic_store is core, so both frontends do the same
+        thing here."""
+        graphic_store.store(device_spec, image)
 
     def add_barcode(self):
         return self.document.add_barcode_element()
@@ -416,11 +496,25 @@ class QtDriver:
 
     def shift_click(self, lx, ly):
         """Press and release with Shift held, which adds to the selection."""
-        from PySide2.QtCore import QEvent, Qt
+        from PySide2.QtCore import Qt
+        self._modified_click(lx, ly, Qt.ShiftModifier)
+
+    def ctrl_click(self, lx, ly):
+        """Press and release with Ctrl held: exactly the element under it."""
+        from PySide2.QtCore import Qt
+        self._modified_click(lx, ly, Qt.ControlModifier)
+
+    def ctrl_shift_click(self, lx, ly):
+        """Ctrl and Shift: add or drop exactly the element under it."""
+        from PySide2.QtCore import Qt
+        self._modified_click(lx, ly, Qt.ControlModifier | Qt.ShiftModifier)
+
+    def _modified_click(self, lx, ly, modifiers):
+        from PySide2.QtCore import QEvent
         self.canvas.mousePressEvent(
-            self._event(QEvent.MouseButtonPress, lx, ly, Qt.ShiftModifier))
+            self._event(QEvent.MouseButtonPress, lx, ly, modifiers))
         self.canvas.mouseReleaseEvent(
-            self._event(QEvent.MouseButtonRelease, lx, ly, Qt.ShiftModifier))
+            self._event(QEvent.MouseButtonRelease, lx, ly, modifiers))
 
     def band(self, from_x, from_y, to_x, to_y):
         """Drag a rubber band across the canvas, from one point to another."""
@@ -467,6 +561,28 @@ class QtDriver:
 
     def align(self, edge):
         self.document.align_selected(edge)
+
+    def group(self):
+        """Edit > Group, through the window's handler as the menu would."""
+        self.window.on_group()
+
+    def ungroup(self):
+        self.window.on_ungroup()
+
+    def remove_from_group(self):
+        self.window.on_remove_from_group()
+
+    def select_all(self):
+        self.window.on_select_all()
+
+    def deselect_all(self):
+        self.window.on_deselect_all()
+
+    def invert_selection(self):
+        self.window.on_invert_selection()
+
+    def resize_target(self):
+        return self.document.resize_target()
 
     def move_group(self, dx, dy):
         self.geometry.move_selection(self.document, self.document.selection,
@@ -616,6 +732,20 @@ def sequence(driver, record):
     driver.shift_click(frame.x + frame.width // 2, frame.y + frame.height // 2)
     record('a click then a shift-click selects: ' + json.dumps(driver.selection()))
 
+    # The selection commands, through each window's own handlers. None of
+    # them touches the design, so what is recorded is the selection.
+    driver.select_all()
+    record('select all selects: ' + json.dumps(driver.selection()))
+    driver.invert_selection()
+    record('inverting that selects: ' + json.dumps(driver.selection()))
+    driver.invert_selection()
+    record('and inverting again selects: ' + json.dumps(driver.selection()))
+    driver.deselect_all()
+    record('deselect all selects: ' + json.dumps(driver.selection()))
+    driver.select(barcode)
+    driver.invert_selection()
+    record('inverting one element selects the rest: ' + json.dumps(driver.selection()))
+
     # Alignment. A group lines up against its own bounding box and a lone
     # element against the label, so both rules are compared; the group drag
     # after them is the clamp that has to treat the pair as one box.
@@ -625,6 +755,140 @@ def sequence(driver, record):
         record(f'the pair aligned {edge}')
     driver.move_group(-9999, -9999)
     record('the pair dragged into the corner as one box')
+
+    # Grouping. The pair becomes one unit, and every selection gesture is
+    # driven through the frontend's own handlers again, since each of them
+    # has to widen a pick of one member to the pair: a click, a band touching
+    # a member, a shift-click. The align with a loose element moves the pair
+    # as one box, the z-order command moves the pair as one run, and the
+    # ^FXDESIGNER_GROUP markers are in the ZPL every step records.
+    driver.select_many([text, frame])
+    driver.group()
+    record('the pair grouped')
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    driver.click(frame.x + frame.width // 2, frame.y + frame.height // 2)
+    record('a click on one member of the group selects: '
+           + json.dumps(driver.selection()))
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    # From empty canvas just right of the frame, reaching a few dots into
+    # its top corner - which the text below does not extend up to.
+    driver.band(frame.x + frame.width + 40, frame.y + 10,
+                frame.x + frame.width - 4, frame.y + 20)
+    record('a band reaching one member of the group selects: '
+           + json.dumps(driver.selection()))
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    driver.shift_click(text.x + text.width // 2, text.y + text.height // 2)
+    record('a shift-click on one member of the group selects: '
+           + json.dumps(driver.selection()))
+    driver.select_many([text, barcode])
+    record('selecting a member and a loose element selects: '
+           + json.dumps(driver.selection()))
+    for edge in ('right', 'bottom'):
+        driver.align(edge)
+        record(f'the group and a loose element aligned {edge}')
+    driver.select(text)
+    driver.bring_forward()
+    record('bring the group forward, as one run')
+
+    # A direct pick. Ctrl-click reaches one member of the group, through
+    # each frontend's own modifier reading, and what follows it - a drag, an
+    # align - acts on that member alone, while the z-order commands and
+    # Ungroup still take its whole group.
+    # At 1:1, as every pointer drag here is, so the two frontends quantise
+    # the pointer to the same dots.
+    driver.set_zoom(1.0)
+    # Points inside one element only, and away from the handles a directly
+    # picked element grows - a press on one of those is a resize, not a pick.
+    fx, fy = frame.x + 30, frame.y + 30
+    driver.fresh_gesture()
+    driver.ctrl_click(fx, fy)
+    record('a ctrl-click on one member selects: ' + json.dumps(driver.selection()))
+    driver.fresh_gesture()
+    driver.drag_pointer(fx, fy, 30, 20)
+    record('and a drag after it moves that member alone')
+    driver.fresh_gesture()
+    driver.ctrl_shift_click(barcode.x + 20, barcode.y + 20)
+    record('a ctrl-shift-click adds exactly the element under it: '
+           + json.dumps(driver.selection()))
+    driver.align('left')
+    record('the member and the loose element aligned left, the member alone')
+    driver.fresh_gesture()
+    driver.ctrl_click(text.x + text.width // 2, text.y + text.height // 2)
+    driver.send_to_back()
+    record('send to back from a directly picked member moves its whole group')
+    driver.ungroup()
+    record('the pair ungrouped, from a directly picked member')
+
+    # Nesting: the pair grouped again, then that group with the barcode. A
+    # click anywhere in it selects the nest; Ungroup from inside peels the
+    # outer group and leaves the pair a group of its own.
+    driver.select_many([text, frame])
+    driver.group()
+    driver.select_many([text, barcode])
+    driver.group()
+    record('the pair grouped, then grouped with the barcode: a nest')
+    # The frame's bottom edge is the one place the barcode and the text,
+    # which sit over the rest of it by now, do not reach.
+    px, py = frame.x + 10, frame.y + frame.height - 10
+    driver.fresh_gesture()
+    driver.click(px, py)
+    record('a click on a member of the inner pair selects the whole nest: '
+           + json.dumps(driver.selection()))
+    driver.fresh_gesture()
+    driver.ctrl_click(px, py)
+    record('a ctrl-click inside the nest selects: ' + json.dumps(driver.selection()))
+    driver.ungroup()
+    record('ungroup from inside peels the outer group, the pair keeps its own')
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    driver.click(px, py)
+    record('a click on the pair now selects just the pair: '
+           + json.dumps(driver.selection()))
+    driver.ungroup()
+    record('the pair ungrouped again')
+
+    # Resizing a group. The handles belong to the pair as one box; a resize
+    # by any of them scales both members - the text's font, the frame's
+    # thickness - and the pointer path through each canvas's handle branch
+    # is what the drag step drives.
+    driver.select_many([text, frame])
+    driver.group()
+    record('handles of the group: ' + json.dumps(
+        {k: list(v) for k, v in sorted(driver.handles(driver.resize_target()).items())}))
+    driver.resize(driver.resize_target(), 'br', 40, 30)
+    record('the group resized by its bottom-right handle')
+    driver.resize(driver.resize_target(), 'tl', -20, -10)
+    record('and by its top-left handle')
+    corner = driver.handles(driver.resize_target())['br']
+    driver.fresh_gesture()
+    driver.drag_pointer(corner[0], corner[1], 30, 20)
+    record('a pointer drag on a group handle scales the group')
+    driver.select_many([text, barcode])
+    driver.group()
+    driver.resize(driver.resize_target(), 'ml', 25, 0)
+    record('a nest resized by its left handle')
+
+    # Remove from Group lifts the directly picked member out and leaves the
+    # rest grouped; then everything back to loose for the steps that follow.
+    driver.fresh_gesture()
+    driver.band(width - 1, height - 1, width - 1, height - 1)
+    driver.fresh_gesture()
+    driver.ctrl_click(frame.x + 10, frame.y + frame.height - 10)
+    driver.remove_from_group()
+    record('the frame removed from its group, selecting: '
+           + json.dumps(driver.selection()))
+    driver.select(text)
+    driver.ungroup()
+    driver.select(text)
+    driver.ungroup()
+    record('everything ungrouped again')
 
     driver.select(barcode)
     for edge in ('right', 'bottom', 'center', 'middle'):
@@ -822,6 +1086,18 @@ def sequence(driver, record):
     driver.load(FIXTURE_RECALL)
     record('load an ^XF recall call, which is data and no geometry')
 
+    # The graphic counterpart of the pair above: ^IS saves a rendered
+    # snapshot, then ^XG/^IM/^IL each recall it. Loading the save fixture
+    # first, in this same process, is what lets the recall/load fixtures
+    # resolve real pixels rather than only a placeholder - both frontends
+    # have to agree on that resolved image, not just on the reference.
+    driver.load(FIXTURE_GRAPHIC_SAVE)
+    record('load a format that saves itself with ^IS')
+    driver.load(FIXTURE_GRAPHIC_RECALL)
+    record('load a format recalling that image with ^XG and ^IM')
+    driver.load(FIXTURE_GRAPHIC_LOAD)
+    record('load a format loading that image with ^IL')
+
     # ^LH moves every field, so a frontend that read it differently would place
     # the whole design somewhere else; the flips have to survive a save in both.
     driver.load(FIXTURE_HOME)
@@ -859,6 +1135,41 @@ def sequence(driver, record):
     record('make a field variable')
     driver.set_field_number(_variable, None, None)
     record('and back to a literal')
+
+    # A time field has its own creation button rather than being a mode of
+    # the text editor's Data Source selector, so its own path -
+    # add_time_element - has to write the same ^FC/^FD pair from both
+    # frontends.
+    driver.add_time('%m/%d/%y')
+    record('add a time field')
+
+    # Likewise for a serial field - add_serial_element, not a mode of the
+    # text editor's Data Source selector.
+    driver.add_serial('1')
+    record('add a serial field')
+
+    # And for a numbered field - add_numbered_element is its own creation
+    # path too now, the same as ^SN and ^FC.
+    driver.add_numbered(7, 'Batch')
+    record('add a numbered field')
+
+    # A stored graphic reference has its own creation path too -
+    # add_stored_graphic_element - the same "+ button, its own element" shape
+    # as time/serial/numbered above.
+    driver.add_stored_graphic('XG', 'R:SAMPLE.GRF')
+    record('add a stored graphic reference')
+
+    # Printer -> Graphics... 'Store...' is a second way into graphic_store,
+    # alongside ^IS - store_graphic bypasses its own file-chooser and
+    # device/name/extension dialogs the way every other driver method
+    # bypasses its editor, going straight to the graphic_store.store() call
+    # both frontends make. It changes no Document state - see
+    # zplcore/graphic_store.py - so the ZPL is unaffected; what has to agree
+    # between frontends is that the reference just added now resolves.
+    driver.store_graphic('R:SAMPLE.GRF', Image.new('RGB', (40, 30), (10, 20, 30)))
+    resolved = driver.elements[-1].resolve()
+    record('store a graphic and resolve the reference already pointing at it',
+          text=f"resolved={resolved.size if resolved else None}")
 
 
 def main():

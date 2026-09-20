@@ -21,7 +21,7 @@ from PySide2.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide2.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen
 from PySide2.QtWidgets import QMenu, QWidget
 
-from zplcore import geometry, textraster, view
+from zplcore import geometry, graphic_store, textraster, view
 from zplcore.model import DesignElement, Document
 
 
@@ -89,6 +89,7 @@ class DesignCanvas(QWidget):
         self.band_origin = None
         self.band_now = None
         self.band_additive = False
+        self.band_direct = False
         self.last_click_time = 0.0
         self.last_click_element = None
         self._cursor_shape = None
@@ -187,6 +188,11 @@ class DesignCanvas(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(QRectF(0, 0, doc.label_width, doc.label_height))
 
+        # ^IL: a stored image this format loads at ^FO0,0, underneath its
+        # fields - not one of doc.elements, so drawn here rather than through
+        # _draw_element.
+        self._draw_image_load(painter)
+
         for element in doc.elements:
             selected = doc.is_selected(element)
             # An element that will not print is dimmed rather than hidden: the
@@ -195,6 +201,10 @@ class DesignCanvas(QWidget):
             self._draw_element(painter, element, selected)
         painter.setOpacity(1.0)
 
+        self._draw_group_outlines(painter, scale)
+        target = self.document.resize_target()
+        if target is not None:
+            self._draw_handles(painter, target)
         self._draw_band(painter, scale)
 
         painter.restore()
@@ -208,6 +218,30 @@ class DesignCanvas(QWidget):
             self._draw_barcode_element(painter, element, selected)
         elif element.element_type == 'image':
             self._draw_image_element(painter, element, selected)
+        elif element.element_type == 'stored_graphic':
+            self._draw_stored_graphic_element(painter, element, selected)
+
+    def _draw_image_load(self, painter):
+        """The ^IL image this format loads at ^FO0,0, if it names one."""
+        spec = self.document.image_load
+        if not spec:
+            return
+        image = graphic_store.recall(spec)
+        if image is not None:
+            qimage = to_qimage(image)
+            if qimage is not None and not qimage.isNull():
+                painter.drawImage(QPointF(0, 0), qimage)
+            return
+        # Not available this session - a small marker beats leaving a ^IL the
+        # file names completely invisible.
+        doc = self.document
+        rect = QRectF(0, 0, min(220, doc.label_width), min(24, doc.label_height))
+        painter.fillRect(rect, QColor(230, 217, 102, 128))
+        painter.setPen(QColor(89, 77, 13))
+        font = QFont("sans-serif")
+        font.setPixelSize(11)
+        painter.setFont(font)
+        painter.drawText(QPointF(4, 17), f"^IL {spec} (unavailable)")
 
     def _draw_band(self, painter, scale: float):
         """The rubber band, while one is being dragged."""
@@ -224,19 +258,33 @@ class DesignCanvas(QWidget):
                                 abs(x1 - x0), abs(y1 - y0)))
         painter.setBrush(Qt.NoBrush)
 
-    def _draw_handles(self, painter, element: DesignElement):
-        """The eight resize handles, as small filled squares.
-
-        Only ever on a selection of one. A group has no single box to resize,
-        and handles on each member would offer a drag with nowhere to go.
-        """
-        if len(self.document.selection) != 1:
+    def _draw_group_outlines(self, painter, scale: float):
+        """A dashed box around each selected group, so a group can be told
+        from a selection that merely holds several elements - and a group
+        inside a group from its parent. Which boxes, and how far outside
+        the members they sit, is the document's to say; drawn with a longer
+        dash than the band so the two never read as one."""
+        boxes = self.document.group_outlines()
+        if not boxes:
             return
+        pen = QPen(QColor(0, 128, 255))
+        pen.setWidthF(1.0 / max(1e-6, scale))
+        pen.setStyle(Qt.CustomDashLine)
+        pen.setDashPattern([8, 4])
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        for x, y, w, h in boxes:
+            painter.drawRect(QRectF(x, y, w, h))
+
+    def _draw_handles(self, painter, target):
+        """The eight resize handles of what the document says can be resized:
+        the one selected element, or a whole selected group. Drawn once,
+        after every element, so nothing above the target covers them."""
         painter.setPen(QPen(QColor(0, 0, 255), 1))
         painter.setBrush(QColor(0, 128, 255))
         size = geometry.handle_size(self._scale())
         half = size / 2
-        for _, (hx, hy) in geometry.handles(element).items():
+        for _, (hx, hy) in geometry.handles(target).items():
             painter.drawRect(QRectF(hx - half, hy - half, size, size))
         painter.setBrush(Qt.NoBrush)
 
@@ -244,25 +292,29 @@ class DesignCanvas(QWidget):
 
     def _draw_text_element(self, painter, element, selected: bool):
         reverse = element.reverse_print
-        if reverse:
-            # ^FR: this field prints in reverse, so the box is drawn solid
-            # rather than as the usual translucent editing affordance - a
-            # reversed field with nothing under it would otherwise vanish.
-            painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
-                             QColor(0, 0, 0))
-        else:
+
+        def draw_affordance():
             # Translucent background: a designer affordance must not hide
-            # anything underneath it that will still print.
+            # anything underneath it that will still print - true regardless
+            # of reverse_print, so a reversed field is still visible and
+            # selectable even where it has nothing (yet) to invert. Drawn
+            # after the ink when reversed, or it would be inverted along
+            # with the real content beneath it instead of just tinting it.
             painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
                              QColor(242, 242, 255, 89))
+            painter.setPen(QPen(QColor(0, 0, 255), 2) if selected
+                           else QPen(QColor(128, 128, 255), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
-        painter.setPen(QPen(QColor(0, 0, 255), 2) if selected
-                       else QPen(QColor(128, 128, 255), 1))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
+        if not reverse:
+            draw_affordance()
 
         font_path = element.font_path or self.document.font_path
         block = getattr(element, 'block', None)
+        # ^FR: white glyphs drawn under a Difference composition invert
+        # whatever is already on the canvas under them, rather than being
+        # painted a flat colour of their own.
         ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
 
         # Everything below draws the text in its own upright frame; the frame
@@ -274,6 +326,8 @@ class DesignCanvas(QWidget):
                           element.y + facing['offset'][1])
         if facing['angle']:
             painter.rotate(facing['angle'])
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_Difference)
 
         raster = None
         if block is not None:
@@ -286,9 +340,11 @@ class DesignCanvas(QWidget):
                 painter.drawImage(QPointF(0, 0), wrapped)
             else:
                 self._draw_text_block(painter, element, font_path, block, reverse)
+            if reverse:
+                painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
             painter.restore()
-            if selected:
-                self._draw_handles(painter, element)
+            if reverse:
+                draw_affordance()
             return
         if font_path:
             raster = to_qimage(
@@ -309,10 +365,13 @@ class DesignCanvas(QWidget):
         else:
             self._draw_text_fallback(painter, element, font_path, reverse)
 
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         painter.restore()
 
-        if selected:
-            self._draw_handles(painter, element)
+        if reverse:
+            draw_affordance()
+
 
     def _draw_text_block(self, painter, element, font_path, block, reverse=False):
         """Wrap with a Qt face when the block cannot be rasterised.
@@ -394,12 +453,21 @@ class DesignCanvas(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
-        # ^GB's colour: white is what the printer leaves unburnt, so it shows
-        # only over something already black - drawing it black instead was the
-        # one case where the canvas showed the opposite of what prints.
-        # ^FR flips it again, on top of whichever colour was chosen.
-        white = (getattr(element, 'colour', 'B') == 'W') != element.reverse_print
-        ink = QColor(255, 255, 255) if white else QColor(0, 0, 0)
+        reverse = element.reverse_print
+        if reverse:
+            # ^FR replaces the field's own print outright, so colour has
+            # nothing left to choose between - white drawn under a
+            # Difference composition inverts whatever the canvas already
+            # has here, rather than picking a flat colour of its own.
+            painter.setCompositionMode(QPainter.CompositionMode_Difference)
+            ink = QColor(255, 255, 255)
+        else:
+            # ^GB's colour: white is what the printer leaves unburnt, so it
+            # shows only over something already black - drawing it black
+            # instead was the one case where the canvas showed the opposite
+            # of what prints.
+            white = getattr(element, 'colour', 'B') == 'W'
+            ink = QColor(255, 255, 255) if white else QColor(0, 0, 0)
         radius = element.corner_radius() if hasattr(element, 'corner_radius') else 0
 
         if 2 * t >= min(element.width, element.height):
@@ -429,8 +497,9 @@ class DesignCanvas(QWidget):
             else:
                 painter.drawRect(box)
 
-        if selected:
-            self._draw_handles(painter, element)
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
 
     # --- barcode -------------------------------------------------------------
 
@@ -451,13 +520,21 @@ class DesignCanvas(QWidget):
         if layout['angle']:
             painter.rotate(layout['angle'])
 
-        # White behind the symbol: a barcode the printer cannot read is worse
-        # than one that covers something, so it is deliberately opaque.
-        # ^FR swaps it for black-behind-white, same as everywhere else.
         reverse = element.reverse_print
-        bg, fg = (QColor(0, 0, 0), QColor(255, 255, 255)) if reverse \
-            else (QColor(255, 255, 255), QColor(0, 0, 0))
-        painter.fillRect(QRectF(0, 0, run, stack), bg)
+        if reverse:
+            # ^FR: white bars drawn under a Difference composition invert
+            # whatever the canvas already has under them, rather than a
+            # background of their own - inverting blank white gives black
+            # bars, same as an unreversed barcode, unless something already
+            # printed (a filled ^GB, say) is under it.
+            painter.setCompositionMode(QPainter.CompositionMode_Difference)
+            fg = QColor(255, 255, 255)
+        else:
+            # White behind the symbol: a barcode the printer cannot read is
+            # worse than one that covers something, so it is deliberately
+            # opaque.
+            painter.fillRect(QRectF(0, 0, run, stack), QColor(255, 255, 255))
+            fg = QColor(0, 0, 0)
 
         bar_x, bar_y, bar_w, bar_h = layout['bars']
         mods = element.modules()
@@ -473,6 +550,8 @@ class DesignCanvas(QWidget):
 
         if layout['text']:
             self._draw_barcode_text(painter, layout, reverse)
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         painter.restore()
 
         # The selection border follows the footprint, which is axis-aligned at
@@ -484,8 +563,6 @@ class DesignCanvas(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
-        if selected:
-            self._draw_handles(painter, element)
 
     def _draw_barcode_text(self, painter, layout, reverse=False):
         """The interpretation line, in dots - not at a constant screen size.
@@ -518,7 +595,7 @@ class DesignCanvas(QWidget):
         # being dragged reuse the last bitmap stretched to the new bounds; the
         # exact one is regenerated on release.
         image = None
-        if self.active_handle is not None and element is self.document.selected_element:
+        if self.active_handle is not None and self.document.is_selected(element):
             image = element.peek_print_render()
         if image is None:
             image = element.get_print_render(to_qimage)
@@ -546,8 +623,39 @@ class DesignCanvas(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
 
-        if selected:
-            self._draw_handles(painter, element)
+
+    def _draw_stored_graphic_element(self, painter, element, selected: bool):
+        """Draw a ^XG/^IM reference: the real image if this session has it,
+        otherwise a placeholder naming what it is waiting for."""
+        image = element.resolve()
+        qimage = to_qimage(image) if image is not None else None
+
+        if qimage is not None and not qimage.isNull():
+            painter.save()
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            painter.drawImage(
+                QRectF(element.x, element.y, element.width, element.height), qimage)
+            painter.restore()
+        else:
+            painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
+                             QColor(237, 237, 204))
+            painter.setPen(QColor(115, 102, 26))
+            font = QFont("sans-serif")
+            font.setPixelSize(12)
+            painter.setFont(font)
+            painter.drawText(QPointF(element.x + 5, element.y + element.height / 2 - 6),
+                             f"^{element.command} {element.device_spec}")
+            painter.drawText(QPointF(element.x + 5, element.y + element.height / 2 + 10),
+                             "(not available this session)")
+
+        pen = QPen(QColor(0, 0, 255), 2) if selected else QPen(QColor(153, 140, 51), 1)
+        if not selected:
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([4, 3])
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
+
 
     # --- mouse ---------------------------------------------------------------
 
@@ -561,16 +669,21 @@ class DesignCanvas(QWidget):
             return
 
         self.active_handle = None
-        # Shift or Ctrl adds to the selection instead of replacing it.
-        additive = bool(event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier))
+        # Shift adds to the selection instead of replacing it; Ctrl picks
+        # exactly the element under the pointer, one inside a group included,
+        # rather than its whole group. The rules are the document's - the
+        # canvas only says which keys were down.
+        additive = bool(event.modifiers() & Qt.ShiftModifier)
+        direct = bool(event.modifiers() & Qt.ControlModifier)
 
-        # A handle of the selected element wins over anything under the pointer
-        if len(doc.selection) == 1:
-            handle = geometry.handle_at_point(lx, ly, doc.selected_element,
-                                             self._scale())
+        # A handle of the resize target - the selected element, or a whole
+        # selected group - wins over anything under the pointer
+        target = doc.resize_target()
+        if target is not None:
+            handle = geometry.handle_at_point(lx, ly, target, self._scale())
             if handle:
                 self.active_handle = handle
-                self.resize_origin = geometry.resize_origin(doc.selected_element)
+                self.resize_origin = geometry.resize_origin(target)
                 self.drag_start = (lx, ly)
                 return
 
@@ -581,6 +694,7 @@ class DesignCanvas(QWidget):
         if clicked_element is None:
             self.band_origin = self.band_now = (lx, ly)
             self.band_additive = additive
+            self.band_direct = direct
             self.last_click_element = None
             if not additive:
                 doc.clear_selection()
@@ -590,7 +704,7 @@ class DesignCanvas(QWidget):
         # Double click, tracked here rather than left to the toolkit so the
         # interval stays the 500ms the spec names, on the same element.
         now = time.time()
-        if (not additive
+        if (not additive and not direct
                 and self.last_click_element is clicked_element
                 and clicked_element is not None
                 and (now - self.last_click_time) < 0.5):
@@ -602,7 +716,7 @@ class DesignCanvas(QWidget):
         self.last_click_time = now
         self.last_click_element = clicked_element
 
-        doc.select(clicked_element, additive)
+        doc.select(clicked_element, additive, direct)
         # An additive click is a selection gesture, not the start of a drag:
         # picking up the group on the same click would move it by whatever the
         # pointer wandered before the button came back up.
@@ -635,7 +749,7 @@ class DesignCanvas(QWidget):
         if self.active_handle:
             # Measured from the press, so the whole drag is still in the delta
             # after the box has snapped back to its printed size.
-            geometry.resize_by_handle(doc, doc.selected_element,
+            geometry.resize_by_handle(doc, doc.resize_target(),
                                       self.active_handle, dx, dy,
                                       origin=self.resize_origin)
         else:
@@ -682,9 +796,9 @@ class DesignCanvas(QWidget):
         self.band_origin = self.band_now = None
         caught = geometry.elements_in_box(doc.elements, x0, y0, x1, y1)
         if self.band_additive:
-            doc.extend_selection(caught)
+            doc.extend_selection(caught, self.band_direct)
         else:
-            doc.select_many(caught)
+            doc.select_many(caught, self.band_direct)
         # A band changes the selection, never the document, so it is not a
         # change to undo - only a redraw.
         self.update()
@@ -708,11 +822,10 @@ class DesignCanvas(QWidget):
             self._set_cursor(self.HANDLE_CURSORS.get(self.active_handle))
             return
         shape = None
-        if len(self.document.selection) == 1:
+        target = self.document.resize_target()
+        if target is not None:
             lx, ly = self._screen_to_label(event.x(), event.y())
-            handle = geometry.handle_at_point(lx, ly,
-                                             self.document.selected_element,
-                                             self._scale())
+            handle = geometry.handle_at_point(lx, ly, target, self._scale())
             if handle:
                 shape = self.HANDLE_CURSORS.get(handle)
         self._set_cursor(shape)
@@ -737,6 +850,14 @@ class DesignCanvas(QWidget):
         print_action.setChecked(element.print_enabled)
         menu.addSeparator()
 
+        group = menu.addAction("Group")
+        ungroup = menu.addAction("Ungroup")
+        remove = menu.addAction("Remove from Group")
+        group.setEnabled(doc.can_group())
+        ungroup.setEnabled(doc.can_ungroup())
+        remove.setEnabled(doc.can_remove_from_group())
+        menu.addSeparator()
+
         front = menu.addAction("Bring to Front")
         forward = menu.addAction("Bring Forward")
         backward = menu.addAction("Send Backward")
@@ -756,6 +877,12 @@ class DesignCanvas(QWidget):
             # printed label - how a user suppresses something that would
             # otherwise print through an image covering it.
             element.print_enabled = print_action.isChecked()
+        elif chosen is group:
+            doc.group_selected()
+        elif chosen is ungroup:
+            doc.ungroup_selected()
+        elif chosen is remove:
+            doc.remove_from_group()
         elif chosen is front:
             doc.bring_to_front()
         elif chosen is forward:

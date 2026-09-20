@@ -60,8 +60,21 @@ until one is (§13) — at the configured printer resolution (4 × 6 inches is
 ### 3.2 Properties common to every element
 
 `x`, `y` (top-left corner, dots), `width`, `height` (dots), `element_type`,
-`print_enabled` (default true — see §6.6), and `reverse_print` (`^FR`, default
-false — a checkbox in the Edit Text, Edit Frame and Edit Barcode dialogs, §7).
+`print_enabled` (default true — see §6.6), `reverse_print` (`^FR`, default
+false — a checkbox in every element editor that edits ink; Edit Image and
+Edit Stored Graphic have none, §7), and `group` (default none — the *path* of
+group ids the element is in, outermost first, as a tuple: `(3, 7)` is "in group
+7, which is inside group 3"; immutable, so that a snapshot's shallow copy
+carries it and undo cannot leave a group pointing at replaced elements).
+
+A **group** is nothing more than its id in each of its members' paths, and it
+sits inside another group when its members' paths hold that one's id first.
+Ids are unique across the document at every depth. The members stay ordinary
+elements in the one flat z-ordered list; the ZPL they write, the way they
+paint and the editors that open on them know nothing of it. What a group
+changes is selection (§5), alignment and depth (§6.2). Groups nest by
+wrapping: grouping a selection that holds a group puts a new id in front of
+every member's path, and ungrouping takes the outermost id off again (§6.2).
 
 ### 3.3 Element types
 
@@ -162,19 +175,24 @@ the frame is a solid filled rectangle. Clamp to that maximum, minimum 1.
 
 #### Barcode
 
-Code 128, subsets B and C.
+One element, five symbologies: Code 128 (`^BC`, subsets B and C), Code 39
+(`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`) and a UPC/EAN Extension
+add-on (`^BS`). QR, Data Matrix, PDF417 and the rest are still not offered -
+see §18.
 
 | Property | Default |
 |---|---|
+| `symbology` | `code128` - which of the five |
 | `barcode_value` | `"123456789"` |
-| `bar_height` | 100 dots - the bars themselves, `^BC`'s own height |
+| `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots |
+| `ratio` | 3.0 - the wide-to-narrow ratio Code 39 and Interleaved 2 of 5 draw their wide elements at; the other three are fixed-ratio and ignore it |
 | `orientation` | none - `N` upright, `R` 90°, `I` 180°, `B` 270° |
 | `show_text` | true - whether the value prints as an interpretation line |
-| `text_above` | false - the line goes above the bars instead of below |
-| `check_digit` | false - append a UCC/EAN mod-10 digit |
-| `mode` | `N` - `A` lets the symbol use subset C |
-| `font` | none - the `^A` before the `^BC`, which sets the interpretation line's font |
+| `text_above` | false for every symbology but the UPC/EAN extension, where it is true - the line goes above the bars instead of below |
+| `check_digit` | false - append a check digit (Code 128's UCC/EAN one, Code 39's own Mod-43, or Interleaved 2 of 5's Mod-10); EAN-13 and the UPC/EAN extension have no such flag at all, because EAN-13's own check digit is never optional and the extension has none |
+| `mode` | `N` - `A` lets Code 128 use subset C; the other four symbologies have no mode |
+| `font` | none - the `^A` before the barcode command, which sets the interpretation line's font |
 
 **`width` and `height` are the footprint, not the bars.** The element box is
 the bars plus the interpretation line, transposed when the barcode is rotated:
@@ -188,27 +206,39 @@ box   = (run, stack) upright,  (stack, run) rotated
 Because a quarter turn leaves the box axis-aligned, rotation needs nothing from
 hit-testing, dragging or the resize handles - they only ever see the box.
 
-**Derive the width from the symbol, not from the character count.** Subset C
-packs two digits into one symbol, so `(35 + n×11) × module_width` is wrong by
-nearly half for a numeric value in mode A. Summing the encoded module widths is
-right for both subsets.
+**Derive the width from the symbol, not from the character count.** Code
+128's subset C packs two digits into one symbol, so `(35 + n×11) × module_width`
+is wrong by nearly half for a numeric value in mode A - and no formula at all
+covers Interleaved 2 of 5's checksum digit or EAN-13 and the extension's own
+fixed lengths. Summing each symbology's own encoded module widths is right for
+all of them; only Code 128's happens to have a closed form as well.
 
-Mode `A` is the printer's automatic subset switching: move into subset C across
-a run of four or more digits (or two, when the whole value is numeric and the
+Mode `A` is Code 128's automatic subset switching: move into subset C across a
+run of four or more digits (or two, when the whole value is numeric and the
 start code is free), and back to B for anything else. Switching for a shorter
 run costs more than it saves.
 
-The interpretation line prints the encoded value - including the check digit
-when there is one - in the font the `^A` selected, at that font's dot height. A
+The interpretation line prints the encoded value - including a check digit
+when there is one, and EAN-13's own thirteenth digit or the extension's fitted
+length always - in the font the `^A` selected, at that font's dot height. A
 barcode whose line is switched on and whose file named no font is given one, so
 what prints is stated rather than inherited from the printer's `^CF`.
+
+**EAN-13 and the UPC/EAN extension fit the value to a fixed length rather than
+validating it.** EAN-13 takes the last 12 digits (padding on the left with
+zeros if there are fewer) and appends its own check digit; the extension does
+the same to 2 digits if that many or fewer were given, or to 5 otherwise.
+Interleaved 2 of 5 similarly gets a leading zero if, after any check digit, its
+own digit count is odd - two digits share every symbol, so an odd count cannot
+be interleaved at all.
 
 Resizing a barcode is a request for a module width and a bar height, not for an
 arbitrary rectangle: the drag sets those two and the box snaps back to what
 they produce, so the symbol is never stretched to fill.
 
-**`width` is derived**: `(35 + len(value) × 11) × module_width`. The constant 35
-is the start, check and stop modules; each data character is 11 modules.
+**Code 128's `width` has a closed form**: `(35 + len(value) × 11) × module_width`.
+The constant 35 is the start, check and stop modules; each data character is
+11 modules. It holds only for Code 128 subset B - see above.
 
 #### Image
 
@@ -314,26 +344,39 @@ pinned.
 
 - **Left click** selects the topmost element containing the point, or clears the
   selection.
-- **Shift-click or Ctrl-click** adds the element under the pointer to the
-  selection, or takes it out again if it is already in. A plain click on an
-  element that is already selected keeps the whole selection, so a group can be
-  picked up by any of its members; a click on empty canvas is what reduces a
-  group back to nothing.
+- **Shift-click** adds the element under the pointer — its whole group, if it
+  is in one — to the selection, or takes it out again if it is already in. A
+  plain click on an element that is already selected keeps the whole
+  selection, so a group can be picked up by any of its members; a click on
+  empty canvas, or Deselect All (§6.2), is what reduces a group back to
+  nothing.
+- **Ctrl-click** is a *direct pick*: exactly the element under the pointer,
+  even one inside a group, and nothing else. It narrows a selected group down
+  to that one member. It is a pick, not a toggle, so it starts a drag like a
+  plain click does — which is how a member is moved on its own without
+  ungrouping. **Ctrl+Shift-click** adds or removes exactly that element.
 - **Dragging on empty canvas** draws a rubber band, and everything its rectangle
   **overlaps** is selected when the button comes up — overlapping, not
   containing, so an element running to the edge of the label can still be caught.
-  Holding Shift or Ctrl adds the catch to the selection instead of replacing it.
+  Holding Shift adds the catch to the selection instead of replacing it;
+  holding Ctrl takes the catch exactly, without widening a member to its group.
   A band changes only the selection, never the document, so it is not undoable.
 - The selection is **ordered by when each element was picked**. Its last member
-  is the *primary*: the one that carries the resize handles and the one the
-  z-order commands move.
+  is the *primary*: the one that carries the resize handles when it is the only
+  element selected, and the one the z-order commands move.
 - **Drag** moves the selection. A single element is clamped so it stays inside
   the label: `0 ≤ x ≤ label_width − width`, likewise for y. A group moves by one
   shared delta, clamped against the group's own bounding box — clamping each
   element separately would let the ones still inside carry on while the one
   against the edge stopped, and the group would come apart.
-- **Eight resize handles** on a selection of exactly one — four corners, four
-  edge midpoints — drawn as small filled squares. A group gets none: there is no
+- **Eight resize handles** on the *resize target* — four corners, four edge
+  midpoints — drawn as small filled squares, once, after every element, so
+  nothing drawn above the target covers them. The target is the one selected
+  element when exactly one is selected, or the selected **group** when the
+  selection is exactly every member of some group at any depth — a nest picked
+  by a click resizes as its outer group, every member of an inner pair picked
+  directly resizes the pair — and its handles sit on the members' joint box. A
+  loose multi-selection, or a partial pick of a group, gets none: there is no
   single box to resize, and a handle on each member would offer a drag with
   nowhere to go. A handle is **8 screen pixels**, drawn and hit-tested at
   `8 / scale` dots, so it is the same size to the pointer at every zoom. A handle
@@ -370,13 +413,64 @@ pinned.
     turn the box is transposed, so the font height comes from the side across the
     text and the font width is solved along it, exactly as a rotated barcode
     takes its module width from its run
+- **Resizing a group scales its members.** The handle's untouched corner or
+  edge is the anchor; a corner scales both axes, a side handle one, each freely
+  — as a single element resizes, and as ZPL's independent font height and width
+  allow. The moving edge may go as far as the room its fixed edge leaves, so the
+  anchor never has to move, and the joint box is held to the same **20 × 20
+  minimum**. Every member is put back to how it was at the press and scaled
+  from there, about the anchor, by the same rule a change of print resolution
+  applies (§11) with one factor per axis: positions and boxes outright; a text
+  element's font height by the factor across its lines and its font width by
+  the one along them, a barcode's bar height and module width likewise, the two
+  swapping axes at a quarter turn, and their boxes then coming back from the
+  metrics; a block's wrap width and indent along, its line spacing across, its
+  line count kept — a scale is a scale, not a re-wrap; a frame's thickness by
+  the smaller factor, then held under half its shorter side; an image's box,
+  its bitmap re-dithering at the new size on the next paint. Members have no
+  minimum of their own — a group holding a 12-dot text still shrinks — only a
+  floor of one dot on every size. Because the members snap to what will print,
+  their joint box drifts a little from the one dragged, so the group is shifted
+  back to put the anchored edge where the press had it, then held inside the
+  label as one, the way a drag is.
 - **Double click** (same element, within 500 ms) opens that element's edit
   dialog. A modified click is a selection gesture and never a double click.
 - **Right click** selects the element under the pointer and opens a context menu
   (§6.6). If that element is part of a group the rest of the group is kept, and
   the element becomes the primary — so the z-order commands in the menu act on
   the element that was actually pointed at.
-- **Delete** removes every selected element, not only the primary.
+- **Delete** removes every selected element, not only the primary. A group left
+  with one member by it is no group and is dissolved.
+- **A grouped element is never selected on its own except by a direct pick.**
+  Every other way into the selection widens a pick of one member to its whole
+  outermost group: a plain click on a member selects the group with that member
+  as the primary; a shift-click on a member adds the whole group, again with
+  that member primary, or drops the whole group if it was selected; a rubber
+  band that overlaps one member catches the group; and assigning a single
+  element programmatically selects its group. Dragging, Delete and Align then
+  treat the group as one because the selection *is* the group. The widening is
+  done in the model, not the canvas — the canvases only say which keys were
+  down — so the two frontends cannot disagree about it.
+- **A directly picked element behaves as a loose one** for as long as it is
+  selected: handles, resize, drag, Delete and Align act on it alone (Align
+  treats it as a unit of its own beside whatever else is selected), and its
+  editor opens as ever. Its group is still seen by the z-order commands, which
+  move the whole top-level group it is in (§6.2), and by Group and Ungroup
+  (§6.2). A plain click on it keeps the pick; a plain click on another member
+  of its group selects the whole group again.
+- **A selected group is outlined**: a dashed rectangle outside the members'
+  joint bounding box, in the rubber band's blue with a longer dash (8 on, 4
+  off) so the two never read as one — and so is each group nested inside it.
+  The innermost outline drawn sits 2 dots outside its members, and each level
+  enclosing it sits 2 dots further out again, so a nested box is always inside
+  its parent's. A group only some of whose members are selected has no outline
+  (a box around the picked ones would say the group is those), and neither has
+  a group of one. Each member keeps its own selection rectangle; the handles,
+  when the selection is a whole group, sit on the members' joint box with the
+  outline 2 dots outside them.
+- **Double click on a member** opens that member's editor, and **Print This
+  Element** on a member toggles that member alone — both name one element and
+  act on one.
 
 ---
 
@@ -405,15 +499,70 @@ must report the real error and leave the flag set.
 
 ### 6.2 Edit
 
-Undo, Redo, Delete, then Bring to Front / Bring Forward / Send Backward / Send
-to Back, then an **Align** submenu. Delete and the four z-order items are
-disabled when nothing is selected; the raise pair is disabled when the selection
-is already on top and the lower pair when it is already at the bottom.
-Sensitivity is re-evaluated each time the menu opens.
+Undo, Redo, Delete, then Select All / Deselect All / Invert Selection, then
+Group / Ungroup / Remove from Group, then Bring to Front / Bring Forward / Send
+Backward / Send to Back, then an **Align** submenu. Delete and the four z-order
+items are disabled when nothing is selected; the raise pair is disabled when
+the selection is already on top and the lower pair when it is already at the
+bottom. Sensitivity is re-evaluated each time the menu opens.
 
-The z-order commands move the **primary** element only, even while a group is
-selected: what "bring forward" should mean for three elements at different
-depths is a question of its own, and answering it badly is worse than leaving it.
+**Select All** (Ctrl+A) selects every element, whole groups included, with the
+topmost element as the primary; it is enabled while anything is left
+unselected. **Deselect All** (Ctrl+Shift+A) clears the selection, and is
+enabled while there is one. **Invert Selection** selects exactly what was not
+selected — widened to whole groups, so a member picked directly (§5) comes
+back with the rest of its group — and is enabled whenever there are elements;
+inverting everything leaves nothing, inverting nothing selects everything. All
+three change the selection and never the document, so none records an undo
+entry (§12), and a shortcut that arrives with nothing to do does nothing.
+
+**Group** (Ctrl+G) wraps the selection in a new group. It is enabled when the
+selection holds two or more *units* — a unit being a loose element or a whole
+top-level group — so two loose elements, a group plus a loose element, or two
+groups can be grouped, and exactly one group on its own cannot. Every member
+gets a fresh id put in front of its path, which is how a group inside the
+selection is **nested** in the new one rather than folded into it. Whole
+top-level groups go in, even where the selection holds only a directly picked
+member of one (§5): a group cannot be split by grouping, and afterwards the
+selection is the whole new group. Grouping also makes the members **one
+contiguous run in the z-order**, keeping their order among themselves — so a
+group already among them keeps its own run — and placing the run where the
+topmost member was, so the group stays above everything that member was above.
+**Ungroup** (Ctrl+Shift+G) dissolves the outermost group of every selected
+element — for every member of that group, not only the selected ones — so
+groups nested inside it become groups of their own, which another Ungroup
+peels in turn. It is enabled when any selected element is grouped; the
+selection is left as it was. Both are document changes and undoable.
+
+**Remove from Group** takes the selected *unit* out of the group around it,
+one level up. The unit is what the outline says is selected (§5): an element
+picked directly on its own, or a whole group every member of which is picked —
+so a directly picked member leaves its innermost group, and a nested pair
+picked entirely leaves the group around it, keeping its own id. Walking each
+selected element's path from the outside in, the first group wholly inside the
+selection is that unit; none means the element is; one at the very top means
+the whole top-level group is selected and there is nothing to lift it out of.
+The command is enabled when some selected element is grouped and its whole
+top-level group is not inside the selection — so a plain click on a group
+lights Ungroup and never this, and a Ctrl-click lights this. What is lifted
+lands just above the last member it leaves behind in the z-order, so every
+group's run stays one run and the lifted element stays on top of what it left,
+where it was; several are lifted from the top down so they keep their order
+among themselves. A group left with one member is no group and is dissolved.
+The selection is left as it was; one undo entry; no keyboard shortcut, since it
+is reached after a Ctrl-click, which the context menu (§6.6) is already under.
+
+The z-order commands move the **unit holding the primary** element: the primary
+alone, or its whole group as one run. Not the rest of a loose multi-selection —
+what "bring forward" should mean for three elements at different depths is a
+question of its own, and answering it badly is worse than leaving it. A group is
+different: it has one depth by construction. Stepping past a neighbouring group
+steps past all of it, so that group's run survives too. The raise and lower
+pairs are enabled from the units, not from the primary's own index: a group
+whose run is at the top cannot go higher even when the primary is not the last
+element in the list. Changing the depth of anything rebuilds the list from its
+units, which also mends a group whose members a hand-edited file left
+scattered.
 
 **Align** holds six commands, in this order: Align Left, Centre Horizontally,
 Align Right, Align Top, Centre Vertically, Align Bottom. Each moves one axis and
@@ -421,11 +570,16 @@ leaves the other alone, and all six are disabled when nothing is selected.
 
 | Selection | What it lines up against |
 |---|---|
-| Two or more elements | The selection's own bounding box — Align Left takes every member to the leftmost x in the group, Centre Horizontally puts every member's centre on the group's centre |
-| Exactly one element | The label, which is the only other thing there is to line it up with — Align Left is `x = 0`, Centre Horizontally is `(label_width − width) / 2`, Align Right is `label_width − width` |
+| Two or more units | The selection's own bounding box — Align Left takes every unit to the leftmost x in the selection, Centre Horizontally puts every unit's centre on the selection's centre |
+| Exactly one unit | The label, which is the only other thing there is to line it up with — Align Left is `x = 0`, Centre Horizontally is `(label_width − width) / 2`, Align Right is `label_width − width` |
 
-Results are clamped into the label the way a drag is, so an element larger than
-the label lands against the edge rather than at a negative coordinate. An align
+What is lined up is each **unit** — a loose element, or a whole group moved as
+one rigid box by one shared delta — so aligning left does not stack a group's
+members at the same x and undo the very arrangement grouping was meant to keep.
+A group selected on its own is one unit and lines up against the label.
+
+Results are clamped into the label the way a drag is, so a unit larger than the
+label lands against the edge rather than at a negative coordinate. An align
 that moves nothing records no undo entry. Nothing else about an element changes:
 a field placed by `^FT` is written back as `^FT` at its new position, and a
 rotated element aligns by its footprint, which is axis-aligned at every quarter
@@ -445,7 +599,6 @@ those two groups. §5 describes what each does to the scale.
 |---|---|
 | **Label Size** | §7 |
 | **Default Printer** | §7 |
-| **Printer Fonts…** | §10.4 |
 
 ### 6.5 Toolbar
 
@@ -465,8 +618,11 @@ text-labelled, and the icon theme has no object-align icons to label six with.
   in the design and in the saved file but leaves it off the printed label. This
   is how a user suppresses an element that would otherwise print through an
   image covering it.
+- **Group / Ungroup / Remove from Group**, under the same rules as in the Edit
+  menu (§6.2).
 - **Bring to Front / Bring Forward / Send Backward / Send to Back**, disabled at
-  the ends of the z-order.
+  the ends of the z-order — of the units, so a group at the top offers neither
+  raise even when the member right-clicked is not the last element (§6.2).
 
 ### 6.7 The unsaved-changes prompt
 
@@ -521,9 +677,9 @@ file choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
-| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across all three of these dialogs. |
-| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) flips Colour's effect a second time (§18). |
-| **Edit Barcode** | Value; Bar Height; Module Width; Orientation; Value Text; Text Height; UCC Check Digit; Mode; Reverse | Bar height 20–300 dots, module width 1–20, text height 6–200. The remaining four are `^BC`'s own parameters (§3.3); width is derived from the symbol, never entered. |
+| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across every element editor that has one. |
+| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) inverts whatever is already on the label, ignoring Colour (§18). |
+| **Edit Barcode** | Symbology; Value; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the five choices of §3.3; the rest are that symbology's own parameters, and Ratio, Check Digit and Mode are shown only for the symbologies that have one — Check Digit's own label changes with it. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
@@ -550,12 +706,19 @@ file choosers and the prompts — are modal.
 | Text in a block | as above, with `^FB<width>,<lines>,<spacing>,<justification>,<indent>` between the font and the data |
 | Text, downloaded font | `^FO<x>,<y>` / `^A@<orientation>,<font_height>,<font_width>,E:<NAME>.TTF` / `^FD<text>^FS` |
 | Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>[,<colour>[,<rounding>]]` / `^FS` — the colour and rounding are written only when they are not `B` and `0` |
-| Barcode | `^FO<x>,<y>` / `^BY<module_width>` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` |
+| Barcode | `^FO<x>,<y>` / `^BY<module_width>[,<ratio>]` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` — or `^B3`, `^BE`, `^B2`, `^BS` for the other four symbologies, each in its own parameter order (§3.3) |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
 
 Each command is on its own line. `^BY` must be emitted: without it the printer
 uses its own default module width of 2, which pins the barcode's physical size
 to the head resolution and makes it the one element that cannot be rescaled.
+Its ratio is written too, for Code 39 and Interleaved 2 of 5, when it is not
+the default 3.0.
+
+`^PQ<quantity>[,<pause count>,<replicates>,<override pause>]` is written last,
+immediately before `^XZ`, and only when at least one of its four values is not
+ZPL's own default (`1,0,0,N`) — trimmed to however many of them that takes, so
+a quantity-only label writes just `^PQ5` rather than `^PQ5,0,0,N`.
 
 **Graphic encoding** (`^GFA`): one bit per dot, rows padded to whole bytes,
 `bytes_per_row = ceil(width / 8)`, data as uppercase hex. **A set bit is
@@ -595,7 +758,7 @@ nothing.
 
 ### 8.2 Designer metadata
 
-Four `^FX` comment keys, which printers ignore:
+Five `^FX` comment keys, which printers ignore:
 
 | Key | Payload | Purpose |
 |---|---|---|
@@ -603,6 +766,20 @@ Four `^FX` comment keys, which printers ignore:
 | `^FXDESIGNER_PREVIEW:` | base64 JPEG | The image at original quality, so a reopened file need not be rebuilt from the 1-bit data |
 | `^FXDESIGNER_PATH:` | plain filesystem path | Where the image came from |
 | `^FXDESIGNER_NOPRINT:` | base64 of a whole element block | An element kept in the design but not printed |
+| `^FXDESIGNER_GROUP:` | comma-separated integers | The groups the next field belongs to, outermost first (§3.2, §5) |
+
+The group marker is written on its own line immediately before each member's
+block — before the `^FXDESIGNER_NOPRINT:` line of a hidden member, and outside
+its payload, so the payload stays exactly the element's own ZPL. Its value is
+the member's whole path: `1,2` is "in group 2, inside group 1". Groups are
+numbered 1, 2, 3… in order of first appearance, walking the fields in file
+order and each path from the outside in, whatever ids a session's grouping and
+ungrouping left in memory. A level with only one member is not a group and is
+left out of the path, and if nothing is left the marker is not written. An
+element that writes nothing (an image with no source) gets no marker either,
+since the marker would otherwise attach to whatever field came next. A file
+from a build before groups could nest reads back unchanged — its single
+integer is a path of one — and such a build ignores a nested marker as a whole.
 
 **`^FX` comments end at the next caret, not at the end of the line.** Any
 payload that could contain a caret must therefore be base64 encoded — otherwise
@@ -614,8 +791,9 @@ path are caret-free and are stored as-is.
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
 `^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
-the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the label transforms
-(`^LH`, `^LS`, `^LT`, `^PO`, `^PM`, `^LR`), and the four metadata keys.
+the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
+family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
+`^PO`, `^PM`, `^LR`), `^PQ`, and the five metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -661,11 +839,14 @@ the power-up module width of 2 and **printed at half the width the file asked
 for** (404 dots to 202), and a save wrote that back. Nothing was said either,
 because `^BY` is a command the model holds.
 
-The ratio is carried but not modelled: ZPL states it has no effect on
-fixed-ratio symbologies, and Code 128 is one, so it changes nothing this
-designer draws. It round-trips so that a file which gave one does not lose it.
-`^BY`'s `h` is read but never written, because the height always goes on `^BC`
-explicitly and there is nowhere for the two to disagree.
+The ratio is carried but not modelled for Code 128, EAN-13 and the UPC/EAN
+extension: ZPL states it has no effect on fixed-ratio symbologies, and all
+three are, so it changes nothing this designer draws for them. Code 39 and
+Interleaved 2 of 5 are not fixed-ratio, and it does change their own wide
+elements' width (§3.3). Either way it round-trips so that a file which gave
+one does not lose it. `^BY`'s `h` is read but never written, because the
+height always goes on the barcode command itself and there is nowhere for the
+two to disagree.
 
 **`^FT` places a field from its baseline, and `^FO` from its top.** `^FT`
 opens a field exactly as `^FO` does; ignoring it does not misplace such a field
@@ -679,11 +860,13 @@ where a baseline sits inside a character cell is measured from the font file and
 is only an estimate of what the printer will do - and normalising bakes that
 estimate into the file every time such a label is opened and saved.
 
-**A symbology that cannot be drawn is dropped, not redrawn as text.** `^B3`,
-`^BQ`, `^BX` and the rest reached the text branch, so a Code 39 sixty dots tall
-arrived as nine-dot text holding the barcode's data, and saved that way. The
-label gaining something that was never in it is worse than losing the barcode,
-which the load warning names either way.
+**A symbology that cannot be drawn is dropped, not redrawn as text.** `^BQ`,
+`^BX` and the rest still reach the text branch's own trap otherwise, so a QR
+code sixty dots tall would arrive as nine-dot text holding its data, and save
+that way. The label gaining something that was never in it is worse than
+losing the barcode, which the load warning names either way. `^B3`, `^BE`,
+`^B2` and `^BS` used to be dropped the same way; they are real symbologies now
+(§3.3) and reach the barcode branch instead.
 
 **Read the source as commands, not as lines.** A ZPL command is a caret (or
 tilde) plus exactly two characters, and its parameters run to the next caret -
@@ -704,9 +887,64 @@ than treated as an error, and missing parameters fall back to the defaults in
 gone once the user saves, so on load the application lists the print-affecting
 commands it could not model.
 
+**Control-character redefinition is honoured on read and normalised on
+save.** `^CC`, `^CT` and `^CD` (and their `~` twins) move the format prefix,
+the control prefix and the parameter delimiter - `^`, `~` and `,` - for every
+byte that follows, and the tokeniser knows only the defaults. Rather than
+teach it, and every parameter split after it, a label that moves a character
+is rewritten once, before anything reads it, into the label it would have
+been with the defaults: commands are re-spelled with `^` and `~`, delimited
+parameters with `,`, and the redefinitions themselves are left out. The
+rewrite runs ahead of the tokeniser at every entry that takes file text -
+parsing, the load warning's own scan, and the file-chooser preview - and a
+text holding none of the six default spellings is not scanned at all, since
+the first redefinition can only ever be spelled with the defaults.
+
+The scan follows the tokeniser's own rules so that its output tokenises as
+the printer would have read the file: a prefix starts a command only when
+two name characters follow (a bare `~` in `^FC%,#,~` is data), parameters run
+to the next format prefix or command-starting control prefix, and the
+characters in force are tracked from the start, so the restoring command,
+spelled with the *new* character (`^CC/` … `/CC^`), is found and dropped
+too. The delimiter is never rewritten inside `^FD`, `^FV`, `^FX` or `^FN`,
+whose parameters are text, and only in the leading counts of `^GF`, `~DG`
+and `~DY`, whose payload follows them.
+
+Field data is the one place the rewrite is not a substitution. The point of
+`^CC` is to put a literal `^` in a field, and once `^` is the prefix again
+that byte would end the field, so any default character the data holds
+*while it is not in force* becomes the `^FH` escape for it (`_5E`, `_7E`) -
+under the field's own indicator if it has a `^FH`, otherwise under `_` with a
+`^FH` supplied ahead of the `^FD`, in which case any `_` already in the data
+is escaped as well (`_5F`) so the new indicator cannot invent an escape. A
+`^FX` comment gets a space for each such character instead; its content is
+not modelled and a `^` in it would end it early.
+
+On load the application then reports the redefinitions as written
+(`^CC/, /CC^`), saying the label has been read with them in force and that
+saving writes the standard characters in their place and leaves the
+redefinition out, so the saved file prints the same label but no longer
+changes the printer's control characters. The ordinary unsupported list
+follows as usual, computed on the rewritten text, so it names what is really
+there.
+
 Before parsing, `^FXDESIGNER_NOPRINT` payloads are decoded and expanded back
 into the line stream in place, preceded by a marker, so hidden elements keep
 their z-order position.
+
+**A marker ahead of a field is used up by that field, whatever it builds.** The
+no-print marker and the group marker both flag "the next field"; a field that
+turns out to be one the model cannot hold (§3.3) consumes them all the same, so
+neither can fall through to the supported field after it and hide or group one
+the file never meant. Only a marker the `^FO` has not yet followed is carried.
+A group marker whose value is not a comma-separated list of integers is
+ignored as a whole; duplicate ids in a hand-edited file simply mean the same
+group; a path that disagrees with another member's — the same id at two depths
+— is kept as it is, since selection and units go by the outermost id and at
+worst such elements do not group, and the next save renumbers what is
+consistent and drops what is not a group; members a file leaves scattered
+through the z-order are not moved on load (the file opens as it is), and are
+gathered into one run the first time their depth is changed (§6.2).
 
 **Restoring an image**, in order of preference:
 
@@ -726,6 +964,18 @@ their z-order position.
 2. Open a TCP connection to the configured address and port (10 s timeout). On
    failure, show the error and stop.
 3. Send the document's ZPL as UTF-8 bytes and close the connection.
+
+**`^PO`, `^PM` and `^LR` are always sent explicitly in step 3, whatever their
+value.** A real printer keeps these three after the job that set them —
+`^XA...^XZ` does not reset them — so a label that does not invert, mirror or
+reverse-print still sends `^PON`, `^PMN` and `^LRN`, clearing whatever an
+earlier job (from this app or elsewhere) left in effect. A saved `.zpl` file
+is never sent to a printer and has no such state to correct, so Save keeps
+omitting them at ZPL's own default (§8.1).
+
+If the label carries a `^PQ`, it is sent as part of that ZPL like any other
+command, and the printer prints that many copies itself — this step does not
+loop the send.
 
 Elements with `print_enabled` false are sent as `^FXDESIGNER_NOPRINT` comments
 rather than as fields, so the printer ignores them.
@@ -816,6 +1066,64 @@ family), Delete (the selected object) and Refresh. When the printer is
 unreachable it says so and disables Delete rather than showing an empty list as
 if the printer had no fonts.
 
+### 10.5 Printer object manager
+
+**Printer → Objects…** lists every object stored on the printer — any of
+R:/E:/B:/A:/Z:, any extension — with Store, Retrieve, Delete and Refresh,
+same status handling as the font and graphic managers. Where the font and
+graphic managers scope their `^HW` request to `E:*.TTF` and `*.GRF`
+respectively, this one is unscoped (`d:*.*`) on purpose: the point of this
+manager is to surface everything the printer is holding, including objects
+neither of the other two recognizes — a saved format, firmware/config
+housekeeping, a printer's own WML front-panel menu, anything another tool
+put there. `Z:` is queried here but not by Graphics: it is read-only
+factory content (a default WML menu, an RFID recipe file), not somewhere a
+user's own graphic would ever be stored.
+
+Store and Retrieve both exist here, unlike Upload in the font and graphic
+managers, because both have a genuinely generic printer command behind
+them. Store sends `CISDFCRC16`, which writes an arbitrary local file to the
+printer's `E:` drive verbatim — the only device it supports, so its prompt
+asks only for a name and extension, never a device — with CRC and checksum
+both sent as `0000`, which the command documents as skipping that field's
+validation entirely, rather than risk a wrong implementation of an
+under-specified checksum silently failing every upload. Retrieve sends the
+`file.type` Set/Get/Do command, which hands back a named object's bytes
+verbatim regardless of what kind of object it is, and offers them for
+saving to a local file exactly as retrieved, no decoding attempted. Neither
+`~DY` nor `~DG` — the font and graphic managers' own Upload — is generic
+this way; each is locked to its one format.
+
+Object names round-trip through this manager exactly as the printer gives
+them, never forced to upper case the way the font and graphic managers
+force theirs: those two only ever create upper-case 8.3 objects, but a
+`CISDFCRC16`-stored object is not necessarily one (the command's own manual
+examples are lower case), and `file.type` retrieval is case sensitive — a
+name normalised the wrong way would silently stop matching the real object.
+
+Delete sends `^ID`, the same extension-agnostic command the font and graphic
+managers already use, and asks for confirmation first, same as Graphics —
+except for a `Z:` object, where Delete is unavailable: `^ID` does not reach
+that device at all and silently ignores a target there, so the control is
+withheld rather than let a click report nothing and change nothing.
+Deleting an object that `graphic_store`'s local cache also has pixels for
+(see §18) clears that cache entry too, so a `^XG`/`^IM`/`^IL` already on the
+canvas cannot go on showing pixels for an object the printer no longer has.
+
+### 10.6 Printer console
+
+**Printer → Console…** is a free-form send/reply dialog for whatever the
+type-specific managers above don't cover - one-off diagnostics like `~HS`
+host status or `~HI` host identification, or an SGD `getvar`/`setvar` not
+wrapped by any manager. Text is sent to the printer exactly as typed, with
+no `^XA`/`^XZ` wrapping added, so both immediate commands and full label
+formats work unchanged; whatever the printer writes back is shown beneath
+it in a scrollback log, or `(no reply)` if nothing came back before the
+same timeout the other managers use. A reply that is not valid UTF-8 (e.g.
+the bytes of a retrieved object) is shown with replacement characters
+rather than failing - this is a diagnostic view, not a retrieval path;
+Objects → Retrieve already exists for getting bytes back losslessly.
+
 ---
 
 ## 11. Print resolution
@@ -848,7 +1156,9 @@ from either dialog — offer three choices:
 Rescaling multiplies positions, sizes, label dimensions, font height and width,
 frame thickness and barcode module width, rounding to whole dots; text widths
 are then recomputed from font metrics rather than scaled, and images re-dither
-from their source at the new size.
+from their source at the new size. It is the one rule for scaling an element
+that resizing a group (§5) applies too, there with a factor per axis and about
+the group's anchor rather than the label's origin.
 
 **A file with no recorded resolution is assumed to be 203 dpi**, not the
 printer's current setting. Adopting the printer's setting would stamp a guess
@@ -905,6 +1215,95 @@ references and the `^FN`/`^FD` pairs are re-emitted, and nothing is drawn,
 because the geometry it fills lives on the printer. Opening one used to empty
 the file.
 
+**`^IM`/`^XG`/`^IL`/`^IS` are the graphic counterpart of `^DF`/`^XF`.** `^IS`
+saves everything a format has drawn so far as a named image; `^XG` and `^IM`
+recall one inside a field, positioned by `^FO` like any other field (`^XG` also
+takes a magnification factor, 1 to 10 on each axis; `^IM` is "identical to
+^XG... except there are no sizing parameters", so it is always 1,1); `^IL`
+recalls one at the very start of a format, always at `^FO0,0`, for the fields
+after it to overlay.
+
+Unlike `^DF`/`^XF`, resolution here is real, not only round-tripped:
+`zplcore.graphic_store` keeps an in-memory registry, keyed on name and
+extension (**not** on the `R:`/`E:`/`B:`/`A:` device prefix — see §18), for as
+long as the process runs. Parsing a file that carries `^IS` captures a real
+image into that registry; a later `^XG`/`^IM`/`^IL` — in the same file, or a
+different one parsed afterwards in the same running app — resolves it back.
+The lookup is live, not cached, so an element already on screen updates the
+next time it is drawn once some other file's `^IS` fills the name in.
+
+Resolution never changes what a save writes: an `^XG`/`^IM` field always writes
+back the command and the name it named, never the resolved pixels — inlining
+them would turn a small reference into a large embedded image, and drop the
+device path a real printer still needs to look the object up by.
+
+| Written | Opens as | Saves as |
+|---|---|---|
+| `^FO50,50^XGR:LOGO.GRF,2,2^FS` | a graphic field, magnified 2× if this session has `R:LOGO.GRF`, else a placeholder naming it | `^FO50,50^XGR:LOGO.GRF,2,2^FS` |
+| `^FO50,50^IMR:LOGO.GRF^FS` | the same, unmagnified | `^FO50,50^IMR:LOGO.GRF^FS` |
+| `^ILR:LOGO.GRF` | the document's `image_load`; drawn as a background at 0,0 if resolved | `^ILR:LOGO.GRF`, right after `^XA` |
+| `^ISR:LOGO.GRF,Y^FS` | recorded on the document; captures everything drawn before it into the store | `^ISR:LOGO.GRF,Y^FS`, after the elements it captured |
+
+A `+ Graphic` button creates an `^XG`/`^IM` reference the same way `+ Time` and
+`+ Serial` create theirs; double-clicking one opens an editor for its command,
+device, name, extension and magnification. `^IL` and `^IS` have no creation
+dialog of their own, the same as `^DF`/`^XF` — they round-trip a file that
+already carries them rather than being authored from a blank document.
+
+**Printer → Graphics…** talks to the real printer, the same way Settings →
+Printer Fonts… already does for fonts — not `graphic_store`'s local memory,
+though it keeps that in step as a convenience (see below). Every request
+goes to whichever printer is actually in effect this session
+(`self.printer_address`/`self.printer_port`, which a session-only "Set
+Printer for This Session…" override moves without touching the persisted
+default) — never the persisted default itself.
+
+- **View** queries the printer live via `^HW`, one request per device
+  (`R:`/`E:`/`B:`/`A:`, since graphics — unlike fonts, always `E:` — can live
+  in any of them), scoped to `*.GRF` — the canonical ZPL graphic extension,
+  and the one Store writes — the same way `query_printer_fonts` is scoped to
+  `E:*.TTF`. An unscoped `*.*` was tried first and rejected: a printer's own
+  memory holds plenty that is not a graphic at all — fonts, firmware/config
+  objects, whatever else came from the factory or another tool — and it made
+  the dialog list all of it. The `.GRF` filter is applied twice, once in the
+  request and again on the reply, so a printer model that ignores the
+  pattern and answers with its whole directory anyway is still filtered
+  correctly. Reachability is judged by the first device queried, the same
+  rule `query_printer_fonts` already uses for its one query; a later device
+  answering nothing is not treated as the printer going away.
+- **Store…** builds a `~DG` payload — the same 1-bit, Floyd-Steinberg
+  dithered, hex-encoded bitmap `^GF` fields already carry — from a PNG/JPG
+  picked off disk and a chosen device/name/extension, and uploads it for
+  real.
+- **Retrieve…** fetches an object's real bytes back via `^HG` (Host
+  Graphic), read the same request/read-reply way `^HW`'s listing already is.
+  Confirmed against real hardware: the reply is not a self-contained image
+  file — it is the same shape a `~DG` upload writes (name, total bytes,
+  bytes per row, then the bitmap itself ASCII-hex encoded), just missing
+  the device and extension a `~DG` carries. `graphics.decode_data()` reads
+  that data half the same way it already does for `^GF` fields. If a reply
+  does not start this way, PIL is tried on it directly as a fallback, in
+  case some other firmware genuinely answers with a self-contained image;
+  a reply that fits neither raises with its length and a hex preview
+  rather than a bare decode error. The fetched image is then offered as a
+  file to save.
+- **Delete** sends `^ID...^FS`, the same shape `delete_printer_font` already
+  uses, and asks for confirmation first, since — unlike everything else this
+  designer does to a stored graphic — it cannot be undone from here.
+
+Store and Retrieve also mirror a successful result into `graphic_store`'s
+local, in-session cache, purely so an already-placed `^XG`/`^IM`/`^IL`
+element updates on screen without a second round trip to the printer — the
+same way uploading a font also registers it locally for the canvas to draw
+with. An object the printer already had before this session opened is
+listed by View but shows no thumbnail until Retrieved. Two real devices can
+genuinely hold distinctly-named objects (a real `R:LOGO.GRF` and a real
+`E:LOGO.GRF`); View's list keeps both distinct, but the *locally cached
+pixels* for one can still overwrite the other's if both are Retrieved in one
+session, since `graphic_store.key()` does not distinguish device (see §18).
+None of this touches the Document: nothing about it is written to the saved
+ZPL, and it never marks the file as having unsaved changes.
+
 **`^LH` and `^LS` are folded into coordinates; `^LT` is not.** An element
 holds the **absolute** dot position it will print at, so the canvas, dragging,
 clamping and alignment need to know nothing about either command. A save
@@ -958,12 +1357,12 @@ to come back as the group.
 - **One entry per user action.** A drag or a resize is one entry, recorded when
   the mouse is released — not one per motion event.
 - Every document change is undoable: adding, deleting, moving, resizing,
-  reordering, aligning, editing an element through its dialog, toggling Print
-  This Element, and changing the label size (including the element clamping that
-  a smaller label causes).
+  reordering, aligning, grouping and ungrouping, editing an element through its
+  dialog, toggling Print This Element, and changing the label size (including
+  the element clamping that a smaller label causes).
 - Changing the **selection** is not a document change and is not undoable: a
-  click, a shift-click and a rubber band record no entry. An align that moves
-  nothing records none either.
+  click, a shift-click, a rubber band, Select All, Deselect All and Invert
+  Selection record no entry. An align that moves nothing records none either.
 - Performing a new action after undoing discards the redo branch.
 - History is capped at 50 entries, oldest discarded.
 - Loading a file clears the history — undo never crosses a file boundary.
@@ -1038,6 +1437,7 @@ treated as corrupt and falls back too.
 
 | Shortcut | Action |
 |---|---|
+| Ctrl+N | New |
 | Ctrl+O | Open |
 | Ctrl+S | Save |
 | Ctrl+Shift+S | Save As |
@@ -1046,6 +1446,10 @@ treated as corrupt and falls back too.
 | Ctrl+Z | Undo |
 | Ctrl+Shift+Z, Ctrl+Y | Redo |
 | Delete | Delete selected element |
+| Ctrl+A | Select All |
+| Ctrl+Shift+A | Deselect All |
+| Ctrl+G | Group |
+| Ctrl+Shift+G | Ungroup |
 | Ctrl+] | Bring Forward |
 | Ctrl+Shift+] | Bring to Front |
 | Ctrl+[ | Send Backward |
@@ -1060,7 +1464,10 @@ Three notes for a port:
 
 - Shortcuts are global to the window, not only active while a menu is open —
   which is why Page Up / Home were avoided for the z-order actions: they would
-  be taken away from scrolling the canvas.
+  be taken away from scrolling the canvas. For the same reason Ctrl+A means
+  the main window must never hold a text entry of its own: the binding would
+  take select-all-text away from it. The element editors are windows of their
+  own and keep theirs.
 - A shortcut is subject to the same enable/disable rules as its menu item. Ctrl+Y
   does nothing when there is nothing to redo, and Delete does nothing with no
   selection; neither is an error.
@@ -1096,7 +1503,7 @@ message — never a swallowed exception or a placeholder.
 | Frame | 200 × 150 dots, 2 dot thickness |
 | Frame dialog limits | width 10–800, height 10–1200, thickness 1 to `min(w,h)/2` |
 | Barcode | Code 128, `"123456789"`, 100 dot bar height, module width 2, value printed below |
-| Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200 |
+| Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200, ratio 2.0–3.0 |
 | Image | 200 × 200 dots, JPEG/PNG source |
 | Minimum element size when resizing | 20 × 20 dots |
 | Resize handle size and hit radius | 8 **screen pixels** — `8 / scale` dots, so it neither shrinks out of reach when zoomed out nor covers the element when zoomed in; where the radius puts two handles in reach, the nearer wins |
@@ -1137,11 +1544,21 @@ rather than requirements:
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
   drawn whole, wrapped, whether or not a font file is available.
-- **Code 128 only.** No other symbology is offered, and the value is not
-  validated against the subset.
+- **Five symbologies: Code 128, Code 39, EAN-13, Interleaved 2 of 5 and the
+  UPC/EAN extension.** QR, Data Matrix, PDF417 and the rest are still not
+  offered, and no symbology's value is validated against its own character
+  set or length - EAN-13 and the extension fit whatever they are given rather
+  than rejecting it (§3.3), and Code 39 draws an out-of-set character as a
+  blank rather than refusing the barcode.
+- **Code 39's Full ASCII Mode is not simulated.** The `+$`/`-$` escapes a
+  scanner configured for it would read specially are drawn as the literal `+`,
+  `$` and `-` characters they are - Code 39 itself has no such mode; it is a
+  convention some scanners apply to the decoded text, one this designer has
+  no way to know a given printer's scanner follows.
 - **Modes `U` and `D` are carried but not simulated.** Only `A` changes the
   symbol; UCC case mode and UCC/EAN mode round-trip and can be chosen, but the
-  canvas draws them as `N`. The same goes for `>` FNC1 escapes in `^FD`.
+  canvas draws them as `N`. The same goes for `>` FNC1 escapes in `^FD`. Both
+  are Code 128 only - the other four symbologies have no mode at all.
 - **The exact subset-switching threshold is inferred.** Zebra does not publish
   where mode A moves into subset C; the rule above is the conservative reading,
   and a printer would settle it.
@@ -1160,6 +1577,10 @@ rather than requirements:
   inversion against whatever is beneath — not a whole-image invert. Inverting
   the finished image would turn the white background black, which is not what a
   printer does, so nothing is drawn for it in either the canvas or the preview.
+- **`^PQ`'s pause count, RFID replicates and override-pause flag round-trip but
+  have no editor and are not otherwise acted on.** Only quantity, the common
+  case, is exposed in Label Settings; a file from another tool that sets the
+  other three keeps them through a save, the same treatment `^LT` gets.
 - **The canvas shows a `^FN` placeholder; the preview does not.** The canvas
   answers "what am I editing", so an unfilled variable field draws its prompt or
   its number rather than becoming invisible. The preview answers "what will
@@ -1170,10 +1591,78 @@ rather than requirements:
   would make such a barcode a hairline on the canvas. A `^BY` that does give a
   height is always obeyed; this is the fallback when nothing in the file has
   said anything at all.
-- **`^FR` is approximated as an ink/background swap on the field's own
-  footprint, not a true sample-and-invert of whatever is already on the label
-  underneath it.** Both canvases and the preview draw the field's background
-  solid and its ink in the opposite colour, which reproduces the common case —
-  a field reversed against a solid `^GB` box already there — without any new
-  compositing machinery. The cost: a field reversed with nothing solid beneath
-  it shows as a filled box, where a real printer would show nothing at all.
+- **`^FR` inverts whatever is already on the label under the field's own ink
+  shape — glyph outlines, bar rectangles, the frame's own border or fill —
+  and touches nothing outside it, confirmed against a real printer.**
+  Inverting blank (white) label gives black, so a reversed field with
+  nothing already printed under it prints its own ink normally, the same as
+  an unreversed field; only where it overlaps something already filled in
+  (a solid `^GB` box, say) does it come out as a genuine white cutout. Both
+  canvases do this live, with `QPainter.CompositionMode_Difference` /
+  `cairo.OPERATOR_DIFFERENCE`; the offline preview does the equivalent by
+  cropping, inverting and pasting back under a mask of the field's own ink.
+  Two residual approximations: `^GB`'s `Colour` is ignored whenever `Reverse`
+  is ticked — inferred from the same hardware description rather than itself
+  hardware-tested, since `^FR` replaces the field's normal print outright and
+  leaves nothing for `Colour` to modulate — and the font-less `^FB` fallback
+  (no TrueType file at all) inverts per line's bounding box rather than per
+  glyph.
+- **A label made smaller can squash a group.** Shrinking the label (§7) clamps
+  every element into the new bounds one by one, so two members that both hit
+  the edge end up closer together than they were — the label changed, not the
+  group, and a multi-selection behaves the same way. A drag or an align keeps
+  the shape; only the label size does not.
+- **A group resizes freely, never proportionally.** Each axis scales on its
+  own, as a single element's does; there is no Shift-held proportional drag.
+  And a group scale rounds each member to whole dots, so a group scaled up and
+  back down again is not always the group it was.
+- **A group cannot be split by grouping, and Ungroup dissolves only the
+  outermost level.** Group always wraps whole top-level groups, so two members
+  picked directly out of a group cannot be sub-grouped in place — ungroup
+  first, or build the nest from the inside out. Remove from Group lifts the
+  selected unit one level and no further; an inner group cannot be dissolved
+  in place (lift it out, then Ungroup it), and lifting the only loose member
+  out of a nest can leave two group ids over the same pair — legal, and two
+  Ungroups clear it. The z-order commands on a directly picked member move
+  its whole top-level group, since a group has one depth.
+- **`^XG`/`^IM`/`^IL` resolve a stored graphic in `graphic_store` (the local,
+  in-session cache) by name and extension only — the `R:`/`E:`/`B:`/`A:`
+  device prefix is preserved for round-tripping but does not distinguish
+  objects there.** A real printer has separate storage areas and can hold
+  `R:LOGO.GRF` and `E:LOGO.GRF` as two different images at once; **Printer →
+  Graphics…**'s View correctly keeps the two distinct, since it lists what
+  the real printer reports, device and all. But Retrieving both into the
+  local cache in the same session *can* now produce the collision this used
+  to be impossible to reach: the second Retrieve's pixels overwrite the
+  first's under the shared, device-blind key — see `zplcore/graphic_store.py`.
+  Nothing about `^IS`/`^XG`/`^IM`/`^IL` themselves changed to cause this;
+  it is Printer → Graphics… bridging session-local memory to a real
+  multi-device printer for the first time.
+- **A stored graphic resolves only for as long as the app keeps running, and
+  only if this same run has already parsed the `^IS` that saved it, or
+  Stored/Retrieved it via Printer → Graphics….** There is no on-disk
+  persistence, no merging of data across separately opened files — the same
+  limit `^DF`/`^XF` already has. Opening a file with `^XG`/`^IM`/`^IL` cold
+  shows a placeholder naming what it is waiting for rather than failing or
+  inventing an image; opening **Printer → Graphics…** and using Retrieve
+  resolves it for real, straight from the printer, without needing a
+  matching `^IS` to have been parsed at all.
+- **`^DG` (Download Graphic), `^HG` (Host Graphic) and `^ID` (Object Delete)
+  are not parsed from ZPL *files*.** A file that relies on any of them to
+  seed, fetch or remove a stored object still opens with the graphic it names
+  unresolved or unremoved — this app never sees the command, only the
+  `^XG`/`^IM`/`^IL` that assumed it had already run. **Printer → Graphics…**
+  performs the real exchanges instead — `~DG` for Store, `^HG` for Retrieve,
+  `^ID` for Delete — directly against the printer, just never triggered by
+  opening a file.
+- **`^CC`, `^CT` and `^CD` are honoured by rewriting, not by parsing
+  (§8.3), and a save drops them.** What that cannot express: a literal `,`
+  inside a *parameter* while the delimiter is moved (`^A@N;40;40;E:A,B.TTF`)
+  has no spelling in standard ZPL and is read as a delimiter after the
+  rewrite; a `^FH` written after its `^FD`, against the manual, is not seen
+  by the escape and the field's own indicator is not used; a `~DG` binary
+  payload is scanned as text, so a redefinition spelled inside its bytes
+  would be taken at its word (`~DG` is reported as unsupported regardless).
+  And the saved file no longer changes the printer's control characters -
+  a label that used `^CC` to leave a printer reconfigured will not, once
+  saved from here.

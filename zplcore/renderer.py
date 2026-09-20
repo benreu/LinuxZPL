@@ -4,10 +4,10 @@ ZPL (Zebra Programming Language) Renderer
 Renders ZPL commands to PIL Image objects for display.
 """
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
-from . import fields, geometry, graphics, parser, textraster, transforms
+from . import fields, geometry, graphic_store, graphics, parser, textraster, transforms
 from .model import BarcodeElement, FieldBlock, FrameElement, TextElement
 
 
@@ -35,6 +35,7 @@ class ZPLRenderer:
         self.current_font_size = 12
         self.current_font = None
         self.field_data = None
+        self.hex_indicator = None
         self.font_cache = {}
         self.barcode_height = 0
         self.is_barcode_mode = False
@@ -55,7 +56,9 @@ class ZPLRenderer:
         self.pending_frame = None
         self.barcode_orientation = ''
         self.barcode_options = ()
+        self.barcode_symbology = 'code128'
         self.module_width = 2
+        self.ratio = 3.0
         self.custom_font_path: Optional[str] = None
         self.current_field_font_path: Optional[str] = None
         self.font_registry: dict = {}
@@ -119,6 +122,8 @@ class ZPLRenderer:
             module_width=max(1, getattr(self, 'module_width', 2)),
             orientation=self.barcode_orientation,
             options=self.barcode_options,
+            symbology=getattr(self, 'barcode_symbology', 'code128'),
+            ratio=getattr(self, 'ratio', 3.0),
             font=(('0', self.current_font_size,
                    self.current_font_width or self.current_font_size)
                   if self.current_font_size else None))
@@ -128,8 +133,11 @@ class ZPLRenderer:
         # into its own image and turned as a whole.
         run = layout['run']
         stack = max(1, element.bar_height) + element.text_height()
-        # ^FR swaps the panel's background and ink, white-on-black instead of
-        # black-on-white.
+        # ^FR does not paint a background - it inverts whatever is already
+        # there under its own bars and interpretation line. A panel with a 0
+        # background and 255 ink is exactly the mask _invert_under() wants,
+        # so the same values that used to draw a (wrong) white-on-black panel
+        # now serve as that mask instead - see the paste at the end.
         bg, ink = (0, 255) if self.current_reverse else (255, 0)
         panel = Image.new('L', (max(1, run), max(1, stack)), bg)
         draw = ImageDraw.Draw(panel)
@@ -155,7 +163,26 @@ class ZPLRenderer:
 
         if layout['angle']:
             panel = panel.rotate(-layout['angle'], expand=True)
-        self.image.paste(panel, (x, y - element.height if self.typeset else y))
+        pos = (x, y - element.height if self.typeset else y)
+        if self.current_reverse:
+            self._invert_under(panel, pos)
+        else:
+            self.image.paste(panel, pos)
+
+    def _invert_under(self, mask, pos) -> None:
+        """Invert the label wherever `mask` ('L', 0-255) is non-zero.
+
+        This is what ^FR actually does on a real printer: it inverts
+        whatever is already on the label under this field's own ink -
+        nothing else - rather than painting a background of its own.
+        Inverting blank (white) label gives black, so a field with nothing
+        already printed under it prints its own ink normally; only where
+        something is already black does it come out white.
+        """
+        if mask.width <= 0 or mask.height <= 0:
+            return
+        box = (pos[0], pos[1], pos[0] + mask.width, pos[1] + mask.height)
+        self.image.paste(ImageChops.invert(self.image.crop(box)), pos, mask)
 
     def _turned(self, panel, run: int, stack: int):
         """Paste a drawn panel onto the label, turned to face the right way.
@@ -164,6 +191,11 @@ class ZPLRenderer:
         image and is turned as a whole - the same way a rotated barcode is
         drawn. The footprint transposes at a quarter turn, which is what keeps
         the preview's box the same one the canvas shows.
+
+        `panel` doubles as the ^FR mask when reversed - see _render_text and
+        _render_block, which build it with the same 0-background/255-ink
+        values _invert_under() expects, for the same reason _render_barcode's
+        panel does.
         """
         element = TextElement(self.current_x, self.current_y,
                               orientation=self.current_font_orientation)
@@ -173,7 +205,11 @@ class ZPLRenderer:
             panel = panel.rotate(-angle, expand=True)
         offset = textraster.baseline_offset(self._font_path(),
                                             self.current_font_size)
-        self.image.paste(panel, (self.current_x, self._top(offset)))
+        pos = (self.current_x, self._top(offset))
+        if self.current_reverse:
+            self._invert_under(panel, pos)
+        else:
+            self.image.paste(panel, pos)
 
     def _render_text(self, text: str):
         """A plain ^FD field, in the font and the direction ^A asked for.
@@ -199,8 +235,9 @@ class ZPLRenderer:
                    self.current_font_size)
         natural = max(1, box[2] - box[0])
         stack = max(1, box[3] - box[1])
-        # ^FR swaps the panel's background and ink, white-on-black instead of
-        # black-on-white.
+        # A 0 background and 255 ink doubles as _invert_under()'s mask when
+        # reversed - _turned() does the actual inverting - and is the normal
+        # black-on-white panel otherwise.
         bg, ink = (0, 255) if self.current_reverse else (255, 0)
         panel = Image.new('L', (natural, stack), bg)
         ImageDraw.Draw(panel).text((-box[0], -box[1]), text, fill=ink, font=font)
@@ -219,8 +256,9 @@ class ZPLRenderer:
         block = self.current_block
         font_path = self._font_path()
         font_width = self.current_font_width or self.current_font_size
-        # ^FR swaps the panel's background and ink, white-on-black instead of
-        # black-on-white.
+        # A 0 background and 255 ink doubles as _invert_under()'s mask when
+        # reversed - _turned() does the actual inverting - and is the normal
+        # black-on-white panel otherwise.
         bg, ink = (0, (255, 255, 255, 255)) if self.current_reverse \
             else (255, (0, 0, 0, 255))
         drawn = textraster.raster_block(text, font_path, self.current_font_size,
@@ -232,19 +270,24 @@ class ZPLRenderer:
             return
 
         # No usable font file, so there are no glyph metrics to raster with;
-        # the lines still go where they belong.
+        # the lines still go where they belong. There is no panel here to
+        # double as a mask, so one is built by hand, per line.
         font = self._get_font(self.current_font_size)
         step = textraster.pitch(self.current_font_size, block)
         for row, line in enumerate(textraster.wrap(
                 text, font_path, self.current_font_size, font_width, block)):
             y = self.current_y + row * step
             if self.current_reverse:
-                box = self.draw.textbbox(
-                    (self.current_x + block.indent, y), line, font=font)
-                self.draw.rectangle(box, fill='black')
-            self.draw.text((self.current_x + block.indent, y), line,
-                           fill='white' if self.current_reverse else 'black',
-                           font=font)
+                box = self.draw.textbbox((0, 0), line, font=font)
+                w = max(1, box[2] - box[0])
+                h = max(1, box[3] - box[1])
+                mask = Image.new('L', (w, h), 0)
+                ImageDraw.Draw(mask).text((-box[0], -box[1]), line,
+                                          fill=255, font=font)
+                self._invert_under(mask, (self.current_x + block.indent + box[0], y + box[1]))
+            else:
+                self.draw.text((self.current_x + block.indent, y), line,
+                               fill='black', font=font)
 
     def _render_frame(self, params: str):
         """Draw a ^GB box through the same element the canvas draws.
@@ -259,31 +302,43 @@ class ZPLRenderer:
         element = FrameElement(self.current_x, self.current_y,
                                *parser._read_frame(params))
         element.y = self._top(element.height)
-        # ^FR flips the colour again, on top of whichever colour was chosen.
-        # An RGB tuple, not a bare int: PIL packs a lone int into an RGB
-        # image's first channel rather than broadcasting it, which drew white
-        # as red.
-        white = (element.colour == 'W') != self.current_reverse
-        ink = (255, 255, 255) if white else (0, 0, 0)
         thickness = max(1, element.thickness)
-        # PIL's rectangle includes both corners, so the far edge is one dot
-        # short of the width - otherwise every ^GB drew a dot wider and a dot
-        # taller here than on the canvas, which is most visible on a rule.
-        box = [(element.x, element.y),
-               (element.x + element.width - 1, element.y + element.height - 1)]
         radius = element.corner_radius()
+
+        if self.current_reverse:
+            # ^FR replaces the field's own print outright, so colour has
+            # nothing left to choose between - the box is drawn into a mask,
+            # local to its own top-left, and _invert_under() inverts
+            # whatever the label already has under it rather than this
+            # painting a flat colour of its own.
+            mask = Image.new('L', (element.width, element.height), 0)
+            draw, ink = ImageDraw.Draw(mask), 255
+            box = [(0, 0), (element.width - 1, element.height - 1)]
+        else:
+            # An RGB tuple, not a bare int: PIL packs a lone int into an RGB
+            # image's first channel rather than broadcasting it, which drew
+            # white as red.
+            draw, ink = self.draw, (255, 255, 255) if element.colour == 'W' else (0, 0, 0)
+            # PIL's rectangle includes both corners, so the far edge is one
+            # dot short of the width - otherwise every ^GB drew a dot wider
+            # and a dot taller here than on the canvas, which is most visible
+            # on a rule.
+            box = [(element.x, element.y),
+                   (element.x + element.width - 1, element.y + element.height - 1)]
 
         if 2 * thickness >= min(element.width, element.height):
             # ^GB fills solid once the border meets in the middle
             if radius > 0:
-                self.draw.rounded_rectangle(box, radius=radius, fill=ink)
+                draw.rounded_rectangle(box, radius=radius, fill=ink)
             else:
-                self.draw.rectangle(box, fill=ink)
+                draw.rectangle(box, fill=ink)
         elif radius > 0:
-            self.draw.rounded_rectangle(box, radius=radius, outline=ink,
-                                        width=thickness)
+            draw.rounded_rectangle(box, radius=radius, outline=ink, width=thickness)
         else:
-            self.draw.rectangle(box, outline=ink, width=thickness)
+            draw.rectangle(box, outline=ink, width=thickness)
+
+        if self.current_reverse:
+            self._invert_under(mask, (element.x, element.y))
 
     def _render_graphic(self, params: str):
         """Render a ^GF graphic field, in whichever encoding it arrived in.
@@ -305,6 +360,23 @@ class ZPLRenderer:
         self.image.paste(bitmap.convert('RGB'),
                          (self.current_x, self._top(rows)))
 
+    def _render_stored_graphic(self, command: str, params: str):
+        """Render a ^XG/^IM field, if this session's ^IS has the image it names.
+
+        Unresolved is not an error: the same rule an unfilled ^FN follows -
+        the printer would supply this at print time, and there is nothing to
+        draw yet, so nothing is drawn.
+        """
+        spec, mag_x, mag_y = parser._read_stored_graphic('^' + command, params)
+        image = graphic_store.recall(spec)
+        if image is None:
+            return
+        if mag_x != 1 or mag_y != 1:
+            image = image.resize((max(1, image.width * mag_x),
+                                  max(1, image.height * mag_y)))
+        self.image.paste(image.convert('RGB'),
+                         (self.current_x, self._top(image.height)))
+
     def render(self, zpl_content: str) -> Image.Image:
         """
         Render ZPL content to an image.
@@ -323,6 +395,7 @@ class ZPLRenderer:
         self.typeset = False
         self.unsupported_field = False
         self.current_reverse = False
+        self.hex_indicator = None
         self.pending_frame = None
         # ^FN's data can be declared after the field that uses it, so the table
         # is built in a pass of its own before anything is drawn.
@@ -447,13 +520,18 @@ class ZPLRenderer:
                 self.typeset = (command == 'FT')
                 self.unsupported_field = False
                 self.current_reverse = False
+                self.hex_indicator = None
                 self.pending_frame = None
                 # A field names its own font with ^A or inherits ^CF's, and a
                 # printer starts every field from the latter.
                 self._use_default_font()
+        elif command == 'FH':
+            # Field hex indicator: ^FHa marks a-XX escapes in the ^FD that
+            # follows, decoded here since the preview never re-saves ZPL.
+            self.hex_indicator = fields.read_hex_indicator(params)
         elif command == 'FD':
             # Field data: ^FD<data>
-            self.field_data = params
+            self.field_data = fields.decode_hex(params, self.hex_indicator)
         elif command == 'FN':
             # A numbered field prints whatever its ^FN#^FD pair gave it, and
             # nothing at all when no pair did - the printer substitutes at print
@@ -485,10 +563,21 @@ class ZPLRenderer:
             # after ^GB in the same field is still seen before it is drawn.
             self.pending_frame = params
         elif command == 'BY':
-            # Module width, which sets how wide the bars are
-            match = re.match(r'\s*(\d+)', params)
-            if match:
-                self.module_width = max(1, int(match.group(1)))
+            # Module width, and the wide-to-narrow ratio Code 39 and
+            # Interleaved 2 of 5 draw their wide elements at - every other
+            # symbology here is fixed-ratio and ignores it, the same way
+            # BarcodeElement does.
+            parts = [p.strip() for p in params.split(',')]
+            if parts and parts[0]:
+                try:
+                    self.module_width = max(1, int(parts[0]))
+                except ValueError:
+                    pass
+            if len(parts) > 1 and parts[1]:
+                try:
+                    self.ratio = float(parts[1])
+                except ValueError:
+                    pass
         elif command == 'FB':
             # Field block: the text that follows is wrapped into it
             self.current_block = FieldBlock.from_zpl(params)
@@ -514,6 +603,7 @@ class ZPLRenderer:
                     self.is_barcode_mode = False
                     self.barcode_orientation = ''
                     self.barcode_options = ()
+                    self.barcode_symbology = 'code128'
                     self.current_block = None
                 else:
                     self._render_text(self.field_data)
@@ -521,6 +611,26 @@ class ZPLRenderer:
         elif command == 'GF':
             # Graphic field: ^GFa,total,total,bytes_per_row,<data>
             self._render_graphic(params)
+        elif command in ('IM', 'XG'):
+            # Recall a stored image, like ^GF but naming one this session's
+            # own ^IS may have captured rather than carrying its own data.
+            self._render_stored_graphic(command, params)
+        elif command == 'IL':
+            # Image Load: a stored image, always at ^FO0,0, underneath
+            # whatever this format goes on to draw over it.
+            image = graphic_store.recall(params)
+            if image is not None:
+                self.image.paste(image.convert('RGB'), (0, 0))
+        elif command == 'IS':
+            # Image Save: captured into graphic_store by the parser, which
+            # runs on every open - not repeated here, so a preview render is
+            # never the hidden reason a recall does or does not work. All
+            # this does is honour p=N, which means "do not print this pass".
+            parts = [p.strip() for p in params.split(',')]
+            print_flag = parts[1].upper() if len(parts) > 1 and parts[1] else 'Y'
+            if print_flag == 'N':
+                self.image = Image.new('RGB', (self.width, self.height), color='white')
+                self.draw = ImageDraw.Draw(self.image)
         elif command == 'CF':
             # ^CFf,h,w - the font every later field prints in unless it names
             # its own. Ignoring it drew a default-font field at this class's
@@ -539,10 +649,24 @@ class ZPLRenderer:
             except ValueError:
                 self.barcode_height = 50
             self.barcode_options = tuple(parts[2:])
+            self.barcode_symbology = 'code128'
+            self.is_barcode_mode = True
+        elif command in ('B3', 'BE', 'B2', 'BS'):
+            # Code 39, EAN-13, Interleaved 2 of 5 and the UPC/EAN extension -
+            # reusing parser._read_barcode rather than a second copy of its
+            # per-command parameter order is what stops the preview and a
+            # save disagreeing about where one of them spells its own check
+            # digit or its own trailing flags.
+            bc = parser._read_barcode('^' + command, params)
+            self.barcode_orientation = bc['orientation']
+            self.barcode_height = bc['height']
+            self.barcode_options = bc['options']
+            self.barcode_symbology = bc['symbology']
             self.is_barcode_mode = True
         elif command[0] == 'B':
-            # Code 39, QR, Data Matrix, EAN - a symbology this designer cannot
-            # draw. ^BY and ^BC are matched above, so only the rest reach here.
+            # QR, Data Matrix, PDF417 and the rest - a symbology this
+            # designer cannot draw. ^BY and the other four are matched
+            # above, so only the rest reach here.
             self.unsupported_field = True
     
     def render_from_file(self, filepath: str) -> Image.Image:
@@ -558,7 +682,9 @@ class ZPLRenderer:
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 zpl_content = f.read()
-            return self.render(zpl_content)
+            # A file may have moved ^, ~ or , (see parser.canonicalise);
+            # render() is otherwise only ever given the model's own ZPL.
+            return self.render(parser.canonicalise(zpl_content)[0])
         except Exception as e:
             raise IOError(f"Failed to read ZPL file: {e}")
 

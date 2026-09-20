@@ -10,7 +10,7 @@ than being written twice.
 
 import os.path
 
-from . import fonts
+from . import fonts, printer_io
 
 # Distinguishes "the printer's resolution changed under an open document" from
 # "a file was opened that recorded no resolution", which are answered
@@ -59,53 +59,65 @@ def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):
     return None
 
 
-def confirm_printer_fonts(document, address, port, ask, on_progress=None):
-    """Check the label's fonts are on the printer. False cancels printing.
+# The pre-print font check is three steps a frontend chains itself, because
+# the middle one is a prompt and the other two are network calls it runs off
+# the GUI thread: missing_printer_fonts (ask the printer), then - only if
+# something is missing - font_problem_prompt's wording for its own ask(),
+# then upload_fonts for an 'upload' answer. The rule about what counts as
+# missing and what the prompt says stays here, shared, so the two frontends
+# cannot drift on it.
 
-    `ask(text, detail, uploadable)` returns 'upload', 'print' or 'cancel'.
-    `on_progress(message)` reports each upload, if given.
+def missing_printer_fonts(document, address, port, cancel=None):
+    """The label's fonts the printer does not have, as (missing, uploadable)
+    name -> path dicts - both empty when there is nothing to do - or None if
+    the printer could not be asked.
+
+    None is not the same as "the printer has no fonts": it leads to a
+    different prompt (font_problem_prompt(None)). `uploadable` is the subset
+    of `missing` whose source file is known, i.e. the ones upload_fonts could
+    actually send.
     """
     sources = document.font_sources()
     if not sources:
-        return True, None  # nothing but built-in fonts, nothing to check
-
-    installed = fonts.query_printer_fonts(address, port)
+        return {}, {}  # nothing but built-in fonts, nothing to check
+    installed = fonts.query_printer_fonts(address, port, cancel=cancel)
     if installed is None:
-        # Not the same as "the printer has no fonts": it could not be asked,
-        # and the two lead to different prompts.
-        answer = ask("The printer could not be asked which fonts it has.",
-                     "It may be unreachable, or may not support font queries.\n"
-                     "Printing anyway may fall back to a substitute font.",
-                     {})
-        return _act_on_font_answer(answer, {}, address, port, on_progress)
-
+        return None
     missing = {n: p for n, p in sources.items() if n.upper() not in installed}
-    if not missing:
-        return True, None
-
     uploadable = {n: p for n, p in missing.items() if p}
+    return missing, uploadable
+
+
+def font_problem_prompt(missing):
+    """(text, detail) for the frontend's ask(); `missing` is
+    missing_printer_fonts' dict, or None when the printer could not be asked."""
+    if missing is None:
+        return ("The printer could not be asked which fonts it has.",
+                "It may be unreachable, or may not support font queries.\n"
+                "Printing anyway may fall back to a substitute font.")
     lines = [f"  {fonts.printer_font_path(n)}" +
              ("" if missing[n] else "   (source file unknown)")
              for n in sorted(missing)]
-    answer = ask("Fonts used by this label are not on the printer.",
-                 "\n".join(lines) + "\n\nMissing fonts print in a substitute typeface.",
-                 uploadable)
-    return _act_on_font_answer(answer, uploadable, address, port, on_progress)
+    return ("Fonts used by this label are not on the printer.",
+            "\n".join(lines) + "\n\nMissing fonts print in a substitute typeface.")
 
 
-def _act_on_font_answer(answer, uploadable, address, port, on_progress):
-    """Carry out the choice. Returns (proceed, error message or None)."""
-    if answer == 'upload':
-        for name, path in sorted(uploadable.items()):
-            if on_progress:
-                on_progress(f"Uploading {fonts.printer_font_path(name)}...")
-            try:
-                fonts.upload_font(address, port, path, name)
-            except Exception as e:
-                # A failed upload aborts: printing now would use a substitute.
-                return False, f"Upload of {name} failed: {e}"
-        return True, None
-    return answer == 'print', None
+def upload_fonts(uploadable, address, port, on_progress=None, cancel=None):
+    """Upload each font in turn. `on_progress(message)` reports each one.
+
+    Raises OSError naming the font on the first failure - printing after a
+    failed upload would use a substitute, so the caller must not carry on.
+    A cancel passes through untouched, so it is not reported as a failure.
+    """
+    for name, path in sorted(uploadable.items()):
+        if on_progress:
+            on_progress(f"Uploading {fonts.printer_font_path(name)}...")
+        try:
+            fonts.upload_font(address, port, path, name, cancel=cancel)
+        except printer_io.Cancelled:
+            raise
+        except Exception as e:
+            raise OSError(f"Upload of {name} failed: {e}") from e
 
 
 def unsaved_changes_gate(is_dirty, ask, save):
@@ -187,10 +199,25 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # offsets became real coordinates and the flips round-trip. ^LR is modelled in
 # the sense that matters here - it survives a save - though the preview does not
 # simulate it; see FUNCTIONAL_SPEC.md section 18.
-MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^GB', '^FB', '^FR',
+# ^IM, ^XG, ^IL and ^IS are the graphic counterpart of the stored-format
+# family: a reference to an image the printer holds, modelled the same way -
+# as a real (if only sometimes resolvable) placeholder rather than something
+# a save quietly drops.
+# ^PQ is how many copies the label prints, plus the pause/RFID options that
+# ride along with it - modelled the way ^LT is: quantity survives a save and
+# can be set from Label Settings, the rest survive a save but are carried
+# only.
+# ^CC, ^CT and ^CD never reach this table: parser.canonicalise reads the
+# label with the characters they set and leaves them out of the text, and
+# warn_unsupported reports them on their own, since what a save does with
+# them - write the defaults - is a different thing from dropping a command.
+MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^B3', '^BE', '^B2',
+            '^BS', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
             '^FN', '^FV', '^DF', '^XF',
-            '^LH', '^LS', '^LT', '^PO', '^PM', '^LR'}
+            '^SN', '^SF', '^FC', '^FH',
+            '^LH', '^LS', '^LT', '^PO', '^PM', '^LR',
+            '^IM', '^XG', '^IL', '^IS', '^PQ'}
 
 
 def unsupported_commands(zpl_content: str) -> list:
@@ -201,12 +228,12 @@ def unsupported_commands(zpl_content: str) -> list:
     is worth saying out loud, rather than letting someone discover it on a
     printed label.
     """
-    from .parser import tokenise
+    from .parser import canonicalise, tokenise
 
     from . import graphics
 
     seen = []
-    for command, params in tokenise(zpl_content):
+    for command, params in tokenise(canonicalise(zpl_content)[0]):
         if command.startswith('^A'):        # every font is modelled
             continue
         if command == '^GF':
@@ -223,13 +250,26 @@ def unsupported_commands(zpl_content: str) -> list:
     return seen
 
 
-def warn_unsupported(zpl_content: str, notify) -> list:
+def warn_unsupported(zpl_content: str, notify, notify_redefined) -> list:
     """Tell the user what opening this file has quietly left behind.
 
     `notify(commands)` shows it however the toolkit shows things. Returns the
     commands so a caller can log or test them.
+
+    A label that redefines a control character (^CC, ^CT, ^CD) is read with
+    the characters it set (parser.canonicalise), so the canvas is right; what
+    the user is owed is different, and `notify_redefined(spellings)` says it:
+    a save writes the standard characters and leaves the redefinition out,
+    so the saved file prints the same label but no longer changes the
+    printer's settings. The ordinary list is computed on the canonical text
+    and follows as usual, so a label can hear both.
     """
+    from .parser import control_redefinitions
+
+    redefined = control_redefinitions(zpl_content)
+    if redefined:
+        notify_redefined(redefined)
     dropped = unsupported_commands(zpl_content)
     if dropped:
         notify(dropped)
-    return dropped
+    return redefined + dropped

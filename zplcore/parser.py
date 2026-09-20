@@ -14,16 +14,18 @@ from typing import Optional, Tuple
 
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
+from . import graphic_store
 from . import graphics
 from . import transforms as zpl_transforms
 from .model import (BarcodeElement, Document, FieldBlock, FrameElement,
-                    ImageElement, TextElement)
+                    ImageElement, StoredGraphicElement, TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
 DPI_KEY = '^FXDESIGNER_DPI:'
 PREVIEW_KEY = '^FXDESIGNER_PREVIEW:'
 PATH_KEY = '^FXDESIGNER_PATH:'
+GROUP_KEY = '^FXDESIGNER_GROUP:'
 
 # The same keys as the tokeniser sees them: ^FX is the command, the rest is
 # its parameters.
@@ -31,6 +33,11 @@ NOPRINT_PARAM = NOPRINT_MARKER[len('^FX'):]
 DPI_PARAM = DPI_KEY[len('^FX'):]
 PREVIEW_PARAM = PREVIEW_KEY[len('^FX'):]
 PATH_PARAM = PATH_KEY[len('^FX'):]
+GROUP_PARAM = GROUP_KEY[len('^FX'):]
+
+# (no-print flag, group id) - what the designer markers ahead of a field ask
+# of it, and the value of having asked nothing.
+_NO_PENDING = (False, None)
 
 
 def parse_label_size(zpl_content: str) -> Tuple[Optional[int], Optional[int]]:
@@ -41,7 +48,8 @@ def parse_label_size(zpl_content: str) -> Tuple[Optional[int], Optional[int]]:
             int(ll.group(1)) if ll else None)
 
 
-COMMAND = re.compile(r'([\^~])([A-Za-z0-9@]{2})([^\^~]*)', re.S)
+COMMAND = re.compile(
+    r'([\^~])([A-Za-z0-9@]{2})((?:(?!\^|~[A-Za-z0-9@]{2})[\s\S])*)', re.S)
 
 # ZPL's own factory default font, used by any field that carries neither an ^A
 # of its own nor a ^CF before it.
@@ -83,6 +91,169 @@ def tokenise(zpl_content: str):
     """
     return [(m.group(1) + m.group(2).upper(), m.group(3))
             for m in COMMAND.finditer(zpl_content)]
+
+
+# The three characters ZPL parses by rather than reads as data, and the
+# command that moves each. ^CC, ^CT and ^CD (and their ~ twins) take one
+# character - the new value - and it is in force from the very next byte:
+# `^CC/` is followed by `/FO`, not `^FO`, and put back with `/CC^`.
+REDEFINES = {'CC': 'format', 'CT': 'control', 'CD': 'delimiter'}
+_DEFAULT_CHARACTERS = {'format': '^', 'control': '~', 'delimiter': ','}
+
+# What COMMAND accepts as the two characters of a name. A prefix that is not
+# followed by two of these starts nothing: the regex skips it, and so a bare
+# `~` in ^FC's parameters is data rather than the start of a tilde command.
+_NAME_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@')
+
+# Commands whose parameters are free text rather than a delimited list. The
+# delimiter is never rewritten inside them: a `;` in ^FD data under ^CD; is
+# a semicolon, and ^FXDESIGNER_GROUP:1,2 keeps its own comma.
+_FREE_TEXT = {'FD', 'FV', 'FX', 'FN'}
+
+# Commands that begin with a delimited list and end with a data payload - hex
+# or :Z64: - in which nothing is a delimiter, however it is currently spelled.
+# Only this many leading parameters are rewritten.
+_LEADING_PARAMETERS = {'GF': 4, 'DG': 3, 'DY': 5}
+
+# The ^FH escape for each default character a field's data may hold literally
+# once that character no longer starts a command.
+_ESCAPES = {'^': '5E', '~': '7E', '_': '5F'}
+
+
+def canonicalise(zpl_content: str) -> tuple:
+    """The text with ZPL's default control characters restored, and every
+    ^CC/^CT/^CD (or ~) that moved one, as written, in the order found.
+
+    The tokeniser above knows only the defaults. Rather than teach it, and
+    every parameter split after it, that `,` might be `;` today, a label that
+    moves a character is rewritten once, here, into the label it would have
+    been with the defaults - and the redefinitions themselves are left out,
+    since that label no longer needs them. Everything downstream, the writer
+    included, then sees ordinary ZPL: a save writes the standard characters
+    and no redefinition, so the saved file prints the same label but no longer
+    changes the printer's settings, which the load notice says.
+
+    This is a scan and not a regex because the second redefinition is spelled
+    with the first one's character: after `^CC/` the restoring command is
+    `/CC^`, which no fixed pattern sees. The characters in force are tracked
+    from the start of the text, where they are always the defaults - nothing
+    but these commands can change them, so the first one is always spelled
+    with `^` or `~`, and a text holding none of the six spellings holds no
+    redefinition at all. That check is the fast path: it returns the text it
+    was given, the same object, and every file that never used the feature
+    takes it.
+
+    The scan mirrors COMMAND, so a label it does rewrite tokenises as the
+    printer would have read it: a prefix starts a command only when two name
+    characters follow, and parameters run to the next format prefix or to a
+    control prefix that starts a command. A prefix that starts nothing is
+    written as its default and skipped by the regex exactly as a stray `^` is
+    today. The text is scanned as a printer scans it, so a `^CC` inside ^FD
+    data counts, because on the printer it would; a redefinition with no
+    character after it, or a whitespace one, is recorded by its bare spelling
+    and changes nothing - Zebra disallows it, and there is no printer
+    behaviour to mirror.
+
+    Field data is the one place the rewrite is not a substitution. The point
+    of ^CC is to put a literal `^` in a field, and once `^` is the prefix
+    again that byte would end the field, so any default character the data
+    holds *while it is not in force* becomes the ^FH escape for it - under
+    the field's own indicator if it has a ^FH, else under `_` with a ^FH
+    supplied ahead of the ^FD, and any `_` already in the data escaped too so
+    the new indicator cannot invent an escape. A ^FH written after its ^FD,
+    against the manual, is not seen; a ^FX comment gets a space for each such
+    character instead, since its content is not modelled and a `^` in it
+    would end the comment early.
+    """
+    if not any(prefix + name in zpl_content
+               for prefix in (_DEFAULT_CHARACTERS['format'],
+                              _DEFAULT_CHARACTERS['control'])
+               for name in REDEFINES):
+        return zpl_content, []
+
+    chars = dict(_DEFAULT_CHARACTERS)
+    found = []
+    out = []
+    indicator = None    # the ^FH of the field being read, if it has one
+    i, n = 0, len(zpl_content)
+
+    def starts_command(at):
+        """Whether the prefix at `at` begins a command, by COMMAND's rule."""
+        return (at + 2 < n and zpl_content[at + 1] in _NAME_CHARS
+                and zpl_content[at + 2] in _NAME_CHARS)
+
+    def parameters_end(at):
+        """Where the parameters that begin at `at` stop."""
+        while at < n:
+            ch = zpl_content[at]
+            if ch == chars['format']:
+                return at
+            if ch == chars['control'] and starts_command(at):
+                return at
+            at += 1
+        return n
+
+    while i < n:
+        ch = zpl_content[i]
+        if ch != chars['format'] and ch != chars['control']:
+            out.append(ch)
+            i += 1
+            continue
+        default = (_DEFAULT_CHARACTERS['format'] if ch == chars['format']
+                   else _DEFAULT_CHARACTERS['control'])
+        if not starts_command(i):
+            out.append(default)
+            i += 1
+            continue
+        name = zpl_content[i + 1:i + 3]
+        upper = name.upper()
+        role = REDEFINES.get(upper)
+        if role is not None:
+            new = zpl_content[i + 3:i + 4]
+            if new and not new.isspace():
+                found.append(zpl_content[i:i + 4])
+                chars[role] = new
+                i += 4
+            else:
+                found.append(zpl_content[i:i + 3])
+                i += 3
+            continue
+        end = parameters_end(i + 3)
+        params = zpl_content[i + 3:end]
+        i = end
+        if upper in ('FO', 'FT', 'FS'):
+            indicator = None
+        elif upper == 'FH':
+            indicator = zpl_fields.read_hex_indicator(params)
+        # The default characters that may sit in data as literals: each one
+        # that is not, at this moment, what starts a command.
+        literal = [c for c, role in (('^', 'format'), ('~', 'control'))
+                   if chars[role] != c]
+        if upper in ('FD', 'FV'):
+            if any(c in params for c in literal):
+                if indicator is None:
+                    indicator = '_'
+                    out.append(default + 'FH' + indicator)
+                    literal.append('_')
+                params = ''.join(indicator + _ESCAPES[c] if c in literal else c
+                                 for c in params)
+        elif upper == 'FX':
+            params = ''.join(' ' if c in literal else c for c in params)
+        elif upper not in _FREE_TEXT and chars['delimiter'] != ',':
+            keep = _LEADING_PARAMETERS.get(upper)
+            if keep is None:
+                params = params.replace(chars['delimiter'], ',')
+            else:
+                # A bounded split touches only the first `keep` delimiters;
+                # the payload, whatever it holds, stays in the last piece.
+                params = ','.join(params.split(chars['delimiter'], keep))
+        out.append(default + name + params)
+    return ''.join(out), found
+
+
+def control_redefinitions(zpl_content: str) -> list:
+    """Every ^CC/^CT/^CD (or ~) in the text, as written, in the order found."""
+    return canonicalise(zpl_content)[1]
 
 
 def _expand_hidden(zpl_content: str) -> str:
@@ -161,6 +332,52 @@ def _decode_gfa_image(x: int, y: int, params: str, preview_b64, path_hint):
     return None
 
 
+def _capture_image_save(expanded: str, offset: int, spec: str, doc: Document) -> None:
+    """^IS: flatten everything drawn before this point and store it.
+
+    Reusing the standalone renderer rather than a third drawing
+    implementation: "everything drawn before this point" is exactly what
+    running it over the text up to here, and no further, produces. A
+    snapshot that fails to render is skipped rather than raised - a bad ^IS
+    must not be the reason the rest of the file fails to open.
+    """
+    from . import renderer as zpl_renderer
+
+    prefix = expanded[:offset]
+    if not prefix.rstrip().endswith('^XZ'):
+        prefix += '^XZ'
+    try:
+        image = zpl_renderer.ZPLRenderer(
+            width=doc.label_width, height=doc.label_height).render(prefix)
+    except Exception:
+        return
+    graphic_store.store(spec, image)
+
+
+def _read_stored_graphic(cmd: str, params: str):
+    """The device spec and magnification an ^XG/^IM field names.
+
+    ^IM has no magnification of its own - it is, per the ZPL manual,
+    "identical to ^XG... except there are no sizing parameters" - so both are
+    read the same way and ^IM's is simply always 1,1. That is what lets one
+    element class serve both commands.
+    """
+    parts = [p.strip() for p in params.split(',')]
+    spec = parts[0] if parts and parts[0] else 'R:UNKNOWN.GRF'
+
+    def number(index):
+        if len(parts) > index and parts[index]:
+            try:
+                return max(1, min(10, int(parts[index])))
+            except ValueError:
+                pass
+        return 1
+
+    mag_x = number(1) if cmd == '^XG' else 1
+    mag_y = number(2) if cmd == '^XG' else 1
+    return spec, mag_x, mag_y
+
+
 def read_field_table(tokens):
     """The values and prompts a format's ^FN#^FD pairs give its fields.
 
@@ -195,6 +412,9 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     records none. The caller decides what to do about a mismatch - the "assume
     203 dpi, and say it was assumed" rule lives with the prompt, not here.
     """
+    # First, before the label-size regex or anything else reads the text:
+    # from here on the file is spelled with ZPL's default characters.
+    zpl_content, _ = canonicalise(zpl_content)
     doc = Document()
     width, height = parse_label_size(zpl_content)
     if width:
@@ -202,10 +422,17 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     if height:
         doc.label_height = height
 
-    tokens = tokenise(_expand_hidden(zpl_content))
+    expanded = _expand_hidden(zpl_content)
+    tokens = tokenise(expanded)
+    # Same matches tokenise() itself found, kept alongside the tokens rather
+    # than folded into its return value - `tokenise` is used elsewhere for
+    # just the (cmd, params) pairs, and only ^IS needs to know where in the
+    # text a token started (see _capture_image_save).
+    token_offsets = [m.start() for m in COMMAND.finditer(expanded)]
     doc.fields = read_field_table(tokens)
     loaded_dpi = None
-    pending_no_print = False
+    # Designer markers written in front of a field, held until it is built.
+    pending = _NO_PENDING
     field = None            # commands gathered since the last ^FO
     # ^CF sets the font for every field that does not name one of its own, so
     # it has to be carried between fields rather than gathered into one. ^BY is
@@ -218,7 +445,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     home = (0, 0)           # the ^LH in force, which is not always the first
     seen_home = False
 
-    for cmd, params in tokens:
+    for index, (cmd, params) in enumerate(tokens):
         if cmd == '^FX':
             key = params.strip()
             if key.startswith(DPI_PARAM):
@@ -227,7 +454,16 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 except ValueError:
                     pass
             elif key == NOPRINT_PARAM:
-                pending_no_print = True
+                pending = (True, pending[1])
+            elif key.startswith(GROUP_PARAM):
+                # The path of groups the next field is in, outermost first;
+                # a marker that is not all integers is ignored as a whole.
+                try:
+                    path = tuple(int(p) for p in key[len(GROUP_PARAM):].split(','))
+                except ValueError:
+                    pass
+                else:
+                    pending = (pending[0], path)
             elif field is not None and key.startswith(PREVIEW_PARAM):
                 field['preview'] = key[len(PREVIEW_PARAM):]
             elif field is not None and key.startswith(PATH_PARAM):
@@ -289,6 +525,34 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 doc.recalls.append(recalled)
             continue
 
+        if cmd == '^IL':
+            # The graphic counterpart of ^XF: a stored image, always placed at
+            # ^FO0,0, for the fields after it to overlay. Recorded rather than
+            # turned into an element - like ^XF, this is data the printer
+            # holds, not geometry this file drew - so a save writes it back
+            # unchanged and the canvas/renderer resolve it (if this session's
+            # ^IS has it) at draw time instead.
+            doc.image_load = params.strip() or None
+            continue
+
+        if cmd == '^IS':
+            # Saves everything drawn so far as a named image. Recorded so a
+            # save writes it back, and captured into this session's graphic
+            # store now, while `expanded` still has the text to render - see
+            # _capture_image_save.
+            saved = params.strip()
+            if saved:
+                doc.image_saves.append(saved)
+                _capture_image_save(expanded, token_offsets[index],
+                                    saved.split(',')[0].strip(), doc)
+            continue
+
+        if cmd == '^PQ':
+            (doc.print_quantity, doc.print_pause_count,
+             doc.print_replicates, doc.print_override_pause) = \
+                _read_print_quantity(params)
+            continue
+
         if cmd == '^CF':
             default_font = _read_default_font(params, default_font)
             continue
@@ -307,7 +571,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
 
         if cmd in ('^FO', '^FT'):
             # A field that never saw ^FS still ends here, at the next one
-            pending_no_print = _flush(field, doc, renderer, pending_no_print)
+            pending = _flush(field, doc, renderer, pending)
             match = re.match(r'\s*(-?\d+),(-?\d+)', params)
             field = _new_field(int(match.group(1)) + origin[0],
                                int(match.group(2)) + origin[1],
@@ -321,7 +585,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             continue
 
         if cmd == '^FS':
-            pending_no_print = _flush(field, doc, renderer, pending_no_print)
+            pending = _flush(field, doc, renderer, pending)
             field = None
             continue
 
@@ -334,13 +598,14 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['block'] = FieldBlock.from_zpl(params)
         elif cmd == '^FR':
             field['reverse'] = True
-        elif cmd == '^BC':
-            field['barcode'] = _read_barcode(params, field['bar_height'])
+        elif cmd in ('^BC', '^B3', '^BE', '^B2', '^BS'):
+            field['barcode'] = _read_barcode(cmd, params, field['bar_height'])
         elif cmd.startswith('^B') or cmd == '^GS':
-            # Code 39, QR, Data Matrix, EAN - a symbology this designer cannot
-            # draw. Recorded so the field is dropped, because falling through
-            # to the text branch did not merely lose the barcode: it put a text
-            # element holding the barcode's data on the label in its place.
+            # QR, Data Matrix, PDF417 and the rest - a symbology this designer
+            # cannot draw. Recorded so the field is dropped, because falling
+            # through to the text branch did not merely lose the barcode: it
+            # put a text element holding the barcode's data on the label in
+            # its place.
             #
             # ^GS draws a glyph from the symbol font and is the same trap for
             # the same reason. It is not a ^B command, so it went on falling
@@ -351,10 +616,24 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['frame'] = params
         elif cmd == '^GF':
             field['graphic'] = params
+        elif cmd in ('^IM', '^XG'):
+            field['stored_graphic'] = (cmd, params)
         elif cmd == '^FN':
             read = zpl_fields.read(params)
             if read is not None:
                 field['field_number'], field['field_prompt'] = read
+        elif cmd == '^SN':
+            read = zpl_fields.read_serial(params)
+            if read is not None:
+                (field['serial_start'], field['serial_increment'],
+                 field['serial_leading_zero']) = read
+        elif cmd == '^SF':
+            field['serial_field_raw'] = params
+        elif cmd == '^FC':
+            field['clock_format'] = True
+            field['clock_chars'] = zpl_fields.read_clock_chars(params)
+        elif cmd == '^FH':
+            field['hex_indicator'] = zpl_fields.read_hex_indicator(params)
         elif cmd == '^FD':
             field['data'] = params
         elif cmd == '^FV':
@@ -362,7 +641,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             # it as data is what stops such a field vanishing outright.
             field['data'] = params
 
-    _flush(field, doc, renderer, pending_no_print)
+    _flush(field, doc, renderer, pending)
 
     doc.selected_element = None
     return doc, loaded_dpi
@@ -382,11 +661,16 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None) -> dict:
     inherited = dict(default_barcode or DEFAULT_BARCODE)
     return {'x': x, 'y': y, 'block': None, 'font': None,
             'field_number': None, 'field_prompt': None,
+            'serial_start': None, 'serial_increment': None,
+            'serial_leading_zero': False,
+            'clock_format': False, 'clock_chars': None,
+            'serial_field_raw': None, 'hex_indicator': None,
             'module_width': inherited['module_width'],
             'ratio': inherited['ratio'],
             'bar_height': inherited['height'],
             'default_font': dict(default_font or DEFAULT_FONT),
-            'barcode': None, 'frame': None, 'graphic': None, 'data': None,
+            'barcode': None, 'frame': None, 'graphic': None,
+            'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'symbology': None,
             'reverse': False}
 
@@ -440,6 +724,30 @@ def _read_barcode_default(params: str, current: dict) -> dict:
     number(1, 'ratio', float)
     number(2, 'height', int)
     return default
+
+
+def _read_print_quantity(params: str) -> tuple:
+    """^PQq,p,r,o - copies, pause count, RFID replicates, override-pause flag.
+
+    Each is independently optional; a blank or unreadable one falls back to
+    ZPL's own default rather than raising, since this is exactly the kind of
+    command another tool's ZPL should not be rejected over.
+    """
+    parts = [p.strip() for p in (params or '').split(',')]
+
+    def integer(index, fallback):
+        if len(parts) > index and parts[index]:
+            try:
+                return int(parts[index])
+            except ValueError:
+                pass
+        return fallback
+
+    quantity = integer(0, 1) or 1
+    pause_count = integer(1, 0)
+    replicates = integer(2, 0)
+    override_pause = len(parts) > 3 and parts[3].strip().upper() == 'Y'
+    return quantity, pause_count, replicates, override_pause
 
 
 def read_font(code: str, params: str, default_font=None) -> dict:
@@ -517,36 +825,74 @@ def _read_frame(params: str):
             thickness, colour, number(4, 0))
 
 
-def _read_barcode(params: str, default_height=None) -> dict:
-    """^BC<orientation>,<height>,<interpretation line>,<above>,<check>,<mode>.
+BARCODE_SYMBOLOGY = {'^BC': 'code128', '^B3': 'code39', '^BE': 'ean13',
+                     '^B2': 'interleaved2of5', '^BS': 'upcean_extension'}
+
+# Where each command's own trailing flags land, keyed by the canonical
+# (show_text, text_above, check_digit, mode) BarcodeElement's own `options`
+# tuple always uses. ^B3 is not here: its check digit comes before the
+# height, not after, so `_read_barcode` reads it separately.
+_BARCODE_PARAMS = {
+    '^BC': ('o', 'h', 'f', 'g', 'e', 'm'),
+    '^BE': ('o', 'h', 'f', 'g'),
+    '^B2': ('o', 'h', 'f', 'g', 'e'),
+    '^BS': ('o', 'h', 'f', 'g'),
+}
+
+
+def _read_barcode(cmd: str, params: str, default_height=None) -> dict:
+    """A barcode command's own parameters, whichever of ^BC/^B3/^BE/^B2/^BS.
 
     Everything after the height is carried through untouched: those flags
-    decide whether the digits print under the bars and which Code 128 subsets
-    the printer may use, and re-emitting a barcode without them would change
-    the label.
+    decide whether the digits print under the bars and, where a symbology
+    has one, whether and how a check digit is added - re-emitting a barcode
+    without them would change the label. Each command spells its own subset
+    of them in its own order, which is what `_BARCODE_PARAMS` (and, for ^B3,
+    the code below) exists to put back into one shape: the (show, above,
+    check, mode) order `options` always uses regardless of symbology.
 
     An omitted height is ^BY's, which is what its third parameter is for.
-    Hard-coding 100 here turned ^BY3,3.0,150^BCN into a barcode a third shorter
-    than the file asked for.
+    Hard-coding 100 here turned ^BY3,3.0,150^BCN into a barcode a third
+    shorter than the file asked for.
     """
     parts = [p.strip() for p in params.split(',')]
-    orientation = ''
-    if parts and parts[0][:1].isalpha():
-        orientation = parts[0][:1].upper()
     fallback = DESIGNER_BAR_HEIGHT if default_height is None else default_height
+
+    if cmd == '^B3':
+        # ^B3o,e,h,f,g - the one command whose check digit comes before the
+        # height rather than after it, among the other trailing options.
+        fields = dict(zip(('o', 'e', 'h', 'f', 'g'), parts))
+    else:
+        fields = dict(zip(_BARCODE_PARAMS[cmd], parts))
+
+    orientation = ''
+    o = fields.get('o', '')
+    if o[:1].isalpha():
+        orientation = o[:1].upper()
     try:
-        height = int(parts[1]) if len(parts) > 1 and parts[1] else fallback
+        height = int(fields['h']) if fields.get('h') else fallback
     except ValueError:
         height = fallback
-    return {'orientation': orientation, 'height': height,
-            'options': tuple(p for p in parts[2:])}
+
+    return {'symbology': BARCODE_SYMBOLOGY[cmd], 'orientation': orientation,
+            'height': height,
+            'options': (fields.get('f', ''), fields.get('g', ''),
+                        fields.get('e', ''), fields.get('m', ''))}
 
 
-def _flush(field, doc, renderer, pending_no_print: bool) -> bool:
-    """Turn a gathered field into an element. Returns the no-print flag."""
+def _flush(field, doc, renderer, pending) -> tuple:
+    """Turn a gathered field into an element. Returns the markers still pending.
+
+    The markers are for the next field, whatever it builds: a field that turns
+    out to be something the model cannot hold uses them up all the same, so
+    they cannot fall through to the supported field after it and hide or
+    group one the file never meant. Only a marker with no field yet at all -
+    the ^FO has not arrived - is carried.
+    """
     if field is None:
-        return pending_no_print
+        return pending
 
+    no_print, group = pending
     before = len(doc.elements)
     element = _build_element(field, doc, renderer)
     if element is not None:
@@ -554,11 +900,11 @@ def _flush(field, doc, renderer, pending_no_print: bool) -> bool:
             _apply_typeset(element, doc)
         element.reverse_print = field['reverse']
         doc.elements.append(element)
-    if pending_no_print and len(doc.elements) > before:
-        for el in doc.elements[before:]:
+    for el in doc.elements[before:]:
+        if no_print:
             el.print_enabled = False
-        return False
-    return pending_no_print
+        el.group = group
+    return _NO_PENDING
 
 
 def _apply_typeset(element, doc) -> None:
@@ -589,12 +935,40 @@ def _build_element(field, doc, renderer):
     """
     x, y = field['x'], field['y']
 
+    # True for any field whose value the printer supplies rather than the
+    # file - a recalled ^FN, an incrementing ^SN, or a clock-substituted ^FC.
+    # Such a field carries no ^FD of its own, so treating it the same as one
+    # with none written at all is what stops it from either vanishing (the
+    # text branch below) or being handed an invented value (the barcode
+    # branch), the same trap ^FN alone used to fall into.
+    printer_generated = (field['field_number'] is not None
+                        or field['serial_increment'] is not None
+                        or field['clock_format'])
+
     if field['graphic'] is not None:
         # Every format reaches the decoder, so one that cannot be read fails
         # where it can be reported rather than at a regex that matched only
         # the spelling this designer writes.
         return _decode_gfa_image(x, y, field['graphic'],
                                  field['preview'], field['path'])
+
+    if field['stored_graphic'] is not None:
+        # ^XG/^IM name an image this file never carries the bytes for - only
+        # this session's own ^IS can supply them (see graphic_store) - so
+        # this element holds the reference, not pixels, and resolves live
+        # whenever it is drawn. If this session already has it, size the box
+        # to match - magnified, as ^XG asks - so the canvas lays out the rest
+        # of the label the way it will really print; otherwise a placeholder
+        # size, since there is nothing yet to measure.
+        cmd, params = field['stored_graphic']
+        spec, mag_x, mag_y = _read_stored_graphic(cmd, params)
+        resolved = graphic_store.recall(spec)
+        if resolved is not None:
+            width, height = resolved.width * mag_x, resolved.height * mag_y
+        else:
+            width, height = 200, 200
+        return StoredGraphicElement(x, y, width, height, command=cmd[1:],
+                                    device_spec=spec, mag_x=mag_x, mag_y=mag_y)
 
     if field['frame'] is not None:
         return FrameElement(x, y, *_read_frame(field['frame']))
@@ -604,21 +978,29 @@ def _build_element(field, doc, renderer):
         # A ^A before the ^BC selects the interpretation line's font, not a
         # text element's, so it belongs to the barcode.
         font = field['font']
-        # A numbered field's data comes from the printer, so it has none of
-        # its own and must not be given any: `or "123456789"` is a default for a
-        # barcode the user has just created, and applying it here invented a
-        # value that appeared nowhere in the file and then wrote it to disk.
+        # A field whose data the printer supplies has none of its own and
+        # must not be given any: `or "123456789"` is a default for a barcode
+        # the user has just created, and applying it here invented a value
+        # that appeared nowhere in the file and then wrote it to disk.
         value = field['data']
         if value is None:
-            value = '' if field['field_number'] is not None else "123456789"
+            value = '' if printer_generated else "123456789"
         return BarcodeElement(x, y, height=bc['height'],
                               barcode_value=value,
                               module_width=field['module_width'],
                               ratio=field['ratio'],
                               orientation=bc['orientation'],
                               options=bc['options'],
+                              symbology=bc['symbology'],
                               field_number=field['field_number'],
                               field_prompt=field['field_prompt'],
+                              serial_start=field['serial_start'],
+                              serial_increment=field['serial_increment'],
+                              serial_leading_zero=field['serial_leading_zero'],
+                              clock_format=field['clock_format'],
+                              clock_chars=field['clock_chars'],
+                              serial_field_raw=field['serial_field_raw'],
+                              hex_indicator=field['hex_indicator'],
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
 
@@ -627,9 +1009,10 @@ def _build_element(field, doc, renderer):
         # Code 39 sixty dots tall from arriving as nine-dot text.
         return None
 
-    # A ^FN field carries no ^FD of its own - that is what ^FN is for - so
-    # requiring data discarded every text field in a stored format.
-    if field['data'] is not None or field['field_number'] is not None:
+    # A field whose data the printer supplies carries no ^FD of its own -
+    # that is the point of ^FN/^SN/^FC - so requiring data discarded every
+    # such field in a stored format.
+    if field['data'] is not None or printer_generated:
         return _build_text(x, y, field, doc, renderer)
 
     return None
@@ -643,7 +1026,14 @@ def _build_text(x, y, field, doc, renderer):
     element = TextElement(x, y, field['data'] or '', font['height'],
                           font['width'], font_code=font['code'],
                           field_number=field['field_number'],
-                          field_prompt=field['field_prompt'])
+                          field_prompt=field['field_prompt'],
+                          serial_start=field['serial_start'],
+                          serial_increment=field['serial_increment'],
+                          serial_leading_zero=field['serial_leading_zero'],
+                          clock_format=field['clock_format'],
+                          clock_chars=field['clock_chars'],
+                          serial_field_raw=field['serial_field_raw'],
+                          hex_indicator=field['hex_indicator'])
     element.orientation = font.get('orientation', 'N')
     element.height = font['height']
     element.printer_font_name = font['name']

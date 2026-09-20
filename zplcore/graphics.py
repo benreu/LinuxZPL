@@ -137,6 +137,56 @@ def _decode_base64(text: str) -> Optional[bytes]:
     return raw or None
 
 
+def encode(image, bytes_per_row: int) -> str:
+    """Pack a 1-bit image into ZPL's own bitmap format: hex-encoded,
+    MSB-first, 8 pixels per byte, a short final row padded white.
+
+    The inverse of decode_data() - together one reading and one writing of
+    the same bitmap, so ^GF and the printer's own stored objects (~DG) can
+    never disagree about what a picture became. `image` must already be mode
+    '1' (dithered - Floyd-Steinberg via .convert('1') is the caller's job,
+    not this function's); `bytes_per_row` is the caller's, too, since it is
+    sometimes an element's box width rather than the image's own, and a
+    short row is padded to it rather than recomputed from image.size.
+
+    A SET bit is black - the inverse of the usual 1-bit convention, which is
+    why this compares against 0 rather than casting the array directly.
+    """
+    import numpy as np
+    width, height = image.size
+    arr = np.array(image, dtype=np.uint8)
+    padded_w = bytes_per_row * 8
+    if padded_w > width:
+        # Padding is white, i.e. an unset bit, so it prints nothing.
+        pad = np.full((height, padded_w - width), 255, dtype=np.uint8)
+        arr = np.concatenate([arr, pad], axis=1)
+    arr = arr.reshape(height, bytes_per_row, 8)
+    bits = (arr == 0).astype(np.uint8)
+    weights = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint8)
+    packed = (bits * weights).sum(axis=2).astype(np.uint8)
+    return packed.tobytes().hex().upper()
+
+
+def to_image(raw: bytes, bytes_per_row: int):
+    """Raw ZPL bitmap bytes - what decode_data() returns - back to a real
+    image. The inverse of encode(), minus the dithering it has no way to
+    undo: a set bit is still black, so the bits invert to greyscale before
+    Pillow sees them.
+
+    The same unpacking parser.py's own last-resort ^GF reading does inline;
+    lives here, alongside encode()/decode_data(), so retrieve_printer_graphic
+    can turn a printer's own bitmap reply into pixels without a second,
+    untested copy of the bit order.
+    """
+    import numpy as np
+    from PIL import Image as PILImage
+    rows = len(raw) // bytes_per_row
+    arr = np.frombuffer(raw, dtype=np.uint8).reshape(rows, bytes_per_row)
+    unpacked = np.unpackbits(arr, axis=1)
+    pixel_data = ((1 - unpacked) * 255).astype(np.uint8)
+    return PILImage.fromarray(pixel_data, mode='L').convert('RGB')
+
+
 def _decode_hex(text: str, bytes_per_row: int) -> Optional[bytes]:
     """Hex digits, with ZPL's run-length shorthands expanded.
 

@@ -24,9 +24,10 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gdk, GdkPixbuf, GObject, Gtk
 
-from zplcore import geometry, textraster, view
+from zplcore import geometry, graphic_store, textraster, view
 from zplcore.model import (BarcodeElement, DesignElement, Document,
-                           FrameElement, ImageElement, TextElement)
+                           FrameElement, ImageElement, StoredGraphicElement,
+                           TextElement)
 
 
 def to_pixbuf(pil_image) -> Optional[GdkPixbuf.Pixbuf]:
@@ -120,6 +121,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self.band_origin: Optional[Tuple[int, int]] = None
         self.band_now: Optional[Tuple[int, int]] = None
         self.band_additive = False
+        self.band_direct = False
         self._cursor_name: Optional[str] = None   # cursor currently set
         self._cursor_cache = {}
 
@@ -215,6 +217,15 @@ class DesignCanvas(Gtk.DrawingArea):
     def add_text_element(self, text: str = "New Text"):
         return self._added(self.document.add_text_element(text))
 
+    def add_time_element(self, text: str = "%m/%d/%y"):
+        return self._added(self.document.add_time_element(text))
+
+    def add_serial_element(self, text: str = "1"):
+        return self._added(self.document.add_serial_element(text))
+
+    def add_numbered_element(self, number: int = 1, prompt=None):
+        return self._added(self.document.add_numbered_element(number, prompt))
+
     def add_frame_element(self):
         return self._added(self.document.add_frame_element())
 
@@ -223,6 +234,10 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def add_image_element(self, image_path: str):
         return self._added(self.document.add_image_element(image_path))
+
+    def add_stored_graphic_element(self, command: str = 'XG',
+                                   device_spec: str = 'R:UNKNOWN.GRF'):
+        return self._added(self.document.add_stored_graphic_element(command, device_spec))
 
     def remove_selected(self):
         if self.document.remove_selected():
@@ -246,6 +261,18 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def align_selected(self, edge: str):
         if self.document.align_selected(edge):
+            self._changed()
+
+    def group_selected(self):
+        if self.document.group_selected():
+            self._changed()
+
+    def ungroup_selected(self):
+        if self.document.ungroup_selected():
+            self._changed()
+
+    def remove_from_group(self):
+        if self.document.remove_from_group():
             self._changed()
 
     def snapshot(self):
@@ -276,8 +303,8 @@ class DesignCanvas(Gtk.DrawingArea):
                                        printer_font_name)
         self.queue_draw()
 
-    def to_zpl(self) -> str:
-        return self.document.to_zpl()
+    def to_zpl(self, *, explicit_flips: bool = False) -> str:
+        return self.document.to_zpl(explicit_flips=explicit_flips)
 
     def set_label_size(self, width: int, height: int):
         self.document.set_label_size(width, height)
@@ -414,6 +441,11 @@ class DesignCanvas(Gtk.DrawingArea):
         context.stroke()
         context.set_dash([], 0)
 
+        # ^IL: a stored image this format loads at ^FO0,0, underneath its
+        # fields - not one of self.elements, so drawn here rather than through
+        # _draw_element.
+        self._draw_image_load(context)
+
         # Draw elements in label coordinates (context is scaled)
         for element in self.elements:
             selected = self.document.is_selected(element)
@@ -427,6 +459,10 @@ class DesignCanvas(Gtk.DrawingArea):
                 context.pop_group_to_source()
                 context.paint_with_alpha(0.35)
 
+        self._draw_group_outlines(context, scale_factor)
+        target = self.document.resize_target()
+        if target is not None:
+            self._draw_handles(context, target)
         self._draw_band(context, scale_factor)
 
         context.restore()
@@ -441,33 +477,68 @@ class DesignCanvas(Gtk.DrawingArea):
             self._draw_barcode_element(context, element, selected)
         elif element.element_type == 'image':
             self._draw_image_element(context, element, selected)
+        elif element.element_type == 'stored_graphic':
+            self._draw_stored_graphic_element(context, element, selected)
+
+    def _draw_image_load(self, context):
+        """The ^IL image this format loads at ^FO0,0, if it names one."""
+        spec = self.document.image_load
+        if not spec:
+            return
+        image = graphic_store.recall(spec)
+        if image is not None:
+            pixbuf = to_pixbuf(image)
+            if pixbuf:
+                context.save()
+                Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+                context.paint()
+                context.restore()
+            return
+        # Not available this session - a small marker beats leaving a ^IL the
+        # file names completely invisible.
+        context.save()
+        context.set_source_rgba(0.9, 0.85, 0.4, 0.5)
+        context.rectangle(0, 0, min(220, self.label_width), min(24, self.label_height))
+        context.fill()
+        context.set_source_rgb(0.35, 0.3, 0.05)
+        context.select_font_face("sans")
+        context.set_font_size(11)
+        context.move_to(4, 17)
+        context.show_text(f"^IL {spec} (unavailable)")
+        context.restore()
     
     def _draw_text_element(self, context, element, selected: bool):
         """Draw a text element."""
         reverse = element.reverse_print
-        if reverse:
-            # ^FR: this field prints in reverse, so the box is drawn solid
-            # rather than as the usual translucent editing affordance - a
-            # reversed field with nothing under it would otherwise vanish.
-            context.set_source_rgb(0, 0, 0)
-        else:
-            # Translucent background: it is a designer affordance, and must
-            # not hide anything underneath that will still print.
-            context.set_source_rgba(0.95, 0.95, 1, 0.35)
-        context.rectangle(element.x, element.y, element.width, element.height)
-        context.fill()
 
-        # Draw border
-        if selected:
-            context.set_source_rgb(0, 0, 1)
-            context.set_line_width(2)
-        else:
-            context.set_source_rgb(0.5, 0.5, 1)
-            context.set_line_width(1)
-        context.rectangle(element.x, element.y, element.width, element.height)
-        context.stroke()
+        def draw_affordance():
+            # Translucent background: it is a designer affordance, and must
+            # not hide anything underneath that will still print - true
+            # regardless of reverse_print, so a reversed field is still
+            # visible and selectable even where it has nothing (yet) to
+            # invert. Drawn after the ink when reversed, or it would be
+            # inverted along with the real content beneath it instead of
+            # just tinting it.
+            context.set_source_rgba(0.95, 0.95, 1, 0.35)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.fill()
+
+            if selected:
+                context.set_source_rgb(0, 0, 1)
+                context.set_line_width(2)
+            else:
+                context.set_source_rgb(0.5, 0.5, 1)
+                context.set_line_width(1)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.stroke()
+
+        if not reverse:
+            draw_affordance()
 
         # Draw text using PIL when a custom font is set, otherwise Cairo toy font
+        # ^FR: white ink under an OPERATOR_DIFFERENCE invert whatever is
+        # already on the canvas under the glyphs, rather than being painted
+        # a flat colour of its own.
         ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
         context.set_source_rgb(*(c / 255 for c in ink[:3]))
         font_path = element.font_path or self.font_path
@@ -482,6 +553,8 @@ class DesignCanvas(Gtk.DrawingArea):
                           element.y + facing['offset'][1])
         if facing['angle']:
             context.rotate(math.radians(facing['angle']))
+        if reverse:
+            context.set_operator(cairo.OPERATOR_DIFFERENCE)
 
         pil_rendered = False
         if font_path:
@@ -519,10 +592,13 @@ class DesignCanvas(Gtk.DrawingArea):
             context.show_text(shown)
             context.restore()
 
+        if reverse:
+            context.set_operator(cairo.OPERATOR_OVER)
         context.restore()
 
-        if selected:
-            self._draw_handles(context, element)
+        if reverse:
+            draw_affordance()
+
 
     def _draw_text_block(self, context, element, font_path, block):
         """Wrap with the Cairo toy font when the block cannot be rasterised.
@@ -572,12 +648,21 @@ class DesignCanvas(Gtk.DrawingArea):
             context.rectangle(element.x, element.y, element.width, element.height)
             context.stroke()
 
-        # ^GB's colour: white is what the printer leaves unburnt, so it shows
-        # only over something already black - drawing it black instead was the
-        # one case where the canvas showed the opposite of what prints.
-        # ^FR flips it again, on top of whichever colour was chosen.
-        white = (getattr(element, 'colour', 'B') == 'W') != element.reverse_print
-        context.set_source_rgb(1, 1, 1) if white else context.set_source_rgb(0, 0, 0)
+        reverse = element.reverse_print
+        if reverse:
+            # ^FR replaces the field's own print outright, so colour has
+            # nothing left to choose between - white drawn under
+            # OPERATOR_DIFFERENCE inverts whatever the canvas already has
+            # here, rather than picking a flat colour of its own.
+            context.set_operator(cairo.OPERATOR_DIFFERENCE)
+            context.set_source_rgb(1, 1, 1)
+        else:
+            # ^GB's colour: white is what the printer leaves unburnt, so it
+            # shows only over something already black - drawing it black
+            # instead was the one case where the canvas showed the opposite
+            # of what prints.
+            white = getattr(element, 'colour', 'B') == 'W'
+            context.set_source_rgb(1, 1, 1) if white else context.set_source_rgb(0, 0, 0)
         radius = element.corner_radius() if hasattr(element, 'corner_radius') else 0
 
         if 2 * t >= min(element.width, element.height):
@@ -595,9 +680,9 @@ class DesignCanvas(Gtk.DrawingArea):
                           max(0.0, radius - t / 2))
             context.stroke()
 
-        
-        if selected:
-            self._draw_handles(context, element)
+        if reverse:
+            context.set_operator(cairo.OPERATOR_OVER)
+
     
     def _draw_band(self, context, scale: float):
         """The rubber band, while one is being dragged."""
@@ -616,18 +701,31 @@ class DesignCanvas(Gtk.DrawingArea):
         context.stroke()
         context.set_dash([], 0)
 
-    def _draw_handles(self, context, element):
-        """The eight resize handles of the selected element.
-
-        Only ever on a selection of one. A group has no single box to resize,
-        and handles on each member would offer a drag with nowhere to go.
-        """
-        if len(self.document.selection) != 1:
+    def _draw_group_outlines(self, context, scale: float):
+        """A dashed box around each selected group, so a group can be told
+        from a selection that merely holds several elements - and a group
+        inside a group from its parent. Which boxes, and how far outside
+        the members they sit, is the document's to say; drawn with a longer
+        dash than the band so the two never read as one."""
+        boxes = self.document.group_outlines()
+        if not boxes:
             return
+        context.set_source_rgb(0, 0.5, 1)
+        context.set_line_width(1 / max(1e-6, scale))
+        context.set_dash([8, 4], 0)
+        for x, y, w, h in boxes:
+            context.rectangle(x, y, w, h)
+            context.stroke()
+        context.set_dash([], 0)
+
+    def _draw_handles(self, context, target):
+        """The eight resize handles of what the document says can be resized:
+        the one selected element, or a whole selected group. Drawn once,
+        after every element, so nothing above the target covers them."""
         scale = self._scale()
         size = geometry.handle_size(scale)
         half = size / 2
-        for _name, (hx, hy) in geometry.handles(element).items():
+        for _name, (hx, hy) in geometry.handles(target).items():
             context.set_source_rgb(0, 0.5, 1)
             context.rectangle(hx - half, hy - half, size, size)
             context.fill()
@@ -653,14 +751,23 @@ class DesignCanvas(Gtk.DrawingArea):
         if layout['angle']:
             context.rotate(math.radians(layout['angle']))
 
-        # White behind the symbol: a barcode the printer cannot read is worse
-        # than one that covers something, so it is deliberately opaque.
-        # ^FR swaps it for black-behind-white, same as everywhere else.
         reverse = element.reverse_print
-        bg, fg = ((0, 0, 0), (1, 1, 1)) if reverse else ((1, 1, 1), (0, 0, 0))
-        context.set_source_rgb(*bg)
-        context.rectangle(0, 0, run, stack)
-        context.fill()
+        if reverse:
+            # ^FR: white bars drawn under OPERATOR_DIFFERENCE invert
+            # whatever the canvas already has under them, rather than a
+            # background of their own - inverting blank white gives black
+            # bars, same as an unreversed barcode, unless something already
+            # printed (a filled ^GB, say) is under it.
+            context.set_operator(cairo.OPERATOR_DIFFERENCE)
+            fg = (1, 1, 1)
+        else:
+            # White behind the symbol: a barcode the printer cannot read is
+            # worse than one that covers something, so it is deliberately
+            # opaque.
+            context.set_source_rgb(1, 1, 1)
+            context.rectangle(0, 0, run, stack)
+            context.fill()
+            fg = (0, 0, 0)
 
         bar_x, bar_y, bar_w, bar_h = layout['bars']
         mods = element.modules()
@@ -675,6 +782,8 @@ class DesignCanvas(Gtk.DrawingArea):
 
         if layout['text']:
             self._draw_barcode_text(context, layout, reverse)
+        if reverse:
+            context.set_operator(cairo.OPERATOR_OVER)
         context.restore()
 
         # The selection border follows the footprint, which is axis-aligned at
@@ -689,8 +798,6 @@ class DesignCanvas(Gtk.DrawingArea):
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
 
-        if selected:
-            self._draw_handles(context, element)
 
     def _draw_barcode_text(self, context, layout, reverse=False):
         """The interpretation line, in dots - not at a constant screen size.
@@ -726,7 +833,7 @@ class DesignCanvas(Gtk.DrawingArea):
         # being dragged reuse the last bitmap stretched to the new bounds; the
         # exact one is regenerated on release.
         pixbuf = None
-        if self.active_handle is not None and element is self.selected_element:
+        if self.active_handle is not None and self.document.is_selected(element):
             pixbuf = element.peek_print_render()
         if pixbuf is None:
             pixbuf = element.get_print_render(to_pixbuf)
@@ -762,8 +869,48 @@ class DesignCanvas(Gtk.DrawingArea):
         context.rectangle(element.x, element.y, element.width, element.height)
         context.stroke()
 
+
+    def _draw_stored_graphic_element(self, context, element, selected: bool):
+        """Draw a ^XG/^IM reference: the real image if this session has it,
+        otherwise a placeholder naming what it is waiting for."""
+        image = element.resolve()
+        if image is not None:
+            pixbuf = to_pixbuf(image)
+        else:
+            pixbuf = None
+        if pixbuf:
+            context.save()
+            context.translate(element.x, element.y)
+            context.scale(element.width / pixbuf.get_width(),
+                          element.height / pixbuf.get_height())
+            Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+            context.get_source().set_filter(cairo.Filter.GOOD)
+            context.paint()
+            context.restore()
+        else:
+            context.set_source_rgb(0.93, 0.93, 0.8)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.fill()
+            context.set_source_rgb(0.45, 0.4, 0.1)
+            context.select_font_face("sans")
+            context.set_font_size(12)
+            context.move_to(element.x + 5, element.y + element.height / 2 - 6)
+            context.show_text(f"^{element.command} {element.device_spec}")
+            context.move_to(element.x + 5, element.y + element.height / 2 + 10)
+            context.show_text("(not available this session)")
+
         if selected:
-            self._draw_handles(context, element)
+            context.set_source_rgb(0, 0, 1)
+            context.set_line_width(2)
+        else:
+            context.set_source_rgb(0.6, 0.55, 0.2)
+            context.set_dash([4, 3], 0)
+            context.set_line_width(1)
+        context.rectangle(element.x, element.y, element.width, element.height)
+        context.stroke()
+        context.set_dash([], 0)
+
+
     def _show_context_menu(self, event, element):
         """Show right-click context menu for element reordering."""
         menu = Gtk.Menu()
@@ -779,6 +926,22 @@ class DesignCanvas(Gtk.DrawingArea):
 
         item_print.connect("toggled", on_toggle_print)
         menu.append(item_print)
+        menu.append(Gtk.SeparatorMenuItem())
+
+        item_group = Gtk.MenuItem(label="Group")
+        item_group.connect("activate", lambda _: self.group_selected())
+        item_group.set_sensitive(self.document.can_group())
+        menu.append(item_group)
+
+        item_ungroup = Gtk.MenuItem(label="Ungroup")
+        item_ungroup.connect("activate", lambda _: self.ungroup_selected())
+        item_ungroup.set_sensitive(self.document.can_ungroup())
+        menu.append(item_ungroup)
+
+        item_remove = Gtk.MenuItem(label="Remove from Group")
+        item_remove.connect("activate", lambda _: self.remove_from_group())
+        item_remove.set_sensitive(self.document.can_remove_from_group())
+        menu.append(item_remove)
         menu.append(Gtk.SeparatorMenuItem())
 
         item_front = Gtk.MenuItem(label="Bring to Front")
@@ -797,11 +960,13 @@ class DesignCanvas(Gtk.DrawingArea):
         item_back.connect("activate", lambda _: self.send_to_back())
         menu.append(item_back)
 
-        idx = self.elements.index(element)
-        item_front.set_sensitive(idx < len(self.elements) - 1)
-        item_forward.set_sensitive(idx < len(self.elements) - 1)
-        item_backward.set_sensitive(idx > 0)
-        item_back.set_sensitive(idx > 0)
+        # From the model, as the Qt canvas does: a group is one depth, and
+        # only the model knows where the run holding this element ends.
+        can_raise, can_lower = self.document.can_raise(), self.document.can_lower()
+        item_front.set_sensitive(can_raise)
+        item_forward.set_sensitive(can_raise)
+        item_backward.set_sensitive(can_lower)
+        item_back.set_sensitive(can_lower)
 
         menu.show_all()
         menu.popup_at_pointer(event)
@@ -830,17 +995,21 @@ class DesignCanvas(Gtk.DrawingArea):
         # Reset active handle for new click
         self.active_handle = None
 
-        # Shift or Ctrl adds to the selection instead of replacing it.
-        additive = bool(event.state & (Gdk.ModifierType.SHIFT_MASK |
-                                       Gdk.ModifierType.CONTROL_MASK))
+        # Shift adds to the selection instead of replacing it; Ctrl picks
+        # exactly the element under the pointer, one inside a group included,
+        # rather than its whole group. The rules are the document's - the
+        # canvas only says which keys were down.
+        additive = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
+        direct = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
 
-        # Check if clicking on a resize handle of the selected element
-        if len(self.document.selection) == 1:
-            handle = geometry.handle_at_point(lx, ly, self.selected_element,
-                                             self._scale())
+        # A handle of the resize target - the selected element, or a whole
+        # selected group - wins over anything under the pointer
+        target = self.document.resize_target()
+        if target is not None:
+            handle = geometry.handle_at_point(lx, ly, target, self._scale())
             if handle:
                 self.active_handle = handle
-                self.resize_origin = geometry.resize_origin(self.selected_element)
+                self.resize_origin = geometry.resize_origin(target)
                 self.drag_start = (lx, ly)
                 return
 
@@ -856,6 +1025,7 @@ class DesignCanvas(Gtk.DrawingArea):
         if clicked_element is None:
             self.band_origin = self.band_now = (lx, ly)
             self.band_additive = additive
+            self.band_direct = direct
             self.last_click_element = None
             if not additive:
                 self.document.clear_selection()
@@ -864,7 +1034,7 @@ class DesignCanvas(Gtk.DrawingArea):
 
         # Check for double-click (within 500ms and same element)
         current_time = time.time()
-        if (not additive and
+        if (not additive and not direct and
             self.last_click_element == clicked_element and 
             clicked_element is not None and 
             (current_time - self.last_click_time) < 0.5):
@@ -879,7 +1049,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self.last_click_element = clicked_element
         
         # Single click selection
-        self.document.select(clicked_element, additive)
+        self.document.select(clicked_element, additive, direct)
         # An additive click is a selection gesture, not the start of a drag:
         # picking up the group on the same click would move it by whatever the
         # pointer wandered before the button came back up.
@@ -909,9 +1079,9 @@ class DesignCanvas(Gtk.DrawingArea):
         self.band_origin = self.band_now = None
         caught = geometry.elements_in_box(self.elements, x0, y0, x1, y1)
         if self.band_additive:
-            self.document.extend_selection(caught)
+            self.document.extend_selection(caught, self.band_direct)
         else:
-            self.document.select_many(caught)
+            self.document.select_many(caught, self.band_direct)
         # A band changes the selection, never the document, so it is not a
         # change to undo - only a redraw.
         self.queue_draw()
@@ -934,10 +1104,10 @@ class DesignCanvas(Gtk.DrawingArea):
             self._set_cursor(self.HANDLE_CURSORS.get(self.active_handle))
             return
         name = None
-        if len(self.document.selection) == 1:
+        target = self.document.resize_target()
+        if target is not None:
             lx, ly = self._screen_to_label(event.x, event.y)
-            handle = geometry.handle_at_point(lx, ly, self.selected_element,
-                                             self._scale())
+            handle = geometry.handle_at_point(lx, ly, target, self._scale())
             if handle:
                 name = self.HANDLE_CURSORS.get(handle)
         self._set_cursor(name)
@@ -983,7 +1153,7 @@ class DesignCanvas(Gtk.DrawingArea):
         if self.active_handle:
             # Measured from the press, so the whole drag is still in the delta
             # after the box has snapped back to its printed size.
-            geometry.resize_by_handle(self.document, self.selected_element,
+            geometry.resize_by_handle(self.document, self.document.resize_target(),
                                       self.active_handle, dx, dy,
                                       origin=self.resize_origin)
         else:

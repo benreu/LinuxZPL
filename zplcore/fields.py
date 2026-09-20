@@ -61,6 +61,109 @@ def placeholder(number, prompt=None) -> str:
     return f"{OPEN}FN{int(number)}{CLOSE}"
 
 
+# ^FC<a>,<b>,<c> - the characters that trigger a substitution in a later ^FD.
+# Only the primary has a default: the manual gives b and c "Default: none -
+# this value cannot be the same as a or c". Defaulting them to characters
+# instead registered two indicators the file never asked for, so data
+# containing them was clock-substituted rather than printed.
+_CLOCK_DEFAULTS = ('%', None, None)
+
+
+def read_serial(params: str):
+    """^SN<start>,<increment>,<leading zeros> as (start, increment, leading
+    zero), or None when there is no start value to serialize.
+
+    `increment` defaults to 1 and the leading-zero flag to False when the
+    file leaves them out, matching how a printer treats an omitted ^SN
+    parameter.
+    """
+    parts = (params or '').split(',')
+    start = parts[0].strip()
+    if not start:
+        return None
+    try:
+        increment = int(parts[1]) if len(parts) > 1 and parts[1].strip() else 1
+    except ValueError:
+        increment = 1
+    leading_zero = len(parts) > 2 and parts[2].strip().upper() == 'Y'
+    return start, increment, leading_zero
+
+
+def read_clock_chars(params: str):
+    """^FC<a>,<b>,<c> as a 3-tuple, None for a part the file left out."""
+    parts = [p.strip() for p in (params or '').split(',')]
+    parts += [''] * (3 - len(parts))
+    return tuple(p or default for p, default in zip(parts, _CLOCK_DEFAULTS))
+
+
+_HEX_DIGITS = frozenset('0123456789ABCDEFabcdef')
+
+
+def read_hex_indicator(params: str) -> str:
+    """^FHa's indicator character, or ZPL's own default '_' when a is omitted."""
+    stripped = (params or '').strip()
+    return stripped[0] if stripped else '_'
+
+
+def decode_hex(text, indicator):
+    """A ^FD/^FV literal with `indicator`XX escapes replaced by that byte.
+
+    Only a well-formed pair - the indicator followed by exactly two hex
+    digits - is an escape; a lone indicator, or one followed by something
+    that isn't hex, is left exactly as written, since there is no printer
+    behaviour to fall back to for a malformed one.
+    """
+    if not text or not indicator:
+        return text
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if (ch == indicator and i + 2 < n
+                and text[i + 1] in _HEX_DIGITS and text[i + 2] in _HEX_DIGITS):
+            out.append(chr(int(text[i + 1:i + 3], 16)))
+            i += 3
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out)
+
+
+def clock_chars_zpl(chars) -> str:
+    """^FC's parameters, trimmed after the last one that is actually set.
+
+    Positional, so a gap has to stay a gap: ('%', None, '#') is "%,,#", not
+    "%,#". Only trailing absences come off.
+    """
+    given = list(chars)
+    keep = 0
+    for index, value in enumerate(given):
+        if value is not None:
+            keep = index + 1
+    return ','.join('' if v is None else v for v in given[:keep])
+
+
+def serial_display(base: str, increment) -> str:
+    """What a canvas draws for a field the printer increments each label.
+
+    The starting value is real content - unlike a bare ^FN, there is always
+    something to show - so it is kept, with a marker appended rather than
+    replacing it, the way ^FN's brackets mark a field the canvas would
+    otherwise draw as if it were fixed text.
+    """
+    sign = '+' if increment >= 0 else ''
+    return f"{base}{OPEN}{sign}{increment}{CLOSE}"
+
+
+def clock_display(base: str) -> str:
+    """What a canvas draws for a field the printer's clock fills in.
+
+    The literal format codes (e.g. %m/%d/%y) are real content too, so they
+    are wrapped rather than hidden - the same reasoning as `serial_display`.
+    """
+    return f"{OPEN}{base}{CLOSE}"
+
+
 class FieldTable:
     """The data and prompts belonging to a format's numbered fields.
 

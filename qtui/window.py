@@ -9,7 +9,6 @@ touches a file or the printer.
 
 import configparser
 import os
-import socket
 import sys
 from pathlib import Path
 
@@ -21,13 +20,15 @@ from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QLabel,
 
 from zplcore import fonts as zpl_fonts
 from zplcore import parser as zpl_parser
+from zplcore import printer_io
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore.model import (BarcodeElement, Document, FrameElement, ImageElement,
-                           TextElement)
+                           StoredGraphicElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from . import dialogs as qt_dialogs
+from .busy import BusyBar
 from .canvas import DesignCanvas
 
 # The align commands, in menu order: the three horizontal, then the three
@@ -74,6 +75,8 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_address = DEFAULT_ADDRESS
         self.printer_port = DEFAULT_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        # The one non-modal printer window - see on_printer_console.
+        self.printer_console_dialog = None
         self.label_inches = DEFAULT_LABEL_INCHES
         self.saved_geometry = None
         self._load_settings()
@@ -125,6 +128,10 @@ class ZPLDesignerWindow(QMainWindow):
         self._build_toolbar()
 
         # Its own widget, so a status message does not wipe the zoom away.
+        # The busy row sits beside it for the one network call the main
+        # window makes itself: Print.
+        self._busy = BusyBar((self.print_action,), self.update_status, self)
+        self.statusBar().addPermanentWidget(self._busy)
         self.zoom_label = QLabel()
         self.statusBar().addPermanentWidget(self.zoom_label)
         self.statusBar().showMessage("Ready")
@@ -262,6 +269,21 @@ class ZPLDesignerWindow(QMainWindow):
 
         self.delete_action = self._action("&Delete", self.on_delete, QKeySequence.Delete)
 
+        # Literal keys rather than QKeySequence.SelectAll / Deselect: the
+        # second is bound on X11 only, and the two frontends have to agree.
+        self.select_all_action = self._action("&Select All", self.on_select_all, "Ctrl+A")
+        self.deselect_all_action = self._action("Dese&lect All", self.on_deselect_all,
+                                                "Ctrl+Shift+A")
+        self.invert_selection_action = self._action("&Invert Selection",
+                                                    self.on_invert_selection)
+
+        self.group_action = self._action("&Group", self.on_group, "Ctrl+G")
+        self.ungroup_action = self._action("&Ungroup", self.on_ungroup, "Ctrl+Shift+G")
+        # No shortcut: one more window-wide binding for a command reached
+        # after a Ctrl-click, which the context menu is already under.
+        self.remove_from_group_action = self._action("Remove &from Group",
+                                                     self.on_remove_from_group)
+
         self.front_action = self._action("Bring to Front", self.on_bring_to_front, "Ctrl+Shift+]")
         self.forward_action = self._action("Bring Forward", self.on_bring_forward, "Ctrl+]")
         self.backward_action = self._action("Send Backward", self.on_send_backward, "Ctrl+[")
@@ -295,7 +317,11 @@ class ZPLDesignerWindow(QMainWindow):
 
         self.label_size_action = self._action("Label Size…", self.on_label_size)
         self.default_printer_action = self._action("Default Printer…", self.on_default_printer)
-        self.printer_fonts_action = self._action("Printer Fonts…", self.on_printer_fonts)
+        self.local_fonts_action = self._action("Local Fonts…", self.on_local_fonts)
+        self.printer_fonts_action = self._action("Fonts…", self.on_printer_fonts)
+        self.printer_graphics_action = self._action("Graphics…", self.on_printer_graphics)
+        self.printer_objects_action = self._action("Objects…", self.on_printer_objects)
+        self.printer_console_action = self._action("Console…", self.on_printer_console)
 
         self.session_printer_action = self._action(
             "&Set Printer for This Session…", self.on_session_printer)
@@ -324,6 +350,14 @@ class ZPLDesignerWindow(QMainWindow):
         edit_menu.addSeparator()
         edit_menu.addAction(self.delete_action)
         edit_menu.addSeparator()
+        edit_menu.addAction(self.select_all_action)
+        edit_menu.addAction(self.deselect_all_action)
+        edit_menu.addAction(self.invert_selection_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.group_action)
+        edit_menu.addAction(self.ungroup_action)
+        edit_menu.addAction(self.remove_from_group_action)
+        edit_menu.addSeparator()
         for action in (self.front_action, self.forward_action,
                        self.backward_action, self.back_action):
             edit_menu.addAction(action)
@@ -343,10 +377,16 @@ class ZPLDesignerWindow(QMainWindow):
         view_menu.addAction(self.fit_width_action)
         view_menu.addAction(self.actual_size_action)
 
+        printer_menu = menubar.addMenu("&Printer")
+        printer_menu.addAction(self.printer_graphics_action)
+        printer_menu.addAction(self.printer_fonts_action)
+        printer_menu.addAction(self.printer_objects_action)
+        printer_menu.addAction(self.printer_console_action)
+
         settings_menu = menubar.addMenu("&Settings")
         settings_menu.addAction(self.label_size_action)
         settings_menu.addAction(self.default_printer_action)
-        settings_menu.addAction(self.printer_fonts_action)
+        settings_menu.addAction(self.local_fonts_action)
 
     def _build_toolbar(self):
         toolbar = QToolBar("Elements", self)
@@ -355,9 +395,13 @@ class ZPLDesignerWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         toolbar.addAction(self._action("+ Text", self.on_add_text))
+        toolbar.addAction(self._action("+ Time", self.on_add_time))
+        toolbar.addAction(self._action("+ Serial", self.on_add_serial))
+        toolbar.addAction(self._action("+ Numbered", self.on_add_numbered))
         toolbar.addAction(self._action("+ Frame", self.on_add_frame))
         toolbar.addAction(self._action("+ Barcode", self.on_add_barcode))
         toolbar.addAction(self._action("+ Image", self.on_add_image))
+        toolbar.addAction(self._action("+ Graphic", self.on_add_stored_graphic))
         toolbar.addSeparator()
         toolbar.addAction(self.delete_action)
 
@@ -398,6 +442,12 @@ class ZPLDesignerWindow(QMainWindow):
         """Grey out the actions that need a selection, or a place to move to."""
         doc = self.document
         self.delete_action.setEnabled(bool(doc.selection))
+        self.select_all_action.setEnabled(len(doc.selection) < len(doc.elements))
+        self.deselect_all_action.setEnabled(bool(doc.selection))
+        self.invert_selection_action.setEnabled(bool(doc.elements))
+        self.group_action.setEnabled(doc.can_group())
+        self.ungroup_action.setEnabled(doc.can_ungroup())
+        self.remove_from_group_action.setEnabled(doc.can_remove_from_group())
         for action in self.align_actions:
             action.setEnabled(bool(doc.selection))
         for action in (self.front_action, self.forward_action):
@@ -464,6 +514,18 @@ class ZPLDesignerWindow(QMainWindow):
         self.document.add_text_element("New Text")
         self.canvas.commit()
 
+    def on_add_time(self):
+        self.document.add_time_element()
+        self.canvas.commit()
+
+    def on_add_serial(self):
+        self.document.add_serial_element()
+        self.canvas.commit()
+
+    def on_add_numbered(self):
+        self.document.add_numbered_element()
+        self.canvas.commit()
+
     def on_add_frame(self):
         self.document.add_frame_element()
         self.canvas.commit()
@@ -479,6 +541,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.document.add_image_element(path)
         self.canvas.commit()
 
+    def on_add_stored_graphic(self):
+        self.document.add_stored_graphic_element()
+        self.canvas.commit()
+
     def on_delete(self):
         # Every selected element goes, so every editor open on one has to be
         # closed - an editor must never outlive the element it is editing.
@@ -487,6 +553,22 @@ class ZPLDesignerWindow(QMainWindow):
             for element in doomed:
                 self._close_editor_for(element)
             self.canvas.commit()
+
+    # Selection commands change the selection and never the document, so
+    # they repaint and record nothing - the same as a click or a band.
+
+    def on_select_all(self):
+        if self.document.select_all():
+            self.canvas.update()
+
+    def on_deselect_all(self):
+        if self.document.selection:
+            self.document.clear_selection()
+            self.canvas.update()
+
+    def on_invert_selection(self):
+        if self.document.invert_selection():
+            self.canvas.update()
 
     def _reorder(self, moved: bool):
         if moved:
@@ -508,6 +590,18 @@ class ZPLDesignerWindow(QMainWindow):
         if self.document.align_selected(edge):
             self.canvas.commit()
 
+    def on_group(self):
+        if self.document.group_selected():
+            self.canvas.commit()
+
+    def on_ungroup(self):
+        if self.document.ungroup_selected():
+            self.canvas.commit()
+
+    def on_remove_from_group(self):
+        if self.document.remove_from_group():
+            self.canvas.commit()
+
     def on_element_double_clicked(self, element):
         """Open the editor for whichever element was double-clicked."""
         open_editor = self._editors.get(id(element))
@@ -526,7 +620,16 @@ class ZPLDesignerWindow(QMainWindow):
             self._register_label_fonts()
             self.canvas.commit()
 
-        if isinstance(element, TextElement):
+        if isinstance(element, TextElement) and element.clock_format:
+            editor = qt_dialogs.edit_time_dialog(self, element, self.document,
+                                                 on_accept=text_committed)
+        elif isinstance(element, TextElement) and element.serial_increment is not None:
+            editor = qt_dialogs.edit_serial_dialog(self, element, self.document,
+                                                   on_accept=text_committed)
+        elif isinstance(element, TextElement) and element.field_number is not None:
+            editor = qt_dialogs.edit_numbered_dialog(self, element, self.document,
+                                                      on_accept=text_committed)
+        elif isinstance(element, TextElement):
             editor = qt_dialogs.edit_text_dialog(self, element, self.document,
                                                  on_accept=text_committed)
         elif isinstance(element, FrameElement):
@@ -544,6 +647,9 @@ class ZPLDesignerWindow(QMainWindow):
                 element.reload()
                 self.canvas.commit()
             return
+        elif isinstance(element, StoredGraphicElement):
+            editor = qt_dialogs.edit_stored_graphic_dialog(self, element,
+                                                            on_accept=committed)
         else:
             return
 
@@ -588,7 +694,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.apply_label_settings(*result)
 
     def apply_label_settings(self, width, height, dpi, w_in, h_in,
-                             transform=None):
+                             transform=None, quantity=None):
         """One accepted visit to Label Settings, whatever it changed.
 
         The resolution and the size can both have moved in the same visit, and
@@ -601,9 +707,15 @@ class ZPLDesignerWindow(QMainWindow):
         """
         old_dpi = self.printer_dpi
         self.printer_dpi = dpi
+        # Only the DPI slot of the default moves - address/port stay whatever
+        # the persisted default already was, so a session override on those
+        # (Printer Settings) survives a Label Settings visit untouched.
+        self._default_printer = (self._default_printer[0], self._default_printer[1], dpi)
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.document.transform = transform
+        if quantity is not None:
+            self.document.print_quantity = quantity
         # Written before the prompt, as the printer dialog writes its own: the
         # prompt is modal and can be dismissed by the window manager, and the
         # choice the user already made should be on disk by then.
@@ -633,8 +745,8 @@ class ZPLDesignerWindow(QMainWindow):
         address, port, dpi = result
         old_dpi = self.printer_dpi
         self.printer_address, self.printer_port, self.printer_dpi = address, port, dpi
-        self._save_settings()
         self._default_printer = (address, port, dpi)
+        self._save_settings()
         self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
         if dpi != old_dpi:
             note = self._offer_dpi_rescale()
@@ -642,6 +754,9 @@ class ZPLDesignerWindow(QMainWindow):
                 self.canvas._sync_size()
                 self.canvas.commit()
                 self.update_status(note[0].upper() + note[1:])
+
+    def on_local_fonts(self):
+        qt_dialogs.LocalFontsDialog(self).exec_()
 
     def on_session_printer(self):
         """Print To this session's printer, without touching the persisted default."""
@@ -668,6 +783,38 @@ class ZPLDesignerWindow(QMainWindow):
         dialog = qt_dialogs.PrinterFontsDialog(
             self, self.printer_address, self.printer_port, on_uploaded)
         dialog.exec_()
+
+    def on_printer_graphics(self):
+        # Storing/retrieving/deleting a graphic changes no Document state, so
+        # this is a plain repaint - canvas.update(), never canvas.commit() -
+        # so an ^XG/^IM/^IL that now resolves differently is shown without
+        # marking the file dirty or pushing a bogus undo entry.
+        dialog = qt_dialogs.PrinterGraphicsDialog(
+            self, self.printer_address, self.printer_port,
+            on_changed=lambda *_a: self.canvas.update())
+        dialog.exec_()
+
+    def on_printer_objects(self):
+        # Same reasoning as on_printer_graphics: deleting an object changes
+        # no Document state, so this is a plain repaint, never a commit().
+        dialog = qt_dialogs.PrinterObjectsDialog(
+            self, self.printer_address, self.printer_port,
+            on_changed=lambda *_a: self.canvas.update())
+        dialog.exec_()
+
+    def on_printer_console(self):
+        # Non-modal and a singleton, unlike the other printer dialogs: this
+        # one is meant to stay open while the user keeps working elsewhere
+        # in the window, so a second click focuses it rather than stacking
+        # another one.
+        if self.printer_console_dialog is not None:
+            self.printer_console_dialog.raise_()
+            self.printer_console_dialog.activateWindow()
+            return
+        dialog = qt_dialogs.PrinterConsoleDialog(self)
+        dialog.destroyed.connect(lambda *_a: setattr(self, 'printer_console_dialog', None))
+        self.printer_console_dialog = dialog
+        dialog.show()
 
     # --- files ---------------------------------------------------------------
 
@@ -824,7 +971,8 @@ class ZPLDesignerWindow(QMainWindow):
             self.unsaved_changes = bool(rescaled)
             self._reset_history()
             workflow.warn_unsupported(
-                content, lambda cmds: qt_dialogs.warn_unsupported(self, cmds))
+                content, lambda cmds: qt_dialogs.warn_unsupported(self, cmds),
+                lambda found: qt_dialogs.warn_control_redefined(self, found))
         except Exception as e:
             self.show_error(f"Failed to load file: {e}")
             self.update_status("Error loading file")
@@ -867,42 +1015,68 @@ class ZPLDesignerWindow(QMainWindow):
             renderer.set_font(self.renderer.custom_font_path)
         return renderer
 
-    def _confirm_printer_fonts(self) -> bool:
-        """Check the label's fonts are on the printer. False cancels printing."""
-        def ask(text, detail, uploadable):
-            return qt_dialogs.ask_font_problem(self, text, detail, uploadable)
-
-        def progress(message):
-            self.update_status(message)
-            QApplication.processEvents()
-
-        proceed, error = workflow.confirm_printer_fonts(
-            self.document, self.printer_address, self.printer_port, ask, progress)
-        if error:
-            self.show_error(error)
-        return proceed
-
     def on_print(self):
-        if not self._confirm_printer_fonts():
-            self.update_status("Printing cancelled")
-            return
+        """Print in up to three steps, each network one off the GUI thread
+        behind the status bar's busy row: ask the printer which fonts it has,
+        prompt if any are missing (on the GUI thread, as a prompt must be),
+        then upload whatever the user chose to and send the label.
+        """
         try:
-            content = self.document.to_zpl()
+            content = self.document.to_zpl(explicit_flips=True)
         except Exception as e:
             self.show_error(f"Failed to generate ZPL: {e}")
             return
+        address, port = self.printer_address, self.printer_port
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(PRINT_TIMEOUT)
-        try:
-            sock.connect((self.printer_address, self.printer_port))
-            sock.sendall(content.encode('utf-8'))
-        except OSError as e:
-            self.show_error(str(e))
+        def send_label(uploadable):
+            self.update_status("Printing...")
+
+            def work(cancel):
+                if uploadable:
+                    workflow.upload_fonts(uploadable, address, port,
+                                          self._busy.report, cancel)
+                    self._busy.report("Printing...")
+                printer_io.send(address, port, content.encode('utf-8'),
+                                PRINT_TIMEOUT, cancel=cancel)
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    self.update_status("Printing cancelled")
+                elif error is not None:
+                    self.show_error(str(error))
+                    self.update_status("Printing failed")
+                else:
+                    self.update_status(f"Sent to {address}:{port}")
+
+            self._busy.run(work, done)
+
+        def checked(result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self.update_status("Printing cancelled")
+                return
+            if error is not None:
+                self.show_error(str(error))
+                self.update_status("Printing failed")
+                return
+            missing, uploadable = (None, {}) if result is None else result
+            if result is not None and not missing:
+                send_label({})
+                return
+            text, detail = workflow.font_problem_prompt(missing)
+            answer = qt_dialogs.ask_font_problem(self, text, detail, uploadable)
+            if answer == 'upload':
+                send_label(uploadable)
+            elif answer == 'print':
+                send_label({})
+            else:
+                self.update_status("Printing cancelled")
+
+        if not self.document.font_sources():
+            send_label({})
             return
-        finally:
-            sock.close()
-        self.update_status(f"Sent to {self.printer_address}:{self.printer_port}")
+        self.update_status("Checking printer fonts...")
+        self._busy.run(lambda cancel: workflow.missing_printer_fonts(
+            self.document, address, port, cancel=cancel), checked)
 
     # --- settings file -------------------------------------------------------
 
@@ -948,9 +1122,15 @@ class ZPLDesignerWindow(QMainWindow):
                 parser.read(path)
                 if not parser.has_section('printer'):
                     parser.add_section('printer')
-                parser.set('printer', 'address', self.printer_address)
-                parser.set('printer', 'port', str(self.printer_port))
-                parser.set('printer', 'dpi', str(self.printer_dpi))
+                # The persisted default, not self.printer_address/_port/_dpi:
+                # those are whatever is active for printing right now, which a
+                # session override (Printer Settings) deliberately changes
+                # without this ever running. Only Default Printer and Label
+                # Settings are allowed to move self._default_printer, and they
+                # do so before calling this.
+                parser.set('printer', 'address', self._default_printer[0])
+                parser.set('printer', 'port', str(self._default_printer[1]))
+                parser.set('printer', 'dpi', str(self._default_printer[2]))
                 if not parser.has_section('label'):
                     parser.add_section('label')
                 # Inches, not dots: dots only mean a size once a resolution is

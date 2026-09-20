@@ -16,8 +16,14 @@ from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
                  ImageFont as PILImageFont)
 
 from . import code128
+from . import code39
+from . import ean13
+from . import i2of5
+from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
+from . import graphic_store
+from . import graphics
 from . import transforms as zpl_transforms
 from . import geometry
 
@@ -46,6 +52,14 @@ class DesignElement:
     # ^FR: this field prints in reverse - white where the label would
     # otherwise be black, and vice versa.
     reverse_print = False
+    # The groups this element is in, as a tuple of ids from the outermost
+    # in, or None for none: (3, 7) is "in group 7, which is inside group 3".
+    # Ids are unique across the document at every depth. A tuple rather than
+    # a reference to the other members, so a snapshot's shallow copy carries
+    # it and undo cannot leave a group pointing at elements that were
+    # replaced. A group itself is derived: every element whose path holds
+    # its id.
+    group = None
 
     def origin_zpl(self, offset=(0, 0)) -> str:
         """The ^FO or ^FT that places this element.
@@ -76,6 +90,31 @@ class DesignElement:
     field_number = None
     field_prompt = None
 
+    # ^SN: the printer increments this field's value each time it prints.
+    # `serial_start` is kept apart from the field's own literal because ^SN
+    # can appear with no ^FD at all, in which case it is the only value the
+    # file gives this field.
+    serial_start = None
+    serial_increment = None
+    serial_leading_zero = False
+
+    # ^FC: the printer splices its real-time clock into this field's literal
+    # at print time. `clock_chars` is the (a, b, c) trigger-character triple
+    # ^FC names, or None to mean the file left it at the ZPL default.
+    clock_format = False
+    clock_chars = None
+
+    # ^FH: the character that marks a hex escape (indicatorXX) in this
+    # field's literal, or None when the file gave none. The literal itself
+    # stays raw - see data_literal() - so a save writes ^FH back unchanged;
+    # only display_text()/encoded_value() decode it.
+    hex_indicator = None
+
+    # ^SF (deprecated): kept only as opaque, unparsed params so a file that
+    # carries one round-trips unchanged - its mask-character semantics are
+    # not modelled.
+    serial_field_raw = None
+
     def data_literal(self) -> str:
         """The literal this field prints, as the file gave it."""
         if not self.data_attribute:
@@ -90,8 +129,17 @@ class DesignElement:
         its number instead. The preview does not use this - it answers "what
         will print", and an unfilled ^FN prints nothing until the printer
         substitutes for it.
+
+        ^SN and ^FC are different: the literal they carry is real content (a
+        starting serial value, a clock-format string), not a stand-in, so it
+        is shown with a marker rather than replaced by one.
         """
-        literal = self.data_literal()
+        literal = zpl_fields.decode_hex(self.data_literal(), self.hex_indicator)
+        if self.serial_increment is not None:
+            base = literal or self.serial_start or ''
+            return zpl_fields.serial_display(base, self.serial_increment)
+        if self.clock_format:
+            return zpl_fields.clock_display(literal)
         if literal or self.field_number is None:
             return literal
         if table is not None:
@@ -99,20 +147,34 @@ class DesignElement:
         return zpl_fields.placeholder(self.field_number, self.field_prompt)
 
     def data_zpl(self) -> str:
-        """^FN and/or ^FD, then the ^FS that ends the field.
+        """^FC/^FD/^SN/^SF/^FN as this field carries them, then the closing ^FS.
 
         A plain field writes ^FD exactly as it always did, which is what keeps
-        every existing file byte-identical. A numbered one writes its ^FN, and
-        its ^FD only when it really has a literal - ZPL allows both together,
-        and means by it that this field's data also fills every other field
-        sharing the number.
+        every existing file byte-identical. ^FC has to precede the ^FD it
+        modifies; ^SN and ^SF follow it, matching how a printer-generated
+        field is conventionally written. A numbered field's ^FN/^FD pairing is
+        unchanged from before - ZPL allows both together, and means by it that
+        this field's data also fills every other field sharing the number.
         """
         literal = self.data_literal()
+        zpl = ''
+        if self.clock_format:
+            chars = self.clock_chars or zpl_fields._CLOCK_DEFAULTS
+            zpl += f"^FC{zpl_fields.clock_chars_zpl(chars)}"
+        if self.hex_indicator:
+            zpl += f"^FH{self.hex_indicator}"
         if self.field_number is None:
-            return f"^FD{literal}^FS\n"
-        name = f'"{self.field_prompt}"' if self.field_prompt is not None else ''
-        data = f"^FD{literal}" if literal else ''
-        return f"^FN{self.field_number}{name}{data}^FS\n"
+            zpl += f"^FD{literal}"
+        else:
+            name = f'"{self.field_prompt}"' if self.field_prompt is not None else ''
+            data = f"^FD{literal}" if literal else ''
+            zpl += f"^FN{self.field_number}{name}{data}"
+        if self.serial_increment is not None:
+            leading_zero = 'Y' if self.serial_leading_zero else 'N'
+            zpl += f"^SN{self.serial_start},{self.serial_increment},{leading_zero}"
+        if self.serial_field_raw is not None:
+            zpl += f"^SF{self.serial_field_raw}"
+        return f"{zpl}^FS\n"
 
     def contains_point(self, x: int, y: int) -> bool:
         """Check if point is within element bounds."""
@@ -202,7 +264,11 @@ class TextElement(DesignElement):
     def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
                  font_height: int = 36, font_width: int = 20,
                  font_code: str = 'F', orientation: str = 'N',
-                 field_number=None, field_prompt=None):
+                 field_number=None, field_prompt=None,
+                 serial_start=None, serial_increment=None,
+                 serial_leading_zero=False,
+                 clock_format=False, clock_chars=None,
+                 serial_field_raw=None, hex_indicator=None):
         self.x = x
         self.y = y
         self.text = text
@@ -212,6 +278,15 @@ class TextElement(DesignElement):
         # as if it were data.
         self.field_number = field_number
         self.field_prompt = field_prompt
+        # ^SN, ^FC, ^SF: the other ways a printer supplies this field's value
+        # instead of the design - see DesignElement for what each one means.
+        self.serial_start = serial_start
+        self.serial_increment = serial_increment
+        self.serial_leading_zero = serial_leading_zero
+        self.clock_format = clock_format
+        self.clock_chars = clock_chars
+        self.serial_field_raw = serial_field_raw
+        self.hex_indicator = hex_indicator
         self.font_height = font_height
         self.font_width = font_width
         self.width = len(text) * font_width
@@ -305,13 +380,16 @@ class TextElement(DesignElement):
         """Convert to ZPL commands."""
         effective_font = self.printer_font_name or printer_font_name
         turn = self.orientation or 'N'
-        zpl = self.origin_zpl(offset) + self.reverse_zpl()
+        zpl = self.origin_zpl(offset)
         if effective_font:
             zpl += f"^A@{turn},{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
         else:
             zpl += f"^A{self.font_code}{turn},{self.font_height},{self.font_width}\n"
         if self.block is not None:
             zpl += self.block.to_zpl() + "\n"
+        # ^FR immediately before the data it reverses, not right after ^FO -
+        # the working convention, and the one place this differed from it.
+        zpl += self.reverse_zpl()
         zpl += self.data_zpl()
         return zpl
 
@@ -376,30 +454,50 @@ class FrameElement(DesignElement):
 
 
 class BarcodeElement(DesignElement):
-    """Barcode element for the designer. Code 128, subsets B and C.
+    """Barcode element for the designer: Code 128, Code 39, EAN-13,
+    Interleaved 2 of 5, or a UPC/EAN Extension add-on, chosen by `symbology`.
 
-    ZPL's ^BC carries six parameters, and all six change the label. They are
-    held here by name rather than as a tail of strings, so the canvas can draw
-    what each one will actually do.
+    Each symbology has its own encoder module (code128.py, code39.py, ...),
+    matching this element's own job of holding what ^BC and its siblings
+    carry by name rather than as a tail of strings, so the canvas can draw
+    what each parameter will actually do. The parameters themselves differ
+    per symbology - EAN-13 has no check-digit flag because its own is not
+    optional, Code 39 spells its check digit before the height instead of
+    after - so `to_zpl` and the parser both dispatch on `symbology` for the
+    shape of the command, not just which encoder to call.
 
-    `bar_height` is ^BC's own height - the bars themselves. `width` and
-    `height` are the element's footprint: the bars plus the interpretation
-    line, transposed when the barcode is rotated. The shared geometry only
-    ever sees the footprint, which is why rotating one needs nothing from it.
+    `bar_height` is the bars themselves. `width` and `height` are the
+    element's footprint: the bars plus the interpretation line, transposed
+    when the barcode is rotated. The shared geometry only ever sees the
+    footprint, which is why rotating one needs nothing from it.
     """
 
-    # ZPL's defaults for the parameters after the height, in order. A barcode
-    # written with these is written without them, so a label this designer
-    # created serialises exactly as it always did.
-    DEFAULTS = ('Y', 'N', 'N', 'N')
+    SYMBOLOGIES = ('code128', 'code39', 'ean13', 'interleaved2of5',
+                   'upcean_extension')
+    # The ZPL command letter(s) for every symbology but code39, which to_zpl
+    # spells directly - its check digit does not live among the trailing
+    # options the rest share.
+    COMMANDS = {'code128': 'BC', 'ean13': 'BE',
+                'interleaved2of5': 'B2', 'upcean_extension': 'BS'}
+    # Which trailing options each command's own format carries, in the order
+    # ZPL spells them in - a subset and order of (show_text, text_above,
+    # check_digit, mode), since ^BE and ^BS have no check digit and ^BC is
+    # the only one with a mode.
+    TRAILING_OPTIONS = {
+        'code128': ('show_text', 'text_above', 'check_digit', 'mode'),
+        'ean13': ('show_text', 'text_above'),
+        'interleaved2of5': ('show_text', 'text_above', 'check_digit'),
+        'upcean_extension': ('show_text', 'text_above'),
+    }
     ORIENTATIONS = ('', 'N', 'R', 'I', 'B')
     MODES = ('N', 'U', 'A', 'D')
 
-    # ^BY's wide-to-narrow ratio. Carried rather than modelled: the manual is
-    # explicit that it "has no effect on fixed-ratio bar codes", and Code 128 -
-    # the only symbology this designer draws - is one of them. So it changes
-    # nothing that prints here, and is kept only so that a file which gave one
-    # does not quietly lose it on the next save.
+    # ^BY's wide-to-narrow ratio. Carried but not modelled for Code 128,
+    # EAN-13 and the UPC/EAN extension - the manual is explicit that it "has
+    # no effect on fixed-ratio bar codes", and all three are. Code 39 and
+    # Interleaved 2 of 5 are not: their own wide elements are drawn at this
+    # many narrow modules, rounded to a whole one the same way a module
+    # width itself always is (see `modules`).
     DEFAULT_RATIO = 3.0
 
     data_attribute = 'barcode_value'
@@ -415,26 +513,44 @@ class BarcodeElement(DesignElement):
                  orientation: str = '', options: tuple = (),
                  font: Optional[tuple] = None,
                  ratio: float = DEFAULT_RATIO,
-                 field_number=None, field_prompt=None):
+                 symbology: str = 'code128',
+                 field_number=None, field_prompt=None,
+                 serial_start=None, serial_increment=None,
+                 serial_leading_zero=False,
+                 clock_format=False, clock_chars=None,
+                 serial_field_raw=None, hex_indicator=None):
         self.x = x
         self.y = y
         self.bar_height = height
         self.barcode_value = barcode_value
         self.field_number = field_number
         self.field_prompt = field_prompt
+        self.serial_start = serial_start
+        self.serial_increment = serial_increment
+        self.serial_leading_zero = serial_leading_zero
+        self.clock_format = clock_format
+        self.clock_chars = clock_chars
+        self.serial_field_raw = serial_field_raw
+        self.hex_indicator = hex_indicator
         self.module_width = module_width
         self.ratio = float(ratio)
         self.orientation = orientation
-        # The font a ^A before the ^BC selected, as (code, height, width). It
-        # sets the interpretation line, so losing it would change the label
-        # even though no text element uses it.
+        self.symbology = symbology if symbology in self.SYMBOLOGIES else 'code128'
+        # The font a ^A before the barcode command selected, as
+        # (code, height, width). It sets the interpretation line, so losing
+        # it would change the label even though no text element uses it.
         self.font = tuple(font) if font else None
         self.element_type = 'barcode'
 
-        # ^BC's remaining parameters, by name. Each missing one falls back to
-        # ZPL's default for *that position* - padding with the defaults as a
-        # suffix would slide them along, so ^BC,100,N would read as "no line,
-        # printed above".
+        # The trailing options, by name, in the canonical (show, above,
+        # check, mode) order every symbology's constructor call uses
+        # regardless of how its own ZPL command spells them. Each missing
+        # one falls back to *that position's* default - padding with the
+        # defaults as a suffix would slide them along, so ^BC,100,N would
+        # read as "no line, printed above". The UPC/EAN extension is the one
+        # symbology whose own default for "above" is Y, not N.
+        self.DEFAULTS = (('Y', 'Y', 'N', 'N') if self.symbology == 'upcean_extension'
+                         else ('Y', 'N', 'N', 'N'))
         given = list(options)
         show, above, check, mode = [
             given[i] if i < len(given) and given[i] != '' else self.DEFAULTS[i]
@@ -448,16 +564,54 @@ class BarcodeElement(DesignElement):
 
     # --- what the printer will make of it -----------------------------------
 
+    def _raw_value(self) -> str:
+        """The field data, hex-decoded, before any symbology processing."""
+        return zpl_fields.decode_hex(self.barcode_value, self.hex_indicator)
+
     def encoded_value(self) -> str:
         """The data the symbol carries, and the interpretation line shows."""
-        value = self.barcode_value
+        value = self._raw_value()
+        if self.symbology == 'ean13':
+            return ean13.normalize(value)
+        if self.symbology == 'upcean_extension':
+            return upcext.normalize(value)
+        if self.symbology == 'interleaved2of5':
+            if self.check_digit:
+                value += code128.ucc_check_digit(value)
+            return i2of5.normalize(value)
         if self.check_digit:
-            value += code128.ucc_check_digit(value)
+            value += (code39.mod43_check_digit(value) if self.symbology == 'code39'
+                      else code128.ucc_check_digit(value))
         return value
 
     def modules(self) -> list:
-        """The bar and space widths of the symbol, in modules."""
-        return code128.encode(self.encoded_value(), self.mode)
+        """The bar and space widths of the symbol, in modules.
+
+        EAN-13 and the UPC/EAN extension always fit and checksum their own
+        way (see their `normalize`), which `encoded_value` also calls for the
+        interpretation line - encoding straight from the raw value here
+        rather than from that result avoids re-fitting an already-fitted
+        string, which would corrupt it.
+        """
+        if self.symbology == 'ean13':
+            return ean13.encode(self._raw_value())
+        if self.symbology == 'upcean_extension':
+            return upcext.encode(self._raw_value())
+        value = self.encoded_value()
+        if self.symbology == 'code128':
+            return code128.encode(value, self.mode)
+        if self.symbology == 'code39':
+            return self._ratio_scaled(code39.encode(value))
+        return self._ratio_scaled(i2of5.encode(value))  # interleaved2of5
+
+    def _ratio_scaled(self, mods: list) -> list:
+        """Code 39 and Interleaved 2 of 5 encode a wide element as 2 - twice
+        a narrow one - because neither knows this barcode's own ratio. This
+        is where that 2 becomes however many narrow modules the ratio asks
+        for, rounded to a whole one the way a module width itself always is.
+        """
+        wide = max(1, round(self.ratio))
+        return [wide if m == 2 else m for m in mods]
 
     def printed_width(self) -> int:
         """The bars, end to end, in dots.
@@ -487,13 +641,23 @@ class BarcodeElement(DesignElement):
 
     # --- serialisation ------------------------------------------------------
 
-    def _options_zpl(self) -> str:
-        """^BC's parameters after the height, up to the last non-default one."""
-        values = ['Y' if self.show_text else 'N',
-                  'Y' if self.text_above else 'N',
-                  'Y' if self.check_digit else 'N',
-                  self.mode]
-        while values and values[-1] == self.DEFAULTS[len(values) - 1]:
+    def _trailing_zpl(self, names: tuple) -> str:
+        """`names` - some subset of (show_text, text_above, check_digit,
+        mode) - in this command's own ZPL order, up to the last one that is
+        not that position's default.
+
+        The four flags share one canonical order in the constructor and in
+        DEFAULTS regardless of symbology, but each command spells only its
+        own subset of them, in its own order - this is what puts them back.
+        """
+        canonical = ('show_text', 'text_above', 'check_digit', 'mode')
+        spelled = {'show_text': 'Y' if self.show_text else 'N',
+                  'text_above': 'Y' if self.text_above else 'N',
+                  'check_digit': 'Y' if self.check_digit else 'N',
+                  'mode': self.mode}
+        defaults = dict(zip(canonical, self.DEFAULTS))
+        values = [spelled[name] for name in names]
+        while values and values[-1] == defaults[names[len(values) - 1]]:
             values.pop()
         return ("," + ",".join(values)) if values else ""
 
@@ -523,13 +687,24 @@ class BarcodeElement(DesignElement):
         # of 2 dots, which pins the barcode's physical size to the head
         # resolution and makes it the one element that cannot be rescaled.
         #
-        # The height goes on ^BC explicitly, which is why ^BY's own h is read
-        # but never written: there is nowhere for it to disagree.
-        return (self.origin_zpl(offset) + self.reverse_zpl() +
-                f"{self._by_zpl()}\n"
-                f"{self._font_zpl()}"
-                f"^BC{self.orientation},{self.bar_height}{self._options_zpl()}\n"
-                + self.data_zpl())
+        # The height goes on the barcode command itself, which is why ^BY's
+        # own h is read but never written: there is nowhere for it to disagree.
+        preamble = (self.origin_zpl(offset) +
+                   f"{self._by_zpl()}\n{self._font_zpl()}")
+        if self.symbology == 'code39':
+            # ^B3 spells its own check digit right after orientation, before
+            # the height - the one command whose parameters do not otherwise
+            # match every other symbology's own shape.
+            check = 'Y' if self.check_digit else 'N'
+            trailing = self._trailing_zpl(('show_text', 'text_above'))
+            command = f"^B3{self.orientation},{check},{self.bar_height}{trailing}\n"
+        else:
+            letter = self.COMMANDS[self.symbology]
+            trailing = self._trailing_zpl(self.TRAILING_OPTIONS[self.symbology])
+            command = f"^{letter}{self.orientation},{self.bar_height}{trailing}\n"
+        # ^FR immediately before the data it reverses, not right after ^FO -
+        # the working convention, and the one place this differed from it.
+        return preamble + command + self.reverse_zpl() + self.data_zpl()
 
 
 # The choices both frontends offer for a barcode, as (label, value). Here
@@ -554,12 +729,38 @@ BARCODE_MODES = (("None", 'N'),
 
 BARCODE_CHECK_DIGIT = (("No", False), ("Yes", True))
 
+BARCODE_SYMBOLOGIES = (("Code 128", 'code128'), ("Code 39", 'code39'),
+                       ("EAN-13", 'ean13'),
+                       ("Interleaved 2 of 5", 'interleaved2of5'),
+                       ("UPC/EAN Extension", 'upcean_extension'))
+
+# Which of the dialog's own rows apply to a given symbology, and what to call
+# the check digit there - Code 128's UCC digit, Code 39's Mod-43 and
+# Interleaved 2 of 5's Mod-10 are three different checksums under one name,
+# and EAN-13 and the UPC/EAN extension have none to offer at all. Here rather
+# than in either toolkit, for the same reason the lists above are.
+BARCODE_FEATURES = {
+    'code128':          {'mode': True,  'ratio': False, 'check_digit': "UCC Check Digit"},
+    'code39':           {'mode': False, 'ratio': True,  'check_digit': "Mod-43 Check Digit"},
+    'ean13':            {'mode': False, 'ratio': False, 'check_digit': None},
+    'interleaved2of5':  {'mode': False, 'ratio': True,  'check_digit': "Mod-10 Check Digit"},
+    'upcean_extension': {'mode': False, 'ratio': False, 'check_digit': None},
+}
+
 FRAME_COLOURS = (("Black", 'B'), ("White", 'W'))
 
 # ^FB's justification, for the same reason: the wrap a user picks in one
 # frontend has to be a wrap the other can pick too.
 TEXT_JUSTIFICATIONS = (("Left", 'L'), ("Centred", 'C'),
                        ("Right", 'R'), ("Justified", 'J'))
+
+# ^XG/^IM name a stored image as d:o.x - device, object name, extension - and
+# both editors offer the same choices for the same reason every list above
+# does.
+STORED_GRAPHIC_COMMANDS = (("Recall Graphic (^XG)", 'XG'),
+                           ("Image Move (^IM)", 'IM'))
+STORED_GRAPHIC_DEVICES = (("R: (DRAM)", 'R'), ("E: (Flash)", 'E'),
+                          ("B: (B: memory)", 'B'), ("A: (A: memory)", 'A'))
 
 
 class ImageElement(DesignElement):
@@ -672,7 +873,6 @@ class ImageElement(DesignElement):
     def to_zpl(self, offset=(0, 0)) -> str:
         if not self.image_path and self._pil_image is None:
             return ""
-        import numpy as np
 
         img_sized = self._get_sized_image()
         if img_sized is None:
@@ -682,19 +882,7 @@ class ImageElement(DesignElement):
         img_1bit = self.get_print_bitmap()
         bytes_per_row = (self.width + 7) // 8
         total_bytes = bytes_per_row * self.height
-        arr = np.array(img_1bit, dtype=np.uint8)
-        padded_w = bytes_per_row * 8
-        if padded_w > self.width:
-            # Padding is white, i.e. an unset bit, so it prints nothing.
-            pad = np.full((self.height, padded_w - self.width), 255, dtype=np.uint8)
-            arr = np.concatenate([arr, pad], axis=1)
-        arr = arr.reshape(self.height, bytes_per_row, 8)
-        # A SET bit is black - the inverse of the usual 1-bit convention, which
-        # is why this compares against 0 rather than casting the array.
-        bits = (arr == 0).astype(np.uint8)
-        weights = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint8)
-        packed = (bits * weights).sum(axis=2).astype(np.uint8)
-        data = packed.tobytes().hex().upper()
+        data = graphics.encode(img_1bit, bytes_per_row)
 
         # Embed full-colour JPEG preview in a ^FX comment so the designer can
         # restore the original image quality when the ZPL file is reopened.
@@ -703,12 +891,61 @@ class ImageElement(DesignElement):
         img_sized.convert('RGB').save(preview_bio, format='JPEG', quality=85, optimize=True)
         b64_preview = _b64.b64encode(preview_bio.getvalue()).decode('ascii')
 
-        zpl = self.origin_zpl(offset) + self.reverse_zpl()
+        zpl = self.origin_zpl(offset)
         zpl += f"^FXDESIGNER_PREVIEW:{b64_preview}\n"
         if self.image_path:
             zpl += f"^FXDESIGNER_PATH:{self.image_path}\n"
+        # ^FR immediately before ^GF, not right after ^FO - the comment
+        # lines above carry no ink and must not sit between the two.
+        zpl += self.reverse_zpl()
         zpl += f"^GFA,{total_bytes},{total_bytes},{bytes_per_row},{data}\n"
         zpl += f"^FS\n"
+        return zpl
+
+
+class StoredGraphicElement(DesignElement):
+    """^XG (Recall Graphic) or ^IM (Image Move) - a field that places a
+    graphic held in printer storage rather than one embedded in this file.
+
+    This app has no printer to ask, but it does keep its own in-session
+    memory of anything a `^IS` it has parsed this run saved - see
+    zplcore/graphic_store.py. `resolve()` is looked up live, on every draw,
+    rather than cached at parse time: if that memory is empty when this
+    element is created, a later file's `^IS` can still fill it in without
+    this element needing to be reparsed.
+
+    Whatever `resolve()` returns, `to_zpl()` always writes back the command
+    this field named, never the resolved pixels - the whole point of ^XG and
+    ^IM is that the printer, not this file, owns the image data. Baking the
+    resolved bitmap into a ^GF here would turn a small reference into a large
+    embedded image the next time the file was saved, and would drop the
+    device path a real printer still needs to look the object up by.
+    """
+
+    def __init__(self, x: int = 50, y: int = 50, width: int = 200, height: int = 200,
+                 command: str = 'XG', device_spec: str = 'R:UNKNOWN.GRF',
+                 mag_x: int = 1, mag_y: int = 1):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.command = command if command in ('IM', 'XG') else 'XG'
+        self.device_spec = device_spec or 'R:UNKNOWN.GRF'
+        self.mag_x = mag_x or 1
+        self.mag_y = mag_y or 1
+        self.element_type = 'stored_graphic'
+
+    def resolve(self):
+        """The real image this reference names, if this session has it."""
+        return graphic_store.recall(self.device_spec)
+
+    def to_zpl(self, offset=(0, 0)) -> str:
+        zpl = self.origin_zpl(offset) + self.reverse_zpl()
+        if self.command == 'XG':
+            zpl += f"^XG{self.device_spec},{self.mag_x},{self.mag_y}\n"
+        else:
+            zpl += f"^IM{self.device_spec}\n"
+        zpl += "^FS\n"
         return zpl
 
 
@@ -736,9 +973,27 @@ class Document:
         self.recalls: List[str] = []
         self.fields = zpl_fields.FieldTable()
 
+        # ^IL names a stored image to load at ^FO0,0, ahead of the fields
+        # that overlay it - the graphic counterpart of a recall, so it lives
+        # here rather than as an element for the same reason ^XF's data does.
+        # ^IS instead saves everything drawn before it as a named image; a
+        # format can do that more than once, so it is a list like `recalls`,
+        # not a single value like `stored_format`.
+        self.image_load: Optional[str] = None
+        self.image_saves: List[str] = []
+
         # ^LH, ^LS, ^LT, ^PO, ^PM and ^LR - what the format says about the
         # label as a whole rather than about any one field on it.
         self.transform = zpl_transforms.LabelTransform()
+
+        # ^PQ - how many copies to print, and the pause/RFID options that ride
+        # along with it. Only quantity has an editor (Label Settings); the
+        # rest are carried the way ^LT is - present so a save does not
+        # silently drop them.
+        self.print_quantity = 1
+        self.print_pause_count = 0
+        self.print_replicates = 0
+        self.print_override_pause = False
 
         # Document-wide font, used by any text element that has none of its own
         self.font_path: Optional[str] = None
@@ -754,6 +1009,13 @@ class Document:
     # singular name as a property over the list means everything that only ever
     # wants one element - the editors, the context menu, the parser - is
     # unchanged by there being more than one.
+    #
+    # A grouped element (see `group_selected`) is never selected on its own
+    # except by a direct pick: every other way into the selection widens a
+    # pick of one member to its whole outermost group, here rather than in
+    # the canvases, so a click, a rubber band and a test's assignment all
+    # agree on it and neither frontend can forget. A direct pick - Ctrl-click
+    # - is the way to one element inside a group without ungrouping it.
 
     @property
     def selected_element(self) -> Optional[DesignElement]:
@@ -761,33 +1023,43 @@ class Document:
 
     @selected_element.setter
     def selected_element(self, element: Optional[DesignElement]):
-        self.selection = [element] if element is not None else []
+        self.selection = self._expand([element]) if element is not None else []
 
-    def select(self, element: Optional[DesignElement], additive: bool = False):
+    def select(self, element: Optional[DesignElement], additive: bool = False,
+               direct: bool = False):
         """Pick an element, or add one to the selection and take it out again.
 
         A plain pick of an element already in the selection keeps the whole
         selection, so a group can be dragged by any of its members; an additive
         pick of one takes it out, which is how a member is dropped.
+
+        Picking a grouped element picks its outermost group, with the element
+        pointed at as the primary; dropping one drops its group. A direct pick
+        is exactly the element and nothing else - it narrows a selected group
+        down to the one member, and an additive direct pick adds or drops that
+        one member alone.
         """
         if element is None:
             if not additive:
                 self.clear_selection()
             return
+        members = [element] if direct else self.group_members(element)
         if not additive:
-            if element not in self.selection:
-                self.selection = [element]
-            else:
-                # The picked element becomes the primary even though the group
-                # survives, so the commands that act on one element - the
-                # z-order four, reached by right-clicking a member - act on the
-                # element the user actually pointed at.
-                self.make_primary(element)
+            if direct or element not in self.selection:
+                self.selection = members
+            # The picked element becomes the primary even though the group
+            # survives, so the commands that act on one element - the z-order
+            # four, reached by right-clicking a member - act on the element
+            # the user actually pointed at.
+            self.make_primary(element)
             return
         if element in self.selection:
-            self.selection.remove(element)
+            for member in members:
+                if member in self.selection:
+                    self.selection.remove(member)
         else:
-            self.selection.append(element)
+            self.selection.extend(m for m in members if m not in self.selection)
+            self.make_primary(element)
 
     def make_primary(self, element) -> None:
         """Move a selected element to the end, making it the primary."""
@@ -795,26 +1067,222 @@ class Document:
             self.selection.remove(element)
             self.selection.append(element)
 
-    def select_many(self, elements) -> None:
+    def select_many(self, elements, direct: bool = False) -> None:
         """Select exactly these, ignoring any that are not in the document."""
-        self.selection = [el for el in elements if el in self.elements]
+        self.selection = self._expand(elements, direct)
 
-    def extend_selection(self, elements) -> None:
+    def extend_selection(self, elements, direct: bool = False) -> None:
         """Add these to the selection, leaving what is already in it alone.
 
         Adding rather than toggling, which is what an additive rubber band
         wants: a band dragged over a group to pick up one more element should
         not drop every element it passed on the way.
         """
-        for element in elements:
-            if element in self.elements and element not in self.selection:
+        for element in self._expand(elements, direct):
+            if element not in self.selection:
                 self.selection.append(element)
 
     def clear_selection(self) -> None:
         self.selection = []
 
+    def select_all(self) -> bool:
+        """Select every element; returns whether that changed anything."""
+        if len(self.selection) == len(self.elements):
+            return False
+        self.select_many(self.elements)
+        return True
+
+    def invert_selection(self) -> bool:
+        """Select what is not selected, whole groups included - a member
+        picked directly comes back with the rest of its group. Returns
+        whether there was anything to invert."""
+        if not self.elements:
+            return False
+        self.select_many([el for el in self.elements if el not in self.selection])
+        return True
+
     def is_selected(self, element) -> bool:
         return element in self.selection
+
+    def _expand(self, elements, direct: bool = False) -> List[DesignElement]:
+        """These elements, each grouped one widened to its outermost group.
+
+        In the order given, each group where its first member was, with no
+        element twice; anything not in the document is left out. A direct
+        expansion widens nothing - it is the same filtering, and no more.
+        """
+        picked = [el for el in elements if el is not None and el in self.elements]
+        expanded: List[DesignElement] = []
+        for element in picked:
+            for member in ([element] if direct else self.group_members(element)):
+                if member not in expanded:
+                    expanded.append(member)
+        return expanded
+
+    # --- groups --------------------------------------------------------------
+    #
+    # A group is a set of elements that select, move and change depth as one.
+    # It is nothing more than the same id in each member's `group` path: the
+    # members stay ordinary elements in the one flat z-ordered list, so the
+    # ZPL, the painting and the editors know nothing about it. Groups nest by
+    # wrapping - grouping a selection that holds a group puts a new id in
+    # front of every member's path, and ungrouping takes the outermost id
+    # off again, so what was inside comes back out as a group of its own.
+
+    def group_members(self, element) -> List[DesignElement]:
+        """Every element in this element's outermost group, in z-order - or
+        just it."""
+        top = geometry.top_group(element)
+        if top is None:
+            return [element]
+        return [el for el in self.elements if geometry.top_group(el) == top]
+
+    def units(self, elements=None) -> List[List[DesignElement]]:
+        """The document (or these elements) as the units that move together."""
+        return geometry.units_of(self.elements if elements is None else elements)
+
+    def group_outlines(self):
+        """The boxes to draw around the selected groups (geometry.group_outlines)."""
+        return geometry.group_outlines(self.elements, self.selection)
+
+    def can_group(self) -> bool:
+        """Two or more units are selected: something to join to something."""
+        return len(self.units(self.selection)) >= 2
+
+    def can_ungroup(self) -> bool:
+        return any(el.group for el in self.selection)
+
+    def _fresh_group_id(self) -> int:
+        """One more than any id in use at any depth."""
+        used = [gid for el in self.elements for gid in (el.group or ())]
+        return max(used, default=0) + 1
+
+    def group_selected(self) -> bool:
+        """Wrap the selection in a new group, and make it one run in the
+        z-order.
+
+        Whole top-level groups go in, even where the selection holds only a
+        directly picked member of one: a group cannot be split by grouping.
+        Contiguous so that the group has one depth for the z-order commands
+        to move. The run lands where the topmost member was, so the group
+        stays above everything that member was above; the members keep their
+        order within it, and so any group already among them keeps its run.
+        """
+        if not self.can_group():
+            return False
+        primary = self.selected_element
+        chosen = self._expand(self.selection)
+        members = [el for el in self.elements if el in chosen]
+        top = self.elements.index(members[-1])
+        for element in members:
+            self.elements.remove(element)
+        self.elements[top - len(members) + 1:top - len(members) + 1] = members
+        fresh = self._fresh_group_id()
+        for element in members:
+            element.group = (fresh,) + (element.group or ())
+        # The selection is now the whole new group, which it was not if a
+        # member had been picked directly.
+        self.selection = members
+        self.make_primary(primary)
+        return True
+
+    def ungroup_selected(self) -> bool:
+        """Dissolve the outermost group of every selected element; the
+        selection stays.
+
+        Of every member of that group, not only the selected ones - Ungroup
+        is a command on a group, and a directly picked member names its group
+        as well as any. What was nested inside comes out as a group of its
+        own; another Ungroup peels that.
+        """
+        tops = {geometry.top_group(el) for el in self.selection if el.group}
+        if not tops:
+            return False
+        for element in self.elements:
+            if geometry.top_group(element) in tops:
+                element.group = element.group[1:] or None
+        return True
+
+    def _members_of(self, gid) -> List[DesignElement]:
+        return geometry.members_of(self.elements, gid)
+
+    def _lifts(self) -> list:
+        """(element, id of the group it would leave) for every selected
+        element that Remove from Group would move.
+
+        What is lifted is the selected unit - the thing the outline says is
+        selected: an element picked on its own, or a whole group every
+        member of which is picked - and it goes one level up, out of the
+        group just outside it. Walking the path from the outside in, the
+        first group wholly in the selection is that unit; none means the
+        element is; one at the top means the whole top-level group is
+        selected, and there is nothing to lift it out of.
+        """
+        picked = {id(el) for el in self.selection}
+        lifts = []
+        for element in self.selection:
+            path = element.group or ()
+            unit = len(path)
+            for depth, gid in enumerate(path):
+                if all(id(m) in picked for m in self._members_of(gid)):
+                    unit = depth
+                    break
+            if unit > 0:
+                lifts.append((element, path[unit - 1]))
+        return lifts
+
+    def can_remove_from_group(self) -> bool:
+        return bool(self._lifts())
+
+    def remove_from_group(self) -> bool:
+        """Take the selected unit out of the group around it; the selection
+        stays.
+
+        What is lifted lands just above the last member it leaves behind, so
+        every group's run stays one run and the lifted element stays on top
+        of what it left, where it was. Lifts are done from the top of the
+        z-order down, so several keep their order among themselves. A group
+        left with one member is no group and is dissolved.
+        """
+        lifts = self._lifts()
+        if not lifts:
+            return False
+        for element, gid in sorted(lifts, key=lambda lift: self.elements.index(lift[0]),
+                                   reverse=True):
+            element.group = tuple(g for g in element.group if g != gid) or None
+            remaining = [m for m in self._members_of(gid) if m is not element]
+            self.elements.remove(element)
+            self.elements.insert(self.elements.index(remaining[-1]) + 1, element)
+        self._dissolve_singletons({gid for _, gid in lifts})
+        return True
+
+    def _dissolve_singletons(self, ids) -> None:
+        """Strip any of these group ids that only one element is left in."""
+        for gid in ids:
+            members = self._members_of(gid)
+            if len(members) == 1:
+                members[0].group = tuple(g for g in members[0].group if g != gid) or None
+
+    def resize_target(self):
+        """What the resize handles belong to: the one selected element, a
+        whole selected group - the selection being exactly every member of
+        some group, at whatever depth - or None for a selection that is
+        neither, which gets no handles.
+
+        From the inside out, so that every member of a nested pair picked
+        directly resizes the pair and not the group around it; a plain click
+        on the nest, which selects all of it, resizes the outer group.
+        """
+        if len(self.selection) == 1:
+            return self.selection[0]
+        if not self.selection:
+            return None
+        picked = {id(el) for el in self.selection}
+        for gid in reversed(self.selection[0].group or ()):
+            members = self._members_of(gid)
+            if len(members) >= 2 and {id(el) for el in members} == picked:
+                return geometry.GroupBox(members)
+        return None
 
     # --- adding and removing -------------------------------------------------
 
@@ -825,6 +1293,53 @@ class Document:
     def add_text_element(self, text: str = "New Text") -> TextElement:
         offset = self._stagger(10)
         element = TextElement(50 + offset, 50 + offset, text)
+        self.sync_text_width(element)
+        return self._append(element)
+
+    def add_time_element(self, text: str = "%m/%d/%y") -> TextElement:
+        """A field the printer's real-time clock fills in (^FC).
+
+        Its own creation button and element state rather than a mode of a
+        plain text field - see qtui/dialogs.py's edit_time_dialog for why.
+        `sync_text_width` runs after `clock_format` is set, so the box is
+        measured against the wrapped marker it will actually show.
+        """
+        offset = self._stagger(10)
+        element = TextElement(50 + offset, 50 + offset, text)
+        element.clock_format = True
+        self.sync_text_width(element)
+        return self._append(element)
+
+    def add_serial_element(self, text: str = "1") -> TextElement:
+        """A field the printer increments or decrements each label (^SN).
+
+        Its own creation button and element state rather than a mode of a
+        plain text field - see qtui/dialogs.py's edit_serial_dialog. The
+        starting value doubles as ^SN's own first parameter (`serial_start`),
+        matching how `_field_source_rows.apply_to` already keeps the two in
+        sync whenever a field switches into serial mode.
+        """
+        offset = self._stagger(10)
+        element = TextElement(50 + offset, 50 + offset, text)
+        element.serial_start = text
+        element.serial_increment = 1
+        element.serial_leading_zero = False
+        self.sync_text_width(element)
+        return self._append(element)
+
+    def add_numbered_element(self, number: int = 1, prompt=None) -> TextElement:
+        """A field a stored format recalls by number at print time (^FN).
+
+        Its own creation button and element state rather than a mode of a
+        plain text field - see qtui/dialogs.py's edit_numbered_dialog. No
+        literal by default: a numbered field's data comes from the printer,
+        and handing it one here would be inventing content the design never
+        gave, the same trap a newly-created ^FN barcode used to fall into.
+        """
+        offset = self._stagger(10)
+        element = TextElement(50 + offset, 50 + offset, '')
+        element.field_number = number
+        element.field_prompt = prompt
         self.sync_text_width(element)
         return self._append(element)
 
@@ -839,6 +1354,12 @@ class Document:
     def add_image_element(self, image_path: str) -> ImageElement:
         offset = self._stagger(20)
         return self._append(ImageElement(50 + offset, 50 + offset, 200, 200, image_path))
+
+    def add_stored_graphic_element(self, command: str = 'XG',
+                                   device_spec: str = 'R:UNKNOWN.GRF') -> StoredGraphicElement:
+        offset = self._stagger(20)
+        return self._append(StoredGraphicElement(50 + offset, 50 + offset, 200, 200,
+                                                  command=command, device_spec=device_spec))
 
     def _append(self, element: DesignElement) -> DesignElement:
         self._fit_new_element_to_bounds(element)
@@ -876,6 +1397,10 @@ class Document:
         for element in doomed:
             self.elements.remove(element)
         self.clear_selection()
+        # A member picked directly and deleted can leave its group with one
+        # element, which is no group - and would keep Ungroup lit on what
+        # looks like a loose element.
+        self._dissolve_singletons({gid for el in doomed for gid in (el.group or ())})
         return True
 
     def clear(self):
@@ -885,46 +1410,65 @@ class Document:
 
     # --- z-order -------------------------------------------------------------
     #
-    # These move the primary element only, even while a group is selected: what
-    # "bring forward" should mean for three elements at different depths is a
-    # question of its own, and answering it badly is worse than leaving it.
+    # These move the unit holding the primary element: the primary alone, or
+    # its whole group as one run. Not the rest of a loose multi-selection -
+    # what "bring forward" should mean for three elements at different depths
+    # is a question of its own, and answering it badly is worse than leaving
+    # it. A group is different: it has one depth by construction.
+    #
+    # Rebuilding the list from its units also mends a group whose members a
+    # hand-edited file left scattered, the first time its depth is changed.
+
+    def _primary_unit(self):
+        """(units, index of the one holding the primary), or (units, None)."""
+        units = self.units()
+        primary = self.selected_element
+        for i, unit in enumerate(units):
+            if primary in unit:
+                return units, i
+        return units, None
 
     def can_raise(self) -> bool:
-        return (self.selected_element is not None
-                and self.elements
-                and self.elements[-1] is not self.selected_element)
+        units, i = self._primary_unit()
+        return i is not None and i < len(units) - 1
 
     def can_lower(self) -> bool:
-        return (self.selected_element is not None
-                and self.elements
-                and self.elements[0] is not self.selected_element)
+        units, i = self._primary_unit()
+        return i is not None and i > 0
+
+    def _reorder_units(self, units) -> None:
+        self.elements = [el for unit in units for el in unit]
 
     def bring_forward(self) -> bool:
         if not self.can_raise():
             return False
-        i = self.elements.index(self.selected_element)
-        self.elements[i], self.elements[i + 1] = self.elements[i + 1], self.elements[i]
+        units, i = self._primary_unit()
+        units[i], units[i + 1] = units[i + 1], units[i]
+        self._reorder_units(units)
         return True
 
     def send_backward(self) -> bool:
         if not self.can_lower():
             return False
-        i = self.elements.index(self.selected_element)
-        self.elements[i], self.elements[i - 1] = self.elements[i - 1], self.elements[i]
+        units, i = self._primary_unit()
+        units[i], units[i - 1] = units[i - 1], units[i]
+        self._reorder_units(units)
         return True
 
     def bring_to_front(self) -> bool:
         if not self.can_raise():
             return False
-        self.elements.remove(self.selected_element)
-        self.elements.append(self.selected_element)
+        units, i = self._primary_unit()
+        units.append(units.pop(i))
+        self._reorder_units(units)
         return True
 
     def send_to_back(self) -> bool:
         if not self.can_lower():
             return False
-        self.elements.remove(self.selected_element)
-        self.elements.insert(0, self.selected_element)
+        units, i = self._primary_unit()
+        units.insert(0, units.pop(i))
+        self._reorder_units(units)
         return True
 
     def element_at(self, x: int, y: int) -> Optional[DesignElement]:
@@ -957,11 +1501,12 @@ class Document:
         # entry holding it.
         return (self.label_width, self.label_height,
                 [_copy_element(el) for el in self.elements], selected,
-                self.fields.copy(), self.transform.copy())
+                self.fields.copy(), self.transform.copy(), self.print_quantity)
 
     def restore(self, snap):
         """Put the design back to a snapshot taken earlier."""
-        label_width, label_height, elements, selected, table, transform = snap
+        (label_width, label_height, elements, selected, table, transform,
+         print_quantity) = snap
         # assigned directly rather than through set_label_size, which would
         # clamp elements that were already valid at this size
         self.label_width = label_width
@@ -972,6 +1517,7 @@ class Document:
         self.selection = [self.elements[i] for i in selected]
         self.fields = table.copy()
         self.transform = transform.copy()
+        self.print_quantity = print_quantity
 
     # --- geometry ------------------------------------------------------------
 
@@ -1014,6 +1560,8 @@ class Document:
 
         Used when a label drawn for one head resolution is opened for another:
         ZPL is in dots, so 812 dots is 4in at 203dpi but 2.7in at 300dpi.
+        What each element does with the factor is geometry.scale_element's -
+        the same rule a group resize applies - about the label's origin.
         """
         if factor <= 0 or factor == 1.0:
             return
@@ -1025,42 +1573,10 @@ class Document:
         self.label_height = s(self.label_height)
 
         for el in self.elements:
-            el.x = int(round(el.x * factor))
-            el.y = int(round(el.y * factor))
-            el.width = s(el.width)
-            el.height = s(el.height)
-            if el.typeset is not None:
-                # The gap to the ^FT baseline is in dots like everything else
-                el.typeset = int(round(el.typeset * factor))
-            if el.element_type == 'text':
-                el.font_height = s(el.font_height)
-                el.font_width = s(el.font_width)
-                if el.block is not None:
-                    # The wrap width is in dots like everything else, so a
-                    # block left unscaled would re-wrap at the old physical
-                    # width - narrower text in a box the same size on paper.
-                    el.block.width = s(el.block.width)
-                    el.block.line_spacing = int(round(el.block.line_spacing * factor))
-                    el.block.indent = int(round(el.block.indent * factor))
-            elif el.element_type == 'frame':
-                el.thickness = s(el.thickness)
-            elif el.element_type == 'barcode':
-                # A module is a whole number of dots, so 2 becomes 3 rather
-                # than 2.96 going 203 -> 300 dpi. Positions and heights scale
-                # exactly; a barcode's width cannot.
-                el.module_width = s(el.module_width)
-                el.bar_height = s(el.bar_height)
-                if el.font:
-                    code, fh, fw = el.font
-                    el.font = (code, s(fh), s(fw))
-                el.sync_box()
-            elif el.element_type == 'image':
+            geometry.scale_element(self, el, 0, 0, factor, factor)
+            if el.element_type == 'image':
                 # the bitmap re-dithers from the source at the new size
                 el.reload()
-
-        # text width is derived from font metrics, not scaled directly
-        for el in self.elements:
-            self.sync_text_width(el)
 
     # --- fonts ---------------------------------------------------------------
 
@@ -1124,27 +1640,64 @@ class Document:
 
     # --- serialisation -------------------------------------------------------
 
-    def to_zpl(self) -> str:
-        """Generate ZPL code from the elements, with the label size settings."""
+    def _group_numbers(self) -> dict:
+        """Group id -> the number it is written as: 1, 2, 3 in order of first
+        appearance, walking the elements in z-order and each path from the
+        outside in, so a saved file does not carry whatever ids a session's
+        grouping and ungrouping left behind. A group of one is not a group
+        and gets no number, at whatever depth it sits."""
+        counts: dict = {}
+        for element in self.elements:
+            for gid in set(element.group or ()):
+                counts[gid] = counts.get(gid, 0) + 1
+        numbers: dict = {}
+        for element in self.elements:
+            for gid in element.group or ():
+                if counts[gid] > 1 and gid not in numbers:
+                    numbers[gid] = len(numbers) + 1
+        return numbers
+
+    @staticmethod
+    def _group_marker(element, numbers: dict) -> str:
+        """The ^FXDESIGNER_GROUP line for this element, or '' for none: its
+        path as written numbers, outermost first, the levels that are not
+        groups left out."""
+        path = [numbers[gid] for gid in element.group or () if gid in numbers]
+        if not path:
+            return ''
+        return "^FXDESIGNER_GROUP:" + ",".join(str(n) for n in path) + "\n"
+
+    def to_zpl(self, *, explicit_flips: bool = False) -> str:
+        """Generate ZPL code from the elements, with the label size settings.
+
+        explicit_flips is passed through to the label transform (see
+        LabelTransform.to_zpl) and exists for the print path, not for saving
+        a file.
+        """
         zpl = "^XA\n"
         # ZPL requires ^DF immediately after ^XA: everything following it is
         # stored as text rather than printed, so anything written in between
         # would be left out of the format being saved.
         if self.stored_format:
             zpl += f"^DF{self.stored_format}^FS\n"
+        # ^IL belongs at the start of the format too - it names an image to
+        # load at ^FO0,0, underneath the fields that follow it.
+        if self.image_load:
+            zpl += f"^IL{self.image_load}\n"
         # Before the fields, because ^LH is the reference point every ^FO after
         # it is measured from. Fitted to the elements first, so the offset it
         # declares is one none of them has to be written above - the commands
         # and the coordinates are then consistent by construction rather than
         # by two places agreeing.
         placed = self.transform.fitted(self._lowest_element())
-        zpl += placed.to_zpl()
+        zpl += placed.to_zpl(explicit_flips=explicit_flips)
         zpl += f"^PW{self.label_width}\n"
         zpl += f"^LL{self.label_height}\n"
         # ZPL carries no resolution, so record what the dots were drawn for.
         # Printers ignore ^FX, and the value has no caret to end the comment early.
         zpl += f"^FXDESIGNER_DPI:{self.dpi}\n"
         offset = placed.field_offset()
+        groups = self._group_numbers()
         for element in self.elements:
             if self.printer_font_name and element.element_type == 'text':
                 body = element.to_zpl(printer_font_name=self.printer_font_name,
@@ -1153,6 +1706,11 @@ class Document:
                 # By keyword: a text element's first parameter is its printer
                 # font name, and a positional offset landed there instead.
                 body = element.to_zpl(offset=offset)
+            # The marker flags the next field the parser builds, so it goes
+            # only in front of a field that will be there - an element with
+            # nothing to write would hand its group to whatever came next.
+            if body:
+                zpl += self._group_marker(element, groups)
             if element.print_enabled:
                 zpl += body
             elif body:
@@ -1166,10 +1724,34 @@ class Document:
         # is what stops opening such a file and saving it from emptying it.
         for recalled in self.recalls:
             zpl += f"^XF{recalled}^FS\n"
+        # ^IS saves everything drawn before it as a named image; re-emitting
+        # it here, after the elements it captured, is what a save has to do
+        # to keep meaning "save this design" rather than losing the request.
+        for saved in self.image_saves:
+            zpl += f"^IS{saved}^FS\n"
+        zpl += self._print_quantity_zpl()
         if not self.elements:
             zpl += self.fields.to_zpl()
         zpl += "^XZ"
         return zpl
+
+    def _print_quantity_zpl(self) -> str:
+        """^PQ, trimmed after the last parameter still worth writing.
+
+        q, p, r and o are positional, so anything before the last non-default
+        one has to be spelled even when it is itself still the default.
+        """
+        given = [self.print_quantity, self.print_pause_count,
+                 self.print_replicates,
+                 'Y' if self.print_override_pause else 'N']
+        defaults = [1, 0, 0, 'N']
+        keep = 0
+        for index, value in enumerate(given):
+            if value != defaults[index]:
+                keep = index + 1
+        if keep == 0:
+            return ''
+        return '^PQ' + ','.join(str(v) for v in given[:keep]) + '\n'
 
     def _lowest_element(self):
         """The smallest (x, y) any element occupies, or None if there are none."""

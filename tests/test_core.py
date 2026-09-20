@@ -293,6 +293,613 @@ d, one, two = pair()
 check("delete takes the whole selection", d.remove_selected() and not d.elements)
 check("and leaves nothing selected", not d.selection)
 
+# --- groups -----------------------------------------------------------------
+def quad():
+    """Four frames in a column, none selected, so grouping can be tried on
+    any subset and the z-order read back by position."""
+    d = Document(400, 400)
+    made = [FrameElement(20, 20 + i * 90, 60, 40) for i in range(4)]
+    d.elements.extend(made)
+    return (d, *made)
+
+def order(d):
+    return [d.elements.index(el) for el in d.selection]
+
+check("an element belongs to no group until put in one",
+      FrameElement(0, 0, 10, 10).group is None)
+
+d, a, b, c, e = quad()
+d.select_many([a, c])
+check("two loose elements can be grouped", d.can_group())
+check("group returns True when it did something", d.group_selected())
+check("the members share one group id, one level deep",
+      a.group is not None and a.group == c.group and len(a.group) == 1
+      and b.group is None and e.group is None, (a.group, c.group))
+check("grouping makes the members one run, where the topmost member was",
+      d.elements == [b, a, c, e], [d.elements.index(x) for x in (a, b, c, e)])
+check("exactly one group selected cannot be grouped again", not d.can_group())
+check("but can be ungrouped", d.can_ungroup())
+check("a lone element has nothing to group with",
+      (d.select(b), not d.can_group())[1])
+
+# every way into the selection widens a member to its group
+d.select(a)
+check("a plain click on a member selects the group, clicked member primary",
+      set(d.selection) == {a, c} and d.selected_element is a, order(d))
+d.select(c)
+check("a click on another member keeps the group and moves the primary",
+      set(d.selection) == {a, c} and d.selected_element is c, order(d))
+d.select(c, additive=True)
+check("a shift-click on a selected member drops the whole group", not d.selection)
+d.select(b)
+d.select(a, additive=True)
+check("a shift-click on a member adds the whole group, clicked member primary",
+      d.selection == [b, c, a], order(d))
+d.select_many([c])
+check("select_many of one member is the group", set(d.selection) == {a, c})
+d.selected_element = a
+check("assigning the singular name is the group too", set(d.selection) == {a, c})
+d.clear_selection()
+d.extend_selection([c])
+check("extend_selection of one member is the group", set(d.selection) == {a, c})
+caught = geometry.elements_in_box(d.elements, 0, 0, 100, 30)
+d.select_many(caught)
+check("a rubber band touching one member selects the group",
+      caught == [a] and set(d.selection) == {a, c}, (len(caught), order(d)))
+
+# the group is one unit for the z-order commands
+d.select(a)
+check("a group at the bottom cannot go lower", d.can_lower() and d.can_raise())
+d.bring_forward()
+check("bring forward moves the run past the next unit", d.elements == [b, e, a, c])
+check("and now the group is on top", not d.can_raise())
+d.send_to_back()
+check("send to back moves the run to the bottom", d.elements == [a, c, b, e])
+d.select(b); d.bring_forward()
+check("a loose element steps over a group as a whole", d.elements == [a, c, e, b])
+d.send_backward()
+check("and back again", d.elements == [a, c, b, e])
+
+# nest, ungroup, delete
+d.select(a); d.select(e, additive=True)
+check("a group plus a loose element can be grouped", d.can_group())
+inner = a.group
+d.group_selected()
+check("grouping wraps the old group inside the new one",
+      a.group == c.group == (a.group[0], inner[0]) and e.group == (a.group[0],)
+      and b.group is None, [x.group for x in d.elements])
+check("the new run is contiguous, where the topmost member was",
+      d.elements == [b, a, c, e], [d.elements.index(x) for x in (a, b, c, e)])
+check("a click on any member selects the whole nest",
+      (d.select(e), set(d.selection) == {a, c, e})[1])
+d.select(b); d.select(a, additive=True)
+check("ungroup returns True and peels the outermost level only",
+      d.ungroup_selected() and a.group == c.group == inner and e.group is None
+      and b.group is None, [x.group for x in d.elements])
+check("ungroup leaves the selection as it was", set(d.selection) == {a, b, c, e})
+check("what was inside is a group of its own now",
+      (d.select_many([a]), set(d.selection) == {a, c})[1])
+d.select(b); d.select(a, additive=True)
+check("a second ungroup clears the rest",
+      d.ungroup_selected() and all(x.group is None for x in d.elements))
+check("nothing grouped cannot be ungrouped", not d.can_ungroup())
+d.select_many([a, c]); d.group_selected(); d.select(a)
+check("delete takes the whole group", d.remove_selected() and d.elements == [b, e])
+
+# align treats a group as one rigid box
+d, a, b, c, e = quad()
+a.x, c.x = 50, 120
+d.select_many([a, c]); d.group_selected()
+d.select(a); d.select(e, additive=True)
+shape = (c.x - a.x, c.y - a.y)
+check("align left moves the group as one, keeping its shape",
+      d.align_selected('left') and (c.x - a.x, c.y - a.y) == shape and a.x == e.x == 20,
+      (a.x, c.x, e.x))
+d.select_many([a])
+d.align_selected('right')
+check("a lone group aligns against the label",
+      c.x + c.width == 400 and (c.x - a.x, c.y - a.y) == shape, (a.x, c.x))
+check("units_of gives z-order groups and loners",
+      [len(u) for u in geometry.units_of(d.elements)] == [1, 2, 1] or
+      [len(u) for u in geometry.units_of(d.elements)] == [2, 1, 1],
+      [len(u) for u in geometry.units_of(d.elements)])
+
+# undo carries the tag, as a scalar copied with the element
+d, a, b, c, e = quad()
+snap = d.snapshot()
+d.select_many([a, c]); d.group_selected()
+d.restore(snap)
+check("restoring a snapshot from before the group undoes it",
+      all(x.group is None for x in d.elements))
+w.unsaved_changes = False; w.on_new()
+ga = w.document.add_text_element('ga'); gb = w.document.add_frame_element()
+w.document.select_many([ga, gb])
+depth = len(w._undo_stack)
+w.on_group()
+check("Group in the window records an undo entry",
+      ga.group is not None and len(w._undo_stack) == depth + 1)
+w.on_undo()
+check("and undo takes the group away", all(x.group is None for x in w.document.elements))
+w.on_redo()
+check("and redo brings it back, as one group",
+      len({x.group for x in w.document.elements}) == 1
+      and w.document.elements[0].group is not None)
+w.on_ungroup()
+check("Ungroup in the window is undoable too",
+      all(x.group is None for x in w.document.elements) and len(w._undo_stack) == depth + 2)
+
+# round trip: markers before each member, numbered 1.. by first appearance,
+# a singleton not written, a hidden member still hidden
+d = Document(400, 400)
+t1 = d.add_text_element('one'); t2 = d.add_text_element('two')
+f1 = d.add_frame_element(); f2 = d.add_frame_element(); lone = d.add_text_element('lone')
+d.select_many([f1, f2]); d.group_selected()
+d.select_many([t1, t2]); d.group_selected()
+lone.group = (99,)
+t2.print_enabled = False
+out = d.to_zpl()
+markers = re.findall(r'\^FXDESIGNER_GROUP:([\d,]+)', out)
+check("a marker precedes each member, numbered from 1 in file order",
+      markers == ['1', '1', '2', '2'], markers)
+check("a group of one is not written", '^FXDESIGNER_GROUP:99' not in out)
+check("the marker sits ahead of a hidden member's payload line",
+      re.search(r'\^FXDESIGNER_GROUP:1\n\^FXDESIGNER_NOPRINT:', out) is not None)
+back, _ = zpl_parser.parse_zpl(out)
+tags = [(el.group, el.print_enabled) for el in back.elements]
+check("groups survive a round trip, and so does the hidden member",
+      tags == [((1,), True), ((1,), False), ((2,), True), ((2,), True), (None, True)],
+      tags)
+check("the round trip is stable", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
+
+# markers ahead of a field the model cannot hold are used up by it
+leak = ("^XA^PW400^LL400\n^FXDESIGNER_GROUP:7\n^FXDESIGNER_NOPRINT\n"
+        "^FO10,10^BQN,2,3^FDqr^FS\n^FO20,20^A0N,30,30^FDafter^FS\n^XZ")
+back, _ = zpl_parser.parse_zpl(leak)
+check("neither marker leaks onto the next supported field",
+      len(back.elements) == 1 and back.elements[0].group is None
+      and back.elements[0].print_enabled, [(e.group, e.print_enabled) for e in back.elements])
+check("a marker with no number is ignored",
+      zpl_parser.parse_zpl("^XA^FXDESIGNER_GROUP:x\n^FO1,1^GB10,10,1^FS^XZ")[0].elements[0].group is None)
+
+# --- nested groups ----------------------------------------------------------
+def nest():
+    """Four frames; a and c grouped, then that pair grouped with e. Returns
+    the document, the four, and the (outer, inner) ids."""
+    d, a, b, c, e = quad()
+    d.select_many([a, c]); d.group_selected()
+    d.select_many([a, e]); d.group_selected()
+    return d, a, b, c, e, a.group
+
+d, a, b, c, e, (outer, inner) = nest()
+check("paths run from the outermost group in",
+      a.group == c.group == (outer, inner) and e.group == (outer,), [x.group for x in d.elements])
+check("a fresh id is above every id at every depth",
+      d._fresh_group_id() > max(outer, inner))
+check("units go by the outermost group",
+      [len(u) for u in geometry.units_of(d.elements)] == [1, 3] or
+      [len(u) for u in geometry.units_of(d.elements)] == [3, 1],
+      [len(u) for u in geometry.units_of(d.elements)])
+check("the nest cannot be grouped on its own", (d.select(a), not d.can_group())[1])
+check("the members of a nested pair cannot be sub-grouped in place",
+      (d.select(a, direct=True), d.select(c, additive=True, direct=True),
+       not d.can_group())[2])
+
+# the nest in the file: outer id first, numbered by first appearance
+d, a, b, c, e, (outer, inner) = nest()
+c.print_enabled = False
+out = d.to_zpl()
+markers = re.findall(r'\^FXDESIGNER_GROUP:([\d,]+)', out)
+check("a nested member writes its whole path, outermost first",
+      markers == ['1,2', '1,2', '1'], markers)
+check("the marker of a hidden nested member sits ahead of its payload line",
+      re.search(r'\^FXDESIGNER_GROUP:1,2\n\^FXDESIGNER_NOPRINT:', out) is not None)
+back, _ = zpl_parser.parse_zpl(out)
+check("the nest survives a round trip",
+      [x.group for x in back.elements] == [None, (1, 2), (1, 2), (1,)]
+      and back.elements[2].print_enabled is False, [x.group for x in back.elements])
+check("and the round trip is stable", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
+check("a file from before nesting reads as a path of one",
+      zpl_parser.parse_zpl("^XA^FXDESIGNER_GROUP:3\n^FO1,1^GB10,10,1^FS^XZ")[0].elements[0].group == (3,))
+for bad in ('1,x', '1,,2', ',1'):
+    check(f"a marker of {bad!r} is ignored as a whole",
+          zpl_parser.parse_zpl(f"^XA^FXDESIGNER_GROUP:{bad}\n^FO1,1^GB10,10,1^FS^XZ")[0].elements[0].group is None)
+
+# a level with one member is not a group: a direct delete dissolves it, and
+# one a file hands over is not written
+d, a, b, c, e, (outer, inner) = nest()
+d.select(c, direct=True); d.remove_selected()
+check("deleting one of an inner pair directly dissolves that level",
+      a.group == (outer,) and e.group == (outer,), [x.group for x in d.elements])
+a.group = (outer, inner)
+out = d.to_zpl()
+markers = re.findall(r'\^FXDESIGNER_GROUP:([\d,]+)', out)
+check("an inner level left with one member is dropped from the path",
+      markers == ['1', '1'], markers)
+check("and that round trip is stable too", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
+
+# a hand-edited file that puts one id at two depths neither raises nor drifts
+odd = ("^XA^PW400^LL400\n^FXDESIGNER_GROUP:1,2\n^FO10,10^GB20,20,1^FS\n"
+       "^FXDESIGNER_GROUP:2\n^FO50,50^GB20,20,1^FS\n^XZ")
+back, _ = zpl_parser.parse_zpl(odd)
+once = back.to_zpl()
+check("an inconsistent file loads as written",
+      [x.group for x in back.elements] == [(1, 2), (2,)])
+check("and saves the same way twice", zpl_parser.parse_zpl(once)[0].to_zpl() == once)
+
+# --- direct picks: Ctrl-click reaches one element inside a group ------------
+d, a, b, c, e, (outer, inner) = nest()
+d.select(a)
+d.select(c, direct=True)
+check("a direct pick narrows a selected group to the one element",
+      d.selection == [c])
+d.select(c)
+check("a plain pick of a directly picked element keeps the pick", d.selection == [c])
+d.select(a)
+check("a plain pick of another member widens back to the group",
+      set(d.selection) == {a, c, e} and d.selected_element is a)
+d.select(c, additive=True, direct=True)
+check("an additive direct pick of a selected member drops exactly it",
+      set(d.selection) == {a, e}, order(d))
+d.select(c, additive=True, direct=True)
+check("and adds exactly it back, as the primary",
+      set(d.selection) == {a, c, e} and d.selected_element is c)
+d.select(b, direct=True)
+d.select(c, additive=True, direct=True)
+check("a partial pick built directly stays partial", d.selection == [b, c])
+d.select(c, additive=True)
+check("a widening drop from a partial pick drops the whole group's members that are in it",
+      d.selection == [b])
+d.select_many([c], direct=True)
+check("select_many direct is exactly these", d.selection == [c])
+d.extend_selection([a], direct=True)
+check("extend_selection direct adds exactly these", d.selection == [c, a])
+d.select_many([c])
+check("select_many without direct still widens", set(d.selection) == {a, c, e})
+d.select(c, direct=True)
+at = d.elements.index(c)
+d.restore(d.snapshot())
+check("a snapshot keeps a direct pick direct",
+      d.selection == [d.elements[at]] and d.elements[at].group == (outer, inner))
+
+# what a direct pick can do on its own
+d, a, b, c, e, (outer, inner) = nest()
+d.select(c, direct=True)
+before = (a.x, a.y, e.x, e.y)
+geometry.move_selection(d, d.selection, 5, 7)
+check("a drag moves the directly picked member alone",
+      (a.x, a.y, e.x, e.y) == before and (c.x, c.y) == (25, 27 + 180), (c.x, c.y))
+b.x, c.x = 40, 100
+d.select(b); d.select(c, additive=True, direct=True)
+d.align_selected('left')
+check("align treats the directly picked member as a unit of its own",
+      (b.x, c.x, a.x, e.x) == (40, 40, 20, 20), (b.x, c.x, a.x, e.x))
+d.select(c, direct=True)
+check("a direct member's group still is what the z-order moves",
+      d.elements == [b, a, c, e] and d.can_lower() and d.send_to_back()
+      and d.elements == [a, c, e, b], [d.elements.index(x) for x in (a, b, c, e)])
+d.select(c, direct=True)
+check("ungroup from a direct member peels the whole outer group",
+      d.ungroup_selected() and a.group == c.group == (inner,) and e.group is None)
+d.select(c, direct=True); d.select(b, additive=True, direct=True)
+check("group with a direct member wraps its whole group",
+      d.group_selected() and a.group == c.group and len(a.group) == 2 and b.group == (a.group[0],)
+      and set(d.selection) == {a, b, c} and d.selected_element is b,
+      ([x.group for x in d.elements], order(d)))
+d.select(c, direct=True)
+check("delete of a direct member takes it alone",
+      d.remove_selected() and c not in d.elements and a in d.elements and b in d.elements)
+
+# outlines: one box per whole selected group, nested boxes inside their parent
+d, a, b, c, e, (outer, inner) = nest()
+d.select(a)
+boxes = d.group_outlines()
+ib = geometry.selection_bounds([a, c]); ob = geometry.selection_bounds([a, c, e])
+check("a selected nest draws its outer box and its inner box, outer first",
+      boxes == [(ob[0] - 4, ob[1] - 4, ob[2] + 8, ob[3] + 8),
+                (ib[0] - 2, ib[1] - 2, ib[2] + 4, ib[3] + 4)], boxes)
+d.select(c, direct=True)
+check("a direct pick of one member draws no group box", d.group_outlines() == [])
+d.select(a, direct=True); d.select(c, additive=True, direct=True)
+check("a direct pick of every member of the inner pair draws its box alone, at the plain pad",
+      d.group_outlines() == [(ib[0] - 2, ib[1] - 2, ib[2] + 4, ib[3] + 4)], d.group_outlines())
+d, a, b, c, e = quad()
+d.select_many([a, c]); d.group_selected()
+pb = geometry.selection_bounds([a, c])
+check("a plain pair draws the box it always did",
+      d.group_outlines() == [(pb[0] - 2, pb[1] - 2, pb[2] + 4, pb[3] + 4)])
+d.elements.remove(c); d.select(a)
+check("a group of one draws nothing", a.group is not None and d.group_outlines() == [])
+
+# --- remove from group ------------------------------------------------------
+d, a, b, c, e = quad()
+d.select_many([a, c]); d.group_selected()             # run [b, a, c, e]
+d.select(a, direct=True)
+check("a directly picked member can be removed from its group", d.can_remove_from_group())
+check("a plain click on the group cannot", (d.select(c), not d.can_remove_from_group())[1])
+check("nor a group plus a loose element",
+      (d.select(b, additive=True), not d.can_remove_from_group())[1])
+check("Ungroup and Remove are never both offered on a plain click",
+      (d.select(c), d.can_ungroup() and not d.can_remove_from_group())[1])
+d.select(a, direct=True); d.select(b, additive=True, direct=True)
+check("a direct member plus a loose element can", d.can_remove_from_group())
+d.clear_selection()
+check("nothing selected cannot, and nothing happens",
+      not d.can_remove_from_group() and not d.remove_from_group())
+d.select(b)
+check("a loose element alone cannot", not d.can_remove_from_group())
+d.select(a, direct=True)
+check("remove lifts the member to just above the group it left, selection kept",
+      d.remove_from_group() and d.elements == [b, c, a, e] and d.selection == [a],
+      ([d.elements.index(x) for x in (a, b, c, e)], order(d)))
+check("a pair loses its group when one member leaves", a.group is None and c.group is None)
+
+d, a, b, c, e = quad()
+d.select_many([a, b, c]); d.group_selected()          # [a, b, c, e]
+d.select(b, direct=True); d.remove_from_group()
+check("the middle member lifted lands above the last, the others keep the group",
+      d.elements == [a, c, b, e] and b.group is None and a.group == c.group and a.group,
+      [d.elements.index(x) for x in (a, b, c, e)])
+
+d, P, X, Q, Y = quad()
+d.select_many([P, X, Q, Y]); d.group_selected()
+d.select(X, direct=True); d.select(Y, additive=True, direct=True); d.remove_from_group()
+check("two members lifted at once keep their order, above the rest",
+      d.elements == [P, Q, X, Y] and X.group is None and Y.group is None and P.group == Q.group,
+      [d.elements.index(x) for x in (P, X, Q, Y)])
+
+d, a, b, c, e, (outer, inner) = nest()                # [b, a, c, e]
+d.select(a, direct=True); d.remove_from_group()
+check("lifting a member out of the inner pair re-parents it and dissolves the pair",
+      a.group == (outer,) and c.group == (outer,) and e.group == (outer,)
+      and d.elements == [b, c, a, e], ([x.group for x in d.elements]))
+d, a, b, c, e, (outer, inner) = nest()
+d.select(e, direct=True); d.remove_from_group()
+check("lifting the loose member out of the nest leaves both ids on the pair",
+      e.group is None and a.group == c.group == (outer, inner) and d.elements == [b, a, c, e])
+d, a, b, c, e, (outer, inner) = nest()
+d.select(a, direct=True); d.select(c, additive=True, direct=True)
+check("every member of the inner pair picked directly is the pair, which can be lifted",
+      d.can_remove_from_group())
+d.remove_from_group()
+check("lifting the pair takes it out of the nest whole, keeping its own id",
+      a.group == c.group == (inner,) and e.group is None and d.elements == [b, e, a, c],
+      ([x.group for x in d.elements], [d.elements.index(x) for x in (a, b, c, e)]))
+
+d = Document(400, 400)
+t1, t2, t3, t4 = [FrameElement(20, 20 + i * 90, 60, 40) for i in range(4)]
+d.elements.extend([t1, t2, t3, t4])
+d.select_many([t1, t2]); d.group_selected(); A = t1.group[0]
+d.select_many([t1, t3]); d.group_selected(); B = t1.group[0]
+d.select_many([t1, t4]); d.group_selected(); C = t1.group[0]
+d.select(t1, direct=True); d.select(t2, additive=True, direct=True); d.remove_from_group()
+check("a middle group lifted out of a three-level nest keeps its inner id",
+      t1.group == t2.group == (C, A) and t3.group == (C,) and t4.group == (C,),
+      [x.group for x in d.elements])
+
+w.unsaved_changes = False; w.on_new()
+ra = w.document.add_text_element('ra'); rb = w.document.add_frame_element()
+w.document.select_many([ra, rb]); w.on_group()
+w.document.select(ra, direct=True)
+depth = len(w._undo_stack)
+w.on_remove_from_group()
+check("Remove from Group in the window records one undo entry",
+      len(w._undo_stack) == depth + 1 and ra.group is None and rb.group is None
+      and w.document.elements == [rb, ra])
+w.on_undo()
+check("and undo restores the group and the order",
+      [x.group for x in w.document.elements] == [(1,), (1,)]
+      and w.document.elements[0].element_type == 'text')
+w.document.select_many([ra])
+w.on_remove_from_group()
+check("Remove from Group does nothing, and records nothing, on a group picked whole",
+      len(w._undo_stack) == depth and all(x.group for x in w.document.elements))
+
+# --- select all, deselect all, invert ---------------------------------------
+d, a, b, c, e, (outer, inner) = nest()                # [b, a, c, e]; a,c,e nested
+check("select all selects everything, the topmost element primary",
+      d.select_all() and set(d.selection) == {a, b, c, e} and d.selected_element is e)
+check("and says so only when it changed something", not d.select_all())
+d.clear_selection()
+check("clear_selection is deselect all", not d.selection)
+check("invert of nothing is everything", d.invert_selection() and len(d.selection) == 4)
+check("invert of everything is nothing", d.invert_selection() and not d.selection)
+d.select(b)
+d.invert_selection()
+check("invert is the complement", set(d.selection) == {a, c, e}, order(d))
+d.select(a, direct=True)
+d.invert_selection()
+check("invert of a member picked directly brings its whole group back with the rest",
+      set(d.selection) == {a, b, c, e}, order(d))
+empty = Document(400, 400)
+check("on an empty document none of the three does anything",
+      not empty.select_all() and not empty.invert_selection() and not empty.selection)
+
+w.unsaved_changes = False; w.on_new()
+w.document.add_text_element('sa'); w.document.add_frame_element()
+depth = len(w._undo_stack)
+w.on_select_all()
+check("Select All in the window selects everything and records no undo entry",
+      len(w.document.selection) == 2 and len(w._undo_stack) == depth)
+w.on_invert_selection()
+check("Invert Selection records none either",
+      not w.document.selection and len(w._undo_stack) == depth)
+w.on_select_all(); w.on_deselect_all()
+check("nor does Deselect All", not w.document.selection and len(w._undo_stack) == depth)
+
+# --- the resize target ------------------------------------------------------
+def box_of(element):
+    return (element.x, element.y, element.width, element.height)
+
+d, a, b, c, e, (outer, inner) = nest()
+d.select(b)
+check("one element is its own resize target", d.resize_target() is b)
+d.select(a, direct=True)
+check("a directly picked member is the target, not its group", d.resize_target() is a)
+d.select_many([a])
+t = d.resize_target()
+check("a click-selected nest resizes as the outer group",
+      isinstance(t, geometry.GroupBox) and t.members == [a, c, e]
+      and (t.x, t.y, t.width, t.height) == geometry.selection_bounds([a, c, e]))
+check("handles of a group come from its joint box",
+      geometry.handles(t)['br'] == (t.x + t.width, t.y + t.height))
+d.select(a, direct=True); d.select(c, additive=True, direct=True)
+t = d.resize_target()
+check("every member of the inner pair picked directly resizes the pair",
+      isinstance(t, geometry.GroupBox) and t.members == [a, c])
+d.select(a, direct=True); d.select(e, additive=True, direct=True)
+check("a partial pick has no target", d.resize_target() is None)
+d.clear_selection()
+check("nothing selected has none", d.resize_target() is None)
+d2, p, q, r, s_ = quad(); d2.select_many([p, q])
+check("two loose elements have none", d2.resize_target() is None)
+
+# --- resizing a group -------------------------------------------------------
+def frame_pair():
+    """Two frames whose joint box is (40, 40, 180, 140), grouped and selected."""
+    d = Document(400, 400)
+    f1, f2 = FrameElement(40, 40, 60, 40), FrameElement(140, 120, 80, 60)
+    d.elements.extend([f1, f2])
+    d.select_many([f1, f2]); d.group_selected(); d.select(f1)
+    return d, f1, f2
+
+for handle, dx, dy, expect in (
+        ('br', 20, 10, (40, 40, 200, 150)), ('tl', 20, 10, (60, 50, 160, 130)),
+        ('tr', 20, 10, (40, 50, 200, 130)), ('bl', 20, 10, (60, 40, 160, 150)),
+        ('tm', 0, 10, (40, 50, 180, 130)), ('bm', 0, 10, (40, 40, 180, 150)),
+        ('ml', 20, 0, (60, 40, 160, 140)), ('mr', 20, 0, (40, 40, 200, 140))):
+    d, f1, f2 = frame_pair()
+    geometry.resize_by_handle(d, d.resize_target(), handle, dx, dy)
+    got = geometry.selection_bounds([f1, f2])
+    ex, ey, ew, eh = expect
+    fixed_ok = ((got[0] == ex) if handle[1] != 'l' else True) and \
+               ((got[1] == ey) if handle[0] != 't' else True) and \
+               ((got[0] + got[2] == ex + ew) if handle[1] == 'l' else True) and \
+               ((got[1] + got[3] == ey + eh) if handle[0] == 't' else True)
+    moving_ok = abs(got[2] - ew) <= 1 and abs(got[3] - eh) <= 1
+    check(f"resizing a group by {handle} keeps the fixed edges and moves the others",
+          fixed_ok and moving_ok, (got, expect))
+
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'br', 180, 140)   # exactly x2
+check("members scale about the anchor, positions and sizes alike",
+      (f1.x, f1.y, f1.width, f1.height) == (40, 40, 120, 80)
+      and (f2.x, f2.y, f2.width, f2.height) == (240, 200, 160, 120),
+      (box_of(f1), box_of(f2)))
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'mr', 180, 0)
+check("a side handle leaves the other axis alone",
+      (f2.y, f2.height, f1.height) == (120, 60, 40) and f2.width == 160)
+
+def text_and_frame(orientation='N'):
+    d = Document(812, 1218, dpi=203)
+    t = d.add_text_element('Scale me'); t.font_path = FONT
+    t.orientation = orientation; d.sync_text_width(t)
+    t.x, t.y = 100, 100
+    f = FrameElement(100, 300, 200, 100); d.elements.append(f)
+    d.select_many([t, f]); d.group_selected(); d.select(t)
+    return d, t, f
+
+d, t, f = text_and_frame()
+fh, fw, box = t.font_height, t.font_width, geometry.selection_bounds([t, f])
+geometry.resize_by_handle(d, d.resize_target(), 'br', box[2], box[3] // 2)   # x2 across, x1.5 down
+check("a text member's font scales, height with the stack and width with the run",
+      t.font_height == round(fh * 1.5) and t.font_width == fw * 2, (fh, fw, t.font_height, t.font_width))
+check("and its box comes back from the metrics",
+      t.width == t.printed_width(d.font_path, d.display_text(t)) and t.height == t.font_height)
+got = geometry.selection_bounds([t, f])
+check("the anchored corner of a snapping group is exact", (got[0], got[1]) == (box[0], box[1]), (got, box))
+
+d, t, f = text_and_frame('R')
+fh, fw, box = t.font_height, t.font_width, geometry.selection_bounds([t, f])
+geometry.resize_by_handle(d, d.resize_target(), 'mr', box[2], 0)             # x2 across only
+check("a rotated text member's font height follows the run across the label",
+      t.font_height == fh * 2 and t.font_width == fw, (fh, fw, t.font_height, t.font_width))
+check("and its box stays transposed", t.width == t.font_height)
+
+def barcode_and_frame(orientation='N'):
+    d = Document(812, 1218, dpi=203)
+    bc = d.add_barcode_element(); bc.orientation = orientation
+    bc.font = ('0', 20, 10); bc.sync_box()
+    f = FrameElement(50, 600, 200, 100); d.elements.append(f)
+    d.select_many([bc, f]); d.group_selected(); d.select(bc)
+    return d, bc, f
+
+d, bc, f = barcode_and_frame()
+mw, bh, font, box = bc.module_width, bc.bar_height, bc.font, geometry.selection_bounds([bc, f])
+geometry.resize_by_handle(d, d.resize_target(), 'br', box[2], box[3])       # x2 both
+check("a barcode member's modules and bars scale, and its font with them",
+      bc.module_width == mw * 2 and bc.bar_height == bh * 2
+      and bc.font == (font[0], font[1] * 2, font[2] * 2), (mw, bh, font, bc.module_width, bc.bar_height, bc.font))
+check("and its box is what those print", bc.width == bc.printed_width()
+      and bc.height == bc.bar_height + bc.text_height())
+d, bc, f = barcode_and_frame('R')
+mw, bh, box = bc.module_width, bc.bar_height, geometry.selection_bounds([bc, f])
+geometry.resize_by_handle(d, d.resize_target(), 'mr', box[2], 0)
+check("a rotated barcode's bars follow the run across the label, its modules the stack",
+      bc.bar_height == bh * 2 and bc.module_width == mw, (mw, bh, bc.module_width, bc.bar_height))
+
+d = Document(812, 1218, dpi=203)
+blk = d.add_text_element('one two three four five six seven eight nine ten eleven twelve')
+blk.font_path = FONT; blk.block = zpl_model.FieldBlock(300, 4); blk.block.line_spacing = 4; blk.block.indent = 10
+d.sync_text_width(blk)
+f = FrameElement(50, 300, 200, 100); d.elements.append(f)
+d.select_many([blk, f]); d.group_selected(); d.select(blk)
+box = geometry.selection_bounds([blk, f])
+geometry.resize_by_handle(d, d.resize_target(), 'br', box[2], box[3])       # x2 both
+check("a block member's wrap width, spacing and indent scale and its line count does not",
+      blk.block.width == 600 and blk.block.line_spacing == 8 and blk.block.indent == 20
+      and blk.block.max_lines == 4, (blk.block.width, blk.block.line_spacing, blk.block.indent, blk.block.max_lines))
+
+d, f1, f2 = frame_pair()
+f1.thickness = 10; f2.thickness = 25
+geometry.resize_by_handle(d, d.resize_target(), 'br', 180, 70)              # x2 across, x1.5 down
+check("a frame's thickness scales by the smaller factor and stays within its box",
+      f1.thickness == 15 and f2.thickness <= f2.max_thickness(), (f1.thickness, f2.thickness, f2.max_thickness()))
+
+d = Document(812, 1218, dpi=203)
+im = ImageElement(20, 20, 60, 60, _pil_image=Image.new('RGB', (60, 60), (128, 128, 128)))
+d.elements.append(im); f = FrameElement(200, 200, 100, 100); d.elements.append(f)
+d.select_many([im, f]); d.group_selected(); d.select(im)
+im.get_print_render(lambda rgba: rgba)
+geometry.resize_by_handle(d, d.resize_target(), 'br', 280, 280)             # x2
+check("an image member's box scales and its bitmap re-dithers at the new size",
+      (im.width, im.height) == (120, 120) and im.get_print_render(lambda rgba: rgba).size == (120, 120)
+      and im._pil_image.size == (60, 60), (im.width, im.height))
+
+d, t, f = text_and_frame()
+t.typeset = 30; box = geometry.selection_bounds([t, f])
+geometry.resize_by_handle(d, d.resize_target(), 'bm', 0, box[3])            # x2 down
+check("a ^FT baseline offset scales down the label", t.typeset == 60, t.typeset)
+
+d, a, b, c, e, (outer, inner) = nest()
+d.select(a); was = box_of(c)
+geometry.resize_by_handle(d, d.resize_target(), 'br', 100, 100)
+check("resizing a nest scales the members of the inner group too", box_of(c) != was)
+
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'br', -5000, -5000)
+got = geometry.selection_bounds([f1, f2])
+check("a group cannot be dragged below the minimum size",
+      got[2] >= geometry.MIN_SIZE and got[3] >= geometry.MIN_SIZE
+      and all(el.width >= 1 and el.height >= 1 for el in (f1, f2)), got)
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'br', 99999, 99999)
+got = geometry.selection_bounds([f1, f2])
+check("nor past the label", got[0] + got[2] <= 400 and got[1] + got[3] <= 400 and got[0] >= 0, got)
+d, f1, f2 = frame_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'ml', -500, 0)
+got = geometry.selection_bounds([f1, f2])
+check("a left handle dragged past the edge keeps the right edge where it was",
+      got[0] == 0 and got[0] + got[2] == 220, got)
+d = Document(812, 1218, dpi=203)
+tiny = d.add_text_element('tiny'); tiny.font_path = FONT; tiny.font_height = 12; tiny.font_width = 12
+d.sync_text_width(tiny); tiny.x, tiny.y = 100, 100
+f = FrameElement(100, 200, 200, 100); d.elements.append(f)
+d.select_many([tiny, f]); d.group_selected(); d.select(tiny)
+geometry.resize_by_handle(d, d.resize_target(), 'br', -100, -100)
+check("a group holding a 12-dot text still shrinks", tiny.font_height < 12 and f.height < 100,
+      (tiny.font_height, f.height))
+
 # paint every element type without exceptions
 w.unsaved_changes = False; w.on_new()
 w.document.add_text_element('paint me')
@@ -353,9 +960,6 @@ def drag_slowly(document, element, handle, dx, dy, steps=20):
                                   dx * step // steps, dy * step // steps,
                                   origin=origin)
 
-def box_of(element):
-    return (element.x, element.y, element.width, element.height)
-
 def dragged_both_ways(build, handle, dx, dy):
     """The same drag delivered both ways, on two copies of the one element."""
     slow_doc, slow_el = build()
@@ -401,6 +1005,27 @@ _unmoved_doc, unmoved = plain_text()
 widened, _fast = dragged_both_ways(plain_text, 'mr', 120, 0)
 check("a slow drag of a text element's width actually widens it",
       widened.width > unmoved.width, (unmoved.width, widened.width))
+
+# A group is dragged the same way: from the press, every member put back and
+# scaled again on every event.
+def text_barcode_group():
+    d = Document(812, 1218, dpi=203)
+    t = d.add_text_element('Slowly'); t.font_path = FONT; d.sync_text_width(t)
+    bc = d.add_barcode_element()
+    d.select_many([t, bc]); d.group_selected(); d.select(t)
+    return d, d.resize_target()
+
+slow_doc, slow_target = text_barcode_group()
+drag_slowly(slow_doc, slow_target, 'br', 150, 90)
+fast_doc, fast_target = text_barcode_group()
+geometry.resize_by_handle(fast_doc, fast_target, 'br', 150, 90)
+check("dragging a group slowly lands where dragging it fast does",
+      [box_of(el) for el in slow_target.members] == [box_of(el) for el in fast_target.members],
+      ([box_of(el) for el in slow_target.members], [box_of(el) for el in fast_target.members]))
+still_doc, still_target = text_barcode_group()
+check("and the slow drag actually moved something",
+      [box_of(el) for el in slow_target.members] != [box_of(el) for el in still_target.members])
+
 
 # The bottom handle of a block asks for a line count, and the block keeps every
 # line it is left with. Recomputed from a height that had already snapped back,
@@ -690,12 +1315,153 @@ check("nothing is reported for the templates",
       workflow.unsupported_commands(product) == []
       and workflow.unsupported_commands(serial) == [])
 check("unmodelled commands are reported",
-      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^FH^XZ") == ['^BQ', '^FH'])
+      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^FH^XZ") == ['^BQ'])
 check("and the label transforms are not, now that they survive a save",
       workflow.unsupported_commands(
           "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [],
       workflow.unsupported_commands(
           "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ"))
+
+# ^CC/^CT/^CD move the characters the tokeniser is built on. Rather than teach
+# the tokeniser, canonicalise() rewrites such a label into the one it would
+# have been with the defaults - redefinitions left out, any literal ^ or ~ the
+# data was hiding behind them turned into ^FH escapes - and the load notice
+# says what a save will do. The scan has to find the restoring command too,
+# which is spelled with the new character.
+redefs = zpl_parser.control_redefinitions
+check("a label that never redefines anything reports none",
+      redefs(product) == [] and redefs(serial) == []
+      and redefs("^XA^FO1,1^A0N,30,30^FDx^FS^XZ") == [])
+check("^CC is found, and so is the /CC^ that puts it back - spelled with the "
+      "new prefix, which is why this is a scan and not a regex",
+      redefs("^XA^CC//FO50,50/A0N,40,40/FDCtrl^Alt/FS/CC^^XZ")
+      == ['^CC/', '/CC^'],
+      redefs("^XA^CC//FO50,50/A0N,40,40/FDCtrl^Alt/FS/CC^^XZ"))
+check("the control prefix is tracked the same way",
+      redefs("^XA^CT!!SD15!CT~~SD15^XZ") == ['^CT!', '!CT~'],
+      redefs("^XA^CT!!SD15!CT~~SD15^XZ"))
+check("the delimiter change and its restore are both found",
+      redefs("^XA^CD;^FO50;50^A0N;40;40^FDSmith, John^FS^CD,^XZ")
+      == ['^CD;', '^CD,'])
+check("the ~ spellings count too",
+      redefs("^XA~CC/~CD;/FO1,1/XZ") == ['~CC/', '~CD;']
+      and redefs("^XA~CT!^XZ") == ['~CT!'])
+check("a redefinition with nothing after it is recorded bare and breaks nothing",
+      redefs("^XA^FO1,1^FDx^FS^CC") == ['^CC']
+      and redefs("^XA^FO1,1^FDx^FS^CC\n^XZ") == ['^CC'])
+
+heard = []
+said = workflow.warn_unsupported("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ",
+                                 lambda cmds: heard.append(('dropped', cmds)),
+                                 lambda found: heard.append(('redefined', found)))
+check("a redefining label hears the redefinition notice, then the ordinary "
+      "list - read on the canonical text, so it names the real ^BQ",
+      heard == [('redefined', ['^CC/', '/CC^']), ('dropped', ['^BQ'])]
+      and said == ['^CC/', '/CC^', '^BQ'], heard)
+heard = []
+said = workflow.warn_unsupported("^XA^FO1,1^BQN,2,10^FDQR^FS^XZ",
+                                 lambda cmds: heard.append(('dropped', cmds)),
+                                 lambda found: heard.append(('redefined', found)))
+check("and one that does not is reported exactly as before",
+      heard == [('dropped', ['^BQ'])] and said == ['^BQ'], heard)
+heard = []
+check("a clean label says nothing either way",
+      workflow.warn_unsupported(product, lambda c: heard.append(c),
+                                lambda f: heard.append(f)) == [] and heard == [])
+check("parsing a redefining label gives the real element, not an empty label",
+      [(e.x, e.y, e.text) for e in
+       zpl_parser.parse_zpl("^XA^CC//FO1,1/FDx/FS/CC^^XZ")[0].elements]
+      == [(1, 1, 'x')])
+
+canon = zpl_parser.canonicalise
+_plain = "^XA^FO1,1^A0N,30,30^FDx^FS^XZ"
+check("a label with no redefinition comes back as the very same object",
+      canon(_plain)[0] is _plain and canon(product)[0] is product
+      and canon(serial)[0] is serial)
+
+_cc = "^XA^CC//FO50,50/A0N,40,40/FDCtrl^Alt/FS/CC^^XZ"
+check("^CC: the label is rewritten with ^ back in charge, and the literal "
+      "caret in the data becomes a ^FH escape under a ^FH supplied for it",
+      canon(_cc)[0] == "^XA^FO50,50^A0N,40,40^FH_^FDCtrl_5EAlt^FS^XZ",
+      canon(_cc)[0])
+_ccd = zpl_parser.parse_zpl(_cc)[0]
+check("and parses to one text element that shows Ctrl^Alt",
+      len(_ccd.elements) == 1 and _ccd.display_text(_ccd.elements[0]) == 'Ctrl^Alt'
+      and (_ccd.elements[0].x, _ccd.elements[0].y) == (50, 50),
+      [(e.x, e.y, _ccd.display_text(e)) for e in _ccd.elements])
+_ccz = _ccd.to_zpl()
+check("a save writes the standard characters and no redefinition",
+      'CC' not in _ccz and '^FH_^FDCtrl_5EAlt' in _ccz, _ccz)
+check("and what it wrote reads back to the same label",
+      zpl_parser.parse_zpl(_ccz)[0].display_text(
+          zpl_parser.parse_zpl(_ccz)[0].elements[0]) == 'Ctrl^Alt')
+
+_cd = "^XA^CD;^FO50;50^A0N;40;40^FDSmith, John^FS^CD,^XZ"
+check("^CD: parameters are re-delimited, and the comma in the data is data",
+      canon(_cd)[0] == "^XA^FO50,50^A0N,40,40^FDSmith, John^FS^XZ", canon(_cd)[0])
+_cdd = zpl_parser.parse_zpl(_cd)[0]
+check("so the field lands where it was put, comma intact",
+      [(e.x, e.y, e.text) for e in _cdd.elements] == [(50, 50, 'Smith, John')],
+      [(e.x, e.y, e.text) for e in _cdd.elements])
+
+check("^CT: a control command spelled with the new prefix comes back as ~",
+      canon("^XA^CT!!SD15!CT~~SD15^XZ")[0] == "^XA~SD15~SD15^XZ",
+      canon("^XA^CT!!SD15!CT~~SD15^XZ")[0])
+check("a tilde in the data while ~ is not the control prefix is escaped",
+      canon("^XA^CT!^FO1,1^FDa~b^FS!CT~^XZ")[0]
+      == "^XA^FO1,1^FH_^FDa_7Eb^FS^XZ",
+      canon("^XA^CT!^FO1,1^FDa~b^FS!CT~^XZ")[0])
+check("but a bare ~ while it is the control prefix is data, as the tokeniser "
+      "already reads it - parity, so ^FC's trigger survives the rewrite",
+      canon("^XA^FO1,1^FC%,#,~^FD%m^FS^XZ^CC^")[0]
+      == "^XA^FO1,1^FC%,#,~^FD%m^FS^XZ",
+      canon("^XA^FO1,1^FC%,#,~^FD%m^FS^XZ^CC^")[0])
+
+check("the ~ spellings and a nested pair, each restored in turn",
+      canon("^XA~CC/~CD;/FO1;1/FDa,b;c/FS/CD,/CC^^XZ")
+      == ("^XA^FO1,1^FDa,b;c^FS^XZ", ['~CC/', '~CD;', '/CD,', '/CC^']),
+      canon("^XA~CC/~CD;/FO1;1/FDa,b;c/FS/CD,/CC^^XZ"))
+
+check("a field with its own ^FH escapes under that indicator, no second ^FH",
+      canon("^XA^CC//FO1,1/FH#/FDa^b/FS/CC^^XZ")[0]
+      == "^XA^FO1,1^FH#^FDa#5Eb^FS^XZ",
+      canon("^XA^CC//FO1,1/FH#/FDa^b/FS/CC^^XZ")[0])
+check("a supplied ^FH_ also escapes the underscores already in the data, so "
+      "the new indicator cannot invent an escape",
+      canon("^XA^CC//FO1,1/FDa_b^c/FS/CC^^XZ")[0]
+      == "^XA^FO1,1^FH_^FDa_5Fb_5Ec^FS^XZ",
+      canon("^XA^CC//FO1,1/FDa_b^c/FS/CC^^XZ")[0])
+check("the indicator is the field's: the next field starts without one",
+      canon("^XA^CC//FO1,1/FH#/FDa/FS/FO2,2/FDb^c/FS/CC^^XZ")[0]
+      == "^XA^FO1,1^FH#^FDa^FS^FO2,2^FH_^FDb_5Ec^FS^XZ",
+      canon("^XA^CC//FO1,1/FH#/FDa/FS/FO2,2/FDb^c/FS/CC^^XZ")[0])
+check("data with nothing to escape gets no ^FH",
+      canon("^XA^CC//FO1,1/FDplain/FS/CC^^XZ")[0]
+      == "^XA^FO1,1^FDplain^FS^XZ")
+
+check("a comment holding a literal caret no longer swallows the field after it",
+      [(e.x, e.y, e.text) for e in zpl_parser.parse_zpl(
+          "^XA^CC//FXsee ^FD here/FO1,1/FDx/FS/CC^^XZ")[0].elements]
+      == [(1, 1, 'x')])
+
+_gf_default = "^XA^FO1,1^GFA,8,8,1,FF00FF00FF00FF00^FS^XZ"
+_gf_moved = "^XA^CD;^FO1;1^GFA;8;8;1;FF00FF00FF00FF00^FS^CD,^XZ"
+check("^GF under a moved delimiter: the four counts are re-delimited and the "
+      "payload is left alone",
+      canon(_gf_moved)[0] == _gf_default, canon(_gf_moved)[0])
+check("and the image it decodes to is the same one",
+      zpl_parser.parse_zpl(_gf_moved)[0].elements[0].to_zpl()
+      == zpl_parser.parse_zpl(_gf_default)[0].elements[0].to_zpl())
+
+check("the redefinitions themselves are not in the unsupported list - the "
+      "notice covers them - and what follows them is read for real",
+      workflow.unsupported_commands("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ")
+      == ['^BQ'],
+      workflow.unsupported_commands("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ"))
+check("a stray prefix left by the restore is skipped, as a stray ^ is today",
+      canon("^XA^CC//FO1,1/FDx/FS/CC^^^XZ")[0] == "^XA^FO1,1^FDx^FS^^XZ"
+      and [(e.text) for e in zpl_parser.parse_zpl(
+          "^XA^CC//FO1,1/FDx/FS/CC^^^XZ")[0].elements] == ['x'])
 
 # --- every ^BC parameter ----------------------------------------------------
 from zplcore.model import BARCODE_MODES, BARCODE_ORIENTATIONS
@@ -758,6 +1524,109 @@ check("both frontends are offered the same modes",
 check("both frontends are offered the same orientations",
       [c for _l, c in BARCODE_ORIENTATIONS] == ['N', 'R', 'I', 'B'])
 
+# --- the other symbologies: ^B3, ^BE, ^B2, ^BS -------------------------------
+from zplcore import code39, ean13, i2of5, upcext
+from zplcore.model import BARCODE_FEATURES, BARCODE_SYMBOLOGIES
+
+for cmd in ('^B3', '^BE', '^B2', '^BS'):
+    check(f"{cmd} is no longer reported as unsupported",
+          cmd not in workflow.unsupported_commands(f"^XA^FO0,0{cmd}N^FD1^FS^XZ"),
+          workflow.unsupported_commands(f"^XA^FO0,0{cmd}N^FD1^FS^XZ"))
+
+check("both frontends are offered the same five symbologies",
+      [v for _l, v in BARCODE_SYMBOLOGIES]
+      == ['code128', 'code39', 'ean13', 'interleaved2of5', 'upcean_extension'])
+check("only Code 128 and Code 39 offer a mode or a check digit label apiece",
+      [(name, feat['mode'], feat['check_digit'] is not None)
+       for name, feat in BARCODE_FEATURES.items()]
+      == [('code128', True, True), ('code39', False, True),
+          ('ean13', False, False), ('interleaved2of5', False, True),
+          ('upcean_extension', False, False)])
+
+# Code 39: self-checking, so every character costs the same twelve modules -
+# three wide (2) plus six narrow (1) plus the inter-character gap.
+c39 = BarcodeElement(0, 0, 60, 'CODE-39', symbology='code39')
+check("Code 39 draws the value between two start/stop asterisks",
+      # Twelve modules a character (nine elements, three of them twice a
+      # narrow one) plus a one-module gap between every pair of them,
+      # asterisks included.
+      sum(code39.encode('CODE-39')) == 12 * (len('CODE-39') + 2) + (len('CODE-39') + 1),
+      sum(code39.encode('CODE-39')))
+check("its own mod-43 check digit is a single extra character",
+      code39.mod43_check_digit('CODE-39') == code39.mod43_check_digit('code-39'),
+      "case is folded, the way encode() folds it too")
+c39_checked = BarcodeElement(0, 0, 60, 'CODE-39', symbology='code39', options=('Y', 'N', 'Y'))
+check("Code 39's own check digit joins the text, like Code 128's",
+      c39_checked.encoded_value() == 'CODE-39' + code39.mod43_check_digit('CODE-39'),
+      c39_checked.encoded_value())
+c39_wide = BarcodeElement(0, 0, 60, 'A', symbology='code39', ratio=2.0)
+check("Code 39's ratio scales its wide elements, unlike Code 128's",
+      set(c39_wide.modules()) == {1, 2} and set(code39.encode('A')) == {1, 2},
+      c39_wide.modules())
+c39_wider = BarcodeElement(0, 0, 60, 'A', symbology='code39', ratio=3.0)
+check("a bigger ratio widens the symbol without changing its narrow modules",
+      c39_wider.printed_width() > c39_wide.printed_width(),
+      (c39_wide.printed_width(), c39_wider.printed_width()))
+
+# EAN-13: always 95 modules, always thirteen digits including its own check
+# digit, which is not optional - there is no ^BE parameter for it at all.
+ean = BarcodeElement(0, 0, 60, '400638133393', symbology='ean13')
+check("EAN-13 is always ninety-five modules",
+      sum(ean.modules()) == 95, sum(ean.modules()))
+check("its check digit is always appended, with no flag to ask for it",
+      ean.encoded_value() == '4006381333931', ean.encoded_value())
+ean_short = BarcodeElement(0, 0, 60, '123', symbology='ean13')
+check("a short value is padded with zeros on the left, not on the right",
+      ean_short.encoded_value().startswith('000000000123'), ean_short.encoded_value())
+ean_long = BarcodeElement(0, 0, 60, '1' * 20, symbology='ean13')
+check("a long one is truncated to its last twelve digits",
+      ean_long.encoded_value()[:-1] == '1' * 12, ean_long.encoded_value())
+
+# Interleaved 2 of 5: numeric, and always an even number of digits.
+i25 = BarcodeElement(0, 0, 60, '123456', symbology='interleaved2of5')
+check("an even value round-trips unpadded",
+      i25.encoded_value() == '123456', i25.encoded_value())
+i25_odd = BarcodeElement(0, 0, 60, '12345', symbology='interleaved2of5')
+check("an odd one gets a leading zero, not a trailing one",
+      i25_odd.encoded_value() == '012345', i25_odd.encoded_value())
+i25_checked = BarcodeElement(0, 0, 60, '123456', symbology='interleaved2of5',
+                             options=('Y', 'N', 'Y'))
+check("its own Mod-10 check digit is added before the even-length padding",
+      i25_checked.encoded_value() == '0' + '123456' + code128.ucc_check_digit('123456'),
+      i25_checked.encoded_value())
+
+# UPC/EAN Extension: a 2-digit or 5-digit add-on, no check digit at all.
+ext2 = BarcodeElement(0, 0, 60, '05', symbology='upcean_extension')
+check("two digits stay a two-digit extension",
+      ext2.encoded_value() == '05' and sum(ext2.modules()) == 21,
+      (ext2.encoded_value(), sum(ext2.modules())))
+ext5 = BarcodeElement(0, 0, 60, '12345', symbology='upcean_extension')
+check("five digits are a five-digit extension",
+      ext5.encoded_value() == '12345' and sum(ext5.modules()) == 48,
+      (ext5.encoded_value(), sum(ext5.modules())))
+check("the extension's own default prints its line above the bars, not below",
+      BarcodeElement(0, 0, 60, '05', symbology='upcean_extension').text_above,
+      "^BS's own default for that parameter is Y, unlike every other symbology")
+
+# every one of the four round-trips through its own command, options and all
+for symbology, value, options, ratio, expect in (
+        ('code39', 'ABC-1', ('N', 'Y', 'Y'), 2.5, '^B3N,Y,60,N,Y\n'),
+        ('ean13', '400638133393', ('N', 'Y'), 3.0, '^BEN,60,N,Y\n'),
+        ('interleaved2of5', '1234', ('Y', 'N', 'Y'), 2.0, '^B2N,60,Y,N,Y\n'),
+        ('upcean_extension', '12', ('N', 'N'), 3.0, '^BSN,60,N,N\n')):
+    made = BarcodeElement(1, 2, 60, value, orientation='N', options=options,
+                          ratio=ratio, symbology=symbology)
+    zpl = made.to_zpl()
+    check(f"{symbology} writes its own command", expect in zpl, zpl)
+    back = zpl_parser.parse_zpl(f"^XA{zpl}^XZ")[0].elements[0]
+    check(f"{symbology} reads back the same element it wrote",
+          (back.symbology, back.barcode_value, back.show_text, back.text_above,
+           back.check_digit if symbology != 'ean13' and symbology != 'upcean_extension'
+           else False)
+          == (symbology, value, options[0] != 'N', options[1] == 'Y',
+              (options[2] == 'Y') if len(options) > 2 else False),
+          (back.symbology, back.barcode_value, back.show_text, back.text_above))
+
 # --- ^FR (reverse print) -----------------------------------------------------
 for make, describe in (
         (lambda: TextElement(0, 0, 'Reversed'), 'text'),
@@ -777,6 +1646,23 @@ for make, describe in (
 
 check("^FR is modelled, not reported as an unsupported command",
       '^FR' not in workflow.unsupported_commands(was_reversed.to_zpl()))
+
+# ^FR must sit immediately before the command it reverses - a real printer
+# was seen not to honour it at all when it sat right after ^FO instead, ahead
+# of the field's own setup commands.
+for make, describe, marker in (
+        (lambda: TextElement(0, 0, 'Reversed'), 'text', '^FD'),
+        (lambda: BarcodeElement(0, 0, 80, '12345'), 'barcode', '^FD')):
+    el = make()
+    el.reverse_print = True
+    zpl = el.to_zpl()
+    check(f"^FR immediately precedes {marker} on a {describe} element",
+          f'^FR\n{marker}' in zpl, zpl)
+
+numbered = TextElement(0, 0, field_number=1)
+numbered.reverse_print = True
+check("^FR immediately precedes ^FN on a numbered text element",
+      '^FR\n^FN' in numbered.to_zpl(), numbered.to_zpl())
 
 # --- wrapped text (^FB) -----------------------------------------------------
 
@@ -987,6 +1873,36 @@ check("reverse print set in the text dialog reaches the element",
 check("a reversed field written from the dialog carries ^FR",
       '^FR' in de.to_zpl(), de.to_zpl())
 
+from PySide2.QtGui import QColor
+
+# The canvas must invert against what a *previous* element really put down,
+# not against its own translucent "you can select this" affordance box - the
+# affordance is drawn first (so a reversed field stays visible with nothing
+# to invert yet) and was, for one build, drawn before the ink instead of
+# after, so the invert picked up its own light-blue tint rather than the
+# black frame underneath.
+rw = qt_main.ZPLDesignerWindow()
+rw.unsaved_changes = False
+rw.on_new()
+rw.document.set_label_size(200, 150)
+rbox = rw.document.add_frame_element()
+rbox.x, rbox.y, rbox.width, rbox.height, rbox.thickness = 10, 10, 180, 130, 180
+rtext = rw.document.add_text_element('Hi')
+rtext.x, rtext.y, rtext.font_height, rtext.font_width = 20, 20, 40, 40
+rtext.font_path = FONT
+rtext.reverse_print = True
+rw.document.sync_text_width(rtext)
+rw.document.clear_selection()
+rw.canvas.set_zoom(1.0)
+reversed_canvas = QImage(200, 150, QImage.Format_ARGB32); reversed_canvas.fill(Qt.white)
+rw.canvas.render(reversed_canvas)
+check("the canvas inverts a reversed field's ink against the real box beneath it",
+      QColor(reversed_canvas.pixel(30, 30)).red() > 200,
+      QColor(reversed_canvas.pixel(30, 30)).getRgb())
+check("...and leaves the rest of the box untouched",
+      QColor(reversed_canvas.pixel(15, 30)).red() < 50,
+      QColor(reversed_canvas.pixel(15, 30)).getRgb())
+
 # --- the editors are non-modal child windows --------------------------------
 # Non-modal means an editor can still be up when the element under it is
 # replaced or removed, which is the one way an edit can be silently lost.
@@ -1085,15 +2001,19 @@ check("the preview rounds a rounded frame's corners",
       rounded.getpixel((22, 22)) > 200 and rounded.getpixel((200, 21)) < 100,
       (rounded.getpixel((22, 22)), rounded.getpixel((200, 21))))
 
-# ^FR flips a frame's own colour, in the preview as on the canvas
+# ^FR inverts whatever is already there under a frame's own shape, ignoring
+# colour entirely - nothing is behind this one, so it inverts blank (white)
+# to black. Coloured 'W' (which an unreversed frame draws as invisible white
+# ink) is what tells a correctly-reversed frame apart from one that silently
+# fell back to drawing its own colour instead of inverting.
 fr_frame = ZPLRenderer(400, 300).render(
-    "^XA^PW400^LL300^FO20,20^FR^GB360,260,4^FS^XZ").convert('L')
-check("the preview draws a ^FR frame's border inverted",
-      fr_frame.getpixel((200, 21)) > 200, fr_frame.getpixel((200, 21)))
+    "^XA^PW400^LL300^FO20,20^FR^GB360,260,4,W^FS^XZ").convert('L')
+check("the preview draws a ^FR frame as a true invert, ignoring its colour",
+      fr_frame.getpixel((200, 21)) < 100, fr_frame.getpixel((200, 21)))
 check("^FR reversed on a foreign file writes back after ^GB and still renders",
       ZPLRenderer(400, 300).render(
-          "^XA^PW400^LL300^FO20,20^GB360,260,4^FR^FS^XZ"
-      ).convert('L').getpixel((200, 21)) > 200)
+          "^XA^PW400^LL300^FO20,20^GB360,260,4,W^FR^FS^XZ"
+      ).convert('L').getpixel((200, 21)) < 100)
 
 # --- text turns the way barcodes already do ---------------------------------
 
@@ -1425,7 +2345,7 @@ try:
     fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
     qt_main._config_path = lambda: blocked_dir / 'settings.ini'
     qt_main._fallback_config_path = lambda: fallback_path
-    zw.printer_address = '10.0.0.9'
+    zw._default_printer = ('10.0.0.9', zw.printer_port, zw.printer_dpi)
     zw._save_settings()
     written = _cfg.ConfigParser(); written.read(fallback_path)
     check("a settings file the user config directory won't take is written to the project fallback instead",
@@ -1447,8 +2367,8 @@ qt_main._config_path = lambda: session_path
 qt_main._fallback_config_path = lambda: session_path
 try:
     zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.50', 9100, 203
-    zw._save_settings()
     zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+    zw._save_settings()
 
     real_dialog = qt_dialogs.printer_settings_dialog
     qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
@@ -1491,6 +2411,69 @@ try:
     written = _cfg.ConfigParser(); written.read(session_path)
     check("while Default Printer does persist the new address",
           written.get('printer', 'address', fallback=None) == '10.0.0.5',
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    qt_main._config_path = real_config_path
+    qt_main._fallback_config_path = real_fallback_path
+
+# --- quitting must not promote an active session override to the default ---
+# closeEvent calls _save_settings() only to persist window geometry, but that
+# used to re-save whichever printer was active, silently adopting a session
+# override as the new default the moment the app quit.
+quit_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+qt_main._config_path = lambda: quit_path
+qt_main._fallback_config_path = lambda: quit_path
+try:
+    zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.70', 9100, 203
+    zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+    zw._save_settings()
+
+    real_dialog = qt_dialogs.printer_settings_dialog
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203)
+    try:
+        zw.on_session_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+
+    # Stand in for what closeEvent does: it never touches _default_printer,
+    # it just calls _save_settings() again on the way out.
+    zw._save_settings()
+    written = _cfg.ConfigParser(); written.read(quit_path)
+    check("quitting with a session override active does not promote it to the default",
+          written.get('printer', 'address', fallback=None) == '192.168.1.70',
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    qt_main._config_path = real_config_path
+    qt_main._fallback_config_path = real_fallback_path
+
+# --- Label Settings persists its own DPI, never a session-overridden address
+label_settings_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+qt_main._config_path = lambda: label_settings_path
+qt_main._fallback_config_path = lambda: label_settings_path
+try:
+    zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.80', 9100, 203
+    zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+    zw._save_settings()
+
+    real_dialog = qt_dialogs.printer_settings_dialog
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203)
+    try:
+        zw.on_session_printer()
+    finally:
+        qt_dialogs.printer_settings_dialog = real_dialog
+
+    qt_dialogs.ask_dpi_rescale = lambda *a, **k: 'keep'
+    zw.apply_label_settings(900, 600, 300, 3.0, 2.0)
+
+    check("Label Settings updates the persisted default's DPI",
+          zw._default_printer[2] == 300, zw._default_printer)
+    check("but leaves the persisted default's address alone",
+          zw._default_printer[0] == '192.168.1.80', zw._default_printer)
+
+    written = _cfg.ConfigParser(); written.read(label_settings_path)
+    check("the settings file reflects the new DPI but the original, non-overridden address",
+          (written.get('printer', 'address', fallback=None),
+           written.get('printer', 'dpi', fallback=None)) == ('192.168.1.80', '300'),
           dict(written['printer']) if written.has_section('printer') else None)
 finally:
     qt_main._config_path = real_config_path
@@ -1721,10 +2704,9 @@ check("rescaling carries the ^FT offset with the dots",
 # ^GS draws a glyph from the symbol font. It is the same trap as an unsupported
 # symbology and was missed by the fix for those because it is not a ^B command:
 # ^GSN,50,50^FDA saved as ^AAN,9,5^FDA, a 50-dot symbol arriving as 9-dot text.
-for symbology, source in (("^B3", "^B3N,N,60,Y,N^FD123ABC^FS"),
-                          ("^BQ", "^BQN,2,5^FDMM,AHELLO^FS"),
+# ^B3 and ^BE are no longer in this list - they draw for real now, checked below.
+for symbology, source in (("^BQ", "^BQN,2,5^FDMM,AHELLO^FS"),
                           ("^BX", "^BXN,6,200^FDdata^FS"),
-                          ("^BE", "^BEN,80,Y,N^FD123456789012^FS"),
                           ("^GS", "^GSN,50,50^FDA^FS")):
     page = f"^XA^PW812^LL1218^FO50,50{source}^XZ"
     read = zpl_parser.parse_zpl(page)[0]
@@ -1734,9 +2716,14 @@ for symbology, source in (("^B3", "^B3N,N,60,Y,N^FD123ABC^FS"),
           symbology in workflow.unsupported_commands(page),
           workflow.unsupported_commands(page))
 
-check("the preview draws nothing for one either",
-      _preview_ink("^XA^PW400^LL300^FO50,50^B3N,N,60,Y,N^FD123ABC^FS^XZ",
+check("the preview draws nothing for one still unsupported either",
+      _preview_ink("^XA^PW400^LL300^FO50,50^BQN,2,5^FDMM,AHELLO^FS^XZ",
                    400, 300) is None,
+      _preview_ink("^XA^PW400^LL300^FO50,50^BQN,2,5^FDMM,AHELLO^FS^XZ", 400, 300))
+
+check("but the preview draws ^B3 for real, the same as the canvas would",
+      _preview_ink("^XA^PW400^LL300^FO50,50^B3N,N,60,Y,N^FD123ABC^FS^XZ",
+                   400, 300) is not None,
       _preview_ink("^XA^PW400^LL300^FO50,50^B3N,N,60,Y,N^FD123ABC^FS^XZ", 400, 300))
 
 check("a ^BC is still a barcode",
@@ -1932,16 +2919,21 @@ _stored = (FIXTURES / 'stored_format.zpl').read_text()
 _doc = zpl_parser.parse_zpl(_stored)[0]
 check("a ^DF names the format the file describes",
       _doc.stored_format == 'R:SAMPLE.GRF', _doc.stored_format)
-check("the manual's template opens as all thirteen of its fields",
-      len(_doc.elements) == 13, len(_doc.elements))
-check("and its four ^FN text fields are numbered, not dropped",
+check("the manual's template opens as all fourteen of its fields",
+      len(_doc.elements) == 14, len(_doc.elements))
+check("and its five ^FN fields - one of them a ^B3 barcode - are numbered, not dropped",
       [e.field_number for e in _doc.elements
-       if getattr(e, 'field_number', None) is not None] == [1, 2, 3, 5],
+       if getattr(e, 'field_number', None) is not None] == [1, 2, 3, 4, 5],
       [getattr(e, 'field_number', None) for e in _doc.elements])
+check("^FN4 is the barcode, Code 39 read straight off the manual's own ^B3",
+      [e.element_type for e in _doc.elements if getattr(e, 'field_number', None) == 4]
+      == ['barcode'],
+      [(e.element_type, e.symbology) for e in _doc.elements
+       if getattr(e, 'field_number', None) == 4])
 _saved = _doc.to_zpl()
 check("every ^FN is written back",
       [l for l in _saved.split('\n') if '^FN' in l]
-      == ['^FN1^FS', '^FN2^FS', '^FN3^FS', '^FN5^FS'],
+      == ['^FN1^FS', '^FN2^FS', '^FN3^FS', '^FN4^FS', '^FN5^FS'],
       [l for l in _saved.split('\n') if '^FN' in l])
 check("and the ^DF comes straight after the ^XA, as ZPL requires",
       _saved.split('\n')[:2] == ['^XA', '^DFR:SAMPLE.GRF^FS'],
@@ -2032,6 +3024,650 @@ check("an undo snapshot does not share the field table",
       _udoc.fields.value(7) == 'A-1000', _udoc.fields.value(7))
 
 
+# --- stored graphics: ^IM, ^XG, ^IL, ^IS -------------------------------------
+# The graphic counterpart of the stored-format family above. ^DG's role -
+# putting a named image into printer storage - is played here by ^IS, which
+# saves everything a format has drawn so far; ^XG, ^IM and ^IL each recall one
+# back. None of the four existed at all before this: a label using any of them
+# had its image silently absent on screen and silently dropped on save.
+#
+# Unlike ^DF/^XF, resolution is real within one session: zplcore.graphic_store
+# is a plain module-level dict, so parsing a file with ^IS actually captures a
+# renderable image, and a later ^XG/^IM/^IL - in the same file or a different
+# one parsed afterwards - can recall the real pixels rather than only a
+# placeholder. Each block below clears the store first, so one case's ^IS
+# cannot leak into another's expectations.
+
+from zplcore import graphic_store
+
+_sg_save = (FIXTURES / 'stored_graphic_save.zpl').read_text()
+_sg_recall = (FIXTURES / 'stored_graphic_recall.zpl').read_text()
+_sg_load = (FIXTURES / 'stored_graphic_load.zpl').read_text()
+
+# Cold session: nothing has been parsed yet, so a recall or a load has
+# nothing to resolve - and must still round-trip exactly, not vanish.
+graphic_store.clear()
+_cold_recall = zpl_parser.parse_zpl(_sg_recall)[0]
+check("a cold ^XG/^IM resolve to nothing yet",
+      all(e.resolve() is None for e in _cold_recall.elements),
+      [e.resolve() for e in _cold_recall.elements])
+_cold_saved = _cold_recall.to_zpl()
+check("and the file still round-trips exactly, unresolved",
+      '^XGR:LOGO.GRF,2,2' in _cold_saved and '^IMR:LOGO.GRF' in _cold_saved
+      and '^GF' not in _cold_saved,
+      _cold_saved)
+
+_cold_load = zpl_parser.parse_zpl(_sg_load)[0]
+check("a cold ^IL is recorded but resolves to nothing",
+      _cold_load.image_load == 'R:LOGO.GRF'
+      and graphic_store.recall(_cold_load.image_load) is None,
+      _cold_load.image_load)
+check("and it round-trips right after ^XA, ahead of the fields it underlies",
+      _cold_load.to_zpl().split('\n')[:2] == ['^XA', '^ILR:LOGO.GRF'],
+      _cold_load.to_zpl().split('\n')[:2])
+
+check("none of the four commands are reported as unsupported",
+      workflow.unsupported_commands(_sg_save) == []
+      and workflow.unsupported_commands(_sg_recall) == []
+      and workflow.unsupported_commands(_sg_load) == [],
+      (workflow.unsupported_commands(_sg_save),
+       workflow.unsupported_commands(_sg_recall),
+       workflow.unsupported_commands(_sg_load)))
+
+# Warm session: parsing the save fixture first captures a real image under
+# R:LOGO.GRF, so parsing the recall/load fixtures afterwards resolves for real.
+graphic_store.clear()
+_sg_save_doc = zpl_parser.parse_zpl(_sg_save)[0]
+check("^IS is recorded for round-tripping",
+      _sg_save_doc.image_saves == ['R:LOGO.GRF,Y'], _sg_save_doc.image_saves)
+check("and it captures a real image into this session's store",
+      graphic_store.recall('R:LOGO.GRF') is not None,
+      graphic_store.recall('R:LOGO.GRF'))
+check("^IS round-trips after the elements it captured",
+      _sg_save_doc.to_zpl().endswith('^ISR:LOGO.GRF,Y^FS\n^XZ'),
+      _sg_save_doc.to_zpl())
+
+_warm_recall = zpl_parser.parse_zpl(_sg_recall)[0]
+_xg, _im = _warm_recall.elements
+check("a warm ^XG now resolves to the real image",
+      _xg.resolve() is not None, _xg.resolve())
+check("magnified by the factor it named",
+      (_xg.width, _xg.height) == (_xg.resolve().width * 2, _xg.resolve().height * 2),
+      (_xg.width, _xg.height, _xg.resolve().size))
+check("a warm ^IM resolves too, unmagnified",
+      _im.resolve() is not None and (_im.width, _im.height) == _im.resolve().size,
+      (_im.width, _im.height, _im.resolve() and _im.resolve().size))
+check("saving a resolved ^XG/^IM still writes the reference, never the pixels",
+      '^GF' not in _warm_recall.to_zpl(), _warm_recall.to_zpl())
+
+_warm_load = zpl_parser.parse_zpl(_sg_load)[0]
+check("a warm ^IL resolves to the real image too",
+      graphic_store.recall(_warm_load.image_load) is not None,
+      graphic_store.recall(_warm_load.image_load))
+
+# The preview renderer never repeats the capture itself - see
+# zplcore/renderer.py - it only recalls what the parser already stored, so
+# this exercises that same warm-then-forgotten store rather than parsing again.
+check("the preview draws real ink for a resolved ^XG",
+      _preview_ink(_sg_recall, 812, 1218) is not None,
+      _preview_ink(_sg_recall, 812, 1218))
+graphic_store.clear()
+check("and no ink at all once the session forgets the source",
+      _preview_ink(_sg_recall, 812, 1218) is None,
+      _preview_ink(_sg_recall, 812, 1218))
+
+# graphic_store.key() normalisation: device is not distinguished, and a bare
+# or partial spec still resolves - see FUNCTIONAL_SPEC.md section 18.
+check("device prefix is not distinguished",
+      graphic_store.key('R:SAMPLE.GRF') == graphic_store.key('E:SAMPLE.GRF'),
+      (graphic_store.key('R:SAMPLE.GRF'), graphic_store.key('E:SAMPLE.GRF')))
+check("case does not matter",
+      graphic_store.key('r:sample.grf') == graphic_store.key('R:SAMPLE.GRF'),
+      graphic_store.key('r:sample.grf'))
+check("a bare name defaults to a .GRF extension",
+      graphic_store.key('R:SAMPLE') == 'SAMPLE.GRF', graphic_store.key('R:SAMPLE'))
+check("no name at all is not an error",
+      graphic_store.key('') == 'UNKNOWN.GRF', graphic_store.key(''))
+graphic_store.clear()
+
+# graphic_store.items(): what a "Printer Graphics" manager lists - every
+# stored (name.ext, image) pair, sorted so both frontends' lists agree with
+# each other and with repeated calls.
+check("items() is empty before anything is stored",
+      graphic_store.items() == [], graphic_store.items())
+graphic_store.store('R:B.GRF', Image.new('RGB', (3, 3)))
+graphic_store.store('E:A.GRF', Image.new('RGB', (5, 5)))
+check("items() lists every stored image, sorted by key",
+      [k for k, _img in graphic_store.items()] == ['A.GRF', 'B.GRF'],
+      graphic_store.items())
+graphic_store.clear()
+check("and clear() empties it",
+      graphic_store.items() == [], graphic_store.items())
+
+# graphic_store.delete(): the UI-level counterpart of ^ID, which this app
+# does not parse from ZPL - see FUNCTIONAL_SPEC.md section 18.
+graphic_store.store('R:LOGO.GRF', Image.new('RGB', (7, 7)))
+check("delete() removes a stored image and says it was there",
+      graphic_store.delete('R:LOGO.GRF') is True, graphic_store.recall('R:LOGO.GRF'))
+check("recall() finds nothing afterwards",
+      graphic_store.recall('R:LOGO.GRF') is None, graphic_store.recall('R:LOGO.GRF'))
+check("deleting again says there was nothing to delete",
+      graphic_store.delete('R:LOGO.GRF') is False, graphic_store.delete('R:LOGO.GRF'))
+graphic_store.store('E:SAMPLE.GRF', Image.new('RGB', (2, 2)))
+check("delete() normalises its spec the same way store()/recall() do",
+      graphic_store.delete('e:sample.grf') is True, graphic_store.items())
+graphic_store.clear()
+
+# graphic_store.split_device_spec(): a `d:o.x` spec taken apart for an
+# editor's separate fields - moved here from zplcore/model.py so the network
+# builders below can use it without a circular import.
+check("split_device_spec: no colon defaults to device R",
+      graphic_store.split_device_spec('LOGO.GRF') == ('R', 'LOGO', 'GRF'),
+      graphic_store.split_device_spec('LOGO.GRF'))
+check("split_device_spec: an explicit device is upper-cased, name/ext are not",
+      graphic_store.split_device_spec('e:sample.png') == ('E', 'sample', 'png'),
+      graphic_store.split_device_spec('e:sample.png'))
+check("split_device_spec: missing name/ext default to UNKNOWN/GRF",
+      graphic_store.split_device_spec('B:') == ('B', 'UNKNOWN', 'GRF'),
+      graphic_store.split_device_spec('B:'))
+
+# zplcore.graphics.encode(): the encode-side counterpart of decode_data(),
+# extracted from ImageElement.to_zpl() so the ~DG builder below can reuse the
+# same packer rather than a second, untested one - see zplcore/graphics.py.
+# The existing ^GFA checks earlier in this file already guard to_zpl()'s
+# output stayed byte-identical after that extraction.
+mono = Image.new('1', (8, 1))
+for x in range(4):
+    mono.putpixel((x, 0), 0)      # black
+for x in range(4, 8):
+    mono.putpixel((x, 0), 255)    # white
+check("graphics.encode(): MSB-first, a set bit is black",
+      zpl_graphics.encode(mono, 1) == 'F0', zpl_graphics.encode(mono, 1))
+padded = Image.new('1', (5, 1), 0)   # all black, narrower than one byte
+check("graphics.encode(): a short row pads white up to bytes_per_row",
+      zpl_graphics.encode(padded, 1) == 'F8', zpl_graphics.encode(padded, 1))
+
+# graphic_store.build_graphic_upload(): the ~DG payload Store sends to the
+# real printer - same bitmap graphics.encode() already produces, so this
+# only needs to check the header and that the two agree on the data.
+upload_img = Image.new('RGB', (16, 8), (0, 0, 0))
+upload_payload = graphic_store.build_graphic_upload('R:LOGO.GRF', upload_img)
+check("build_graphic_upload(): ~DG header names device, object and sizes",
+      upload_payload.startswith(b'~DGR:LOGO.GRF,16,2,'), upload_payload[:24])
+upload_hex = upload_payload.decode('ascii').split(',', 3)[-1]
+check("build_graphic_upload()'s hex is exactly graphics.encode()'s own output",
+      upload_hex == zpl_graphics.encode(upload_img.convert('1'), 2), upload_hex)
+check("and it decodes back via the existing graphics.decode_data()",
+      zpl_graphics.decode_data(upload_hex, 2) == b'\xff' * 16,
+      zpl_graphics.decode_data(upload_hex, 2))
+
+# graphic_store.parse_hg_reply(): real hardware answers ^HG not with a
+# self-contained image file but with the same shape a ~DG upload writes,
+# minus the device/extension - name,total,bytes_per_row, a newline, then
+# the bitmap itself. Round-trip through graphics.encode() the way the
+# printer's own reply would be shaped, and confirm the pixels survive.
+rt_src = Image.new('1', (16, 2), 255)
+for x in range(8):
+    rt_src.putpixel((x, 0), 0)   # top row half black, bottom row all white
+rt_bpr = 2
+rt_hex = zpl_graphics.encode(rt_src, rt_bpr)
+rt_reply = f'~DGPHOTO,{rt_bpr * 2},{rt_bpr},\r\n{rt_hex}'.encode('ascii')
+rt_out = graphic_store.parse_hg_reply(rt_reply)
+check("parse_hg_reply(): reconstructs the ~DG-echoed bitmap",
+      rt_out is not None and rt_out.size == (16, 2), rt_out)
+check("parse_hg_reply(): round-tripped pixels match the source",
+      rt_out is not None
+      and list(rt_out.convert('L').getdata()) == list(rt_src.convert('L').getdata()),
+      rt_out and list(rt_out.convert('L').getdata()))
+check("parse_hg_reply(): a reply that isn't ~DG-shaped falls through as None",
+      graphic_store.parse_hg_reply(b'\x0a\x05\x01\x01\x01\x00garbage') is None,
+      graphic_store.parse_hg_reply(b'\x0a\x05\x01\x01\x01\x00garbage'))
+
+# printer_objects.build_object_upload(): the CISDFCRC16 payload Store sends
+# for an arbitrary file - unlike fonts/graphics, case is preserved exactly
+# (see the module docstring), and validation is deliberately skipped via
+# "0000"/"0000" rather than a guessed checksum algorithm.
+from zplcore import printer_objects
+obj_payload = printer_objects.build_object_upload('privkey', 'nrd', b'hello')
+check("build_object_upload(): CISDFCRC16 header, CRC/checksum both 0000",
+      obj_payload.startswith(b'! CISDFCRC16\r\n0000\r\nprivkey.nrd\r\n00000005\r\n0000\r\n'),
+      obj_payload)
+check("build_object_upload(): case preserved, not forced to upper",
+      b'privkey.nrd' in obj_payload and b'PRIVKEY.NRD' not in obj_payload,
+      obj_payload)
+check("build_object_upload(): the data itself follows the header verbatim",
+      obj_payload.endswith(b'hello'), obj_payload)
+
+# printer_objects.download_printer_object(): a printer answering a .TTF
+# retrieval with total silence (blocked to protect font distribution
+# rights - see zplcore/fonts.py) must not be treated as broken for every
+# other object afterward - each retrieval is judged on its own reply, and
+# every request in this module uses a short (5s) timeout so a silent one
+# fails fast rather than blocking or tying up the caller.
+import inspect
+from zplcore import printer_io as zpl_printer_io
+
+_dpo_calls = []
+def _fake_dpo_send(address, port, payload, timeout, read_reply=False, cancel=None):
+    _dpo_calls.append((address, port, payload, timeout, read_reply))
+    return b'' if b'FIRST.TTF' in payload else b'second-object-bytes'
+
+_real_send = zpl_printer_io.send
+zpl_printer_io.send = _fake_dpo_send
+try:
+    _dpo_raised = False
+    try:
+        printer_objects.download_printer_object('10.0.0.1', 9100, 'E:FIRST.TTF')
+    except printer_objects.ObjectNotRetrievable:
+        _dpo_raised = True
+    _dpo_second = printer_objects.download_printer_object(
+        '10.0.0.1', 9100, 'E:SECOND.GRF')
+finally:
+    zpl_printer_io.send = _real_send
+
+check("download_printer_object(): an empty reply raises ObjectNotRetrievable",
+      _dpo_raised, _dpo_raised)
+check("download_printer_object(): a later object is still attempted, not skipped",
+      len(_dpo_calls) == 2, _dpo_calls)
+check("download_printer_object(): the second attempt succeeds with real data",
+      _dpo_second == b'second-object-bytes', _dpo_second)
+check("download_printer_object(): every attempt uses the short 5s timeout",
+      _dpo_calls[0][3] == 5 and _dpo_calls[1][3] == 5, _dpo_calls)
+check("delete_printer_object(): defaults to the same 5s timeout",
+      inspect.signature(printer_objects.delete_printer_object)
+      .parameters['timeout'].default == 5)
+check("upload_printer_object(): defaults to the same 5s timeout",
+      inspect.signature(printer_objects.upload_printer_object)
+      .parameters['timeout'].default == 5)
+
+# printer_io.CancelToken / Cancelled: the one way a dialog abandons a call
+# that is out on a worker thread. Cancelled must not be an OSError, or the
+# query functions would turn a cancel into "printer unreachable".
+import socket, threading, time
+from zplcore import graphic_store as zpl_graphic_store
+
+check("Cancelled is not an OSError, so query_* can't swallow it",
+      not issubclass(zpl_printer_io.Cancelled, OSError))
+
+def _raise_cancelled(*a, **k):
+    raise zpl_printer_io.Cancelled("x")
+zpl_printer_io.send = _raise_cancelled
+try:
+    try:
+        _q = printer_objects.query_printer_objects('10.0.0.1', 9100)
+        _q_outcome = f"returned {_q!r}"
+    except zpl_printer_io.Cancelled:
+        _q_outcome = "raised Cancelled"
+finally:
+    zpl_printer_io.send = _real_send
+check("a cancel propagates out of query_printer_objects rather than becoming None",
+      _q_outcome == "raised Cancelled", _q_outcome)
+
+# cancel= is threaded through every wrapper the same way timeout= is.
+_fwd = []
+def _capture_send(address, port, payload, timeout, read_reply=False, cancel=None):
+    _fwd.append(cancel)
+    return b'~DGX,1,1,\r\n00'
+_sentinel = object()
+zpl_printer_io.send = _capture_send
+try:
+    printer_objects.download_printer_object('h', 1, 'E:A.B', cancel=_sentinel)
+    zpl_fonts.query_printer_fonts('h', 1, cancel=_sentinel)
+    zpl_graphic_store.delete_printer_graphic('h', 1, 'R:A.GRF', cancel=_sentinel)
+    zpl_printer_io.send_command('h', 1, '~HS', cancel=_sentinel)
+finally:
+    zpl_printer_io.send = _real_send
+check("cancel= reaches printer_io.send from objects, fonts, graphics and the console",
+      _fwd == [_sentinel] * 4, _fwd)
+
+# The real thing: a listener that accepts and never answers, cancelled from
+# another thread, must let send() out promptly with Cancelled - not after
+# its 10s timeout.
+_srv = socket.socket(); _srv.bind(('127.0.0.1', 0)); _srv.listen(1)
+_srv_port = _srv.getsockname()[1]
+_token = zpl_printer_io.CancelToken()
+_outcome = {}
+def _blocked_send():
+    try:
+        zpl_printer_io.send('127.0.0.1', _srv_port, b'hi', 10, read_reply=True,
+                            cancel=_token)
+        _outcome['r'] = 'returned'
+    except zpl_printer_io.Cancelled:
+        _outcome['r'] = 'cancelled'
+    except Exception as e:
+        _outcome['r'] = f'other {e!r}'
+_worker = threading.Thread(target=_blocked_send, daemon=True); _worker.start()
+_conn, _ = _srv.accept()
+_t0 = time.monotonic()
+while _token._sock is None and time.monotonic() - _t0 < 2:
+    time.sleep(0.01)
+_t0 = time.monotonic()
+_token.cancel()
+_worker.join(2)
+_took = time.monotonic() - _t0
+_conn.close(); _srv.close()
+check("cancel() unblocks a recv() stuck on a silent printer",
+      not _worker.is_alive() and _outcome.get('r') == 'cancelled', (_outcome, _took))
+check("and does so promptly, not after the timeout", _took < 1, f"{_took:.2f}s")
+
+# A token cancelled before the call never opens a socket: with nothing
+# listening, an attempt would surface as ConnectionRefusedError instead.
+_dead = socket.socket(); _dead.bind(('127.0.0.1', 0)); _dead_port = _dead.getsockname()[1]; _dead.close()
+_pre = zpl_printer_io.CancelToken(); _pre.cancel()
+try:
+    zpl_printer_io.send('127.0.0.1', _dead_port, b'x', 5, cancel=_pre)
+    _pre_outcome = 'returned'
+except zpl_printer_io.Cancelled:
+    _pre_outcome = 'Cancelled'
+except Exception as e:
+    _pre_outcome = type(e).__name__
+check("a pre-cancelled token raises Cancelled before connecting", _pre_outcome == 'Cancelled', _pre_outcome)
+
+# workflow's pre-print font check, now in three pieces the frontends chain:
+# what's missing (network), the prompt wording (pure), the uploads (network).
+class _FontDoc:
+    def __init__(self, sources): self._s = sources
+    def font_sources(self): return self._s
+_real_qpf, _real_upload = zpl_fonts.query_printer_fonts, zpl_fonts.upload_font
+try:
+    zpl_fonts.query_printer_fonts = lambda *a, **k: None
+    check("missing_printer_fonts(): None when the printer could not be asked",
+          workflow.missing_printer_fonts(_FontDoc({'ARIAL': '/a.ttf'}), 'h', 1) is None)
+    zpl_fonts.query_printer_fonts = lambda *a, **k: {'ARIAL'}
+    check("missing_printer_fonts(): nothing missing when the printer has them all",
+          workflow.missing_printer_fonts(_FontDoc({'arial': '/a.ttf'}), 'h', 1) == ({}, {}))
+    _m = workflow.missing_printer_fonts(_FontDoc({'ARIAL': '/a.ttf', 'ROBOTO': '/r.ttf', 'MYSTERY': None}), 'h', 1)
+    check("missing_printer_fonts(): missing vs uploadable (only those with a source file)",
+          _m == ({'ROBOTO': '/r.ttf', 'MYSTERY': None}, {'ROBOTO': '/r.ttf'}), _m)
+    _calls = []
+    def _fake_qpf(*a, **k):
+        _calls.append('asked'); return set()
+    zpl_fonts.query_printer_fonts = _fake_qpf
+    check("missing_printer_fonts(): a label with only built-in fonts never asks the printer",
+          workflow.missing_printer_fonts(_FontDoc({}), 'h', 1) == ({}, {}) and _calls == [], _calls)
+
+    _t, _d = workflow.font_problem_prompt(None)
+    check("font_problem_prompt(None): the could-not-ask wording",
+          'could not be asked' in _t and 'substitute' in _d, (_t, _d))
+    _t, _d = workflow.font_problem_prompt({'ROBOTO': '/r.ttf', 'MYSTERY': None})
+    check("font_problem_prompt(): lists each font, flagging the ones with no source",
+          'E:ROBOTO.TTF' in _d and 'E:MYSTERY.TTF   (source file unknown)' in _d, _d)
+
+    _uploaded, _progress = [], []
+    def _fake_upload(address, port, path, name, timeout=30, cancel=None):
+        _uploaded.append((name, path, cancel))
+    zpl_fonts.upload_font = _fake_upload
+    workflow.upload_fonts({'B': '/b', 'A': '/a'}, 'h', 1, _progress.append, cancel=_sentinel)
+    check("upload_fonts(): uploads each font in name order, reporting each, passing cancel through",
+          _uploaded == [('A', '/a', _sentinel), ('B', '/b', _sentinel)]
+          and _progress == ['Uploading E:A.TTF...', 'Uploading E:B.TTF...'], (_uploaded, _progress))
+    def _failing_upload(address, port, path, name, timeout=30, cancel=None):
+        raise OSError("boom")
+    zpl_fonts.upload_font = _failing_upload
+    try:
+        workflow.upload_fonts({'A': '/a'}, 'h', 1); _up_err = None
+    except OSError as e:
+        _up_err = str(e)
+    check("upload_fonts(): a failure names the font", _up_err == "Upload of A failed: boom", _up_err)
+    def _cancelled_upload(address, port, path, name, timeout=30, cancel=None):
+        raise zpl_printer_io.Cancelled("x")
+    zpl_fonts.upload_font = _cancelled_upload
+    try:
+        workflow.upload_fonts({'A': '/a'}, 'h', 1); _up_err = 'returned'
+    except zpl_printer_io.Cancelled:
+        _up_err = 'Cancelled'
+    except Exception as e:
+        _up_err = type(e).__name__
+    check("upload_fonts(): a cancel passes through, not reported as a failed upload",
+          _up_err == 'Cancelled', _up_err)
+finally:
+    zpl_fonts.query_printer_fonts, zpl_fonts.upload_font = _real_qpf, _real_upload
+
+# qtui.busy.BusyBar: the worker thread's result must land back on the GUI
+# thread, with the bar hidden again and the blocked buttons restored to the
+# state they had - not blindly enabled.
+from qtui.busy import BusyBar
+from PySide2.QtWidgets import QPushButton
+_bb_btn, _bb_off = QPushButton("a"), QPushButton("b")
+_bb_off.setEnabled(False)
+_bb_msgs, _bb_got = [], []
+_bb = BusyBar((_bb_btn, _bb_off), _bb_msgs.append)
+def _bb_work(cancel):
+    _bb.report("halfway")
+    return 42
+_bb.run(_bb_work, lambda r, e: _bb_got.append((r, e)))
+check("BusyBar.run(): shows the bar and disables the blocked buttons while out",
+      _bb.running and not _bb.isHidden() and not _bb_btn.isEnabled())
+_t0 = time.monotonic()
+while not _bb_got and time.monotonic() - _t0 < 3:
+    app.processEvents(); time.sleep(0.01)
+check("BusyBar.run(): the result comes back on the GUI thread",
+      _bb_got == [(42, None)], _bb_got)
+check("BusyBar.report(): progress text lands on the message target", _bb_msgs == ['halfway'], _bb_msgs)
+check("BusyBar: afterwards the bar hides and each button is restored to its prior state",
+      not _bb.running and _bb.isHidden() and _bb_btn.isEnabled() and not _bb_off.isEnabled())
+_bb_got.clear()
+_bb.run(lambda c: (_ for _ in ()).throw(ValueError("nope")), lambda r, e: _bb_got.append((r, type(e).__name__)))
+_t0 = time.monotonic()
+while not _bb_got and time.monotonic() - _t0 < 3:
+    app.processEvents(); time.sleep(0.01)
+check("BusyBar.run(): an exception in the worker arrives as `error`", _bb_got == [(None, 'ValueError')], _bb_got)
+
+
+# --- ^SN, ^SF, ^FC: the other ways a printer supplies a field's value -------
+# ^SN (serialization) and ^FC (real-time clock) used to be dropped entirely,
+# silently, with nothing on screen suggesting a field was ever dynamic - the
+# same "vanishes or invents data" trap ^FN alone used to fall into. ^SF, the
+# deprecated predecessor to ^SN, is kept only as an opaque, unparsed
+# passthrough so a file carrying one still round-trips.
+
+# The finding's own example: a literal '001' the printer increments by 1 each
+# label, with leading zeros restored.
+_sn = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FD001^SN001,1,Y^FS^XZ")[0]
+_sne = _sn.elements[0]
+check("^SN's start, increment and leading-zero flag are all read",
+      (_sne.serial_start, _sne.serial_increment, _sne.serial_leading_zero)
+      == ('001', 1, True),
+      (_sne.serial_start, _sne.serial_increment, _sne.serial_leading_zero))
+check("the canvas shows the real value plus a marker it auto-increments",
+      _sn.display_text(_sne) == '001«+1»', _sn.display_text(_sne))
+check("^SN round-trips byte-identical",
+      '^FD001^SN001,1,Y^FS' in _sn.to_zpl(), _sn.to_zpl())
+check("^SN is no longer reported as unsupported",
+      workflow.unsupported_commands(_sn.to_zpl()) == [],
+      workflow.unsupported_commands(_sn.to_zpl()))
+
+# ^SN with no ^FD of its own - its first parameter is the only value the file
+# gives this field, so it must not vanish for want of a literal.
+_sn_bare = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,90^A0N,20,20^SN5,2,N^FS^XZ")[0]
+check("a bare ^SN with no ^FD still produces a visible element",
+      len(_sn_bare.elements) == 1 and _sn_bare.elements[0].text == '',
+      [(e.element_type, getattr(e, 'text', None)) for e in _sn_bare.elements])
+check("and shows its own start value, not an empty box",
+      _sn_bare.display_text(_sn_bare.elements[0]) == '5«+2»',
+      _sn_bare.display_text(_sn_bare.elements[0]))
+
+# The same "don't invent data" rule ^FN already enforces for a barcode.
+_sn_bc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^BY3^BCN,100^SN1,1,Y^FS^XZ")[0].elements[0]
+check("a ^SN barcode field is a barcode with no invented value",
+      _sn_bc.element_type == 'barcode' and _sn_bc.barcode_value == ''
+      and _sn_bc.serial_start == '1',
+      (_sn_bc.element_type, _sn_bc.barcode_value, _sn_bc.serial_start))
+
+# ^FC, with the manual's own default trigger characters - the third of which,
+# a bare ~, the tokenizer used to swallow because it looks like the start of a
+# tilde command.
+_fc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FC%,#,~^FD%m/%d/%y^FS^XZ")[0]
+_fce = _fc.elements[0]
+check("^FC's three trigger characters all survive, tilde included",
+      _fce.clock_chars == ('%', '#', '~'), _fce.clock_chars)
+check("the canvas wraps the format string rather than showing it as fixed text",
+      _fc.display_text(_fce) == '«%m/%d/%y»', _fc.display_text(_fce))
+check("^FC round-trips byte-identical, tilde and all",
+      '^FC%,#,~^FD%m/%d/%y^FS' in _fc.to_zpl(), _fc.to_zpl())
+check("^FC is no longer reported as unsupported",
+      workflow.unsupported_commands(_fc.to_zpl()) == [],
+      workflow.unsupported_commands(_fc.to_zpl()))
+
+# Only the primary trigger character has a default - the manual gives b and c
+# "Default: none". Defaulting them to characters registered two indicators
+# the file never asked for, so "Part number #" (the manual's own ^DF example)
+# printed its # as a clock substitution instead of a literal character.
+_fc_one = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO20,20^A0N,20,20^FC%^FDPart number #%d^FS^XZ")[0]
+_fc_one_out = _fc_one.to_zpl()
+check("a file registering only the primary indicator keeps # a plain character",
+      '^FC%^FD' in _fc_one_out and '^FC%,#' not in _fc_one_out,
+      _fc_one_out)
+check("a single indicator round-trips as one, not padded to three",
+      '^FC%^FD' in _fc_one_out, _fc_one_out)
+
+_fc_two = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO20,20^A0N,20,20^FC%,{^FDx^FS^XZ")[0]
+check("two indicators round-trip as two",
+      '^FC%,{^FD' in _fc_two.to_zpl(), _fc_two.to_zpl())
+
+_fc_gap = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO20,20^A0N,20,20^FC%,,#^FDx^FS^XZ")[0]
+check("a gap between indicators stays a gap, proving the trim is trailing-only",
+      '^FC%,,#^FD' in _fc_gap.to_zpl(), _fc_gap.to_zpl())
+
+# The designer's own path: neither editor ever sets clock_chars, so a
+# newly-created clock field must not inherit the two absent indicators either.
+_fc_new = TextElement(50, 50, "%m/%d/%y")
+_fc_new.clock_format = True
+check("a clock field created in the designer writes one indicator, not three",
+      _fc_new.data_zpl().startswith('^FC%^FD'), _fc_new.data_zpl())
+
+# Custom trigger characters, none of which happen to be the tilde that catches
+# the default set.
+_fc_custom = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FC*,&,!^FDtest^FS^XZ")[0].elements[0]
+check("custom ^FC trigger characters are read as given",
+      _fc_custom.clock_chars == ('*', '&', '!'), _fc_custom.clock_chars)
+
+# The tokenizer fix, checked directly: a lone ~ inside ^FC's own params must
+# not be mistaken for the start of a genuine tilde command, and a genuine
+# tilde command right after must still split out on its own.
+_tokens = zpl_parser.tokenise("^FC%,#,~^FD%m/%d/%y^FS~JR")
+check("^FC keeps its trailing tilde parameter",
+      ('^FC', '%,#,~') in _tokens, _tokens)
+check("a real tilde command straight after still tokenises on its own",
+      ('~JR', '') in _tokens, _tokens)
+
+# ^SF is deprecated and not modelled - only preserved, so a file carrying one
+# does not lose it on the next save.
+_sf = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FDABC^SF1,999^FS^XZ")[0]
+_sfe = _sf.elements[0]
+check("^SF's params are kept, unparsed",
+      _sfe.serial_field_raw == '1,999', _sfe.serial_field_raw)
+check("^SF round-trips byte-identical",
+      '^FDABC^SF1,999^FS' in _sf.to_zpl(), _sf.to_zpl())
+check("^SF is no longer reported as unsupported either",
+      workflow.unsupported_commands(_sf.to_zpl()) == [],
+      workflow.unsupported_commands(_sf.to_zpl()))
+
+# ^FH: a hex indicator marking indicatorXX escapes in the ^FD that follows.
+# decode_hex() is the pure substitution, checked directly first.
+check("decode_hex: a well-formed escape is substituted",
+      zpl_fields.decode_hex('_48ello', '_') == 'Hello',
+      zpl_fields.decode_hex('_48ello', '_'))
+check("decode_hex: a custom indicator character works the same way",
+      zpl_fields.decode_hex('~48ello', '~') == 'Hello',
+      zpl_fields.decode_hex('~48ello', '~'))
+check("decode_hex: a non-hex second digit leaves the escape literal",
+      zpl_fields.decode_hex('_4Zello', '_') == '_4Zello',
+      zpl_fields.decode_hex('_4Zello', '_'))
+check("decode_hex: a lone trailing indicator is left as-is",
+      zpl_fields.decode_hex('abc_', '_') == 'abc_',
+      zpl_fields.decode_hex('abc_', '_'))
+check("decode_hex: no indicator is a no-op",
+      zpl_fields.decode_hex('_48ello', None) == '_48ello',
+      zpl_fields.decode_hex('_48ello', None))
+check("read_hex_indicator: bare ^FH defaults to underscore",
+      zpl_fields.read_hex_indicator('') == '_',
+      zpl_fields.read_hex_indicator(''))
+check("read_hex_indicator: ^FH's own character is read as given",
+      zpl_fields.read_hex_indicator('~') == '~',
+      zpl_fields.read_hex_indicator('~'))
+
+# End to end: the literal stays raw for storage and round-tripping, and is
+# only decoded where it is actually turned into pixels or bars.
+_fh = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FH_^FD_48ello^FS^XZ")[0]
+_fhe = _fh.elements[0]
+check("^FH's indicator is read onto the element",
+      _fhe.hex_indicator == '_', _fhe.hex_indicator)
+check("the stored literal stays raw, not decoded",
+      _fhe.text == '_48ello', _fhe.text)
+check("display_text() decodes the hex escape",
+      _fhe.display_text() == 'Hello', _fhe.display_text())
+check("^FH round-trips byte-identical",
+      '^FH_^FD_48ello^FS' in _fh.to_zpl(), _fh.to_zpl())
+check("^FH is no longer reported as unsupported",
+      workflow.unsupported_commands(_fh.to_zpl()) == [],
+      workflow.unsupported_commands(_fh.to_zpl()))
+
+# A barcode's value is decoded the same way, through the one method both
+# canvases already draw bars and the interpretation line from.
+_fh_bc = BarcodeElement(50, 50, barcode_value='_48ello', hex_indicator='_')
+check("a barcode's encoded_value() decodes its hex escape too",
+      _fh_bc.encoded_value() == 'Hello', _fh_bc.encoded_value())
+
+# The print-preview renderer is a second, independent interpreter, so it is
+# checked separately: a ^FH-escaped field must render pixel-identical to the
+# plain field it decodes to.
+_fh_escaped = ZPLRenderer(300, 150).render(
+    "^XA^PW300^LL150^FO20,20^A0N,30,30^FH_^FD_48ello^FS^XZ").convert('L')
+_fh_plain = ZPLRenderer(300, 150).render(
+    "^XA^PW300^LL150^FO20,20^A0N,30,30^FDHello^FS^XZ").convert('L')
+check("the renderer decodes ^FH the same way the model does",
+      list(_fh_escaped.getdata()) == list(_fh_plain.getdata()))
+
+# add_time_element is its own creation path - the "+ Time" button - rather
+# than a mode of add_text_element, and has to size its box against the
+# wrapped marker like any other clock field does.
+_time_doc = Document()
+_time_el = _time_doc.add_time_element()
+check("add_time_element makes a clock field, not a mode of a text one",
+      _time_el.clock_format and _time_el.text == '%m/%d/%y',
+      (_time_el.clock_format, _time_el.text))
+check("its box is measured from the wrapped marker, not the bare format string",
+      _time_el.width > _time_el.printed_width(None, _time_el.text),
+      (_time_el.width, _time_el.printed_width(None, _time_el.text)))
+
+# Likewise, add_serial_element is its own creation path - the "+ Serial"
+# button - rather than a mode of add_text_element.
+_serial_doc = Document()
+_serial_el = _serial_doc.add_serial_element()
+check("add_serial_element makes a serial field, not a mode of a text one",
+      (_serial_el.serial_increment, _serial_el.serial_start, _serial_el.text)
+      == (1, '1', '1'),
+      (_serial_el.serial_increment, _serial_el.serial_start, _serial_el.text))
+check("its box is measured from the wrapped marker, not the bare start value",
+      _serial_el.width > _serial_el.printed_width(None, _serial_el.text),
+      (_serial_el.width, _serial_el.printed_width(None, _serial_el.text)))
+
+# And add_numbered_element is its own creation path too now - the
+# "+ Numbered" button - rather than a mode of add_text_element. No literal
+# by default: inventing one would be the same trap a newly-created ^FN
+# barcode used to fall into, so the box has to be measured from the
+# placeholder it shows instead of an empty string.
+_numbered_doc = Document()
+_numbered_el = _numbered_doc.add_numbered_element(7, 'Batch')
+check("add_numbered_element makes a numbered field with no invented literal",
+      (_numbered_el.field_number, _numbered_el.field_prompt, _numbered_el.text)
+      == (7, 'Batch', ''),
+      (_numbered_el.field_number, _numbered_el.field_prompt, _numbered_el.text))
+check("its box is measured from the placeholder, not an empty literal",
+      _numbered_el.width > 0, _numbered_el.width)
+
+
 # --- the commands that move or flip a whole label ---------------------------
 # ^LH and ^LS displace every field: a label carrying one was drawn where its ^FO
 # said and printed somewhere else, and a save dropped the command, so it then
@@ -2094,6 +3730,34 @@ check("and none of the six is reported as unsupported any more",
       workflow.unsupported_commands(
           "^XA^LH1,1^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [])
 
+# Printing must not depend on the printer already being clean of a previous
+# job's ^PO/^PM/^LR - unlike ^XA...^XZ, these three are sticky at the printer
+# and outlive the job that set them, so the print path asks to_zpl to say so
+# even when a flag is at ZPL's own default.
+_lt_default = zpl_transforms.LabelTransform()
+check("to_zpl(explicit_flips=True) states all three flags even at default",
+      _lt_default.to_zpl(explicit_flips=True) == "^PON\n^PMN\n^LRN\n",
+      _lt_default.to_zpl(explicit_flips=True))
+check("and the save path is unchanged: still nothing at default",
+      _lt_default.to_zpl() == "", _lt_default.to_zpl())
+
+_lt_flipped = zpl_transforms.LabelTransform()
+_lt_flipped.invert = _lt_flipped.mirror = _lt_flipped.reverse = True
+check("an already-flipped label states the flip, not both forms",
+      _lt_flipped.to_zpl(explicit_flips=True) == "^POI\n^PMY\n^LRY\n",
+      _lt_flipped.to_zpl(explicit_flips=True))
+
+_print_doc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("Document.to_zpl(explicit_flips=True) threads through to the transform",
+      all(tok in _print_doc.to_zpl(explicit_flips=True)
+          for tok in ('^PON', '^PMN', '^LRN')),
+      _print_doc.to_zpl(explicit_flips=True))
+check("but Document.to_zpl() (the save path) is untouched",
+      not any(tok in _print_doc.to_zpl()
+              for tok in ('^PON', '^PMN', '^LRN', '^POI', '^PMY', '^LRY')),
+      _print_doc.to_zpl())
+
 _plain = _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
 check("the preview moves the ink by ^LH",
       _preview_ink("^XA^PW300^LL200^LH100,50^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
@@ -2148,6 +3812,58 @@ _tdoc.transform.home = (999, 999)
 _tdoc.restore(_tsnap)
 check("an undo snapshot does not share the transform",
       _tdoc.transform.home == (20, 100), _tdoc.transform.home)
+
+# --- ^PQ: print quantity -----------------------------------------------------
+# The most common command this designer had never modelled: a label saying
+# "print 5 copies" opened and saved (or printed) came back saying "print 1".
+
+_pq = zpl_parser.parse_zpl("^XA^PQ5,2,1,Y^XZ")[0]
+check("^PQ sets quantity, pause count, replicates and the override flag",
+      (_pq.print_quantity, _pq.print_pause_count, _pq.print_replicates,
+       _pq.print_override_pause) == (5, 2, 1, True),
+      (_pq.print_quantity, _pq.print_pause_count, _pq.print_replicates,
+       _pq.print_override_pause))
+
+_no_pq = zpl_parser.parse_zpl("^XA^XZ")[0]
+check("a format with no ^PQ defaults to one copy and no options",
+      (_no_pq.print_quantity, _no_pq.print_pause_count,
+       _no_pq.print_replicates, _no_pq.print_override_pause)
+      == (1, 0, 0, False))
+check("and writes back no ^PQ line at all", '^PQ' not in _no_pq.to_zpl())
+
+check("a quantity on its own round-trips as just ^PQ5",
+      '^PQ5' in zpl_parser.parse_zpl("^XA^PQ5^XZ")[0].to_zpl().split('\n'))
+check("a later parameter forces the earlier ones to be spelled too",
+      '^PQ1,3' in zpl_parser.parse_zpl("^XA^PQ1,3^XZ")[0].to_zpl().split('\n'))
+check("and every parameter round-trips together",
+      '^PQ5,2,1,Y' in zpl_parser.parse_zpl("^XA^PQ5,2,1,Y^XZ")[0].to_zpl().split('\n'))
+
+check("^PQ is no longer reported as something a save would drop",
+      workflow.unsupported_commands("^XA^PQ5,1,0,Y^XZ") == [])
+
+# --- printer_io.send_command(): the console's text-in/text-out wrapper -----
+# It should encode the command as UTF-8, pass it straight through to send()
+# unmodified (read_reply always on, since a console has no other way to know
+# whether anything came back), and decode whatever comes back the same way -
+# including a reply that isn't valid UTF-8, which must not raise.
+from zplcore import printer_io
+
+_sc_calls = []
+def _fake_send(address, port, payload, timeout, read_reply=False, cancel=None):
+    _sc_calls.append((address, port, payload, timeout, read_reply))
+    return b'ok: \xff\xfe'  # deliberately invalid UTF-8
+
+_real_send = printer_io.send
+printer_io.send = _fake_send
+try:
+    _sc_reply = printer_io.send_command('10.0.0.1', 9100, '~HS')
+finally:
+    printer_io.send = _real_send
+
+check("send_command(): encodes the command as UTF-8 and asks for a reply",
+      _sc_calls == [('10.0.0.1', 9100, b'~HS', 5, True)], _sc_calls)
+check("send_command(): a non-UTF-8 reply decodes with replacement chars, not a raise",
+      _sc_reply == 'ok: ��', _sc_reply)
 
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))

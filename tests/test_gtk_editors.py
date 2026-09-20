@@ -25,6 +25,7 @@ from gi.repository import Gtk
 
 from gtkui import window as gtk_main
 from gtkui.window import ZPLViewerWindow
+from zplcore import geometry
 
 fails = []
 
@@ -160,6 +161,89 @@ surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 400, 400)
 canvas.on_draw(canvas, cairo.Context(surface))
 canvas.band_origin = canvas.band_now = None
 check("a group selection and a rubber band paint without raising", True)
+
+# --- Group and Ungroup: the Edit menu's rules, and the outline paints -------
+# The conformance suite proves the two frontends agree on what grouping does;
+# the sensitivity of the two items is one thing the ZPL cannot show.
+
+grouped = [document.add_text_element('one'), document.add_frame_element()]
+document.select_many(grouped)
+window._update_edit_menu(None)
+check("Group is offered for two loose elements, Ungroup is not",
+      window.group_item.get_sensitive() and not window.ungroup_item.get_sensitive())
+window.on_group_clicked(None)
+window._update_edit_menu(None)
+check("once grouped, Ungroup is offered and Group is not",
+      window.ungroup_item.get_sensitive() and not window.group_item.get_sensitive())
+check("the group's z-order items come from the model",
+      window.zorder_items[0].get_sensitive() == document.can_raise())
+canvas.on_draw(canvas, cairo.Context(surface))
+check("a selected group's outline paints without raising", True)
+third = document.add_barcode_element()
+document.select_many([grouped[0], third])
+window.on_group_clicked(None)
+check("grouping a group with another element nests it",
+      len(grouped[0].group) == 2 and third.group == (grouped[0].group[0],))
+document.select_many([third])
+check("a nested selection has an outline per level", len(document.group_outlines()) == 2)
+canvas.on_draw(canvas, cairo.Context(surface))
+check("a nested group's outlines paint without raising", True)
+window.on_ungroup_clicked(None)
+check("Ungroup peels the outer level and leaves the pair grouped",
+      third.group is None and len(grouped[0].group) == 1)
+window.on_ungroup_clicked(None)
+check("and a second Ungroup clears the tags",
+      all(element.group is None for element in document.elements))
+
+# --- Remove from Group, and the handles a group gets ------------------------
+document.select_many(grouped)
+window._update_edit_menu(None)
+check("Remove from Group is not offered for two loose elements",
+      not window.remove_from_group_item.get_sensitive())
+window.on_group_clicked(None)
+window._update_edit_menu(None)
+check("nor for a group picked whole, where Ungroup is",
+      window.ungroup_item.get_sensitive() and not window.remove_from_group_item.get_sensitive())
+check("a selected group is the resize target",
+      isinstance(document.resize_target(), geometry.GroupBox))
+canvas.on_draw(canvas, cairo.Context(surface))
+check("a selected group's handles paint without raising", True)
+document.select(grouped[0], direct=True)
+window._update_edit_menu(None)
+check("a directly picked member can be removed from its group",
+      window.remove_from_group_item.get_sensitive())
+depth = len(window._undo_stack)
+window.on_remove_from_group_clicked(None)
+check("Remove from Group records one undo entry and leaves both loose",
+      len(window._undo_stack) == depth + 1
+      and all(element.group is None for element in grouped))
+window.on_undo()
+check("and undo puts the group back",
+      sum(1 for element in document.elements if element.group) == 2)
+
+# --- Select All, Deselect All, Invert Selection -----------------------------
+document.select_many([document.elements[0]])
+window._update_edit_menu(None)
+check("Select All is offered while something is left unselected, Deselect All too",
+      window.select_all_item.get_sensitive() and window.deselect_all_item.get_sensitive()
+      and window.invert_selection_item.get_sensitive())
+depth = len(window._undo_stack)
+window.on_select_all_clicked(None)
+window._update_edit_menu(None)
+check("once everything is selected Select All is not, and no undo entry was recorded",
+      not window.select_all_item.get_sensitive()
+      and len(document.selection) == len(document.elements)
+      and len(window._undo_stack) == depth)
+window.on_invert_selection_clicked(None)
+window._update_edit_menu(None)
+check("inverting a full selection leaves nothing, so Deselect All is not offered",
+      not document.selection and not window.deselect_all_item.get_sensitive()
+      and len(window._undo_stack) == depth)
+window.on_select_all_clicked(None); window.on_deselect_all_clicked(None)
+check("Deselect All clears it and records nothing",
+      not document.selection and len(window._undo_stack) == depth)
+for element in list(document.elements):
+    document.elements.remove(element)
 
 # --- a wrapped block paints its lines where it wraps them -------------------
 # The conformance suite compares ZPL, and the ZPL for a block is right whether
@@ -343,7 +427,7 @@ fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 gtk_main._config_path = lambda: blocked_dir / 'settings.ini'
 gtk_main._fallback_config_path = lambda: fallback_path
 try:
-    window.printer_address = '10.0.0.9'
+    window._default_printer = ('10.0.0.9', window.printer_port, window.printer_dpi)
     window._save_settings()
     written = configparser.ConfigParser(); written.read(fallback_path)
     check("a settings file the user config directory won't take is written to the project fallback instead",
@@ -365,8 +449,8 @@ gtk_main._config_path = lambda: session_path
 gtk_main._fallback_config_path = lambda: session_path
 try:
     window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.50', 9100, 203
-    window._save_settings()
     window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+    window._save_settings()
 
     real_dialog = gtk_main._printer_picker_dialog
     gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
@@ -413,6 +497,101 @@ try:
 finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
+
+# --- quitting must not promote an active session override to the default ---
+# close_app calls _save_settings() only to persist window geometry, but that
+# used to re-save whichever printer was active, silently adopting a session
+# override as the new default the moment the app quit.
+quit_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: quit_path
+gtk_main._fallback_config_path = lambda: quit_path
+try:
+    window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.70', 9100, 203
+    window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+    window._save_settings()
+
+    real_dialog = gtk_main._printer_picker_dialog
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203)
+    try:
+        window.on_session_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+
+    # Stand in for what close_app does: it never touches _default_printer,
+    # it just calls _save_settings() again on the way out.
+    window._save_settings()
+    written = configparser.ConfigParser(); written.read(quit_path)
+    check("quitting with a session override active does not promote it to the default",
+          written.get('printer', 'address', fallback=None) == '192.168.1.70',
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+
+# --- Label Settings persists its own DPI, never a session-overridden address
+label_settings_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: label_settings_path
+gtk_main._fallback_config_path = lambda: label_settings_path
+try:
+    window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.80', 9100, 203
+    window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+    window._save_settings()
+
+    real_dialog = gtk_main._printer_picker_dialog
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203)
+    try:
+        window.on_session_printer_clicked(None)
+    finally:
+        gtk_main._printer_picker_dialog = real_dialog
+
+    # Take the Keep Dots branch without a real dialog, the same trick
+    # conformance_driver.py uses.
+    window._offer_dpi_rescale = \
+        lambda loaded_dpi=_wf._FROM_DOCUMENT: _wf.reconcile_dpi(
+            window.design_canvas.document, window.printer_dpi,
+            lambda *a: 'keep', file_dpi=loaded_dpi)
+    window.apply_label_settings(900, 600, 300, 3.0, 2.0)
+
+    check("Label Settings updates the persisted default's DPI",
+          window._default_printer[2] == 300, window._default_printer)
+    check("but leaves the persisted default's address alone",
+          window._default_printer[0] == '192.168.1.80', window._default_printer)
+
+    written = configparser.ConfigParser(); written.read(label_settings_path)
+    check("the settings file reflects the new DPI but the original, non-overridden address",
+          (written.get('printer', 'address', fallback=None),
+           written.get('printer', 'dpi', fallback=None)) == ('192.168.1.80', '300'),
+          dict(written['printer']) if written.has_section('printer') else None)
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+
+# --- gtkui.busy.BusyBar: a worker thread's result lands back on the main loop
+import time
+from gtkui.busy import BusyBar
+
+bb_btn, bb_off = Gtk.Button(label="a"), Gtk.Button(label="b")
+bb_off.set_sensitive(False)
+bb_msgs, bb_got = [], []
+bb = BusyBar((bb_btn, bb_off), bb_msgs.append)
+
+def bb_work(cancel):
+    bb.report("halfway")
+    return 42
+
+bb.run(bb_work, lambda r, e: bb_got.append((r, e)))
+check("BusyBar.run(): shows the row and makes the blocked buttons insensitive while out",
+      bb.running and bb.get_visible() and not bb_btn.get_sensitive())
+t0 = time.monotonic()
+while not bb_got and time.monotonic() - t0 < 3:
+    while Gtk.events_pending():
+        Gtk.main_iteration()
+    time.sleep(0.01)
+check("BusyBar.run(): the result comes back on the main loop", bb_got == [(42, None)], bb_got)
+check("BusyBar.report(): progress text lands on the message target", bb_msgs == ['halfway'], bb_msgs)
+check("BusyBar: afterwards the row hides and each button is restored to its prior state",
+      not bb.running and not bb.get_visible() and bb_btn.get_sensitive()
+      and not bb_off.get_sensitive())
 
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
