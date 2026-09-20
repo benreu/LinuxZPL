@@ -195,6 +195,9 @@ Read when loading a file and written when saving:
 - `^PW` / `^LL` - Print width / label length
 - `^PQ` - Print quantity (copies), set from Label Settings
 - `^FX` - Comment, used for the designer's own metadata
+- `^CC` / `^CT` / `^CD` - Redefined `^`, `~` and `,` characters are honoured
+  when reading; the file is written back with the standard ones, and a literal
+  `^` or `~` the data was hiding behind them becomes a `^FH` escape
 
 Five `^FX` keys carry what ZPL itself has nowhere to put, and printers ignore
 them:
@@ -230,7 +233,3 @@ Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
 - Rescaling between resolutions cannot be exact for barcodes: a module is a
   whole number of dots, so 2 becomes 3 going from 203 to 300 dpi. Positions and
   heights scale exactly.
-- `^CC`, `^CT` and `^CD` (redefining the `^`, `~` and `,` characters) are
-  detected and warned about, not honoured: a label using them is misread from
-  that point on, and the load warning says so rather than listing what was
-  misread.

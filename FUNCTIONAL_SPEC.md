@@ -887,23 +887,46 @@ than treated as an error, and missing parameters fall back to the defaults in
 gone once the user saves, so on load the application lists the print-affecting
 commands it could not model.
 
-**Control-character redefinition is detected, not honoured.** `^CC`, `^CT`
-and `^CD` (and their `~` twins) move the format prefix, the control prefix and
-the parameter delimiter - `^`, `~` and `,` - for every byte that follows, and
-the tokeniser knows only the defaults. Such a label is therefore misread from
-the redefinition on: not one command dropped, but every field after it. On
-load the application scans for the six spellings, tracking the characters in
-force so the restoring command, which is spelled with the *new* character
-(`^CC/` … `/CC^`), is found as well, and reports them **instead of** the
-ordinary unsupported list - which past that point is made of whatever the
-tokeniser found in the wreckage. The dialog names each redefinition as
-written (`^CC/, /CC^`), says that the designer reads only the standard
-characters so everything after the first of them was misread, that the canvas
-does not show the label as the printer would print it, and that saving would
-replace the file with what the canvas shows. The file still opens, as every
-file does. A label that carries none of the six spellings is not scanned at
-all: the first redefinition can only ever be spelled with the defaults, since
-nothing but these commands can change them.
+**Control-character redefinition is honoured on read and normalised on
+save.** `^CC`, `^CT` and `^CD` (and their `~` twins) move the format prefix,
+the control prefix and the parameter delimiter - `^`, `~` and `,` - for every
+byte that follows, and the tokeniser knows only the defaults. Rather than
+teach it, and every parameter split after it, a label that moves a character
+is rewritten once, before anything reads it, into the label it would have
+been with the defaults: commands are re-spelled with `^` and `~`, delimited
+parameters with `,`, and the redefinitions themselves are left out. The
+rewrite runs ahead of the tokeniser at every entry that takes file text -
+parsing, the load warning's own scan, and the file-chooser preview - and a
+text holding none of the six default spellings is not scanned at all, since
+the first redefinition can only ever be spelled with the defaults.
+
+The scan follows the tokeniser's own rules so that its output tokenises as
+the printer would have read the file: a prefix starts a command only when
+two name characters follow (a bare `~` in `^FC%,#,~` is data), parameters run
+to the next format prefix or command-starting control prefix, and the
+characters in force are tracked from the start, so the restoring command,
+spelled with the *new* character (`^CC/` … `/CC^`), is found and dropped
+too. The delimiter is never rewritten inside `^FD`, `^FV`, `^FX` or `^FN`,
+whose parameters are text, and only in the leading counts of `^GF`, `~DG`
+and `~DY`, whose payload follows them.
+
+Field data is the one place the rewrite is not a substitution. The point of
+`^CC` is to put a literal `^` in a field, and once `^` is the prefix again
+that byte would end the field, so any default character the data holds
+*while it is not in force* becomes the `^FH` escape for it (`_5E`, `_7E`) -
+under the field's own indicator if it has a `^FH`, otherwise under `_` with a
+`^FH` supplied ahead of the `^FD`, in which case any `_` already in the data
+is escaped as well (`_5F`) so the new indicator cannot invent an escape. A
+`^FX` comment gets a space for each such character instead; its content is
+not modelled and a `^` in it would end it early.
+
+On load the application then reports the redefinitions as written
+(`^CC/, /CC^`), saying the label has been read with them in force and that
+saving writes the standard characters in their place and leaves the
+redefinition out, so the saved file prints the same label but no longer
+changes the printer's control characters. The ordinary unsupported list
+follows as usual, computed on the rewritten text, so it names what is really
+there.
 
 Before parsing, `^FXDESIGNER_NOPRINT` payloads are decoded and expanded back
 into the line stream in place, preceded by a marker, so hidden elements keep
@@ -1632,13 +1655,14 @@ rather than requirements:
   performs the real exchanges instead — `~DG` for Store, `^HG` for Retrieve,
   `^ID` for Delete — directly against the printer, just never triggered by
   opening a file.
-- **`^CC`, `^CT` and `^CD` are recognised only to warn (§8.3).** Honouring
-  them would be a pass ahead of the tokeniser that walks the text with the
-  three characters in force, rewrites each back to its default, and drops the
-  redefinition - the same loop `parser.control_redefinitions` already runs,
-  placed in front of `parse_zpl`, `workflow.unsupported_commands` and the
-  file-chooser preview - plus `^FH` escapes for any literal `^` or `~` left
-  in field data, which is what `^CC` is used for in the first place and the
-  part that is not one loop. A save would then write the standard characters
-  and no redefinition, so the file would no longer change printer state.
-  Nothing so far has needed it.
+- **`^CC`, `^CT` and `^CD` are honoured by rewriting, not by parsing
+  (§8.3), and a save drops them.** What that cannot express: a literal `,`
+  inside a *parameter* while the delimiter is moved (`^A@N;40;40;E:A,B.TTF`)
+  has no spelling in standard ZPL and is read as a delimiter after the
+  rewrite; a `^FH` written after its `^FD`, against the manual, is not seen
+  by the escape and the field's own indicator is not used; a `~DG` binary
+  payload is scanned as text, so a redefinition spelled inside its bytes
+  would be taken at its word (`~DG` is reported as unsupported regardless).
+  And the saved file no longer changes the printer's control characters -
+  a label that used `^CC` to leave a printer reconfigured will not, once
+  saved from here.

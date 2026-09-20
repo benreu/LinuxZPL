@@ -207,10 +207,10 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # ride along with it - modelled the way ^LT is: quantity survives a save and
 # can be set from Label Settings, the rest survive a save but are carried
 # only.
-# ^CC, ^CT and ^CD are deliberately absent: they are not a command a save
-# drops but one that makes every token after it wrong, so warn_unsupported
-# reports them on their own and says nothing else - see
-# parser.control_redefinitions.
+# ^CC, ^CT and ^CD never reach this table: parser.canonicalise reads the
+# label with the characters they set and leaves them out of the text, and
+# warn_unsupported reports them on their own, since what a save does with
+# them - write the defaults - is a different thing from dropping a command.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^B3', '^BE', '^B2',
             '^BS', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
@@ -228,12 +228,12 @@ def unsupported_commands(zpl_content: str) -> list:
     is worth saying out loud, rather than letting someone discover it on a
     printed label.
     """
-    from .parser import tokenise
+    from .parser import canonicalise, tokenise
 
     from . import graphics
 
     seen = []
-    for command, params in tokenise(zpl_content):
+    for command, params in tokenise(canonicalise(zpl_content)[0]):
         if command.startswith('^A'):        # every font is modelled
             continue
         if command == '^GF':
@@ -256,20 +256,20 @@ def warn_unsupported(zpl_content: str, notify, notify_redefined) -> list:
     `notify(commands)` shows it however the toolkit shows things. Returns the
     commands so a caller can log or test them.
 
-    A label that redefines a control character (^CC, ^CT, ^CD) is a different
-    case, and gets `notify_redefined(spellings)` instead: from that command
-    on the tokeniser has read the wrong characters, so the canvas is not
-    missing a command, it is missing the label, and the list it would
-    otherwise be given is made of what the regex found in the wreckage.
-    Nothing in that list is worth saying, so it is not said.
+    A label that redefines a control character (^CC, ^CT, ^CD) is read with
+    the characters it set (parser.canonicalise), so the canvas is right; what
+    the user is owed is different, and `notify_redefined(spellings)` says it:
+    a save writes the standard characters and leaves the redefinition out,
+    so the saved file prints the same label but no longer changes the
+    printer's settings. The ordinary list is computed on the canonical text
+    and follows as usual, so a label can hear both.
     """
     from .parser import control_redefinitions
 
     redefined = control_redefinitions(zpl_content)
     if redefined:
         notify_redefined(redefined)
-        return redefined
     dropped = unsupported_commands(zpl_content)
     if dropped:
         notify(dropped)
-    return dropped
+    return redefined + dropped

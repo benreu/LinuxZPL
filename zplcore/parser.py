@@ -100,61 +100,160 @@ def tokenise(zpl_content: str):
 REDEFINES = {'CC': 'format', 'CT': 'control', 'CD': 'delimiter'}
 _DEFAULT_CHARACTERS = {'format': '^', 'control': '~', 'delimiter': ','}
 
+# What COMMAND accepts as the two characters of a name. A prefix that is not
+# followed by two of these starts nothing: the regex skips it, and so a bare
+# `~` in ^FC's parameters is data rather than the start of a tilde command.
+_NAME_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@')
 
-def control_redefinitions(zpl_content: str) -> list:
-    """Every ^CC/^CT/^CD (or ~) in the text, as written, in the order found.
+# Commands whose parameters are free text rather than a delimited list. The
+# delimiter is never rewritten inside them: a `;` in ^FD data under ^CD; is
+# a semicolon, and ^FXDESIGNER_GROUP:1,2 keeps its own comma.
+_FREE_TEXT = {'FD', 'FV', 'FX', 'FN'}
 
-    The tokeniser above knows only the default characters, so a label that
-    moves one is misread from that byte on - not one command dropped, but
-    every field after it - and the load warning has to say so rather than
-    list whatever the regex made of the wreckage.
+# Commands that begin with a delimited list and end with a data payload - hex
+# or :Z64: - in which nothing is a delimiter, however it is currently spelled.
+# Only this many leading parameters are rewritten.
+_LEADING_PARAMETERS = {'GF': 4, 'DG': 3, 'DY': 5}
+
+# The ^FH escape for each default character a field's data may hold literally
+# once that character no longer starts a command.
+_ESCAPES = {'^': '5E', '~': '7E', '_': '5F'}
+
+
+def canonicalise(zpl_content: str) -> tuple:
+    """The text with ZPL's default control characters restored, and every
+    ^CC/^CT/^CD (or ~) that moved one, as written, in the order found.
+
+    The tokeniser above knows only the defaults. Rather than teach it, and
+    every parameter split after it, that `,` might be `;` today, a label that
+    moves a character is rewritten once, here, into the label it would have
+    been with the defaults - and the redefinitions themselves are left out,
+    since that label no longer needs them. Everything downstream, the writer
+    included, then sees ordinary ZPL: a save writes the standard characters
+    and no redefinition, so the saved file prints the same label but no longer
+    changes the printer's settings, which the load notice says.
 
     This is a scan and not a regex because the second redefinition is spelled
     with the first one's character: after `^CC/` the restoring command is
-    `/CC^`, which no fixed pattern sees. The prefixes in force are tracked
+    `/CC^`, which no fixed pattern sees. The characters in force are tracked
     from the start of the text, where they are always the defaults - nothing
     but these commands can change them, so the first one is always spelled
     with `^` or `~`, and a text holding none of the six spellings holds no
-    redefinition at all. That check is the fast path, and every file that
-    never used the feature takes it.
+    redefinition at all. That check is the fast path: it returns the text it
+    was given, the same object, and every file that never used the feature
+    takes it.
 
-    The delimiter is tracked too, though nothing here reads it: honouring
-    these commands is this same loop rewriting each character back to its
-    default and dropping the redefinition, run ahead of `tokenise` in
-    parse_zpl, workflow.unsupported_commands and the renderer's
-    render_from_file. Field data would then need `^FH` escapes for any
-    literal prefix left in it - the reason ^CC gets used at all - which is
-    the part that is not one loop.
+    The scan mirrors COMMAND, so a label it does rewrite tokenises as the
+    printer would have read it: a prefix starts a command only when two name
+    characters follow, and parameters run to the next format prefix or to a
+    control prefix that starts a command. A prefix that starts nothing is
+    written as its default and skipped by the regex exactly as a stray `^` is
+    today. The text is scanned as a printer scans it, so a `^CC` inside ^FD
+    data counts, because on the printer it would; a redefinition with no
+    character after it, or a whitespace one, is recorded by its bare spelling
+    and changes nothing - Zebra disallows it, and there is no printer
+    behaviour to mirror.
 
-    The text is scanned as a printer scans it: a `^CC` inside ^FD data
-    counts, because on the printer it would. A redefinition with no character
-    after it, or a whitespace one, is recorded by its bare spelling and
-    changes nothing - Zebra disallows it, and there is no printer behaviour
-    to mirror.
+    Field data is the one place the rewrite is not a substitution. The point
+    of ^CC is to put a literal `^` in a field, and once `^` is the prefix
+    again that byte would end the field, so any default character the data
+    holds *while it is not in force* becomes the ^FH escape for it - under
+    the field's own indicator if it has a ^FH, else under `_` with a ^FH
+    supplied ahead of the ^FD, and any `_` already in the data escaped too so
+    the new indicator cannot invent an escape. A ^FH written after its ^FD,
+    against the manual, is not seen; a ^FX comment gets a space for each such
+    character instead, since its content is not modelled and a `^` in it
+    would end the comment early.
     """
     if not any(prefix + name in zpl_content
                for prefix in (_DEFAULT_CHARACTERS['format'],
                               _DEFAULT_CHARACTERS['control'])
                for name in REDEFINES):
-        return []
+        return zpl_content, []
+
     chars = dict(_DEFAULT_CHARACTERS)
     found = []
+    out = []
+    indicator = None    # the ^FH of the field being read, if it has one
     i, n = 0, len(zpl_content)
+
+    def starts_command(at):
+        """Whether the prefix at `at` begins a command, by COMMAND's rule."""
+        return (at + 2 < n and zpl_content[at + 1] in _NAME_CHARS
+                and zpl_content[at + 2] in _NAME_CHARS)
+
+    def parameters_end(at):
+        """Where the parameters that begin at `at` stop."""
+        while at < n:
+            ch = zpl_content[at]
+            if ch == chars['format']:
+                return at
+            if ch == chars['control'] and starts_command(at):
+                return at
+            at += 1
+        return n
+
     while i < n:
-        if zpl_content[i] in (chars['format'], chars['control']):
-            role = REDEFINES.get(zpl_content[i + 1:i + 3].upper())
-            if role is not None:
-                new = zpl_content[i + 3:i + 4]
-                if new and not new.isspace():
-                    found.append(zpl_content[i:i + 4])
-                    chars[role] = new
-                    i += 4
-                    continue
+        ch = zpl_content[i]
+        if ch != chars['format'] and ch != chars['control']:
+            out.append(ch)
+            i += 1
+            continue
+        default = (_DEFAULT_CHARACTERS['format'] if ch == chars['format']
+                   else _DEFAULT_CHARACTERS['control'])
+        if not starts_command(i):
+            out.append(default)
+            i += 1
+            continue
+        name = zpl_content[i + 1:i + 3]
+        upper = name.upper()
+        role = REDEFINES.get(upper)
+        if role is not None:
+            new = zpl_content[i + 3:i + 4]
+            if new and not new.isspace():
+                found.append(zpl_content[i:i + 4])
+                chars[role] = new
+                i += 4
+            else:
                 found.append(zpl_content[i:i + 3])
                 i += 3
-                continue
-        i += 1
-    return found
+            continue
+        end = parameters_end(i + 3)
+        params = zpl_content[i + 3:end]
+        i = end
+        if upper in ('FO', 'FT', 'FS'):
+            indicator = None
+        elif upper == 'FH':
+            indicator = zpl_fields.read_hex_indicator(params)
+        # The default characters that may sit in data as literals: each one
+        # that is not, at this moment, what starts a command.
+        literal = [c for c, role in (('^', 'format'), ('~', 'control'))
+                   if chars[role] != c]
+        if upper in ('FD', 'FV'):
+            if any(c in params for c in literal):
+                if indicator is None:
+                    indicator = '_'
+                    out.append(default + 'FH' + indicator)
+                    literal.append('_')
+                params = ''.join(indicator + _ESCAPES[c] if c in literal else c
+                                 for c in params)
+        elif upper == 'FX':
+            params = ''.join(' ' if c in literal else c for c in params)
+        elif upper not in _FREE_TEXT and chars['delimiter'] != ',':
+            keep = _LEADING_PARAMETERS.get(upper)
+            if keep is None:
+                params = params.replace(chars['delimiter'], ',')
+            else:
+                # A bounded split touches only the first `keep` delimiters;
+                # the payload, whatever it holds, stays in the last piece.
+                params = ','.join(params.split(chars['delimiter'], keep))
+        out.append(default + name + params)
+    return ''.join(out), found
+
+
+def control_redefinitions(zpl_content: str) -> list:
+    """Every ^CC/^CT/^CD (or ~) in the text, as written, in the order found."""
+    return canonicalise(zpl_content)[1]
 
 
 def _expand_hidden(zpl_content: str) -> str:
@@ -313,6 +412,9 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     records none. The caller decides what to do about a mismatch - the "assume
     203 dpi, and say it was assumed" rule lives with the prompt, not here.
     """
+    # First, before the label-size regex or anything else reads the text:
+    # from here on the file is spelled with ZPL's default characters.
+    zpl_content, _ = canonicalise(zpl_content)
     doc = Document()
     width, height = parse_label_size(zpl_content)
     if width:

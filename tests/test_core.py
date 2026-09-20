@@ -1322,10 +1322,12 @@ check("and the label transforms are not, now that they survive a save",
       workflow.unsupported_commands(
           "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ"))
 
-# ^CC/^CT/^CD move the characters the tokeniser is built on, so a label using
-# one is misread from that byte on: not a command lost, the label. Detected,
-# not honoured - and reported instead of the generic list, which after the
-# redefinition is made of what the regex found in the wreckage.
+# ^CC/^CT/^CD move the characters the tokeniser is built on. Rather than teach
+# the tokeniser, canonicalise() rewrites such a label into the one it would
+# have been with the defaults - redefinitions left out, any literal ^ or ~ the
+# data was hiding behind them turned into ^FH escapes - and the load notice
+# says what a save will do. The scan has to find the restoring command too,
+# which is spelled with the new character.
 redefs = zpl_parser.control_redefinitions
 check("a label that never redefines anything reports none",
       redefs(product) == [] and redefs(serial) == []
@@ -1352,9 +1354,10 @@ heard = []
 said = workflow.warn_unsupported("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ",
                                  lambda cmds: heard.append(('dropped', cmds)),
                                  lambda found: heard.append(('redefined', found)))
-check("a redefining label gets the redefinition warning and nothing else",
-      heard == [('redefined', ['^CC/', '/CC^'])] and said == ['^CC/', '/CC^'],
-      heard)
+check("a redefining label hears the redefinition notice, then the ordinary "
+      "list - read on the canonical text, so it names the real ^BQ",
+      heard == [('redefined', ['^CC/', '/CC^']), ('dropped', ['^BQ'])]
+      and said == ['^CC/', '/CC^', '^BQ'], heard)
 heard = []
 said = workflow.warn_unsupported("^XA^FO1,1^BQN,2,10^FDQR^FS^XZ",
                                  lambda cmds: heard.append(('dropped', cmds)),
@@ -1365,10 +1368,100 @@ heard = []
 check("a clean label says nothing either way",
       workflow.warn_unsupported(product, lambda c: heard.append(c),
                                 lambda f: heard.append(f)) == [] and heard == [])
-check("parsing a redefining label still returns a document - the warning is "
-      "the response, not an error",
-      isinstance(zpl_parser.parse_zpl("^XA^CC//FO1,1/FDx/FS/CC^^XZ")[0],
-                 Document))
+check("parsing a redefining label gives the real element, not an empty label",
+      [(e.x, e.y, e.text) for e in
+       zpl_parser.parse_zpl("^XA^CC//FO1,1/FDx/FS/CC^^XZ")[0].elements]
+      == [(1, 1, 'x')])
+
+canon = zpl_parser.canonicalise
+_plain = "^XA^FO1,1^A0N,30,30^FDx^FS^XZ"
+check("a label with no redefinition comes back as the very same object",
+      canon(_plain)[0] is _plain and canon(product)[0] is product
+      and canon(serial)[0] is serial)
+
+_cc = "^XA^CC//FO50,50/A0N,40,40/FDCtrl^Alt/FS/CC^^XZ"
+check("^CC: the label is rewritten with ^ back in charge, and the literal "
+      "caret in the data becomes a ^FH escape under a ^FH supplied for it",
+      canon(_cc)[0] == "^XA^FO50,50^A0N,40,40^FH_^FDCtrl_5EAlt^FS^XZ",
+      canon(_cc)[0])
+_ccd = zpl_parser.parse_zpl(_cc)[0]
+check("and parses to one text element that shows Ctrl^Alt",
+      len(_ccd.elements) == 1 and _ccd.display_text(_ccd.elements[0]) == 'Ctrl^Alt'
+      and (_ccd.elements[0].x, _ccd.elements[0].y) == (50, 50),
+      [(e.x, e.y, _ccd.display_text(e)) for e in _ccd.elements])
+_ccz = _ccd.to_zpl()
+check("a save writes the standard characters and no redefinition",
+      'CC' not in _ccz and '^FH_^FDCtrl_5EAlt' in _ccz, _ccz)
+check("and what it wrote reads back to the same label",
+      zpl_parser.parse_zpl(_ccz)[0].display_text(
+          zpl_parser.parse_zpl(_ccz)[0].elements[0]) == 'Ctrl^Alt')
+
+_cd = "^XA^CD;^FO50;50^A0N;40;40^FDSmith, John^FS^CD,^XZ"
+check("^CD: parameters are re-delimited, and the comma in the data is data",
+      canon(_cd)[0] == "^XA^FO50,50^A0N,40,40^FDSmith, John^FS^XZ", canon(_cd)[0])
+_cdd = zpl_parser.parse_zpl(_cd)[0]
+check("so the field lands where it was put, comma intact",
+      [(e.x, e.y, e.text) for e in _cdd.elements] == [(50, 50, 'Smith, John')],
+      [(e.x, e.y, e.text) for e in _cdd.elements])
+
+check("^CT: a control command spelled with the new prefix comes back as ~",
+      canon("^XA^CT!!SD15!CT~~SD15^XZ")[0] == "^XA~SD15~SD15^XZ",
+      canon("^XA^CT!!SD15!CT~~SD15^XZ")[0])
+check("a tilde in the data while ~ is not the control prefix is escaped",
+      canon("^XA^CT!^FO1,1^FDa~b^FS!CT~^XZ")[0]
+      == "^XA^FO1,1^FH_^FDa_7Eb^FS^XZ",
+      canon("^XA^CT!^FO1,1^FDa~b^FS!CT~^XZ")[0])
+check("but a bare ~ while it is the control prefix is data, as the tokeniser "
+      "already reads it - parity, so ^FC's trigger survives the rewrite",
+      canon("^XA^FO1,1^FC%,#,~^FD%m^FS^XZ^CC^")[0]
+      == "^XA^FO1,1^FC%,#,~^FD%m^FS^XZ",
+      canon("^XA^FO1,1^FC%,#,~^FD%m^FS^XZ^CC^")[0])
+
+check("the ~ spellings and a nested pair, each restored in turn",
+      canon("^XA~CC/~CD;/FO1;1/FDa,b;c/FS/CD,/CC^^XZ")
+      == ("^XA^FO1,1^FDa,b;c^FS^XZ", ['~CC/', '~CD;', '/CD,', '/CC^']),
+      canon("^XA~CC/~CD;/FO1;1/FDa,b;c/FS/CD,/CC^^XZ"))
+
+check("a field with its own ^FH escapes under that indicator, no second ^FH",
+      canon("^XA^CC//FO1,1/FH#/FDa^b/FS/CC^^XZ")[0]
+      == "^XA^FO1,1^FH#^FDa#5Eb^FS^XZ",
+      canon("^XA^CC//FO1,1/FH#/FDa^b/FS/CC^^XZ")[0])
+check("a supplied ^FH_ also escapes the underscores already in the data, so "
+      "the new indicator cannot invent an escape",
+      canon("^XA^CC//FO1,1/FDa_b^c/FS/CC^^XZ")[0]
+      == "^XA^FO1,1^FH_^FDa_5Fb_5Ec^FS^XZ",
+      canon("^XA^CC//FO1,1/FDa_b^c/FS/CC^^XZ")[0])
+check("the indicator is the field's: the next field starts without one",
+      canon("^XA^CC//FO1,1/FH#/FDa/FS/FO2,2/FDb^c/FS/CC^^XZ")[0]
+      == "^XA^FO1,1^FH#^FDa^FS^FO2,2^FH_^FDb_5Ec^FS^XZ",
+      canon("^XA^CC//FO1,1/FH#/FDa/FS/FO2,2/FDb^c/FS/CC^^XZ")[0])
+check("data with nothing to escape gets no ^FH",
+      canon("^XA^CC//FO1,1/FDplain/FS/CC^^XZ")[0]
+      == "^XA^FO1,1^FDplain^FS^XZ")
+
+check("a comment holding a literal caret no longer swallows the field after it",
+      [(e.x, e.y, e.text) for e in zpl_parser.parse_zpl(
+          "^XA^CC//FXsee ^FD here/FO1,1/FDx/FS/CC^^XZ")[0].elements]
+      == [(1, 1, 'x')])
+
+_gf_default = "^XA^FO1,1^GFA,8,8,1,FF00FF00FF00FF00^FS^XZ"
+_gf_moved = "^XA^CD;^FO1;1^GFA;8;8;1;FF00FF00FF00FF00^FS^CD,^XZ"
+check("^GF under a moved delimiter: the four counts are re-delimited and the "
+      "payload is left alone",
+      canon(_gf_moved)[0] == _gf_default, canon(_gf_moved)[0])
+check("and the image it decodes to is the same one",
+      zpl_parser.parse_zpl(_gf_moved)[0].elements[0].to_zpl()
+      == zpl_parser.parse_zpl(_gf_default)[0].elements[0].to_zpl())
+
+check("the redefinitions themselves are not in the unsupported list - the "
+      "notice covers them - and what follows them is read for real",
+      workflow.unsupported_commands("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ")
+      == ['^BQ'],
+      workflow.unsupported_commands("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ"))
+check("a stray prefix left by the restore is skipped, as a stray ^ is today",
+      canon("^XA^CC//FO1,1/FDx/FS/CC^^^XZ")[0] == "^XA^FO1,1^FDx^FS^^XZ"
+      and [(e.text) for e in zpl_parser.parse_zpl(
+          "^XA^CC//FO1,1/FDx/FS/CC^^^XZ")[0].elements] == ['x'])
 
 # --- every ^BC parameter ----------------------------------------------------
 from zplcore.model import BARCODE_MODES, BARCODE_ORIENTATIONS

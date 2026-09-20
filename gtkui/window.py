@@ -1179,18 +1179,16 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.destroy()
 
     def _warn_control_redefined(self, spellings):
-        """Say that this file moved ZPL's control characters, and what that cost."""
+        """Say that this file moved ZPL's control characters, and what a save does."""
         dialog = Gtk.MessageDialog(
-            parent=self, flags=0, message_type=Gtk.MessageType.WARNING,
+            parent=self, flags=0, message_type=Gtk.MessageType.INFO,
             buttons=Gtk.ButtonsType.OK,
             text="This label redefines ZPL's control characters.")
         dialog.format_secondary_text(
-            f"{', '.join(spellings)}\n\n^CC, ^CD and ^CT change which "
-            f"characters start a command and separate its parameters. The "
-            f"designer reads only the standard ^, ~ and , so everything after "
-            f"the first of these was misread: the canvas does not show this "
-            f"label as the printer would print it, and saving would replace "
-            f"the file with what the canvas shows.")
+            f"{', '.join(spellings)}\n\nIt has been read with them in force. "
+            f"Saving writes the standard ^, ~ and , in their place and leaves "
+            f"the redefinition out, so the saved file prints the same label "
+            f"but no longer changes the printer's control characters.")
         dialog.run()
         dialog.destroy()
 

@@ -682,7 +682,9 @@ class ZPLRenderer:
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 zpl_content = f.read()
-            return self.render(zpl_content)
+            # A file may have moved ^, ~ or , (see parser.canonicalise);
+            # render() is otherwise only ever given the model's own ZPL.
+            return self.render(parser.canonicalise(zpl_content)[0])
         except Exception as e:
             raise IOError(f"Failed to read ZPL file: {e}")
 
