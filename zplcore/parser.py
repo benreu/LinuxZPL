@@ -93,6 +93,70 @@ def tokenise(zpl_content: str):
             for m in COMMAND.finditer(zpl_content)]
 
 
+# The three characters ZPL parses by rather than reads as data, and the
+# command that moves each. ^CC, ^CT and ^CD (and their ~ twins) take one
+# character - the new value - and it is in force from the very next byte:
+# `^CC/` is followed by `/FO`, not `^FO`, and put back with `/CC^`.
+REDEFINES = {'CC': 'format', 'CT': 'control', 'CD': 'delimiter'}
+_DEFAULT_CHARACTERS = {'format': '^', 'control': '~', 'delimiter': ','}
+
+
+def control_redefinitions(zpl_content: str) -> list:
+    """Every ^CC/^CT/^CD (or ~) in the text, as written, in the order found.
+
+    The tokeniser above knows only the default characters, so a label that
+    moves one is misread from that byte on - not one command dropped, but
+    every field after it - and the load warning has to say so rather than
+    list whatever the regex made of the wreckage.
+
+    This is a scan and not a regex because the second redefinition is spelled
+    with the first one's character: after `^CC/` the restoring command is
+    `/CC^`, which no fixed pattern sees. The prefixes in force are tracked
+    from the start of the text, where they are always the defaults - nothing
+    but these commands can change them, so the first one is always spelled
+    with `^` or `~`, and a text holding none of the six spellings holds no
+    redefinition at all. That check is the fast path, and every file that
+    never used the feature takes it.
+
+    The delimiter is tracked too, though nothing here reads it: honouring
+    these commands is this same loop rewriting each character back to its
+    default and dropping the redefinition, run ahead of `tokenise` in
+    parse_zpl, workflow.unsupported_commands and the renderer's
+    render_from_file. Field data would then need `^FH` escapes for any
+    literal prefix left in it - the reason ^CC gets used at all - which is
+    the part that is not one loop.
+
+    The text is scanned as a printer scans it: a `^CC` inside ^FD data
+    counts, because on the printer it would. A redefinition with no character
+    after it, or a whitespace one, is recorded by its bare spelling and
+    changes nothing - Zebra disallows it, and there is no printer behaviour
+    to mirror.
+    """
+    if not any(prefix + name in zpl_content
+               for prefix in (_DEFAULT_CHARACTERS['format'],
+                              _DEFAULT_CHARACTERS['control'])
+               for name in REDEFINES):
+        return []
+    chars = dict(_DEFAULT_CHARACTERS)
+    found = []
+    i, n = 0, len(zpl_content)
+    while i < n:
+        if zpl_content[i] in (chars['format'], chars['control']):
+            role = REDEFINES.get(zpl_content[i + 1:i + 3].upper())
+            if role is not None:
+                new = zpl_content[i + 3:i + 4]
+                if new and not new.isspace():
+                    found.append(zpl_content[i:i + 4])
+                    chars[role] = new
+                    i += 4
+                    continue
+                found.append(zpl_content[i:i + 3])
+                i += 3
+                continue
+        i += 1
+    return found
+
+
 def _expand_hidden(zpl_content: str) -> str:
     """Decode ^FXDESIGNER_NOPRINT payloads back into the line stream, in place.
 

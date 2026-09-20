@@ -207,6 +207,10 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # ride along with it - modelled the way ^LT is: quantity survives a save and
 # can be set from Label Settings, the rest survive a save but are carried
 # only.
+# ^CC, ^CT and ^CD are deliberately absent: they are not a command a save
+# drops but one that makes every token after it wrong, so warn_unsupported
+# reports them on their own and says nothing else - see
+# parser.control_redefinitions.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^B3', '^BE', '^B2',
             '^BS', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
@@ -246,12 +250,25 @@ def unsupported_commands(zpl_content: str) -> list:
     return seen
 
 
-def warn_unsupported(zpl_content: str, notify) -> list:
+def warn_unsupported(zpl_content: str, notify, notify_redefined) -> list:
     """Tell the user what opening this file has quietly left behind.
 
     `notify(commands)` shows it however the toolkit shows things. Returns the
     commands so a caller can log or test them.
+
+    A label that redefines a control character (^CC, ^CT, ^CD) is a different
+    case, and gets `notify_redefined(spellings)` instead: from that command
+    on the tokeniser has read the wrong characters, so the canvas is not
+    missing a command, it is missing the label, and the list it would
+    otherwise be given is made of what the regex found in the wreckage.
+    Nothing in that list is worth saying, so it is not said.
     """
+    from .parser import control_redefinitions
+
+    redefined = control_redefinitions(zpl_content)
+    if redefined:
+        notify_redefined(redefined)
+        return redefined
     dropped = unsupported_commands(zpl_content)
     if dropped:
         notify(dropped)

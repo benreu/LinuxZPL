@@ -53,6 +53,22 @@ def warn_unsupported(parent, commands):
     box.exec_()
 
 
+def warn_control_redefined(parent, spellings):
+    """Say that this file moved ZPL's control characters, and what that cost."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Warning)
+    box.setWindowTitle("Unsupported commands")
+    box.setText("This label redefines ZPL's control characters.")
+    box.setInformativeText(
+        f"{', '.join(spellings)}\n\n^CC, ^CD and ^CT change which characters "
+        f"start a command and separate its parameters. The designer reads "
+        f"only the standard ^, ~ and , so everything after the first of these "
+        f"was misread: the canvas does not show this label as the printer "
+        f"would print it, and saving would replace the file with what the "
+        f"canvas shows.")
+    box.exec_()
+
+
 def show_error(parent, message: str):
     """Report a failure with the real underlying message, never a placeholder."""
     box = QMessageBox(parent)

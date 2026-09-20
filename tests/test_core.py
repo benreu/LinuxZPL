@@ -1322,6 +1322,54 @@ check("and the label transforms are not, now that they survive a save",
       workflow.unsupported_commands(
           "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ"))
 
+# ^CC/^CT/^CD move the characters the tokeniser is built on, so a label using
+# one is misread from that byte on: not a command lost, the label. Detected,
+# not honoured - and reported instead of the generic list, which after the
+# redefinition is made of what the regex found in the wreckage.
+redefs = zpl_parser.control_redefinitions
+check("a label that never redefines anything reports none",
+      redefs(product) == [] and redefs(serial) == []
+      and redefs("^XA^FO1,1^A0N,30,30^FDx^FS^XZ") == [])
+check("^CC is found, and so is the /CC^ that puts it back - spelled with the "
+      "new prefix, which is why this is a scan and not a regex",
+      redefs("^XA^CC//FO50,50/A0N,40,40/FDCtrl^Alt/FS/CC^^XZ")
+      == ['^CC/', '/CC^'],
+      redefs("^XA^CC//FO50,50/A0N,40,40/FDCtrl^Alt/FS/CC^^XZ"))
+check("the control prefix is tracked the same way",
+      redefs("^XA^CT!!SD15!CT~~SD15^XZ") == ['^CT!', '!CT~'],
+      redefs("^XA^CT!!SD15!CT~~SD15^XZ"))
+check("the delimiter change and its restore are both found",
+      redefs("^XA^CD;^FO50;50^A0N;40;40^FDSmith, John^FS^CD,^XZ")
+      == ['^CD;', '^CD,'])
+check("the ~ spellings count too",
+      redefs("^XA~CC/~CD;/FO1,1/XZ") == ['~CC/', '~CD;']
+      and redefs("^XA~CT!^XZ") == ['~CT!'])
+check("a redefinition with nothing after it is recorded bare and breaks nothing",
+      redefs("^XA^FO1,1^FDx^FS^CC") == ['^CC']
+      and redefs("^XA^FO1,1^FDx^FS^CC\n^XZ") == ['^CC'])
+
+heard = []
+said = workflow.warn_unsupported("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ",
+                                 lambda cmds: heard.append(('dropped', cmds)),
+                                 lambda found: heard.append(('redefined', found)))
+check("a redefining label gets the redefinition warning and nothing else",
+      heard == [('redefined', ['^CC/', '/CC^'])] and said == ['^CC/', '/CC^'],
+      heard)
+heard = []
+said = workflow.warn_unsupported("^XA^FO1,1^BQN,2,10^FDQR^FS^XZ",
+                                 lambda cmds: heard.append(('dropped', cmds)),
+                                 lambda found: heard.append(('redefined', found)))
+check("and one that does not is reported exactly as before",
+      heard == [('dropped', ['^BQ'])] and said == ['^BQ'], heard)
+heard = []
+check("a clean label says nothing either way",
+      workflow.warn_unsupported(product, lambda c: heard.append(c),
+                                lambda f: heard.append(f)) == [] and heard == [])
+check("parsing a redefining label still returns a document - the warning is "
+      "the response, not an error",
+      isinstance(zpl_parser.parse_zpl("^XA^CC//FO1,1/FDx/FS/CC^^XZ")[0],
+                 Document))
+
 # --- every ^BC parameter ----------------------------------------------------
 from zplcore.model import BARCODE_MODES, BARCODE_ORIENTATIONS
 from zplcore import code128

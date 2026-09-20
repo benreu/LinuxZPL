@@ -887,6 +887,24 @@ than treated as an error, and missing parameters fall back to the defaults in
 gone once the user saves, so on load the application lists the print-affecting
 commands it could not model.
 
+**Control-character redefinition is detected, not honoured.** `^CC`, `^CT`
+and `^CD` (and their `~` twins) move the format prefix, the control prefix and
+the parameter delimiter - `^`, `~` and `,` - for every byte that follows, and
+the tokeniser knows only the defaults. Such a label is therefore misread from
+the redefinition on: not one command dropped, but every field after it. On
+load the application scans for the six spellings, tracking the characters in
+force so the restoring command, which is spelled with the *new* character
+(`^CC/` … `/CC^`), is found as well, and reports them **instead of** the
+ordinary unsupported list - which past that point is made of whatever the
+tokeniser found in the wreckage. The dialog names each redefinition as
+written (`^CC/, /CC^`), says that the designer reads only the standard
+characters so everything after the first of them was misread, that the canvas
+does not show the label as the printer would print it, and that saving would
+replace the file with what the canvas shows. The file still opens, as every
+file does. A label that carries none of the six spellings is not scanned at
+all: the first redefinition can only ever be spelled with the defaults, since
+nothing but these commands can change them.
+
 Before parsing, `^FXDESIGNER_NOPRINT` payloads are decoded and expanded back
 into the line stream in place, preceded by a marker, so hidden elements keep
 their z-order position.
@@ -1614,3 +1632,13 @@ rather than requirements:
   performs the real exchanges instead — `~DG` for Store, `^HG` for Retrieve,
   `^ID` for Delete — directly against the printer, just never triggered by
   opening a file.
+- **`^CC`, `^CT` and `^CD` are recognised only to warn (§8.3).** Honouring
+  them would be a pass ahead of the tokeniser that walks the text with the
+  three characters in force, rewrites each back to its default, and drops the
+  redefinition - the same loop `parser.control_redefinitions` already runs,
+  placed in front of `parse_zpl`, `workflow.unsupported_commands` and the
+  file-chooser preview - plus `^FH` escapes for any literal `^` or `~` left
+  in field data, which is what `^CC` is used for in the first place and the
+  part that is not one loop. A save would then write the standard characters
+  and no redefinition, so the file would no longer change printer state.
+  Nothing so far has needed it.

@@ -971,7 +971,8 @@ class ZPLDesignerWindow(QMainWindow):
             self.unsaved_changes = bool(rescaled)
             self._reset_history()
             workflow.warn_unsupported(
-                content, lambda cmds: qt_dialogs.warn_unsupported(self, cmds))
+                content, lambda cmds: qt_dialogs.warn_unsupported(self, cmds),
+                lambda found: qt_dialogs.warn_control_redefined(self, found))
         except Exception as e:
             self.show_error(f"Failed to load file: {e}")
             self.update_status("Error loading file")

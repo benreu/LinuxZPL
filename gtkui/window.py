@@ -1159,7 +1159,8 @@ class ZPLViewerWindow(Gtk.Window):
             # went on recording the resolution it was drawn for.
             self.unsaved_changes = bool(rescaled)
             self._reset_history()
-            workflow.warn_unsupported(content, self._warn_unsupported)
+            workflow.warn_unsupported(content, self._warn_unsupported,
+                                      self._warn_control_redefined)
 
         except Exception as e:
             self.show_error_dialog(f"Failed to load file: {e}")
@@ -1174,6 +1175,22 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.format_secondary_text(
             f"{', '.join(commands)}\n\nThese are not shown on the canvas, and "
             f"saving will not preserve them.")
+        dialog.run()
+        dialog.destroy()
+
+    def _warn_control_redefined(self, spellings):
+        """Say that this file moved ZPL's control characters, and what that cost."""
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK,
+            text="This label redefines ZPL's control characters.")
+        dialog.format_secondary_text(
+            f"{', '.join(spellings)}\n\n^CC, ^CD and ^CT change which "
+            f"characters start a command and separate its parameters. The "
+            f"designer reads only the standard ^, ~ and , so everything after "
+            f"the first of these was misread: the canvas does not show this "
+            f"label as the printer would print it, and saving would replace "
+            f"the file with what the canvas shows.")
         dialog.run()
         dialog.destroy()
 

@@ -230,3 +230,7 @@ Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
 - Rescaling between resolutions cannot be exact for barcodes: a module is a
   whole number of dots, so 2 becomes 3 going from 203 to 300 dpi. Positions and
   heights scale exactly.
+- `^CC`, `^CT` and `^CD` (redefining the `^`, `~` and `,` characters) are
+  detected and warned about, not honoured: a label using them is misread from
+  that point on, and the load warning says so rather than listing what was
+  misread.

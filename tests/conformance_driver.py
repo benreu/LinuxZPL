@@ -137,6 +137,7 @@ class GtkDriver:
         # A fixture carrying a command the model cannot keep would otherwise
         # stop the run on a modal nobody is there to dismiss.
         self.window._warn_unsupported = lambda commands: None
+        self.window._warn_control_redefined = lambda spellings: None
 
     # -- document ---------------------------------------------------------
     @property
@@ -404,6 +405,7 @@ class QtDriver:
         # A fixture carrying a command the model cannot keep would otherwise
         # stop the run on a modal nobody is there to dismiss.
         dialogs.warn_unsupported = lambda *a, **k: None
+        dialogs.warn_control_redefined = lambda *a, **k: None
         self.window = window.ZPLDesignerWindow()
         self.window._save_settings = lambda *a: None
         self.window.printer_dpi = 203
