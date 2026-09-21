@@ -3909,6 +3909,54 @@ check("and every parameter round-trips together",
 check("^PQ is no longer reported as something a save would drop",
       workflow.unsupported_commands("^XA^PQ5,1,0,Y^XZ") == [])
 
+# --- ^CV: code validation ----------------------------------------------------
+# A switch asking the printer to check each barcode's data as it prints. It
+# says nothing about where anything sits, so there is nothing to draw - but a
+# file carrying it was met with the "does not understand" dialog and lost it
+# on save. The manual's own example, with the EAN-13 that is valid.
+
+_cv_example = "^XA^CVY^FO50,50^BEN,100,Y,N^FD9782345678907^FS^XZ"
+_cv = zpl_parser.parse_zpl(_cv_example)[0]
+check("^CVY turns code validation on", _cv.code_validation is True)
+check("^CVN, a bare ^CV and no ^CV at all leave it off",
+      not zpl_parser.parse_zpl("^XA^CVN^XZ")[0].code_validation
+      and not zpl_parser.parse_zpl("^XA^CV^XZ")[0].code_validation
+      and not zpl_parser.parse_zpl("^XA^XZ")[0].code_validation)
+check("the switch is read wherever it appears, and the last one wins",
+      zpl_parser.parse_zpl(
+          "^XA^CVN^FO1,1^BCN,50^FD1^FS^CVY^XZ")[0].code_validation is True)
+
+check("^CVY round-trips through a save", '^CVY' in _cv.to_zpl().split('\n'))
+check("and is written before the barcodes it checks",
+      _cv.to_zpl().index('^CVY') < _cv.to_zpl().index('^FO'))
+check("a format that never said ^CV writes none back",
+      '^CV' not in zpl_parser.parse_zpl("^XA^XZ")[0].to_zpl())
+check("nor does one that said ^CVN, which is ZPL's own default",
+      '^CV' not in zpl_parser.parse_zpl("^XA^CVN^XZ")[0].to_zpl())
+
+# Sticky at the printer "from format to format", like ^PO/^PM/^LR, so the
+# print path has to say so even when it is off.
+_cv_plain = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^A0N,30,30^FDx^FS^XZ")[0]
+check("printing states ^CVN for a label that does not validate",
+      '^CVN' in _cv_plain.to_zpl(explicit_flips=True).split('\n'),
+      _cv_plain.to_zpl(explicit_flips=True))
+check("and ^CVY for one that does",
+      '^CVY' in _cv.to_zpl(explicit_flips=True).split('\n'))
+check("while the save path goes on writing nothing at default",
+      '^CV' not in _cv_plain.to_zpl())
+
+check("^CV is no longer reported as something a save would drop",
+      workflow.unsupported_commands(_cv_example) == [])
+_cv_raw = (FIXTURES / 'code_validation.zpl').read_text()
+check("the fixture reads as one barcode and reports nothing",
+      len(zpl_parser.parse_zpl(_cv_raw)[0].elements) == 1
+      and zpl_parser.parse_zpl(_cv_raw)[0].code_validation
+      and workflow.unsupported_commands(_cv_raw) == [])
+
+check("^CV draws nothing in the preview",
+      _preview_ink("^XA^PW300^LL200^CVY^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
+
 # --- printer_io.send_command(): the console's text-in/text-out wrapper -----
 # It should encode the command as UTF-8, pass it straight through to send()
 # unmodified (read_reply always on, since a console has no other way to know

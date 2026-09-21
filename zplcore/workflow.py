@@ -214,13 +214,17 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # ^FW is the default orientation, resolved into each field the way ^CF is:
 # every text field writes its own letter and a barcode it turned writes one
 # too, so a save loses nothing by leaving the command itself out.
+# ^CV asks the printer to check each barcode's data as it prints - a
+# print-time switch with nothing to draw, carried the way ^LT is: it survives
+# a save, and the print path states it, but no barcode is checked here; see
+# FUNCTIONAL_SPEC.md section 18.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^B3', '^BE', '^B2',
             '^BS', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF', '^FW',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC', '^FH',
             '^LH', '^LS', '^LT', '^PO', '^PM', '^LR',
-            '^IM', '^XG', '^IL', '^IS', '^PQ'}
+            '^IM', '^XG', '^IL', '^IS', '^PQ', '^CV'}
 
 
 def unsupported_commands(zpl_content: str) -> list:

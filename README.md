@@ -197,6 +197,8 @@ Read when loading a file and written when saving:
 - `^IL` / `^IS` - Load / save a stored graphic for a whole format (Image Load / Image Save)
 - `^PW` / `^LL` - Print width / label length
 - `^PQ` - Print quantity (copies), set from Label Settings
+- `^CV` - Code validation, kept through a save and stated when printing; the
+  check itself is the printer's, and nothing is drawn for it
 - `^FX` - Comment, used for the designer's own metadata
 - `^CC` / `^CT` / `^CD` - Redefined `^`, `~` and `,` characters are honoured
   when reading; the file is written back with the standard ones, and a literal

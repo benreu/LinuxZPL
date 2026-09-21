@@ -56,6 +56,9 @@ FIXTURE_GRAPHIC_LOAD = ROOT / 'tests' / 'fixtures' / 'stored_graphic_load.zpl'
 # The commands that move or flip a whole label
 FIXTURE_HOME = ROOT / 'tests' / 'fixtures' / 'label_home.zpl'
 FIXTURE_FLIPPED = ROOT / 'tests' / 'fixtures' / 'flipped_label.zpl'
+# The manual's own ^CV example: a switch the printer acts on and nothing here
+# draws, which both frontends still have to write back
+FIXTURE_VALIDATED = ROOT / 'tests' / 'fixtures' / 'code_validation.zpl'
 
 # A font every step can rely on; text width is the most divergence-prone rule,
 # so the sequence exercises the measured path as well as the fixed-width one.
@@ -1122,6 +1125,11 @@ def sequence(driver, record):
     driver.fresh_gesture()
     driver.drag_pointer(_flipped.x + 3, _flipped.y + 3, 20, 10)
     record('and drag it, which a flipped canvas would send the other way')
+
+    # ^CV is a switch the printer acts on and nothing here draws, so the only
+    # thing to agree on is that both write it back.
+    driver.load(FIXTURE_VALIDATED)
+    record('load a format that asks the printer to validate its barcodes')
 
     # Setting a home and a flip from Label Settings has to reach the file the
     # same way in both, including the ^FO each element is written back at.

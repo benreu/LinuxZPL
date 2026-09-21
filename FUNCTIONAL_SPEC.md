@@ -720,6 +720,11 @@ immediately before `^XZ`, and only when at least one of its four values is not
 ZPL's own default (`1,0,0,N`) — trimmed to however many of them that takes, so
 a quantity-only label writes just `^PQ5` rather than `^PQ5,0,0,N`.
 
+`^CVY` is written after the `^FXDESIGNER_DPI` line and before the first
+element — it is a switch over the barcodes that follow it — and only when the
+file turned code validation on. `^CVN` is ZPL's own default and is not written
+by a save (§9 for why printing differs).
+
 **Graphic encoding** (`^GFA`): one bit per dot, rows padded to whole bytes,
 `bytes_per_row = ceil(width / 8)`, data as uppercase hex. **A set bit is
 black** — the inverse of the usual 1-bit image convention, where 0 is black.
@@ -793,7 +798,7 @@ path are caret-free and are stored as-is.
 `^A@`), `^CF`, `^FW`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
-`^PO`, `^PM`, `^LR`), `^PQ`, and the five metadata keys.
+`^PO`, `^PM`, `^LR`), `^PQ`, `^CV`, and the five metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -1001,6 +1006,12 @@ reverse-print still sends `^PON`, `^PMN` and `^LRN`, clearing whatever an
 earlier job (from this app or elsewhere) left in effect. A saved `.zpl` file
 is never sent to a printer and has no such state to correct, so Save keeps
 omitting them at ZPL's own default (§8.1).
+
+**`^CV` is sent explicitly for the same reason.** The manual: *"Once turned
+on, the ^CV command remains active from format to format until turned off by
+another ^CV command or the printer is turned off."* A label that does not ask
+for code validation therefore sends `^CVN`, and one that does sends `^CVY`;
+Save writes only the latter.
 
 If the label carries a `^PQ`, it is sent as part of that ZPL like any other
 command, and the printer prints that many copies itself — this step does not
@@ -1610,6 +1621,14 @@ rather than requirements:
   have no editor and are not otherwise acted on.** Only quantity, the common
   case, is exposed in Label Settings; a file from another tool that sets the
   other three keeps them through a save, the same treatment `^LT` gets.
+- **`^CV` round-trips but is not simulated.** It asks the printer to check
+  each barcode's data as it prints — character set, check digit, length — and
+  to print `INVALID - X` in reverse image in place of a bad one. Nothing here
+  checks a barcode or draws that message: the canvas and the preview show the
+  symbol as they always did, and the printer does the checking. It has no
+  editor. A `^CV` toggled part-way through a format — which a printer would
+  honour from that point on, and which no generator writes — is written back
+  as the one state the format ended on, at the top.
 - **The canvas shows a `^FN` placeholder; the preview does not.** The canvas
   answers "what am I editing", so an unfilled variable field draws its prompt or
   its number rather than becoming invisible. The preview answers "what will

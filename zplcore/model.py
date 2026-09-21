@@ -995,6 +995,12 @@ class Document:
         self.print_replicates = 0
         self.print_override_pause = False
 
+        # ^CV - whether the printer checks each barcode's data as it prints
+        # and prints INVALID - X in place of a bad one. A print-time check
+        # with nothing to draw, carried the way ^LT is so a save does not
+        # silently drop it. No editor, so it is not in the undo snapshot.
+        self.code_validation = False
+
         # Document-wide font, used by any text element that has none of its own
         self.font_path: Optional[str] = None
         self.font_family: Optional[str] = None
@@ -1672,7 +1678,7 @@ class Document:
 
         explicit_flips is passed through to the label transform (see
         LabelTransform.to_zpl) and exists for the print path, not for saving
-        a file.
+        a file. ^CV rides on it too, being sticky at the printer the same way.
         """
         zpl = "^XA\n"
         # ZPL requires ^DF immediately after ^XA: everything following it is
@@ -1696,6 +1702,8 @@ class Document:
         # ZPL carries no resolution, so record what the dots were drawn for.
         # Printers ignore ^FX, and the value has no caret to end the comment early.
         zpl += f"^FXDESIGNER_DPI:{self.dpi}\n"
+        # Before the fields, because it is a switch over the barcodes after it.
+        zpl += self._code_validation_zpl(explicit=explicit_flips)
         offset = placed.field_offset()
         groups = self._group_numbers()
         for element in self.elements:
@@ -1752,6 +1760,16 @@ class Document:
         if keep == 0:
             return ''
         return '^PQ' + ','.join(str(v) for v in given[:keep]) + '\n'
+
+    def _code_validation_zpl(self, *, explicit: bool) -> str:
+        """^CV, sticky at the printer like ^PO/^PM/^LR: "remains active from
+        format to format until turned off by another ^CV command". A save
+        writes it only when on; the print path (explicit) states it either
+        way, or a job that left it on would go on validating this one.
+        """
+        if self.code_validation:
+            return '^CVY\n'
+        return '^CVN\n' if explicit else ''
 
     def _lowest_element(self):
         """The smallest (x, y) any element occupies, or None if there are none."""

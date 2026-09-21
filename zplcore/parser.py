@@ -563,6 +563,14 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 _read_print_quantity(params)
             continue
 
+        if cmd == '^CV':
+            # A switch the printer keeps until told otherwise, so the last one
+            # in the format is the state it leaves behind. Read whether or not
+            # a field is open, like ^BY. Nothing to draw: it checks barcode
+            # data at print time.
+            doc.code_validation = zpl_transforms.read_flag(params)
+            continue
+
         if cmd == '^CF':
             default_font = _read_default_font(params, default_font)
             continue
