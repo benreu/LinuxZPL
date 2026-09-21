@@ -949,8 +949,7 @@ class ZPLDesignerWindow(QMainWindow):
 
     def load_zpl_file(self, filepath: str):
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                content = f.read()
+            content, code_page = zpl_parser.read_file(filepath)
             document, loaded_dpi = zpl_parser.parse_zpl(content, self.renderer)
             self.canvas.set_document(document)
             self.current_filepath = filepath
@@ -970,6 +969,8 @@ class ZPLDesignerWindow(QMainWindow):
             # went on recording the resolution it was drawn for.
             self.unsaved_changes = bool(rescaled)
             self._reset_history()
+            if code_page:
+                qt_dialogs.notify_decoded(self, code_page)
             workflow.warn_unsupported(
                 content, lambda cmds: qt_dialogs.warn_unsupported(self, cmds),
                 lambda found: qt_dialogs.warn_control_redefined(self, found))

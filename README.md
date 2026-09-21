@@ -200,7 +200,9 @@ Read when loading a file and written when saving:
 - `^CV` - Code validation, kept through a save and stated when printing; the
   check itself is the printer's, and nothing is drawn for it
 - `^CI` - Encoding, kept through a save; a label holding any non-ASCII text
-  is written `^CI28`, since what is written is UTF-8, and printing states it
+  is written `^CI28`, since what is written is UTF-8, and printing states it.
+  A file that is not UTF-8 is read by the `^CI` it declares (CP850, the
+  Windows code pages, Shift-JIS) and converted on save
 - `^CW` / `^FL` - Font identifier and font linking, kept through a save
   verbatim; the printer's font table, with nothing to draw
 - `^FX` - Comment, used for the designer's own metadata

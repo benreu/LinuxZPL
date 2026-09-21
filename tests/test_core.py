@@ -4061,6 +4061,60 @@ check("^CI, ^CW and ^FL draw nothing in the preview",
                    "^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
       == _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
 
+# A file that is not UTF-8 used to fail to open outright - every read was
+# open(..., encoding='utf-8'). It is read by the ^CI it declares now, and a
+# save then converts it to UTF-8 with ^CI28, which prints the same glyphs.
+_decode = zpl_parser.decode_file
+check("a UTF-8 file decodes as itself, with no code page to report",
+      _decode('^XA^FDGrüße^FS^XZ'.encode('utf-8')) == ('^XA^FDGrüße^FS^XZ', None))
+check("a UTF-8 BOM - the manual's alternative to ^CI28 - is dropped, not kept "
+      "as a stray character ahead of ^XA",
+      _decode(b'\xef\xbb\xbf' + '^XA^FDx^FS^XZ'.encode('utf-8'))
+      == ('^XA^FDx^FS^XZ', None))
+check("a UTF-16 file is read by its BOM",
+      _decode('^XA^FDGrüße^FS^XZ'.encode('utf-16')) == ('^XA^FDGrüße^FS^XZ', None))
+check("a ^CI0 file with é as the CP850 byte 0x82 opens as é and says so",
+      _decode(b'^XA^CI0^FO1,1^A0N,9,9^FDcaf\x82^FS^XZ')
+      == ('^XA^CI0^FO1,1^A0N,9,9^FDcafé^FS^XZ', 'cp850'))
+check("no ^CI at all reads as ^CI0 - the power-up value a printer would use",
+      _decode(b'^XA^FDcaf\x82^FS^XZ') == ('^XA^FDcafé^FS^XZ', 'cp850'))
+check("a ^CI27 file with é as the CP1252 byte 0xE9 opens as é",
+      _decode(b'^XA^CI27^FDcaf\xe9^FS^XZ') == ('^XA^CI27^FDcafé^FS^XZ', 'cp1252'))
+check("a ^CI15 file reads as Shift-JIS",
+      _decode(b'^XA^CI15^FD\x93\xfa\x96\x7b^FS^XZ') == ('^XA^CI15^FD日本^FS^XZ', 'shift_jis'))
+_refused = []
+for _bad in (b'^XA^CI16^FDcaf\xe9^FS^XZ', b'^XA^CI28^FDcaf\xe9^FS^XZ'):
+    try:
+        _decode(_bad)
+    except ValueError as e:
+        _refused.append(str(e))
+check("a table-driven ^CI16, or a ^CI28 that is not UTF-8, is refused by "
+      "name rather than guessed at",
+      len(_refused) == 2 and '^CI16' in _refused[0] and '^CI28' in _refused[1],
+      _refused)
+
+_cp850_doc = zpl_parser.parse_zpl(
+    _decode(b'^XA^CI0^FO1,1^A0N,9,9^FDcaf\x82^FS^XZ')[0])[0]
+check("and once open, such a file carries its ^CI0 and its é",
+      _cp850_doc.encoding == '0' and _cp850_doc.elements[0].text == 'café')
+check("so a save converts it: UTF-8 bytes under ^CI28, the same glyphs",
+      '^CI28' in _cp850_doc.to_zpl().split('\n')
+      and '^CI0' not in _cp850_doc.to_zpl()
+      and 'caf\xc3\xa9'.encode('latin-1') in _cp850_doc.to_zpl().encode('utf-8'),
+      _cp850_doc.to_zpl())
+
+_cp850_path = os.path.join(tmp, 'cp850.zpl')
+with open(_cp850_path, 'wb') as f:
+    f.write(b'^XA^PW300^LL200^CI0^FO20,20^A0N,30,30^FDcaf\x82^FS^XZ')
+check("read_file() reads from disk the same way",
+      zpl_parser.read_file(_cp850_path)
+      == ('^XA^PW300^LL200^CI0^FO20,20^A0N,30,30^FDcafé^FS^XZ', 'cp850'))
+check("and the file-chooser preview renders such a file rather than failing",
+      ZPLRenderer(300, 200).render_from_file(_cp850_path).size == (300, 200))
+check("the notice names the code page and what a save will do",
+      'cp850' in workflow.decoded_notice('cp850')[0]
+      and '^CI28' in workflow.decoded_notice('cp850')[1])
+
 # --- printer_io.send_command(): the console's text-in/text-out wrapper -----
 # It should encode the command as UTF-8, pass it straight through to send()
 # unmodified (read_reply always on, since a console has no other way to know

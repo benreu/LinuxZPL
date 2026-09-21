@@ -701,8 +701,9 @@ class ZPLRenderer:
             PIL Image object
         """
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                zpl_content = f.read()
+            # Read as the window reads it, so a file that is not UTF-8
+            # previews in the same accents it will open with.
+            zpl_content, _code_page = parser.read_file(filepath)
             # A file may have moved ^, ~ or , (see parser.canonicalise);
             # render() is otherwise only ever given the model's own ZPL.
             return self.render(parser.canonicalise(zpl_content)[0])

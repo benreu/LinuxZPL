@@ -265,6 +265,21 @@ def unsupported_commands(zpl_content: str) -> list:
     return seen
 
 
+def decoded_notice(code_page: str):
+    """(text, detail) for the frontend's notice that a file was not UTF-8 and
+    was read by the ^CI it declares (parser.read_file's second value).
+
+    Said out loud because a save converts the file: it comes back as UTF-8
+    with ^CI28, which prints the same glyphs for a file whose ^CI was honest,
+    and the wrong ones for a file that relied on a printer's saved setting
+    instead - the accents are the place to look before saving.
+    """
+    return (f"This label was read as {code_page}, the encoding its ^CI declares.",
+            "It is not UTF-8. Saving writes it as UTF-8 with ^CI28, which "
+            "prints the same characters - so check that the accented "
+            "characters look right before saving.")
+
+
 def warn_unsupported(zpl_content: str, notify, notify_redefined) -> list:
     """Tell the user what opening this file has quietly left behind.
 

@@ -52,6 +52,66 @@ def parse_label_size(zpl_content: str) -> Tuple[Optional[int], Optional[int]]:
 COMMAND = re.compile(
     r'([\^~])([A-Za-z0-9@]{2})((?:(?!\^|~[A-Za-z0-9@]{2})[\s\S])*)', re.S)
 
+# The codec a file's ^CI names, for one that is not UTF-8. The single-byte
+# sets: 0-12 are Code Page 850 with a few national replacements (which are
+# ASCII positions, so cp850 reads their bytes as the printer stores them), 13
+# is CP850 itself, 27 and 31-36 the Windows code pages the manual lists, and
+# 15 Shift-JIS, which Python knows. Not here, and so refused rather than
+# guessed: 14, 16, 24 and 26, whose meaning is a *.DAT table on the printer,
+# and 28-30, which are Unicode and so already tried. No ^CI at all reads as 0,
+# the power-up value - a printer given such a file would read it that way.
+_CODE_PAGES = {**{n: 'cp850' for n in range(14)},
+               15: 'shift_jis', 27: 'cp1252', 31: 'cp1250', 33: 'cp1251',
+               34: 'cp1253', 35: 'cp1254', 36: 'cp1255'}
+_FIRST_ENCODING = re.compile(rb'\^CI(\d+)')
+
+
+def decode_file(raw: bytes) -> Tuple[str, Optional[str]]:
+    """The text of a .zpl file's bytes, and the code page it had to be read
+    with - None for a UTF-8 file, which is every file this designer writes.
+
+    Every read used to be open(..., encoding='utf-8'), so a file whose
+    accents were single bytes - a ^CI0 file with é as 0x82, the way a printer
+    at power-up reads it, or a ^CI27 one with é as 0xE9 - did not open at all.
+    Now the ^CI the file declares picks the codec, and the caller says which
+    one was used: the saved file will be UTF-8 with ^CI28 (see
+    Document._encoding_zpl), which prints the same glyphs, but a file that
+    relied on a printer's saved setting rather than its own ^CI will have
+    been read as CP850 and may show the wrong accents - worth a look before
+    a save converts them.
+
+    A BOM is honoured first, as the manual's own alternative to ^CI: UTF-16
+    by its BOM, and utf-8-sig so a UTF-8 BOM is dropped rather than left as
+    a stray character ahead of ^XA. A ^CI whose bytes cannot be read - one of
+    the table-driven Asian sets, or a ^CI28 that is not UTF-8 - raises rather
+    than guesses, since a wrong guess would be written back as real text on
+    the next save.
+    """
+    if raw[:2] in (b'\xff\xfe', b'\xfe\xff'):
+        return raw.decode('utf-16'), None
+    try:
+        return raw.decode('utf-8-sig'), None
+    except UnicodeDecodeError:
+        pass
+    match = _FIRST_ENCODING.search(raw)
+    number = int(match.group(1)) if match else 0
+    codec = _CODE_PAGES.get(number)
+    if codec is None:
+        raise ValueError(f"not UTF-8, and its ^CI{number} encoding is not one "
+                         f"this designer can read")
+    try:
+        return raw.decode(codec), codec
+    except UnicodeDecodeError as e:
+        raise ValueError(f"not UTF-8, and does not read as ^CI{number} "
+                         f"({codec}) either: {e}") from e
+
+
+def read_file(path: str) -> Tuple[str, Optional[str]]:
+    """A .zpl file as text, and the code page it had to be read with, if any.
+    See decode_file."""
+    with open(path, 'rb') as f:
+        return decode_file(f.read())
+
 # ZPL's own factory default font, used by any field that carries neither an ^A
 # of its own nor a ^CF before it. No orientation: ^CF has no such parameter,
 # and a field relying on it turns with ^FW alone.

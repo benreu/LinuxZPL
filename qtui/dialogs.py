@@ -22,7 +22,8 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDoubleSpinBox, QVBoxLayout, QWidget)
 
 from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
-                     graphic_store, printer_io, printer_objects, textraster)
+                     graphic_store, printer_io, printer_objects, textraster,
+                     workflow)
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
                            BARCODE_MODES, BARCODE_ORIENTATIONS,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
@@ -50,6 +51,17 @@ def warn_unsupported(parent, commands):
     box.setInformativeText(
         f"{', '.join(commands)}\n\nThese are not shown on the canvas, and "
         f"saving will not preserve them.")
+    box.exec_()
+
+
+def notify_decoded(parent, code_page):
+    """Say that this file was not UTF-8, and what a save will do with it."""
+    text, detail = workflow.decoded_notice(code_page)
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Information)
+    box.setWindowTitle("File encoding")
+    box.setText(text)
+    box.setInformativeText(detail)
     box.exec_()
 
 

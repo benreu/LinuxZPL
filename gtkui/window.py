@@ -1131,8 +1131,7 @@ class ZPLViewerWindow(Gtk.Window):
     def load_zpl_file(self, filepath: str):
         """Load a ZPL file and update the views."""
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                content = f.read()
+            content, code_page = zpl_parser.read_file(filepath)
 
             document, loaded_dpi = zpl_parser.parse_zpl(content, self.renderer)
             self.design_canvas.set_document(document)
@@ -1159,6 +1158,8 @@ class ZPLViewerWindow(Gtk.Window):
             # went on recording the resolution it was drawn for.
             self.unsaved_changes = bool(rescaled)
             self._reset_history()
+            if code_page:
+                self._notify_decoded(code_page)
             workflow.warn_unsupported(content, self._warn_unsupported,
                                       self._warn_control_redefined)
 
@@ -1175,6 +1176,16 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.format_secondary_text(
             f"{', '.join(commands)}\n\nThese are not shown on the canvas, and "
             f"saving will not preserve them.")
+        dialog.run()
+        dialog.destroy()
+
+    def _notify_decoded(self, code_page):
+        """Say that this file was not UTF-8, and what a save will do with it."""
+        text, detail = workflow.decoded_notice(code_page)
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK, text=text)
+        dialog.format_secondary_text(detail)
         dialog.run()
         dialog.destroy()
 

@@ -926,6 +926,23 @@ top. A `^CI` naming no number is ignored. `^CW` is kept by letter, a letter
 assigned twice keeping its place and taking the last assignment; one with no
 letter is ignored. Every non-empty `^FL` is kept, in order.
 
+**A file that is not UTF-8 is read by the `^CI` it declares.** Every read
+was `open(…, encoding='utf-8')`, so a file whose accents were single bytes —
+a `^CI0` file with `é` as `0x82`, the way a printer at power-up reads it, or a
+`^CI27` one with `é` as `0xE9` — did not open at all. Now a BOM is honoured
+first (UTF-16 by its BOM; a UTF-8 BOM, the manual's own alternative to
+`^CI28`, is dropped rather than left ahead of `^XA`), then UTF-8 is tried,
+and failing that the first `^CI` in the file picks the codec: 0–13 CP850, 27
+CP1252, 31 CP1250, 33–36 CP1251/1253/1254/1255, 15 Shift-JIS, and no `^CI`
+at all CP850, the power-up value. The user is then told, in a notice ahead
+of the unsupported-commands one, which code page the file was read as and
+that a save will write it as UTF-8 with `^CI28` — the same glyphs, for a file
+whose `^CI` was honest. A `^CI` whose bytes cannot be read — 14, 16, 24 and
+26, whose meaning is a `*.DAT` table on the printer, or a `^CI28` that is not
+UTF-8 — is refused by name rather than guessed at, since a wrong guess would
+be written back as real text on the next save. The file-chooser preview reads
+the same way, so it shows the accents the file will open with.
+
 `^CW` is carried rather than resolved into the fields the way `^CF` and `^FW`
 are: resolving `^CWQ,R:MYFONT.FNT` would have to spell the font as an `^A@`,
 and the `^A@` this designer writes is always `E:<NAME>.TTF` (§8.1), naming an
@@ -1697,6 +1714,12 @@ rather than requirements:
   turns its `[` back into a `[`. A `^CI` changed part-way through a format,
   which a printer would honour from that field on, is written back as the
   first one, at the top.
+- **A file with no `^CI` and bytes that are not UTF-8 is assumed to be CP850.**
+  That is the printer's own power-up reading of it, and the right one for a
+  file whose accents were typed against `^CI0`; a CP1252 file that relied on
+  a `^JUS`-saved printer setting instead of its own `^CI27` opens with the
+  wrong accents (`0xE9` is `Ú` in CP850). The notice on open (§8.3) is there
+  so that is seen before a save converts it. There is no encoding chooser.
 - **`^CW` is carried, not resolved, and nothing looks for its font.** A letter
   `^CW` assigns draws like any built-in letter — in the document font, as
   §3.3 has every field without a TrueType face of its own drawn — not the
