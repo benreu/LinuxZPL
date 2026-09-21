@@ -185,6 +185,9 @@ Read when loading a file and written when saving:
 - `^FD` / `^FS` - Field data / end field
 - `^AF` - Built-in font selection
 - `^A@` - Downloaded TrueType font, e.g. `^A@N,36,20,E:DEJAVUSA.TTF`
+- `^FW` - Default field orientation, honoured when reading: an `^A`, a `^CF`
+  field or a barcode that leaves its own orientation out turns with it, and
+  is written back with its own letter instead
 - `^GB` - Draw box
 - `^BC` / `^B3` / `^BE` / `^B2` / `^BS` / `^BY` - Code 128, Code 39, EAN-13,
   Interleaved 2 of 5 and UPC/EAN Extension barcodes, and their module width

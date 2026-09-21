@@ -1977,6 +1977,54 @@ check("^CI is reported as a command a save would drop",
 check("^CF is not reported, now that it is honoured",
       workflow.unsupported_commands("^XA^CF0,40^FO1,1^FDx^FS^XZ") == [])
 
+# ^FW: the orientation every field takes when it leaves its own out. The
+# manual's own example - after ^FWR, ^A0N,25,20 prints upright and ^A0,25,20
+# prints turned - opened with both upright, and a save wrote ^A0N back,
+# pinning the second to a turn the file never gave it. A field with no ^A and
+# a barcode with no letter defer to it the same way.
+fw_doc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FWR\n"
+    "^FO150,90^A0N,25,20^FDZebra Technologies^FS\n"
+    "^FO115,75^A0,25,20^FD0123456789^FS\n"
+    "^CF0,30,30^FO20,300^FDdefault font^FS\n"
+    "^FO200,300^BY2^BC,80^FD12345^FS\n"
+    "^FO200,500^BY2^BCN,80^FD12345^FS\n"
+    "^FWN^FO20,500^A0,25,20^FDupright^FS\n^XZ")[0]
+fw_turns = [e.orientation for e in fw_doc.elements]
+check("an ^A that spells its letter keeps it under ^FW", fw_turns[0] == 'N', fw_turns)
+check("an ^A that leaves its letter out takes ^FW's", fw_turns[1] == 'R', fw_turns)
+check("a field with no ^A takes ^FW's - ^CF has no orientation of its own",
+      fw_turns[2] == 'R', fw_turns)
+check("a barcode that leaves its letter out takes ^FW's", fw_turns[3] == 'R', fw_turns)
+check("and one that spells it keeps it", fw_turns[4] == 'N', fw_turns)
+check("^FW is a running default, like ^CF", fw_turns[5] == 'N', fw_turns)
+fw_saved = fw_doc.to_zpl()
+check("a save spells every turn ^FW gave, and writes no ^FW",
+      '^FW' not in fw_saved and '^A0R,25,20\n' in fw_saved
+      and '^A0R,30,30\n' in fw_saved and '^BCR,80\n' in fw_saved,
+      fw_saved.replace('\n', ' '))
+check("and reads back with the same turns",
+      [e.orientation for e in zpl_parser.parse_zpl(fw_saved)[0].elements] == fw_turns,
+      [e.orientation for e in zpl_parser.parse_zpl(fw_saved)[0].elements])
+# a barcode a file never turned goes on writing no letter, so every existing
+# fixture still saves byte-identical
+for fw_case, fw_prefix in (("no ^FW", ""), ("^FWN", "^FWN")):
+    fw_bc = zpl_parser.parse_zpl(
+        f"^XA^PW812^LL1218{fw_prefix}^FO50,50^BY2^BC,100^FD123^FS^XZ")[0].elements[0]
+    check(f"a ^BC with no letter and {fw_case} still writes none",
+          fw_bc.orientation == '' and '^BC,100\n' in fw_bc.to_zpl(),
+          (fw_bc.orientation, fw_bc.to_zpl().replace('\n', ' ')))
+# only the four letters change it: a bare ^FW, an undefined letter, or the
+# x.14 justification on its own all keep the value in force
+for fw_spelling in ("^FW", "^FWX", "^FW,1"):
+    fw_kept = zpl_parser.parse_zpl(
+        f"^XA^PW812^LL1218^FWR{fw_spelling}^FO50,50^A0,25,20^FDx^FS^XZ")[0].elements[0]
+    check(f"{fw_spelling} after ^FWR keeps R in force",
+          fw_kept.orientation == 'R', fw_kept.orientation)
+check("^FW is not reported, now that it is honoured",
+      workflow.unsupported_commands("^XA^FWR^FO1,1^FDx^FS^XZ") == [],
+      workflow.unsupported_commands("^XA^FWR^FO1,1^FDx^FS^XZ"))
+
 # ^GB's colour and rounding: the colour is a letter, which is why a
 # digits-only pattern dropped it and the rounding after it
 painted = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^GB300,200,4,W,5^FS^XZ")[0]
@@ -2645,6 +2693,26 @@ check("the preview reads a partial ^A against the ^CF in force",
       == _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,20^FDHg^FS^XZ", 400, 300),
       (_preview_ink("^XA^PW400^LL300^CF0,40,20^FO50,50^A0N,40^FDHg^FS^XZ", 400, 300),
        _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,20^FDHg^FS^XZ", 400, 300)))
+
+# ^FW in the preview, each case against the command that spells the turn out
+# - the same comparison ^CF gets above, and for the same reason: ink that is
+# merely inside the box would pass an upright field too.
+for fw_name, fw_deferring, fw_spelled in (
+        ("an ^A with no letter",
+         "^FWR^FO50,50^A0,40,40^FDHg^FS", "^FO50,50^A0R,40,40^FDHg^FS"),
+        ("a ^CF field",
+         "^FWR^CF0,40,40^FO50,50^FDHg^FS", "^FO50,50^A0R,40,40^FDHg^FS"),
+        ("a barcode with no letter",
+         "^FWR^FO50,50^BY2^BC,80^FD123^FS", "^FO50,50^BY2^BCR,80^FD123^FS"),
+        ("an ^A that keeps its own letter",
+         "^FWR^FO50,50^A0N,40,40^FDHg^FS", "^FO50,50^A0N,40,40^FDHg^FS")):
+    fw_drawn = _preview_ink(f"^XA^PW400^LL300{fw_deferring}^XZ", 400, 300)
+    fw_expected = _preview_ink(f"^XA^PW400^LL300{fw_spelled}^XZ", 400, 300)
+    check(f"the preview turns {fw_name} under ^FW as the command spelling it out",
+          fw_drawn == fw_expected, (fw_drawn, fw_expected))
+check("the preview's turned barcode is not simply the upright one",
+      _preview_ink("^XA^PW400^LL300^FWR^FO50,50^BY2^BC,80^FD123^FS^XZ", 400, 300)
+      != _preview_ink("^XA^PW400^LL300^FO50,50^BY2^BC,80^FD123^FS^XZ", 400, 300))
 
 # a rule is the case where a zero side used to leave nothing to draw at all
 check("the preview draws a ^GB rule at its full thickness",

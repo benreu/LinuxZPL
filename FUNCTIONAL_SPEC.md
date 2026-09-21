@@ -87,7 +87,7 @@ every member's path, and ungrouping takes the outermost id off again (§6.2).
 | `font_width` | 20 dots |
 | `font_path`, `font_family`, `printer_font_name` | none (uses the document font, or the printer's built-in font) |
 | `font_code` | `F` - the built-in font designator, written as `^A<code>`. `0` is the scalable font most other tools use |
-| `orientation` | `N` - `^A`'s orientation letter: `N`, `R` (90°), `I` (180°), `B` (270°) |
+| `orientation` | `N` - `^A`'s orientation letter: `N`, `R` (90°), `I` (180°), `B` (270°). A letter the file leaves out is `^FW`'s (§8.3) |
 | `block` | none - a field block (`^FB`), when the text wraps rather than running on one line |
 
 `height` always equals `font_height` **unless the element has a block**. **`width` is derived, never set
@@ -187,7 +187,7 @@ see §18.
 | `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots |
 | `ratio` | 3.0 - the wide-to-narrow ratio Code 39 and Interleaved 2 of 5 draw their wide elements at; the other three are fixed-ratio and ignore it |
-| `orientation` | none - `N` upright, `R` 90°, `I` 180°, `B` 270° |
+| `orientation` | none - `N` upright, `R` 90°, `I` 180°, `B` 270°. None is written as no letter; a letter the file leaves out is `^FW`'s (§8.3) |
 | `show_text` | true - whether the value prints as an interpretation line |
 | `text_above` | false for every symbology but the UPC/EAN extension, where it is true - the line goes above the bars instead of below |
 | `check_digit` | false - append a check digit (Code 128's UCC/EAN one, Code 39's own Mod-43, or Interleaved 2 of 5's Mod-10); EAN-13 and the UPC/EAN extension have no such flag at all, because EAN-13's own check digit is never optional and the extension has none |
@@ -790,7 +790,7 @@ path are caret-free and are stored as-is.
 ### 8.3 What is read
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
-`^A@`), `^CF`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
+`^A@`), `^CF`, `^FW`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
 `^PO`, `^PM`, `^LR`), `^PQ`, and the five metadata keys.
@@ -825,6 +825,35 @@ canvas, the preview and the next save.
 
 The default applies to text only. A barcode that named no font of its own must
 go on naming none, or a file that had no `^A` before its `^BC` grows one.
+
+**`^FW` is the default orientation, and a field that leaves its orientation
+out is not an upright field.** `^FW<r>` sets the orientation every later
+command with an orientation parameter uses when it leaves that parameter out:
+`^A`'s is *"the last accepted `^FW` value or the `^FW` default"*, and every
+barcode command's is *"current `^FW` value"*. `^CF` has no orientation
+parameter at all, so a field with no `^A` has nothing but `^FW` to turn by. It
+is a running default like `^CF` and `^BY` — *"affects only fields that follow
+it"* — with a power-up value of `N`, and only the four letters change it: a
+bare `^FW`, an undefined letter, or the x.14 justification on its own
+(`^FW,1`) keep the value in force, which is the reading that never turns a
+field the file did not spell.
+
+| Written | Means |
+|---|---|
+| `^FWR` … `^A0N,25,20` | upright: the field spelled its own letter |
+| `^FWR` … `^A0,25,20` | turned 90°, and saved as `^A0R,25,20` |
+| `^FWR` … `^CF0,30` … a field with no `^A` | turned 90°, and saved as `^A0R,30,…` |
+| `^FWR` … `^BC,100` | turned 90°, and saved as `^BCR,100` |
+| `^BC,100` with no `^FW`, or under `^FWN` | none, and saved as `^BC,100` — as before |
+
+The first two rows are the manual's own example. Skipping the command did not
+merely draw the second field upright: a save wrote `^A0N,25,20` back, pinning
+it to a turn the file never gave it, and a `^CF` field and a `^BC,100` went the
+same way. `^FW` is resolved into each field as it is read and **never written
+back**, the same trade `^CF` makes: every text field already spells its letter,
+and a barcode `^FW` turned spells one too, so the saved file prints the same
+label with no `^FW` in it. A barcode nothing turned goes on writing no letter,
+so a file that never used `^FW` saves byte-identical.
 
 **`^BY` is the same kind of command for barcodes, and it is read wherever it
 appears.** `^BYw,r,h` sets the module width, the wide-to-narrow ratio and the
@@ -1591,6 +1620,16 @@ rather than requirements:
   would make such a barcode a hairline on the canvas. A `^BY` that does give a
   height is always obeyed; this is the fallback when nothing in the file has
   said anything at all.
+- **`^FW`'s justification is not modelled.** `^FW<r>,<z>` also sets, on x.14
+  firmware, the default justification for `^FO`/`^FT`'s own `z` parameter —
+  which this designer does not read either, and since `^FW` is resolved into
+  each field rather than written back (§8.3) there is nowhere to carry it. A
+  `^FW` with only a `z` changes nothing.
+- **A `^FW` written inside a field is seen by the commands after it, not by
+  the field's default font.** An `^A` or barcode command that follows it in
+  the same field resolves against it, as a printer does; a field with no `^A`
+  takes the value in force at its `^FO`. The canvas and the preview agree on
+  this; a `^FW` between a `^FO` and its data is not something generators emit.
 - **`^FR` inverts whatever is already on the label under the field's own ink
   shape — glyph outlines, bar rectangles, the frame's own border or fill —
   and touches nothing outside it, confirmed against a real printer.**

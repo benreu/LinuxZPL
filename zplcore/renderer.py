@@ -44,6 +44,9 @@ class ZPLRenderer:
         self.current_block = None
         # ^CF's font, for any field that names none of its own
         self.default_font = dict(parser.DEFAULT_FONT)
+        # ^FW's orientation, for any field or barcode that names none of its
+        # own
+        self.default_orientation = parser.DEFAULT_ORIENTATION
         # Whether the current field was placed by ^FT, which names a baseline
         # where ^FO names a top
         self.typeset = False
@@ -88,10 +91,14 @@ class ZPLRenderer:
         return self.current_y - offset if self.typeset else self.current_y
 
     def _use_default_font(self):
-        """Fall back to ^CF's font, as a printer does at every field start."""
+        """Fall back to ^CF's font, as a printer does at every field start.
+
+        The orientation is ^FW's: ^CF carries none, so a field with no ^A turns
+        the way ^FW last said - the same value the parser gives such a field.
+        """
         self.current_font_size = self.default_font['height']
         self.current_font_width = self.default_font['width']
-        self.current_font_orientation = self.default_font['orientation']
+        self.current_font_orientation = self.default_orientation
         self.current_field_font_path = None
 
     def _get_font(self, size: int) -> ImageFont.FreeTypeFont:
@@ -392,6 +399,7 @@ class ZPLRenderer:
         self.draw = ImageDraw.Draw(self.image)
         self.current_field_font_path = None
         self.default_font = dict(parser.DEFAULT_FONT)
+        self.default_orientation = parser.DEFAULT_ORIENTATION
         self.typeset = False
         self.unsupported_field = False
         self.current_reverse = False
@@ -547,7 +555,8 @@ class ZPLRenderer:
             # printer. Read through the parser rather than by a second pair of
             # patterns here, which is what let the preview and the model
             # disagree about how wide ^A0N,40 is.
-            font = parser.read_font(command[1], params, self.default_font)
+            font = parser.read_font(command[1], params, self.default_font,
+                                    self.default_orientation)
             self.current_font_orientation = font['orientation']
             self.current_font_size = font['height']
             self.current_font_width = font['width']
@@ -637,13 +646,23 @@ class ZPLRenderer:
             # own 12 dots, whatever the file asked for.
             self.default_font = parser._read_default_font(params, self.default_font)
             self._use_default_font()
+        elif command == 'FW':
+            # ^FWr - the orientation every later field turns to unless it names
+            # its own. Only the running default changes here: an ^A already
+            # read in an open field keeps the letter it resolved, and a field
+            # with no ^A took the value in force at its ^FO, as it does in the
+            # parser - so the preview turns exactly what the canvas turns.
+            self.default_orientation = parser.read_field_orientation(
+                params, self.default_orientation)
         elif command == 'BC':
             # Barcode: ^BCo,h,f,g,e,m - every parameter changes the label, so
             # the preview keeps them all and draws from the same element the
             # canvas would.
             parts = [p.strip() for p in params.split(',')]
+            # An omitted orientation is ^FW's, as parser._read_barcode reads it
             self.barcode_orientation = (parts[0][:1].upper()
-                                        if parts and parts[0][:1].isalpha() else '')
+                                        if parts and parts[0][:1].isalpha()
+                                        else self.default_orientation)
             try:
                 self.barcode_height = int(parts[1]) if len(parts) > 1 and parts[1] else 50
             except ValueError:
@@ -657,7 +676,9 @@ class ZPLRenderer:
             # per-command parameter order is what stops the preview and a
             # save disagreeing about where one of them spells its own check
             # digit or its own trailing flags.
-            bc = parser._read_barcode('^' + command, params)
+            bc = parser._read_barcode(
+                '^' + command, params,
+                default_orientation=self.default_orientation)
             self.barcode_orientation = bc['orientation']
             self.barcode_height = bc['height']
             self.barcode_options = bc['options']

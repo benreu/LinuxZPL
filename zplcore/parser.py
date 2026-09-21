@@ -17,8 +17,9 @@ from . import fonts as zpl_fonts
 from . import graphic_store
 from . import graphics
 from . import transforms as zpl_transforms
-from .model import (BarcodeElement, Document, FieldBlock, FrameElement,
-                    ImageElement, StoredGraphicElement, TextElement)
+from .model import (ORIENTATIONS, BarcodeElement, Document, FieldBlock,
+                    FrameElement, ImageElement, StoredGraphicElement,
+                    TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
@@ -52,9 +53,15 @@ COMMAND = re.compile(
     r'([\^~])([A-Za-z0-9@]{2})((?:(?!\^|~[A-Za-z0-9@]{2})[\s\S])*)', re.S)
 
 # ZPL's own factory default font, used by any field that carries neither an ^A
-# of its own nor a ^CF before it.
-DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None,
-                'orientation': 'N'}
+# of its own nor a ^CF before it. No orientation: ^CF has no such parameter,
+# and a field relying on it turns with ^FW alone.
+DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None}
+
+# ^FW's power-up value: the orientation of every field that has an orientation
+# parameter and leaves it out - an ^A with no letter, a field with no ^A at
+# all, a barcode command with no letter. A running default like ^CF and ^BY.
+DEFAULT_ORIENTATION = 'N'
+_ORIENTATION_LETTERS = frozenset(code for _label, code in ORIENTATIONS)
 
 # The fonts whose glyphs are scaled rather than chosen from a bitmap, and so
 # the ones an omitted ^A width leaves proportional.
@@ -439,6 +446,9 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     # the same kind of command for barcodes.
     default_font = dict(DEFAULT_FONT)
     default_barcode = dict(DEFAULT_BARCODE)
+    # ^FW is the same kind of command for orientation: the turn every field
+    # that leaves its own out takes, whether text or barcode.
+    default_orientation = DEFAULT_ORIENTATION
     # The ^LH/^LS offset in force. Elements hold the absolute dot position, so
     # the canvas, dragging and clamping never have to know these exist.
     origin = (0, 0)
@@ -557,6 +567,11 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             default_font = _read_default_font(params, default_font)
             continue
 
+        if cmd == '^FW':
+            default_orientation = read_field_orientation(params,
+                                                         default_orientation)
+            continue
+
         if cmd == '^BY':
             # Read whether or not a field is open, because it is a running
             # default: one written before the first ^FO belongs to every
@@ -575,7 +590,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             match = re.match(r'\s*(-?\d+),(-?\d+)', params)
             field = _new_field(int(match.group(1)) + origin[0],
                                int(match.group(2)) + origin[1],
-                               default_font, default_barcode) if match else None
+                               default_font, default_barcode,
+                               default_orientation) if match else None
             # ^FT places a field exactly as ^FO does, but names its baseline
             # rather than its top. Opening no field on it did not degrade such
             # a label - it dropped every field in it, so a file from another
@@ -593,13 +609,15 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             continue
 
         if cmd.startswith('^A'):
-            field['font'] = read_font(cmd[2], params, field['default_font'])
+            field['font'] = read_font(cmd[2], params, field['default_font'],
+                                      default_orientation)
         elif cmd == '^FB':
             field['block'] = FieldBlock.from_zpl(params)
         elif cmd == '^FR':
             field['reverse'] = True
         elif cmd in ('^BC', '^B3', '^BE', '^B2', '^BS'):
-            field['barcode'] = _read_barcode(cmd, params, field['bar_height'])
+            field['barcode'] = _read_barcode(cmd, params, field['bar_height'],
+                                             default_orientation)
         elif cmd.startswith('^B') or cmd == '^GS':
             # QR, Data Matrix, PDF417 and the rest - a symbology this designer
             # cannot draw. Recorded so the field is dropped, because falling
@@ -647,13 +665,15 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     return doc, loaded_dpi
 
 
-def _new_field(x: int, y: int, default_font=None, default_barcode=None) -> dict:
+def _new_field(x: int, y: int, default_font=None, default_barcode=None,
+               default_orientation=DEFAULT_ORIENTATION) -> dict:
     """The state gathered between a ^FO and the ^FS that ends it.
 
     `font` stays None until an ^A names one, because "this field named a font"
     and "this field inherits the default" are different things: a barcode with
     no ^A of its own must go on writing none, while text with no ^A prints in
-    whatever ^CF last set.
+    whatever ^CF last set - and turns the way ^FW last said, since ^CF has no
+    orientation of its own to give it.
 
     The three ^BY values are not like that: ZPL has a default for each, so a
     field always has one, whether from the last ^BY or from the power-up value.
@@ -669,6 +689,7 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None) -> dict:
             'ratio': inherited['ratio'],
             'bar_height': inherited['height'],
             'default_font': dict(default_font or DEFAULT_FONT),
+            'default_orientation': default_orientation,
             'barcode': None, 'frame': None, 'graphic': None,
             'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'symbology': None,
@@ -686,7 +707,6 @@ def _read_default_font(params: str, current: dict) -> dict:
     if parts and parts[0]:
         font['code'] = parts[0][0].upper()
         font['name'] = None
-        font['orientation'] = 'N'
     for index, key in ((1, 'height'), (2, 'width')):
         if len(parts) > index and parts[index]:
             try:
@@ -694,6 +714,26 @@ def _read_default_font(params: str, current: dict) -> dict:
             except ValueError:
                 pass
     return font
+
+
+def read_field_orientation(params: str, current: str) -> str:
+    """^FWr - the orientation every later field turns to unless it names its
+    own.
+
+    The manual's own example is the case: after ^FWR, ^A0N,25,20 prints
+    upright and ^A0,25,20 prints turned. Every barcode command defers the same
+    way, and a field with no ^A at all has nothing else to defer to. Skipping
+    the command did not merely draw such a field upright - a save wrote ^A0N
+    back, pinning the field to a turn the file never gave it.
+
+    Only the four letters change it. A bare ^FW, or one with a letter ZPL does
+    not define, keeps the value in force: the ^CF rule for an omitted
+    parameter, and the reading that never turns a field the file did not
+    spell. The justification ^FW also carries (^FWr,z, x.14 firmware) is not
+    read - ^FO's own z is not either. See FUNCTIONAL_SPEC.md section 18.
+    """
+    letter = params.strip()[:1].upper()
+    return letter if letter in _ORIENTATION_LETTERS else current
 
 
 def _read_barcode_default(params: str, current: dict) -> dict:
@@ -750,21 +790,24 @@ def _read_print_quantity(params: str) -> tuple:
     return quantity, pause_count, replicates, override_pause
 
 
-def read_font(code: str, params: str, default_font=None) -> dict:
+def read_font(code: str, params: str, default_font=None,
+              default_orientation=DEFAULT_ORIENTATION) -> dict:
     """^A<code><orientation>,<h>,<w> - the font a field names for itself.
 
     The designator is the command's second character, so every built-in font
     is read the same way; ^A@ additionally names a font downloaded to the
     printer, e.g. ^A@N,53,19,E:DEJAVUSA.TTF.
 
-    Every parameter is optional, and an omitted one keeps the ^CF default for
-    that position - the same rule _read_default_font applies to ^CF itself.
-    Demanding all three is what made ^A0N,40 come back as ^A0N,36,20, losing
-    the height it did give while the preview, which demanded nothing, drew it
-    at 40.
+    Every parameter is optional, and an omitted one keeps the default for that
+    position: the sizes ^CF's, the same rule _read_default_font applies to ^CF
+    itself, and the orientation ^FW's. Demanding all three is what made ^A0N,40
+    come back as ^A0N,36,20, losing the height it did give while the preview,
+    which demanded nothing, drew it at 40.
 
     The orientation is the first parameter, and dropping it is why text was
     the one element that could not be turned: it loaded flat and saved flat.
+    Reading an omitted one as N was the quieter half of the same fault: under
+    ^FWR the manual's own ^A0,25,20 is turned, and came back upright.
     """
     current = dict(default_font or DEFAULT_FONT)
     # The font file is split off first: its device path carries commas of its
@@ -795,7 +838,8 @@ def read_font(code: str, params: str, default_font=None) -> dict:
             name = named.group(1).upper()
     return {'code': code, 'height': height, 'width': number(2, inherited),
             'name': name,
-            'orientation': letter.group(1).upper() if letter else 'N'}
+            'orientation': (letter.group(1).upper() if letter
+                            else default_orientation)}
 
 
 def _read_frame(params: str):
@@ -840,7 +884,8 @@ _BARCODE_PARAMS = {
 }
 
 
-def _read_barcode(cmd: str, params: str, default_height=None) -> dict:
+def _read_barcode(cmd: str, params: str, default_height=None,
+                  default_orientation=DEFAULT_ORIENTATION) -> dict:
     """A barcode command's own parameters, whichever of ^BC/^B3/^BE/^B2/^BS.
 
     Everything after the height is carried through untouched: those flags
@@ -854,6 +899,11 @@ def _read_barcode(cmd: str, params: str, default_height=None) -> dict:
     An omitted height is ^BY's, which is what its third parameter is for.
     Hard-coding 100 here turned ^BY3,3.0,150^BCN into a barcode a third
     shorter than the file asked for.
+
+    An omitted orientation is ^FW's, as an ^A's is. It stays the empty string
+    while ^FW is at its power-up N, so a barcode a file never turned is written
+    back as it was read - ^BC,100, no letter grown - and only a default that
+    actually turns it is spelled out on the way back.
     """
     parts = [p.strip() for p in params.split(',')]
     fallback = DESIGNER_BAR_HEIGHT if default_height is None else default_height
@@ -865,7 +915,7 @@ def _read_barcode(cmd: str, params: str, default_height=None) -> dict:
     else:
         fields = dict(zip(_BARCODE_PARAMS[cmd], parts))
 
-    orientation = ''
+    orientation = '' if default_orientation == 'N' else default_orientation
     o = fields.get('o', '')
     if o[:1].isalpha():
         orientation = o[:1].upper()
@@ -1034,7 +1084,10 @@ def _build_text(x, y, field, doc, renderer):
                           clock_chars=field['clock_chars'],
                           serial_field_raw=field['serial_field_raw'],
                           hex_indicator=field['hex_indicator'])
-    element.orientation = font.get('orientation', 'N')
+    # ^A's letter when the field named a font - read against the ^FW in force
+    # at the ^A - and ^FW's own when it relies on ^CF, which carries none.
+    element.orientation = (font['orientation'] if field['font']
+                           else field['default_orientation'])
     element.height = font['height']
     element.printer_font_name = font['name']
     element.block = field['block']

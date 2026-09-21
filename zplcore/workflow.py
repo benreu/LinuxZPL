@@ -211,9 +211,12 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # label with the characters they set and leaves them out of the text, and
 # warn_unsupported reports them on their own, since what a save does with
 # them - write the defaults - is a different thing from dropping a command.
+# ^FW is the default orientation, resolved into each field the way ^CF is:
+# every text field writes its own letter and a barcode it turned writes one
+# too, so a save loses nothing by leaving the command itself out.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^B3', '^BE', '^B2',
             '^BS', '^GB', '^FB', '^FR',
-            '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF',
+            '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF', '^FW',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC', '^FH',
             '^LH', '^LS', '^LT', '^PO', '^PM', '^LR',

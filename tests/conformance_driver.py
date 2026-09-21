@@ -36,6 +36,9 @@ FIXTURE_TYPESET = ROOT / 'tests' / 'fixtures' / 'typeset.zpl'
 FIXTURE_RULES = ROOT / 'tests' / 'fixtures' / 'rules.zpl'
 # ^A with its sizes left off, inherited from ^CF or from the font itself
 FIXTURE_PARTIAL = ROOT / 'tests' / 'fixtures' / 'partial_font.zpl'
+# The manual's own ^FW example, plus a ^CF field and a barcode that defer to
+# it the same way.
+FIXTURE_ORIENTED = ROOT / 'tests' / 'fixtures' / 'field_orientation.zpl'
 # A logo in the encoding label software actually sends: :Z64: rather than the
 # uncompressed hex this designer writes
 FIXTURE_COMPRESSED = ROOT / 'tests' / 'fixtures' / 'compressed_logo.zpl'
@@ -1073,6 +1076,8 @@ def sequence(driver, record):
     record('load a file of ^GB rules')
     driver.load(FIXTURE_PARTIAL)
     record('load a file whose ^A leaves its sizes off')
+    driver.load(FIXTURE_ORIENTED)
+    record('load a file whose fields turn with ^FW')
     driver.load(FIXTURE_COMPRESSED)
     record('load a file whose logo is :Z64: compressed')
 
