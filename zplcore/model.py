@@ -10,7 +10,7 @@ in this module, so they can be exercised without a display.
 import base64 as _b64
 import copy
 import io as _io
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
                  ImageFont as PILImageFont)
@@ -1001,6 +1001,21 @@ class Document:
         # silently drop it. No editor, so it is not in the undo snapshot.
         self.code_validation = False
 
+        # ^CI, ^CW and ^FL - the encoding the field data is in, and the
+        # printer's font table: which letter names which downloaded font, and
+        # which font supplies the glyphs another lacks. Nothing to draw, and
+        # carried verbatim so a save does not silently drop them. ^CI is the
+        # first one the file gave, remap pairs and all ('28', '0,21,36'), or
+        # None; but see _encoding_zpl - a label holding non-ASCII is written
+        # as ^CI28 whatever the file said, since what is written is UTF-8.
+        # ^CW is letter -> its parameters, in file order, a re-assigned
+        # letter replacing its entry; ^FL is every command in order, since
+        # a link and an unlink are both actions. No editors, so none of the
+        # three is in the undo snapshot.
+        self.encoding: Optional[str] = None
+        self.font_identifiers: Dict[str, str] = {}
+        self.font_links: List[str] = []
+
         # Document-wide font, used by any text element that has none of its own
         self.font_path: Optional[str] = None
         self.font_family: Optional[str] = None
@@ -1678,8 +1693,19 @@ class Document:
 
         explicit_flips is passed through to the label transform (see
         LabelTransform.to_zpl) and exists for the print path, not for saving
-        a file. ^CV rides on it too, being sticky at the printer the same way.
+        a file. ^CV and ^CI ride on it too, being sticky at the printer the
+        same way.
         """
+        # Before the fields, because ^LH is the reference point every ^FO after
+        # it is measured from. Fitted to the elements first, so the offset it
+        # declares is one none of them has to be written above - the commands
+        # and the coordinates are then consistent by construction rather than
+        # by two places agreeing.
+        placed = self.transform.fitted(self._lowest_element())
+        # The body first: whether it holds a byte outside ASCII decides the
+        # ^CI written ahead of it.
+        body = self._body_zpl(placed.field_offset())
+
         zpl = "^XA\n"
         # ZPL requires ^DF immediately after ^XA: everything following it is
         # stored as text rather than printed, so anything written in between
@@ -1690,12 +1716,12 @@ class Document:
         # load at ^FO0,0, underneath the fields that follow it.
         if self.image_load:
             zpl += f"^IL{self.image_load}\n"
-        # Before the fields, because ^LH is the reference point every ^FO after
-        # it is measured from. Fitted to the elements first, so the offset it
-        # declares is one none of them has to be written above - the commands
-        # and the coordinates are then consistent by construction rather than
-        # by two places agreeing.
-        placed = self.transform.fitted(self._lowest_element())
+        # The encoding and the font table next: the manual wants ^CI "at the
+        # beginning of each ZPL script", and a ^CW has to precede any ^A that
+        # calls the letter it assigns.
+        zpl += self._encoding_zpl(explicit=explicit_flips,
+                                  unicode=not body.isascii())
+        zpl += self._font_identity_zpl()
         zpl += placed.to_zpl(explicit_flips=explicit_flips)
         zpl += f"^PW{self.label_width}\n"
         zpl += f"^LL{self.label_height}\n"
@@ -1704,7 +1730,15 @@ class Document:
         zpl += f"^FXDESIGNER_DPI:{self.dpi}\n"
         # Before the fields, because it is a switch over the barcodes after it.
         zpl += self._code_validation_zpl(explicit=explicit_flips)
-        offset = placed.field_offset()
+        zpl += body
+        zpl += "^XZ"
+        return zpl
+
+    def _body_zpl(self, offset) -> str:
+        """Everything between the format's header and its ^XZ: the elements
+        in z-order, then the recalls, the ^IS saves, ^PQ and, for a format
+        with no elements, the field table."""
+        zpl = ""
         groups = self._group_numbers()
         for element in self.elements:
             if self.printer_font_name and element.element_type == 'text':
@@ -1740,7 +1774,6 @@ class Document:
         zpl += self._print_quantity_zpl()
         if not self.elements:
             zpl += self.fields.to_zpl()
-        zpl += "^XZ"
         return zpl
 
     def _print_quantity_zpl(self) -> str:
@@ -1770,6 +1803,30 @@ class Document:
         if self.code_validation:
             return '^CVY\n'
         return '^CVN\n' if explicit else ''
+
+    def _encoding_zpl(self, *, explicit: bool, unicode: bool) -> str:
+        """^CI. What a save writes and a print sends is UTF-8, so a label with
+        any byte outside ASCII is declared ^CI28 whatever the file said - a
+        file that opened under a single-byte ^CI held only ASCII, so any
+        non-ASCII in it now is the user's own edit. An ASCII-only label goes
+        on carrying the ^CI it had, national replacements and remap pairs
+        included, since under them ASCII is not always ASCII (^CI6 prints [
+        as Ä). Sticky at the printer like ^CV - "we recommend that a ^CI
+        command is included at the beginning of each ZPL script" - so the
+        print path (explicit) states ^CI28 for a label that carried none,
+        while a save writes nothing and every ASCII-only file stays as it was.
+        """
+        if unicode:
+            return '^CI28\n'
+        if self.encoding is not None:
+            return f'^CI{self.encoding}\n'
+        return '^CI28\n' if explicit else ''
+
+    def _font_identity_zpl(self) -> str:
+        """^CW and ^FL, verbatim, one line each - the ^FL with the ^FS the
+        manual's own example gives it."""
+        return (''.join(f'^CW{p}\n' for p in self.font_identifiers.values())
+                + ''.join(f'^FL{p}^FS\n' for p in self.font_links))
 
     def _lowest_element(self):
         """The smallest (x, y) any element occupies, or None if there are none."""

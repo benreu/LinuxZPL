@@ -571,6 +571,38 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             doc.code_validation = zpl_transforms.read_flag(params)
             continue
 
+        if cmd == '^CI':
+            # The encoding the field data is in. The first one is kept - the
+            # one the fields at the top were written under, and the ^LH rule
+            # - because a trailing ^CI0 that puts the printer back before ^XZ
+            # is something generators do write, and must not be the one a
+            # save puts at the top. Carried verbatim, remap pairs and all;
+            # nothing to draw, though the model's own rule for what is
+            # written back is in Document._encoding_zpl.
+            encoding = read_encoding(params)
+            if encoding is not None and doc.encoding is None:
+                doc.encoding = encoding
+            continue
+
+        if cmd == '^CW':
+            # A letter assigned to a downloaded font, verbatim: resolving it
+            # into the fields as ^CF is would have to spell the font as an
+            # ^A@, which only ever writes E:NAME.TTF. A letter assigned twice
+            # keeps its place and takes the last assignment - the printer's
+            # own end state.
+            letter = params.strip()[:1]
+            if letter.isalnum():
+                doc.font_identifiers[letter.upper()] = params.strip()
+            continue
+
+        if cmd == '^FL':
+            # A font linked to (or unlinked from) another, for the glyphs it
+            # lacks. Every one in order - an unlink after a link is not the
+            # same as neither.
+            if params.strip():
+                doc.font_links.append(params.strip())
+            continue
+
         if cmd == '^CF':
             default_font = _read_default_font(params, default_font)
             continue
@@ -722,6 +754,23 @@ def _read_default_font(params: str, current: dict) -> dict:
             except ValueError:
                 pass
     return font
+
+
+def read_encoding(params: str):
+    """^CIa,s1,d1,... - the parameters, verbatim, or None for a ^CI that names
+    no character set.
+
+    Verbatim because everything after the number is a remap table the printer
+    applies and nothing here simulates: re-spelling it could only lose a pair.
+    The number itself is the one thing checked, since the manual gives `a` no
+    default and a bare ^CI written back would be a command with nothing in it.
+    """
+    stripped = params.strip()
+    try:
+        int(stripped.split(',')[0])
+    except ValueError:
+        return None
+    return stripped
 
 
 def read_field_orientation(params: str, current: str) -> str:

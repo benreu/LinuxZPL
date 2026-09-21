@@ -693,6 +693,9 @@ file choosers and the prompts — are modal.
 
 ```
 ^XA
+^CI<encoding>                      only when the file gave one, or the label holds non-ASCII (see below)
+^CW<letter>,<device>:<name>.<ext>  one per ^CW the file gave, verbatim
+^FL<ext>,<base>,<link>^FS          one per ^FL the file gave, verbatim, in order
 ^PW<label_width>
 ^LL<label_height>
 ^FXDESIGNER_DPI:<dpi>
@@ -724,6 +727,27 @@ a quantity-only label writes just `^PQ5` rather than `^PQ5,0,0,N`.
 element — it is a switch over the barcodes that follow it — and only when the
 file turned code validation on. `^CVN` is ZPL's own default and is not written
 by a save (§9 for why printing differs).
+
+**`^CI` declares the encoding the field data is in, and what a save writes is
+UTF-8.** It goes right after `^XA` (after `^DF` and `^IL`, which have their
+own claim on that spot), where the manual asks for it — *"we recommend that a
+^CI command (or Unicode BOM) is included at the beginning of each ZPL
+script"* — and which one is decided in this order:
+
+1. the body holds any byte outside ASCII → `^CI28`, whatever the file said.
+   The bytes *are* UTF-8; a file that opened under a single-byte `^CI` held
+   nothing but ASCII, so any non-ASCII in it now is the user's own edit, and
+   writing `^CI6` over UTF-8 bytes would print `Ã¼` for `ü`;
+2. otherwise the `^CI` the file carried, verbatim, remap pairs and all —
+   under `^CI6` a `[` prints as `Ä`, and under `^CI0,21,36` a `$` prints as
+   `€`, so an ASCII-only label must keep the set it was written for;
+3. otherwise nothing. Every ASCII-only file this designer ever wrote stays
+   byte-identical (§9 for why printing differs).
+
+`^CW` and `^FL` follow it, one line each, exactly as the file spelled them:
+`^CW` in first-seen order of letter, each letter with its last assignment,
+and every `^FL` in order, since a link and an unlink are both actions. `^FL`
+is written with the `^FS` the manual's own example gives it.
 
 **Graphic encoding** (`^GFA`): one bit per dot, rows padded to whole bytes,
 `bytes_per_row = ceil(width / 8)`, data as uppercase hex. **A set bit is
@@ -798,7 +822,8 @@ path are caret-free and are stored as-is.
 `^A@`), `^CF`, `^FW`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
-`^PO`, `^PM`, `^LR`), `^PQ`, `^CV`, and the five metadata keys.
+`^PO`, `^PM`, `^LR`), `^PQ`, `^CV`, `^CI`, `^CW`, `^FL`, and the five
+metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -881,6 +906,31 @@ elements' width (§3.3). Either way it round-trips so that a file which gave
 one does not lose it. `^BY`'s `h` is read but never written, because the
 height always goes on the barcode command itself and there is nowhere for the
 two to disagree.
+
+**`^CI` is the encoding the field data is in, and `^CW` and `^FL` are the
+printer's font table; all three are read wherever they appear and carried
+verbatim.** `^CIa,s1,d1,…` names a character set (0–13 the CP850 national
+sets, 27 and 31–36 Windows code pages, 28 UTF-8, 29 and 30 UTF-16) and up to
+256 byte remaps; `^CWa,d:o.x` assigns a letter to a downloaded font, replacing
+a built-in one wherever the format calls for it; `^FL<ext>,<base>,<link>`
+links a font to another for the glyphs it lacks. None of them says anything
+about where a field sits, so there is nothing to draw — but each was met with
+the "does not understand" dialog and dropped on save, after which a `^CI28`
+file's UTF-8 text printed as CP850 mojibake and a `^CWQ` file's `^AQ` fell
+back to `^CF`'s font.
+
+The **first** `^CI` is kept, the one the fields at the top were written under
+(the `^LH` rule): a trailing `^CI0` that puts the printer back before `^XZ` is
+something generators do write, and must not be the one a save puts at the
+top. A `^CI` naming no number is ignored. `^CW` is kept by letter, a letter
+assigned twice keeping its place and taking the last assignment; one with no
+letter is ignored. Every non-empty `^FL` is kept, in order.
+
+`^CW` is carried rather than resolved into the fields the way `^CF` and `^FW`
+are: resolving `^CWQ,R:MYFONT.FNT` would have to spell the font as an `^A@`,
+and the `^A@` this designer writes is always `E:<NAME>.TTF` (§8.1), naming an
+object that is not there. The `^AQ` that calls the letter already round-trips
+as a letter (§3.3), so the saved file names the same font the printer had.
 
 **`^FT` places a field from its baseline, and `^FO` from its top.** `^FT`
 opens a field exactly as `^FO` does; ignoring it does not misplace such a field
@@ -1012,6 +1062,15 @@ on, the ^CV command remains active from format to format until turned off by
 another ^CV command or the printer is turned off."* A label that does not ask
 for code validation therefore sends `^CVN`, and one that does sends `^CVY`;
 Save writes only the latter.
+
+**`^CI` is stated for the same reason.** The manual: *"We recommend that a ^CI
+command (or Unicode BOM) is included at the beginning of each ZPL script. This
+is important when ZPL scripts with different encodings are being sent to a
+single printer."* A job left on `^CI6` would print this label's `[` as `Ä`. So
+a label that carries no `^CI` sends `^CI28` — the bytes sent are UTF-8, and
+under it ASCII is ASCII — while one that carries a `^CI` sends that one, and
+one holding non-ASCII sends `^CI28` either way (§8.1). Save writes `^CI28`
+only in that last case, so an ASCII-only file stays as it was.
 
 If the label carries a `^PQ`, it is sent as part of that ZPL like any other
 command, and the printer prints that many copies itself — this step does not
@@ -1629,6 +1688,30 @@ rather than requirements:
   editor. A `^CV` toggled part-way through a format — which a printer would
   honour from that point on, and which no generator writes — is written back
   as the one state the format ended on, at the top.
+- **`^CI`'s national sets and remap pairs are carried, not simulated.** Under
+  `^CI6` a printer prints `[` as `Ä`, and under `^CI0,21,36` a `$` as `€`; the
+  canvas and the preview show the `[` and the `$`. The command round-trips so
+  the printer goes on doing what the file asked. Once the label holds
+  anything outside ASCII the file's `^CI` is replaced by `^CI28` (§8.1) — the
+  one honest declaration of UTF-8 bytes — so adding an `é` to a `^CI6` label
+  turns its `[` back into a `[`. A `^CI` changed part-way through a format,
+  which a printer would honour from that field on, is written back as the
+  first one, at the top.
+- **`^CW` is carried, not resolved, and nothing looks for its font.** A letter
+  `^CW` assigns draws like any built-in letter — in the document font, as
+  §3.3 has every field without a TrueType face of its own drawn — not the
+  downloaded font it names, and the
+  pre-print check (§10.3) does not ask the printer for `^CW`'s objects, so a
+  missing one prints in a substitute without a prompt. A letter re-assigned
+  mid-format, which a printer would honour from that field on, is written
+  back as its last assignment, at the top. A barcode's interpretation-line
+  `^A` under an alias is unaffected: the letter round-trips.
+- **`^FL` is carried, not simulated, and Print unlinks nothing.** No glyph
+  fallback is drawn — a character the base font lacks shows in the document
+  font, as every character does. The links are sticky at the printer
+  like `^CV`, but there is no "off" to state: a link left behind by an earlier
+  job only adds glyphs, so the print path sends the label's own `^FL`s and
+  nothing more.
 - **The canvas shows a `^FN` placeholder; the preview does not.** The canvas
   answers "what am I editing", so an unfilled variable field draws its prompt or
   its number rather than becoming invisible. The preview answers "what will

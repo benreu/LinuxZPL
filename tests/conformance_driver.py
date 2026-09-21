@@ -59,6 +59,9 @@ FIXTURE_FLIPPED = ROOT / 'tests' / 'fixtures' / 'flipped_label.zpl'
 # The manual's own ^CV example: a switch the printer acts on and nothing here
 # draws, which both frontends still have to write back
 FIXTURE_VALIDATED = ROOT / 'tests' / 'fixtures' / 'code_validation.zpl'
+# The encoding and the printer's font table - ^CI28 over UTF-8 text, a ^CW
+# and an ^FL - carried verbatim, and nothing here draws for them either
+FIXTURE_FONT_IDENTITY = ROOT / 'tests' / 'fixtures' / 'font_identity.zpl'
 
 # A font every step can rely on; text width is the most divergence-prone rule,
 # so the sequence exercises the measured path as well as the fixed-width one.
@@ -1130,6 +1133,11 @@ def sequence(driver, record):
     # thing to agree on is that both write it back.
     driver.load(FIXTURE_VALIDATED)
     record('load a format that asks the printer to validate its barcodes')
+
+    # ^CI, ^CW and ^FL are the same kind of thing: written back at the top,
+    # and the ^CI28 is what both have to agree on over the non-ASCII text.
+    driver.load(FIXTURE_FONT_IDENTITY)
+    record('load a format that names its encoding and font table')
 
     # Setting a home and a flip from Label Settings has to reach the file the
     # same way in both, including the ^FO each element is written back at.

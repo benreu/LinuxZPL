@@ -187,9 +187,9 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # prints and will not survive a save, because the model has nowhere to put it.
 #
 # This answers "is it safe to say nothing?". parser.STRUCTURAL answers the
-# different question "can the parser skip it without choking?" - ^CI could be
-# skipped but not kept, and listing it here said otherwise, so a file's
-# encoding was dropped without a word.
+# different question "can the parser skip it without choking?" - for a while
+# ^CI could be skipped but not kept, and listing it here said otherwise, so a
+# file's encoding was dropped without a word.
 # ^GF is absent deliberately: whether one can be read depends on how its data
 # is encoded, so unsupported_commands() asks zplcore.graphics per field.
 # ^FN, ^FV, ^DF and ^XF are the stored-format family, modelled since a
@@ -218,13 +218,21 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # print-time switch with nothing to draw, carried the way ^LT is: it survives
 # a save, and the print path states it, but no barcode is checked here; see
 # FUNCTIONAL_SPEC.md section 18.
+# ^CI is the encoding the field data is in, carried verbatim - national
+# replacements and remap pairs included, none of them simulated - and
+# replaced by ^CI28 once the label holds anything outside ASCII, since what a
+# save writes is UTF-8. ^CW and ^FL are the printer's font table, a letter
+# assigned to a downloaded font and a font linked to another for the glyphs
+# it lacks: carried verbatim, nothing to draw; see FUNCTIONAL_SPEC.md
+# section 18.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^B3', '^BE', '^B2',
             '^BS', '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF', '^FW',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC', '^FH',
             '^LH', '^LS', '^LT', '^PO', '^PM', '^LR',
-            '^IM', '^XG', '^IL', '^IS', '^PQ', '^CV'}
+            '^IM', '^XG', '^IL', '^IS', '^PQ', '^CV',
+            '^CI', '^CW', '^FL'}
 
 
 def unsupported_commands(zpl_content: str) -> list:

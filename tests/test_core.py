@@ -1970,10 +1970,10 @@ check("^CF does not put an ^A on a barcode that had none",
       '^A' not in bc_cf.elements[0].to_zpl(),
       bc_cf.elements[0].to_zpl().replace('\n', ' '))
 
-# ^CI cannot be modelled, so it has to be reported rather than dropped in
-# silence - which is what listing it as modelled did
-check("^CI is reported as a command a save would drop",
-      workflow.unsupported_commands("^XA^CI28^FO1,1^A0N,9,9^FDx^FS^XZ") == ['^CI'])
+# ^CI used to be reported as a command a save would drop, which it was; it
+# is carried now (see the ^CI section further down), so it must not be
+check("^CI is no longer reported, now that it is carried",
+      workflow.unsupported_commands("^XA^CI28^FO1,1^A0N,9,9^FDx^FS^XZ") == [])
 check("^CF is not reported, now that it is honoured",
       workflow.unsupported_commands("^XA^CF0,40^FO1,1^FDx^FS^XZ") == [])
 
@@ -3955,6 +3955,110 @@ check("the fixture reads as one barcode and reports nothing",
 
 check("^CV draws nothing in the preview",
       _preview_ink("^XA^PW300^LL200^CVY^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
+
+# --- ^CI, ^CW, ^FL: encoding and font identity ------------------------------
+# Which bytes mean which glyphs: the encoding the field data is in, a letter
+# assigned to a downloaded font, and a font linked to another for the glyphs
+# it lacks. None of them draws anything, and all three were met with the
+# "does not understand" dialog and lost on save - after which a ^CI28 file's
+# UTF-8 text printed as CP850 mojibake.
+
+def _header(zpl):
+    """The lines a save writes ahead of the first field."""
+    out = zpl_parser.parse_zpl(zpl)[0].to_zpl().split('\n')
+    return out[:next((i for i, l in enumerate(out) if l.startswith('^FO')),
+                     len(out))]
+
+check("^CI28 is carried as the encoding",
+      zpl_parser.parse_zpl("^XA^CI28^XZ")[0].encoding == '28')
+check("and a remap table rides along verbatim - the manual's own example",
+      zpl_parser.parse_zpl(
+          "^XA^CI0,21,36^FO100,200^A0N50,50^FD$0123^FS^XZ")[0].encoding
+      == '0,21,36')
+check("a bare ^CI, one that names no number, and no ^CI at all carry nothing",
+      zpl_parser.parse_zpl("^XA^CI^XZ")[0].encoding is None
+      and zpl_parser.parse_zpl("^XA^CIx^XZ")[0].encoding is None
+      and zpl_parser.parse_zpl("^XA^XZ")[0].encoding is None)
+check("the first ^CI wins: a trailing reset is not what the fields were "
+      "written under",
+      zpl_parser.parse_zpl(
+          "^XA^CI28^FO1,1^A0N,9,9^FDx^FS^CI0^XZ")[0].encoding == '28')
+
+check("an ASCII label under ^CI6 goes on carrying it, at the top",
+      '^CI6' in _header("^XA^CI6^FO1,1^A0N,9,9^FD[x]^FS^XZ"),
+      _header("^XA^CI6^FO1,1^A0N,9,9^FD[x]^FS^XZ"))
+check("a label holding non-ASCII is written ^CI28 - the bytes are UTF-8",
+      '^CI28' in _header("^XA^FO1,1^A0N,9,9^FDGrüße^FS^XZ"),
+      _header("^XA^FO1,1^A0N,9,9^FDGrüße^FS^XZ"))
+_ci6_edited = _header("^XA^CI6^FO1,1^A0N,9,9^FDGrüße^FS^XZ")
+check("whatever the file said: ^CI6 with non-ASCII in it becomes ^CI28",
+      '^CI28' in _ci6_edited and '^CI6' not in _ci6_edited, _ci6_edited)
+check("a plain ASCII label saves with no ^CI, byte-identical to before",
+      '^CI' not in _cv_plain.to_zpl())
+check("but printing states ^CI28 for it - sticky at the printer like ^CV",
+      '^CI28' in _cv_plain.to_zpl(explicit_flips=True).split('\n'))
+check("and states the file's own ^CI when it carried one",
+      '^CI6' in zpl_parser.parse_zpl(
+          "^XA^CI6^FO1,1^A0N,9,9^FDx^FS^XZ")[0].to_zpl(
+              explicit_flips=True).split('\n'))
+_hidden_unicode = zpl_parser.parse_zpl("^XA^FO1,1^A0N,9,9^FDGrüße^FS^XZ")[0]
+_hidden_unicode.elements[0].print_enabled = False
+check("a hidden non-ASCII element does not force ^CI28: it does not print",
+      '^CI' not in _hidden_unicode.to_zpl(), _hidden_unicode.to_zpl())
+
+_cw = zpl_parser.parse_zpl(
+    "^XA^CWQ,E:MYFONT.TTF^FO20,20^AQN,30,30^FDx^FS^XZ")[0]
+check("^CW is carried by letter, verbatim",
+      _cw.font_identifiers == {'Q': 'Q,E:MYFONT.TTF'}, _cw.font_identifiers)
+check("and the ^A that calls the letter still writes the letter",
+      '^AQN,30,30' in _cw.to_zpl().split('\n'), _cw.to_zpl())
+check("a letter assigned twice keeps its place and takes the last",
+      list(zpl_parser.parse_zpl(
+          "^XA^CWQ,E:ONE.TTF^CWA,R:TWO.FNT^CWQ,R:THREE.FNT^XZ"
+      )[0].font_identifiers.items())
+      == [('Q', 'Q,R:THREE.FNT'), ('A', 'A,R:TWO.FNT')])
+check("the manual's built-in replacement round-trips as it was",
+      '^CWA,R:MYFONT.FNT' in _saved_body("^XA^CWA,R:MYFONT.FNT^XZ"),
+      _saved_body("^XA^CWA,R:MYFONT.FNT^XZ"))
+check("a ^CW with no letter is ignored",
+      zpl_parser.parse_zpl("^XA^CW^XZ")[0].font_identifiers == {}
+      and zpl_parser.parse_zpl("^XA^CW,E:X.TTF^XZ")[0].font_identifiers == {})
+
+_fl_example = "^XA^FLE:ANMDJ.TTF,E:SWISS721.TTF,1^FS^XZ"
+check("^FL round-trips with the ^FS the manual gives it",
+      '^FLE:ANMDJ.TTF,E:SWISS721.TTF,1^FS' in _saved_body(_fl_example),
+      _saved_body(_fl_example))
+check("and two of them keep their order - an unlink after a link is not "
+      "the same as neither",
+      zpl_parser.parse_zpl(
+          "^XA^FLE:A.TTF,E:B.TTF,1^FS^FLE:A.TTF,E:B.TTF,0^FS^FL^XZ"
+      )[0].font_links == ['E:A.TTF,E:B.TTF,1', 'E:A.TTF,E:B.TTF,0'])
+
+_identity_raw = (FIXTURES / 'font_identity.zpl').read_text()
+_identity = zpl_parser.parse_zpl(_identity_raw)[0]
+_identity_lines = _identity.to_zpl().split('\n')
+check("the fixture reads as one text element reading Grüße",
+      len(_identity.elements) == 1 and _identity.elements[0].text == 'Grüße')
+check("and writes all three back ahead of ^PW and the first field",
+      _identity_lines.index('^CI28') < _identity_lines.index('^PW406')
+      and _identity_lines.index('^CWQ,E:MYFONT.TTF') < _identity_lines.index('^PW406')
+      and (_identity_lines.index('^FLE:ANMDJ.TTF,E:SWISS721.TTF,1^FS')
+           < _identity_lines.index('^PW406')),
+      _identity_lines)
+check("none of the three is reported as something a save would drop",
+      workflow.unsupported_commands(_identity_raw) == []
+      and workflow.unsupported_commands("^XA^CWA,R:MYFONT.FNT^XZ") == []
+      and workflow.unsupported_commands(_fl_example) == []
+      and workflow.unsupported_commands(
+          "^XA^CI0,21,36^FO100,200^A0N50,50^FD$0123^FS^XZ") == [])
+check("a format that is only a ^CW is not empty - it is the manual's example",
+      not zpl_parser.parse_zpl("^XA^CWA,R:MYFONT.FNT^XZ")[0].is_empty()
+      and not zpl_parser.parse_zpl(_fl_example)[0].is_empty())
+
+check("^CI, ^CW and ^FL draw nothing in the preview",
+      _preview_ink("^XA^PW300^LL200^CI28^CWQ,E:X.TTF^FLE:A.TTF,E:B.TTF,1^FS"
+                   "^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
       == _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
 
 # --- printer_io.send_command(): the console's text-in/text-out wrapper -----
