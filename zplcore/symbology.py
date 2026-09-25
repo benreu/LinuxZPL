@@ -31,6 +31,7 @@ SYMBOLOGIES = {
     'logmars': "LOGMARS",
     'postal': "POSTAL (Postnet / PLANET / Intelligent Mail)",
     'planet': "Planet Code",
+    'datamatrix': "Data Matrix",
     'qr': "QR Code",
 }
 
@@ -54,6 +55,7 @@ COMMAND = {
     'logmars': '^BL',
     'postal': '^BZ',
     'planet': '^B5',
+    'datamatrix': '^BX',
     'qr': '^BQ',
 }
 
@@ -66,6 +68,8 @@ COMMAND = {
 COMMAND_PARAMS = {
     '^BC': ('o', 'h', 'f', 'g', 'e', 'm'),
     '^BQ': ('o', 'qr_model', 'w', 'quality', 'qr_mask'),
+    '^BX': ('o', 'w', 'quality_dm', 'columns', 'rows', 'format_id',
+            'escape_char', 'aspect'),
     '^BU': ('o', 'h', 'f', 'g', 'e'),
     '^B9': ('o', 'h', 'f', 'g', 'e'),
     '^B8': ('o', 'h', 'f', 'g'),
@@ -132,8 +136,13 @@ class Param:
                 value = int(raw)
             except ValueError:
                 return self.default_for(symbology)
+        elif self.kind is str:
+            value = raw.upper()
         else:
-            value = raw.upper() if self.kind is str else raw
+            # A parameter that is whatever character the file wrote - ^BX's
+            # escape character, which may be any of them - so neither the
+            # case nor the choices apply.
+            value = raw[:1]
         if self.choices is not None and value not in self.choices:
             return (self.invalid if self.invalid is not None
                     else self.default_for(symbology))
@@ -178,6 +187,21 @@ PARAMETERS = {
     'msi_show_check': Param(str, 'N', choices=('Y', 'N')),
     # ^BZ t - which postal code. 2 is reserved, and draws nothing.
     'postal_type': Param(str, '0', choices=('0', '1', '2', '3')),
+    # ^BX s - the quality level. Only 200 is drawn; see the note in
+    # datamatrix.py and FUNCTIONAL_SPEC.md section 18.
+    'quality_dm': Param(int, 0, choices=(0, 50, 80, 100, 140, 200)),
+    # ^BX c and r - force the symbol up to at least this many columns and
+    # rows, so a row of them comes out the same size. Zero is "whatever the
+    # data needs".
+    'columns': Param(int, 0),
+    'rows': Param(int, 0),
+    # ^BX f - the format ID, for the quality levels that are not drawn, and
+    # ^BX g, the character that introduces an escape sequence in the field
+    # data. The manual's own default moved from a tilde to an underscore.
+    'format_id': Param(int, 6, choices=tuple(range(7))),
+    'escape_char': Param(None, '_'),
+    # ^BX a - 1 square, 2 rectangular.
+    'aspect': Param(int, 1, choices=(1, 2)),
 }
 
 # What an omitted f, g, e and m mean, per symbology, in that order - the
@@ -233,7 +257,7 @@ HEIGHT_UNIT = {
 # The symbologies whose symbol is a grid of square modules rather than bars
 # and spaces. Their size is the grid, so neither ^BY's height nor their own
 # command carries one.
-MATRIX = frozenset(('qr',))
+MATRIX = frozenset(('qr', 'datamatrix'))
 
 # The symbologies drawn as bars of differing height rather than differing
 # width. Every bar is narrow and every gap the same; what carries the data is
@@ -249,8 +273,14 @@ READS_BY = frozenset(set(SYMBOLOGIES) - MATRIX)
 # Symbologies with no interpretation line at all - the matrix codes, whose
 # commands carry no f parameter. Everything else has one, on by default or
 # not as flag_defaults says.
-NO_TEXT = frozenset(('qr',))
+NO_TEXT = frozenset(('qr', 'datamatrix'))
 
+
+# The matrix symbologies whose own command, with its size left out, means
+# "fit the symbol into the height ^BY gives" rather than "use the default for
+# this print resolution". Data Matrix is the only one: ^BX's h is the size of
+# one module, and the manual divides ^BY's height by the rows the data needs.
+SIZED_BY_HEIGHT = frozenset(('datamatrix',))
 
 # How big a placeholder a symbology that could not be built stands in, in
 # modules - the smallest QR symbol either way, and the width of a UPC-A for a
@@ -320,6 +350,8 @@ BARCODE_FEATURES = {
     'logmars':          _features(ratio=True, text='always'),
     'postal':           _features(),
     'planet':           _features(),
+    'datamatrix':       _features(height=None, module_width="Module Size",
+                                  text=False),
     'qr':               _features(height=None, module_width="Magnification",
                                   text=False),
 }
@@ -335,6 +367,16 @@ BARCODE_PARAMETERS = {
            ('qr_model', "Model",
             (("2 (recommended)", 2), ("1 (original)", 1))),
            ('qr_mask', "Mask", tuple((str(n), n) for n in range(8)))),
+    'datamatrix': (('aspect', "Shape",
+                    (("Square", 1), ("Rectangular", 2))),
+                   ('quality_dm', "Quality",
+                    tuple((str(q), q) for q in (200, 0, 50, 80, 100, 140))),
+                   ('columns', "Least Columns",
+                    tuple((str(n) if n else "Fit the data", n)
+                          for n in (0, 10, 16, 20, 26, 32, 36, 44, 52))),
+                   ('rows', "Least Rows",
+                    tuple((str(n) if n else "Fit the data", n)
+                          for n in (0, 10, 16, 20, 26, 32, 36, 44, 52)))),
     'codabar': (('start_char', "Start Character",
                  tuple((c, c) for c in 'ABCD')),
                 ('stop_char', "Stop Character",

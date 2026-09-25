@@ -159,6 +159,42 @@ reads("^BL LOGMARS reads back as the Code 39 it is, check digit and all",
       "^XA^PW600^LL600^FO60,60^BY3^BLN,100^FD12AB^FS^XZ",
       "12ABO", 'Code39')
 
+# --- ^BX, Data Matrix -------------------------------------------------------
+
+reads("^BX carries its value, at the module size its own command gives",
+      "^XA^PW600^LL600^FO60,60^BXN,8,200^FDHELLO^FS^XZ", "HELLO", 'DataMatrix')
+reads("the manual's own example, which fills several data regions",
+      "^XA^PW600^LL600^FO60,60^BXN,6,200"
+      "^FDZEBRA TECHNOLOGIES CORPORATION 333 CORPORATE WOODS PARKWAY^FS^XZ",
+      "ZEBRA TECHNOLOGIES CORPORATION 333 CORPORATE WOODS PARKWAY", 'DataMatrix')
+reads("a rectangular symbol reads the same as a square one",
+      "^XA^PW600^LL600^FO60,60^BXN,6,200,,,,,2^FDZEBRA TECH^FS^XZ",
+      "ZEBRA TECH", 'DataMatrix')
+reads("a symbol forced up to a larger size still reads",
+      "^XA^PW600^LL600^FO60,60^BXN,8,200,20,20^FDFORCED^FS^XZ",
+      "FORCED", 'DataMatrix')
+reads("...and one sized from ^BY's height rather than its own parameter",
+      "^XA^PW600^LL600^FO60,60^BY3,3,200^BXN,,200"
+      "^FDZEBRA TECHNOLOGIES CORPORATION^FS^XZ",
+      "ZEBRA TECHNOLOGIES CORPORATION", 'DataMatrix')
+for facing in "NRIB":
+    reads(f"a Data Matrix turned {facing} still reads",
+          f"^XA^PW600^LL600^FO60,60^BX{facing},8,200^FDTURN{facing}^FS^XZ",
+          f"TURN{facing}", 'DataMatrix')
+# Each encodation scheme, picked by what the data is made of: digits go to
+# ASCII in pairs, upper case to C40, lower case to Text, and anything with a
+# byte above 127 to Base 256. A scheme chosen but mis-encoded decodes to
+# something else, or to nothing, which is the whole point of reading it back.
+for name, value in (("digit pairs, in ASCII", "12345678901234567890"),
+                    ("upper case, in C40", "ZEBRA TECHNOLOGIES CORP"),
+                    ("lower case, in Text", "lower case only here"),
+                    ("mixed case and punctuation",
+                     "https://example.com/track/AC-42"),
+                    ("a single character", "A")):
+    reads(f"^BX encodes {name}",
+          f"^XA^PW600^LL600^FO60,60^BXN,6,200^FD{value}^FS^XZ",
+          value, 'DataMatrix')
+
 # ^BI, ^BJ, ^B1, ^BM and ^BP have no decoder here - zxing reads none of
 # Industrial or Standard 2 of 5, Code 11, MSI or Plessey. Each was checked
 # module for module against BWIPP, the reference implementation, while it was

@@ -1040,7 +1040,14 @@ def _read_barcode(cmd: str, params: str, default_height=None,
             magnification = int(fields['w']) if fields.get('w') else 0
         except ValueError:
             magnification = 0
-        magnification = magnification or symbologies.default_magnification(dpi)
+        if not magnification:
+            # Left out. Data Matrix means "fit the symbol into the height
+            # ^BY gives", which cannot be worked out until the data has been
+            # encoded, so it is left at zero for the element to resolve;
+            # everything else means the manual's default for this head.
+            symbology = symbologies.SYMBOLOGY_OF[cmd]
+            if symbology not in symbologies.SIZED_BY_HEIGHT:
+                magnification = symbologies.default_magnification(dpi)
 
     return {'symbology': symbologies.SYMBOLOGY_OF[cmd],
             'orientation': orientation,
@@ -1159,8 +1166,11 @@ def _build_element(field, doc, renderer):
             value = '' if printer_generated else "123456789"
         # A matrix symbology carries its own magnification and ignores ^BY's
         # module width entirely, so the command's own number wins where it
-        # has one.
-        module_width = bc['magnification'] or field['module_width']
+        # has one - including a zero, which is ^BX's way of saying "fit the
+        # symbol into ^BY's height instead", and which the element resolves
+        # once it knows how many rows the data needs.
+        module_width = (bc['magnification'] if bc['magnification'] is not None
+                        else field['module_width'])
         return BarcodeElement(x, y, height=bc['height'],
                               barcode_value=value,
                               module_width=module_width,

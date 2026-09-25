@@ -30,6 +30,7 @@ from . import msi
 from . import plessey
 from . import twoof5
 from . import postal
+from . import datamatrix
 from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
@@ -465,6 +466,12 @@ class FrameElement(DesignElement):
                 f"{self._options_zpl()}\n^FS\n")
 
 
+# What a barcode falls back to when nothing has given it a height: ZPL's own
+# power-up default is 10 dots, which would make such a symbol a hairline.
+# Recorded as a deviation in FUNCTIONAL_SPEC.md section 18.
+DESIGNER_BAR_HEIGHT = 100
+
+
 class BarcodeElement(DesignElement):
     """Barcode element for the designer, whichever symbology `symbology`
     names.
@@ -730,6 +737,11 @@ class BarcodeElement(DesignElement):
             value = self._raw_value()
             return qr.encode(value, qr.error_correction(value, self.quality),
                              self.qr_mask)
+        if self.symbology == 'datamatrix':
+            return datamatrix.encode(self._raw_value(),
+                                     rectangular=self.aspect == 2,
+                                     rows=self.rows, columns=self.columns,
+                                     escape=self.escape_char)
         raise ValueError(f"no encoder for {self.symbology!r}")
 
     def modules(self) -> list:
@@ -810,6 +822,15 @@ class BarcodeElement(DesignElement):
             # the user can select it and read why.
             rows = len(payload) or symbologies.PLACEHOLDER_GRID
             columns = len(payload[0]) if payload else symbologies.PLACEHOLDER_GRID
+            if self.module_width < 1:
+                # ^BX with its module size left out means "fit the symbol
+                # into the height ^BY gives": that height divided by however
+                # many rows the data turned out to need, which is not known
+                # until the data has been encoded. Kept once it is worked
+                # out, so a save writes the size being drawn.
+                self.module_width = max(
+                    1, round((self.total_height or DESIGNER_BAR_HEIGHT) / rows))
+            module = max(1, self.module_width)
             return (columns * module, rows * module)
         if kind == 'postal':
             # Narrow bars at a one-to-one pitch: n bars and n - 1 gaps.

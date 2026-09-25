@@ -1885,6 +1885,82 @@ for command in ('^BZ', '^B5'):
           workflow.unsupported_commands(
               f"^XA^FO0,0{command}N,40^FD12345^FS^XZ") == [])
 
+# --- ^BX, Data Matrix -------------------------------------------------------
+from zplcore import datamatrix as zpl_dm
+
+_dm = BarcodeElement(0, 0, 60, 'HELLO', symbology='datamatrix', module_width=8)
+check("a Data Matrix is a square grid, sized by the data",
+      _dm.symbol()[0] == 'grid' and len(_dm.symbol()[1]) == 12
+      and len(_dm.symbol()[1][0]) == 12, len(_dm.symbol()[1]))
+check("and its box is that grid at its own module size",
+      (_dm.width, _dm.height) == (96, 96), (_dm.width, _dm.height))
+check("every symbol's corner is the solid finder pattern",
+      _dm.symbol()[1][0][0] and _dm.symbol()[1][-1][0]
+      and all(row[0] for row in _dm.symbol()[1])
+      and all(_dm.symbol()[1][-1]),
+      "left column and bottom row solid, which is what a reader finds it by")
+check("and the other two sides alternate",
+      [row[-1] for row in _dm.symbol()[1]][:4] == [False, True, False, True]
+      and _dm.symbol()[1][0][:4] == [True, False, True, False])
+
+check("only ECC 200 sizes exist, and every one's capacity matches its grid",
+      all((rows - 2 * rr) * (cols - 2 * rc) // 8 == data + ecc
+          for rows, cols, rr, rc, data, ecc, _b in zpl_dm.SIZES + zpl_dm.RECTANGULAR),
+      [(r, c) for r, c, rr, rc, d, e, _b in zpl_dm.SIZES + zpl_dm.RECTANGULAR
+       if (r - 2 * rr) * (c - 2 * rc) // 8 != d + e])
+check("a rectangular symbol is one of the six ZPL offers",
+      (lambda g: (len(g), len(g[0])))(
+          zpl_dm.encode('ZEBRA TECH', rectangular=True)) in
+      [(r, c) for r, c, *_rest in zpl_dm.RECTANGULAR])
+check("forcing rows and columns takes the next size up, never a smaller one",
+      len(zpl_dm.encode('AB', rows=26, columns=26)) == 26
+      and len(zpl_dm.encode('AB')) < 26)
+try:
+    zpl_dm.encode('x' * 20, rows=10, columns=10)
+    _too_small = False
+except ValueError:
+    _too_small = True
+check("and data that will not fit a forced size is refused, not truncated",
+      _too_small, "the manual: 'no symbol is printed'")
+
+check("the encodation is whichever scheme is shortest for this data",
+      len(zpl_dm.encode('ZEBRA TECHNOLOGIES CORPORATION'))
+      < len(zpl_dm.encode('Zebra Technologies Corporation!')),
+      "upper case packs three characters into two codewords; mixed case does not")
+
+# ^BX's escapes, which the manual introduces with an underscore on current
+# firmware and a tilde before it.
+check("_d065 is the character with that decimal value, and __ a literal one",
+      zpl_dm.encode('AB_d065CD', escape='_') == zpl_dm.encode('ABACD', escape='')
+      and zpl_dm.encode('AB__CD', escape='_') == zpl_dm.encode('AB_CD', escape=''))
+check("a trailing escape character with nothing after it is just a character",
+      zpl_dm.encode('TRAILING_', escape='_') == zpl_dm.encode('TRAILING_', escape=''))
+
+# ^BX with no module size of its own means "fit the symbol into ^BY's
+# height", which cannot be known until the data has been encoded.
+_sized = zpl_parser.parse_zpl(
+    "^XA^PW600^LL600^FO20,20^BY3,3,240^BXN,,200^FDZEBRA TECHNOLOGIES^FS^XZ"
+)[0].elements[0]
+check("^BX with no module size takes ^BY's height, divided by its own rows",
+      _sized.module_width == round(240 / len(_sized.symbol()[1]))
+      and abs(_sized.height - 240) <= len(_sized.symbol()[1]),
+      (_sized.module_width, _sized.height))
+check("and the size it worked out is written back, not left to the printer",
+      f"^BXN,{_sized.module_width},200" in _sized.to_zpl(),
+      _sized.to_zpl().replace(chr(10), ' '))
+
+_dm_round = BarcodeElement(1, 2, 60, 'ZEBRA TECH', symbology='datamatrix',
+                           module_width=6, orientation='N',
+                           params={'aspect': '2', 'quality_dm': '200'})
+_dm_back = zpl_parser.parse_zpl(f"^XA{_dm_round.to_zpl()}^XZ")[0].elements[0]
+check("^BX round-trips its shape and quality",
+      (_dm_back.aspect, _dm_back.quality_dm, _dm_back.module_width) == (2, 200, 6),
+      (_dm_back.aspect, _dm_back.quality_dm, _dm_back.module_width))
+check("a Data Matrix has no interpretation line either",
+      not _dm.show_text and geometry.barcode_layout(_dm)['text'] is None)
+check("^BX is no longer a command a save would drop",
+      workflow.unsupported_commands("^XA^FO0,0^BXN,8,200^FDHI^FS^XZ") == [])
+
 # --- ^BQ, the QR code -------------------------------------------------------
 from zplcore import qr as zpl_qr
 

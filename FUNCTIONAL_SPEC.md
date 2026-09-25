@@ -181,8 +181,8 @@ add-on (`^BS`), UPC-A (`^BU`), UPC-E (`^B9`), EAN-8 (`^B8`), Code 93
 (`^BA`), Codabar (`^BK`), Code 11 (`^B1`), MSI (`^BM`), Plessey (`^BP`),
 Industrial 2 of 5 (`^BI`), Standard 2 of 5 (`^BJ`), LOGMARS (`^BL`), the
 POSTAL family (`^BZ` - Postnet, PLANET and the USPS Intelligent Mail
-barcode), Planet Code (`^B5`) and QR (`^BQ`). Data Matrix, PDF417, Aztec and
-the rest are still not offered - see §18.
+barcode), Planet Code (`^B5`), Data Matrix (`^BX`) and QR (`^BQ`). PDF417,
+Aztec, GS1 DataBar and the rest are still not offered - see §18.
 
 **Which command spells which symbology, and what each of its parameters
 means, is one table** - `zplcore/symbology.py` - read by the model, the
@@ -197,7 +197,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 
 | Property | Default |
 |---|---|
-| `symbology` | `code128` - which of the nineteen |
+| `symbology` | `code128` - which of the twenty |
 | `barcode_value` | `"123456789"` |
 | `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots - and, for a matrix symbology, the magnification its own command carries instead of `^BY`'s w. An omitted one is the manual's default for the print resolution: 1 at 150 dpi, 2 at 200, 3 at 300, 6 at 600 |
@@ -209,6 +209,9 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `code11_check` | `N` - and it reads backwards: Code 11 is not self-checking, so `N` is *two* check characters and `Y` is one |
 | `msi_check` | `B` - MSI's four checksums: `A` none, `B` one Mod 10, `C` two Mod 10, `D` a Mod 11 then a Mod 10. `msi_show_check` says whether the line shows what they added |
 | `start_char`, `stop_char` | `A` - which of Codabar's four start and stop characters, a pair a reader can be told to expect |
+| `quality_dm` | `0` - `^BX`'s quality level. Only ECC 200 is drawn, whichever is asked for |
+| `columns`, `rows` | `0` - force `^BX` up to at least this size, so a row of symbols comes out uniform. Data that will not fit the forced size draws nothing |
+| `format_id`, `escape_char`, `aspect` | `6`, `_`, `1` - `^BX`'s format ID (carried; it applies to the quality levels that are not drawn), the character that introduces an escape sequence in the field data, and square or rectangular |
 | `postal_type` | `0` - `^BZ`'s Postnet, `1` PLANET, `3` the USPS Intelligent Mail barcode. `2` is reserved and draws nothing |
 | `mode` | `N` - `A` lets Code 128 use subset C; no other symbology has a mode |
 | `quality` | QR's error correction: `Q` when `^BQ` leaves it out, `M` when `^BQ` names a letter QR has no level for - the manual distinguishes the two |
@@ -1698,7 +1701,7 @@ rather than requirements:
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
   drawn whole, wrapped, whether or not a font file is available.
-- **Nineteen symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
+- **Twenty symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
   the postal codes and the stacked family are still not offered, and no
   symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are
   given rather than rejecting it (§3.3), and Code 39 draws an out-of-set
@@ -1709,6 +1712,22 @@ rather than requirements:
   its symbology has, with the reason on `symbol_error`. A printer prints no
   symbol in the same case. Refusing to open the label instead would lose
   every other field on it.
+- **`^BX` draws ECC 200 whatever quality it is asked for.** Levels 0 to 140
+  use convolutional coding, were meant for closed systems where one party
+  controls both the printing and the reading, and no reader made this century
+  decodes them; 200 is what the manual recommends "for new applications". The
+  parameter round-trips, as does `format_id`, which only applies to the
+  levels that are not drawn.
+- **`^BX`'s encodation is the shortest of four schemes tried over the whole
+  message**, rather than the look-ahead ISO 16022 Annex P defines. Both are
+  valid and any reader accepts either; for label data, which is usually all
+  of one kind, they reach the same symbol size. A message whose last
+  characters do not fill a C40 triple returns to ASCII for them instead of
+  using the end-of-symbol rules, which can cost one size class.
+- **`^BX`'s structured append and code page escapes are read and dropped.**
+  `_2` and `_5NNN` change what a reader reports rather than what is drawn,
+  and neither is simulated. `_1` to `_3`, `__`, `_dNNN` and the `_X` control
+  shifts are all honoured.
 - **The USPS Intelligent Mail barcode's bars come from reportlab.** The
   conversion from twenty digits of tracking and up to eleven of routing to
   sixty-five four-state bars is a 102-bit integer, an eleven-bit cyclic
