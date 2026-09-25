@@ -151,20 +151,26 @@ def query_printer_graphics(address: str, port: int, timeout: float = 5,
     """Every `d:o.GRF` object stored on the printer, across R:/E:/B:/A:, or
     None if it could not be asked.
 
-    One ^HW per device - graphics, unlike fonts (always E:), can live in any
-    of the four - each scoped to *.GRF, the canonical ZPL graphic extension
-    and the one Store here writes, the same way query_printer_fonts is
-    scoped to E:*.TTF. An unscoped *.* was tried first and rejected: a
-    printer's own memory holds plenty that is not a graphic at all - fonts,
-    firmware/config objects, whatever else came from the factory or another
-    tool - and a "Printer Graphics" dialog listing all of it read as broken,
-    not merely broad. Reachability is judged by the first device alone, the
-    same rule query_printer_fonts uses for its one and only query: no reply,
-    or the connection itself failing, means unreachable and the other three
-    devices are not even tried. A later device failing the same way is not
-    proof the printer went away - just that this device has nothing, or does
-    not exist on this model - so it is skipped rather than aborting a result
-    the first device already established.
+    One ^HW per device, each scoped to *.GRF, the canonical ZPL graphic
+    extension and the one Store here writes. An unscoped *.* was tried first
+    and rejected: a printer's own memory holds plenty that is not a graphic
+    at all - fonts, firmware/config objects, whatever else came from the
+    factory or another tool - and a "Printer Graphics" dialog listing all of
+    it read as broken, not merely broad.
+
+    Reachability is judged by the first device alone: no reply, or the
+    connection itself failing, means unreachable and the other three devices
+    are not even tried. A later device failing the same way is not proof the
+    printer went away - just that this device has nothing, or does not exist
+    on this model - so it is skipped rather than aborting a result the first
+    device already established.
+
+    Note that fonts.query_printer_fonts, which asks the same four devices,
+    deliberately does *not* use this rule any more: R: is asked first, and a
+    printer with nothing on R: is not an unreachable printer, so only a
+    failure to connect on the first attempt is decisive there and silence is
+    unreachable only when no device answered at all. The same argument
+    applies here and this function has simply not been changed to match.
     """
     specs: List[str] = []
     for index, device in enumerate(DEVICES):

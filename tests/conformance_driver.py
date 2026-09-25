@@ -193,6 +193,12 @@ class GtkDriver:
         element.font_path = path
         self.canvas.sync_text_width(element)
 
+    def set_font_device(self, device):
+        self.window._set_font_device(device)
+
+    def assign_printer_font(self, element, path, family, name):
+        self.canvas.set_element_font(element, path, family, name)
+
     def resync(self, element):
         self.canvas.sync_text_width(element)
 
@@ -467,6 +473,12 @@ class QtDriver:
     def set_font(self, element, path):
         element.font_path = path
         self.document.sync_text_width(element)
+
+    def set_font_device(self, device):
+        self.window._set_font_device(device)
+
+    def assign_printer_font(self, element, path, family, name):
+        self.document.set_element_font(element, path, family, name)
 
     def resync(self, element):
         self.document.sync_text_width(element)
@@ -1171,6 +1183,20 @@ def sequence(driver, record):
     # both frontends have to carry one rather than resolve it to E:NAME.TTF.
     driver.load(FIXTURE_FONT_PATH)
     record('load a format whose fonts name their own drives')
+
+    # And the Font memory setting has to reach the ^A@ the same way in both.
+    # It needs a font this app assigned to show at all: every element in the
+    # fixture above carries a path of its own, which beats the setting, so a
+    # step built on those alone would pass without proving anything.
+    _assigned = driver.add_text('assigned here')
+    driver.assign_printer_font(_assigned, '/x/NewFace.ttf', 'New Face', 'NEWFACE')
+    record('a font assigned in the designer, written at the default memory')
+    driver.set_font_device('B')
+    record('point new fonts at another memory')
+    # Back to the default, so the steps after this one are not quietly run
+    # against a setting this one moved.
+    driver.set_font_device('E')
+    record('and back, leaving the loaded paths untouched throughout')
 
     # Setting a home and a flip from Label Settings has to reach the file the
     # same way in both, including the ^FO each element is written back at.

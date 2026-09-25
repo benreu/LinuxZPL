@@ -86,6 +86,110 @@ check("collision gets a numeric suffix", second != 'DEJAVUSA' and len(second) <=
 check("empty result becomes FONT", zpl_fonts.printer_font_name('/x/...ttf') == 'FONT',
       zpl_fonts.printer_font_name('/x/...ttf'))
 
+# --- which memory a font is written to ---------------------------------------
+# ~DYd:f,... and ^A@o,h,w,d:f.x both take a drive, and this app used to spell
+# E: into every one of them. The drive is a parameter now, defaulting to E: so
+# nothing moves for a caller that does not care.
+check("printer_font_path(): E: unless another drive is asked for",
+      (zpl_fonts.printer_font_path('ANI'),
+       zpl_fonts.printer_font_path('ANI', 'R')) == ('E:ANI.TTF', 'R:ANI.TTF'),
+      (zpl_fonts.printer_font_path('ANI'), zpl_fonts.printer_font_path('ANI', 'R')))
+check("split_font_spec(): drive and name back apart, defaulting to E: not R:",
+      [zpl_fonts.split_font_spec(x) for x in
+       ('E:ANI.TTF', 'B:CYRI_UB.FNT', 'ANI.TTF')]
+      == [('E', 'ANI'), ('B', 'CYRI_UB'), ('E', 'ANI')],
+      [zpl_fonts.split_font_spec(x) for x in ('E:ANI.TTF', 'B:CYRI_UB.FNT', 'ANI.TTF')])
+
+_upl = {d: zpl_fonts.build_font_upload('/etc/hostname', 'ANI', d)
+        for d in zpl_fonts.DEVICES}
+check("build_font_upload(): the ~DY header names the drive it was given",
+      all(v.startswith(f"~DY{d}:ANI,".encode()) for d, v in _upl.items()),
+      [v[:14] for v in _upl.values()])
+check("build_font_upload(): defaults to E: when no drive is given",
+      zpl_fonts.build_font_upload('/etc/hostname', 'ANI').startswith(b'~DYE:ANI,'),
+      zpl_fonts.build_font_upload('/etc/hostname', 'ANI')[:14])
+# The b and x parameters stay as they were: real hardware accepts A,TT, and
+# the manual's own B,T is a question for a printer rather than for a reading.
+check("build_font_upload(): the A,TT format parameters are left alone",
+      b',A,TT,' in zpl_fonts.build_font_upload('/etc/hostname', 'ANI'),
+      zpl_fonts.build_font_upload('/etc/hostname', 'ANI')[:28])
+
+_font_sent = []
+from zplcore import printer_io as _font_pio
+_font_real_send = _font_pio.send
+_font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: (
+    _font_sent.append(payload) or b'\r\n*ANI.TTF  1024\r\n')
+try:
+    zpl_fonts.delete_printer_font('h', 1, 'ANI', 'B')
+    _listed = zpl_fonts.query_printer_fonts('h', 1)
+finally:
+    _font_pio.send = _font_real_send
+check("delete_printer_font(): ^ID names the drive, not an assumed E:",
+      _font_sent[0] == b'^XA^IDB:ANI.TTF^FS^XZ', _font_sent[0])
+check("query_printer_fonts(): one ^HW per drive, in DEVICES order",
+      _font_sent[1:] == [f'^XA^HW{d}:*.TTF^XZ'.encode()
+                         for d in zpl_fonts.DEVICES], _font_sent[1:])
+check("query_printer_fonts(): answers with specs, so the drive is not lost",
+      _listed == {f'{d}:ANI.TTF' for d in zpl_fonts.DEVICES}, _listed)
+
+# A real ^HW reply, captured from a printer rather than composed here: its
+# entries carry the drive themselves ("* E:ANI.TTF"), which the manual's own
+# format for the command does not show, and one name runs to the full eight
+# characters with a trailing underscore.
+_REAL_HW = (b"\r\n- DIR E:*.TTF \r\n"
+            b"* E:ABYSSINI.TTF    312804          \r\n"
+            b"* E:ANI.TTF    120404          \r\n"
+            b"* E:TT0003M_.TTF    169188  P       \r\n"
+            b"\r\n-  66119680 bytes free E: ONBOARD FLASH \r\n")
+_font_real_send = _font_pio.send
+_font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: (
+    _REAL_HW if b'^HWE:' in payload else b'')
+try:
+    _real_listed = zpl_fonts.query_printer_fonts('h', 1)
+    _font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: b''
+    _silent = zpl_fonts.query_printer_fonts('h', 1)
+    _font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: (
+        b'\r\n- DIR R:*.TTF \r\n\r\n-  1000 bytes free\r\n')
+    _empty = zpl_fonts.query_printer_fonts('h', 1)
+finally:
+    _font_pio.send = _font_real_send
+check("query_printer_fonts(): a real ^HW reply parses to its fonts and nothing else",
+      _real_listed == {'E:ABYSSINI.TTF', 'E:ANI.TTF', 'E:TT0003M_.TTF'}, _real_listed)
+# Reachability cannot be judged on the first device alone once every device is
+# asked: R: comes first, and a printer with nothing on R: is not unreachable.
+check("query_printer_fonts(): silence on R: is not unreachable when E: answers",
+      _real_listed is not None and len(_real_listed) == 3, _real_listed)
+check("query_printer_fonts(): None only when no device answered at all",
+      _silent is None, _silent)
+check("query_printer_fonts(): a drive that lists nothing is an empty set, not None",
+      _empty == set(), _empty)
+
+# Document.font_device is where a font this app assigns goes; an element that
+# carries a path of its own - anything loaded from a file - overrides it.
+_fd = Document(400, 400)
+_fd.set_font('/x/NewFace.ttf', 'New Face', 'NEWFACE')
+_fd.add_text_element('x')
+check("font_sources(): specs at the document's own drive, E: by default",
+      _fd.font_sources() == {'E:NEWFACE.TTF': '/x/NewFace.ttf'}, _fd.font_sources())
+_fd.font_device = 'R'
+check("font_sources(): and it follows the Font memory setting when that moves",
+      _fd.font_sources() == {'R:NEWFACE.TTF': '/x/NewFace.ttf'}, _fd.font_sources())
+check("to_zpl(): the ^A@ follows it too",
+      '^A@N,36,20,R:NEWFACE.TTF' in _fd.to_zpl(), _font_written(_fd))
+# A loaded element carries a font name *and* a path of its own, and that
+# path wins over the setting - which is what keeps a file saying what it said.
+_loaded = zpl_parser.parse_zpl(
+    '^XA^FO50,50^A@N,53,19,B:CYRI_UB.FNT^FDx^FS^XZ')[0]
+_loaded.font_device = 'R'
+check("a loaded element's own path wins over the setting, in both",
+      _loaded.font_sources() == {'B:CYRI_UB.FNT': None}
+      and '^A@N,53,19,B:CYRI_UB.FNT' in _loaded.to_zpl(),
+      (_loaded.font_sources(), _font_written(_loaded)))
+# ...but an element with no font of its own still follows the document, which
+# is why to_zpl only trusts a path when the element names the font too.
+check("an element with no font of its own follows the document's drive",
+      '^A@N,36,20,R:NEWFACE.TTF' in _fd.to_zpl(), _font_written(_fd))
+
 # --- ^A@'s own d:f.x path ----------------------------------------------------
 # ^A@o,h,w,d:f.x names a drive (R:/E:/B:/A:, defaulting to R: - not E:) and an
 # extension (.FNT, .TTF or .TTE). Only the font name was ever read back, and
@@ -3189,7 +3293,8 @@ try:
     fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
     qt_main._config_path = lambda: blocked_dir / 'settings.ini'
     qt_main._fallback_config_path = lambda: fallback_path
-    zw._default_printer = ('10.0.0.9', zw.printer_port, zw.printer_dpi)
+    zw._default_printer = ('10.0.0.9', zw.printer_port, zw.printer_dpi,
+                           zw.printer_font_device)
     zw._save_settings()
     written = _cfg.ConfigParser(); written.read(fallback_path)
     check("a settings file the user config directory won't take is written to the project fallback instead",
@@ -3211,11 +3316,12 @@ qt_main._config_path = lambda: session_path
 qt_main._fallback_config_path = lambda: session_path
 try:
     zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.50', 9100, 203
-    zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+    zw._default_printer = (zw.printer_address, zw.printer_port,
+                           zw.printer_dpi, zw.printer_font_device)
     zw._save_settings()
 
     real_dialog = qt_dialogs.printer_settings_dialog
-    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203, 'E')
     try:
         zw.on_session_printer()
     finally:
@@ -3234,8 +3340,9 @@ try:
     # override just applied above - otherwise clicking OK on an unedited
     # dialog would silently promote the override into the new default.
     seen = {}
-    def capture_dialog(parent, address, port, dpi, **kwargs):
+    def capture_dialog(parent, address, port, dpi, font_device=None, **kwargs):
         seen['address'], seen['port'], seen['dpi'] = address, port, dpi
+        seen['font_device'] = font_device
         return None  # cancel, so nothing else about window state changes
     qt_dialogs.printer_settings_dialog = capture_dialog
     try:
@@ -3246,7 +3353,7 @@ try:
           (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
 
     # Contrast: Default Printer, given the same dialog result, does persist.
-    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203, 'E')
     try:
         zw.on_default_printer()
     finally:
@@ -3269,11 +3376,12 @@ qt_main._config_path = lambda: quit_path
 qt_main._fallback_config_path = lambda: quit_path
 try:
     zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.70', 9100, 203
-    zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+    zw._default_printer = (zw.printer_address, zw.printer_port,
+                           zw.printer_dpi, zw.printer_font_device)
     zw._save_settings()
 
     real_dialog = qt_dialogs.printer_settings_dialog
-    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203)
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203, 'E')
     try:
         zw.on_session_printer()
     finally:
@@ -3296,11 +3404,12 @@ qt_main._config_path = lambda: label_settings_path
 qt_main._fallback_config_path = lambda: label_settings_path
 try:
     zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.80', 9100, 203
-    zw._default_printer = (zw.printer_address, zw.printer_port, zw.printer_dpi)
+    zw._default_printer = (zw.printer_address, zw.printer_port,
+                           zw.printer_dpi, zw.printer_font_device)
     zw._save_settings()
 
     real_dialog = qt_dialogs.printer_settings_dialog
-    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203)
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203, 'E')
     try:
         zw.on_session_printer()
     finally:
@@ -4226,7 +4335,9 @@ try:
 finally:
     zpl_printer_io.send = _real_send
 check("cancel= reaches printer_io.send from objects, fonts, graphics and the console",
-      _fwd == [_sentinel] * 4, _fwd)
+      # Seven, not four: query_printer_fonts asks each of the four devices in
+      # turn now, the way query_printer_graphics already did.
+      _fwd == [_sentinel] * 7, _fwd)
 
 # The real thing: a listener that accepts and never answers, cancelled from
 # another thread, must let send() out promptly with Cancelled - not after
@@ -4280,13 +4391,25 @@ _real_qpf, _real_upload = zpl_fonts.query_printer_fonts, zpl_fonts.upload_font
 try:
     zpl_fonts.query_printer_fonts = lambda *a, **k: None
     check("missing_printer_fonts(): None when the printer could not be asked",
-          workflow.missing_printer_fonts(_FontDoc({'ARIAL': '/a.ttf'}), 'h', 1) is None)
-    zpl_fonts.query_printer_fonts = lambda *a, **k: {'ARIAL'}
+          workflow.missing_printer_fonts(_FontDoc({'E:ARIAL.TTF': '/a.ttf'}), 'h', 1) is None)
+    zpl_fonts.query_printer_fonts = lambda *a, **k: {'E:ARIAL.TTF'}
     check("missing_printer_fonts(): nothing missing when the printer has them all",
-          workflow.missing_printer_fonts(_FontDoc({'arial': '/a.ttf'}), 'h', 1) == ({}, {}))
-    _m = workflow.missing_printer_fonts(_FontDoc({'ARIAL': '/a.ttf', 'ROBOTO': '/r.ttf', 'MYSTERY': None}), 'h', 1)
+          workflow.missing_printer_fonts(_FontDoc({'e:arial.ttf': '/a.ttf'}), 'h', 1) == ({}, {}))
+    _m = workflow.missing_printer_fonts(_FontDoc(
+        {'E:ARIAL.TTF': '/a.ttf', 'E:ROBOTO.TTF': '/r.ttf', 'E:MYSTERY.TTF': None}), 'h', 1)
     check("missing_printer_fonts(): missing vs uploadable (only those with a source file)",
-          _m == ({'ROBOTO': '/r.ttf', 'MYSTERY': None}, {'ROBOTO': '/r.ttf'}), _m)
+          _m == ({'E:ROBOTO.TTF': '/r.ttf', 'E:MYSTERY.TTF': None},
+                 {'E:ROBOTO.TTF': '/r.ttf'}), _m)
+    # The check the whole device design turns on: the right font on the wrong
+    # drive is not the font the label asked for. Matching on the bare name
+    # would call this present and let the print fall back to a substitute.
+    zpl_fonts.query_printer_fonts = lambda *a, **k: {'R:ARIAL.TTF'}
+    _wrong = workflow.missing_printer_fonts(_FontDoc({'E:ARIAL.TTF': '/a.ttf'}), 'h', 1)
+    check("missing_printer_fonts(): a font on another drive does not satisfy the label",
+          _wrong == ({'E:ARIAL.TTF': '/a.ttf'}, {'E:ARIAL.TTF': '/a.ttf'}), _wrong)
+    zpl_fonts.query_printer_fonts = lambda *a, **k: {'R:ARIAL.TTF'}
+    check("missing_printer_fonts(): and on the drive it does name, it is present",
+          workflow.missing_printer_fonts(_FontDoc({'R:ARIAL.TTF': '/a.ttf'}), 'h', 1) == ({}, {}))
     _calls = []
     def _fake_qpf(*a, **k):
         _calls.append('asked'); return set()
@@ -4297,19 +4420,31 @@ try:
     _t, _d = workflow.font_problem_prompt(None)
     check("font_problem_prompt(None): the could-not-ask wording",
           'could not be asked' in _t and 'substitute' in _d, (_t, _d))
-    _t, _d = workflow.font_problem_prompt({'ROBOTO': '/r.ttf', 'MYSTERY': None})
+    _t, _d = workflow.font_problem_prompt(
+        {'E:ROBOTO.TTF': '/r.ttf', 'B:MYSTERY.TTF': None})
     check("font_problem_prompt(): lists each font, flagging the ones with no source",
-          'E:ROBOTO.TTF' in _d and 'E:MYSTERY.TTF   (source file unknown)' in _d, _d)
+          'E:ROBOTO.TTF' in _d and 'B:MYSTERY.TTF   (source file unknown)' in _d, _d)
+    check("font_problem_prompt(): names the drive a font is wanted on, not an assumed E:",
+          'B:MYSTERY.TTF' in _d and 'E:MYSTERY.TTF' not in _d, _d)
 
     _uploaded, _progress = [], []
-    def _fake_upload(address, port, path, name, timeout=30, cancel=None):
+    def _fake_upload(address, port, path, name, device='E', timeout=30, cancel=None):
         _uploaded.append((name, path, cancel))
     zpl_fonts.upload_font = _fake_upload
-    workflow.upload_fonts({'B': '/b', 'A': '/a'}, 'h', 1, _progress.append, cancel=_sentinel)
+    workflow.upload_fonts({'E:B.TTF': '/b', 'E:A.TTF': '/a'}, 'h', 1,
+                          _progress.append, cancel=_sentinel)
     check("upload_fonts(): uploads each font in name order, reporting each, passing cancel through",
           _uploaded == [('A', '/a', _sentinel), ('B', '/b', _sentinel)]
           and _progress == ['Uploading E:A.TTF...', 'Uploading E:B.TTF...'], (_uploaded, _progress))
-    def _failing_upload(address, port, path, name, timeout=30, cancel=None):
+    # Each font goes to the drive its own spec names, not all to one.
+    _devices = []
+    def _device_upload(address, port, path, name, device='E', timeout=30, cancel=None):
+        _devices.append((device, name))
+    zpl_fonts.upload_font = _device_upload
+    workflow.upload_fonts({'R:ONE.TTF': '/1', 'B:TWO.TTF': '/2'}, 'h', 1)
+    check("upload_fonts(): each font goes to the drive its own spec names",
+          sorted(_devices) == [('B', 'TWO'), ('R', 'ONE')], _devices)
+    def _failing_upload(address, port, path, name, device='E', timeout=30, cancel=None):
         raise OSError("boom")
     zpl_fonts.upload_font = _failing_upload
     try:

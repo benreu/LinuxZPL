@@ -75,6 +75,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_address = DEFAULT_ADDRESS
         self.printer_port = DEFAULT_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        # Which printer memory this app's own fonts are written to and
+        # uploaded to - see Document.font_device, which every document is
+        # given a copy of.
+        self.printer_font_device = zpl_fonts.DEFAULT_FONT_DEVICE
         # The one non-modal printer window - see on_printer_console.
         self.printer_console_dialog = None
         self.label_inches = DEFAULT_LABEL_INCHES
@@ -82,7 +86,8 @@ class ZPLDesignerWindow(QMainWindow):
         self._load_settings()
         # The persisted printer, snapshotted so a session-only override (Print
         # To) can offer "Use Default" without re-reading the settings file.
-        self._default_printer = (self.printer_address, self.printer_port, self.printer_dpi)
+        self._default_printer = (self.printer_address, self.printer_port,
+                                 self.printer_dpi, self.printer_font_device)
         self._place_on_screen()
         # Fonts registered before the application existed could not be handed to
         # Qt then; now there is one, so flush them.
@@ -102,6 +107,7 @@ class ZPLDesignerWindow(QMainWindow):
         # both settings.
         document = Document(*self._inches_to_dots(*self.label_inches),
                             dpi=self.printer_dpi)
+        document.font_device = self.printer_font_device
         self.canvas = DesignCanvas(document)
         self.canvas.documentChanged.connect(self.on_canvas_changed)
         self.canvas.elementDoubleClicked.connect(self.on_element_double_clicked)
@@ -710,7 +716,9 @@ class ZPLDesignerWindow(QMainWindow):
         # Only the DPI slot of the default moves - address/port stay whatever
         # the persisted default already was, so a session override on those
         # (Printer Settings) survives a Label Settings visit untouched.
-        self._default_printer = (self._default_printer[0], self._default_printer[1], dpi)
+        self._default_printer = (self._default_printer[0],
+                                 self._default_printer[1], dpi,
+                                 self._default_printer[3])
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.document.transform = transform
@@ -736,16 +744,18 @@ class ZPLDesignerWindow(QMainWindow):
         # Opened with the persisted default, not the printer currently in
         # effect: a session override (Printer Settings) must never leak into
         # this dialog and get re-saved as the new default just by clicking OK.
-        default_address, default_port, default_dpi = self._default_printer
+        (default_address, default_port, default_dpi,
+         default_font_device) = self._default_printer
         result = qt_dialogs.printer_settings_dialog(
             self, default_address, default_port, default_dpi,
-            title="Default Printer")
+            default_font_device, title="Default Printer")
         if result is None:
             return
-        address, port, dpi = result
+        address, port, dpi, font_device = result
         old_dpi = self.printer_dpi
         self.printer_address, self.printer_port, self.printer_dpi = address, port, dpi
-        self._default_printer = (address, port, dpi)
+        self._set_font_device(font_device)
+        self._default_printer = (address, port, dpi, font_device)
         self._save_settings()
         self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
         if dpi != old_dpi:
@@ -755,6 +765,19 @@ class ZPLDesignerWindow(QMainWindow):
                 self.canvas.commit()
                 self.update_status(note[0].upper() + note[1:])
 
+    def _set_font_device(self, device: str):
+        """Adopt a new Font memory setting, here and on the open document.
+
+        The document holds its own copy (Document.font_device), so changing
+        the setting has to reach it or the label would go on writing ^A@ at
+        the old drive. Elements that carry a path of their own - anything
+        loaded from a file - are unaffected by design, so this moves only the
+        fonts this app assigned.
+        """
+        self.printer_font_device = device
+        if self.canvas is not None and self.canvas.document is not None:
+            self.canvas.document.font_device = device
+
     def on_local_fonts(self):
         qt_dialogs.LocalFontsDialog(self).exec_()
 
@@ -762,12 +785,13 @@ class ZPLDesignerWindow(QMainWindow):
         """Print To this session's printer, without touching the persisted default."""
         result = qt_dialogs.printer_settings_dialog(
             self, self.printer_address, self.printer_port, self.printer_dpi,
-            default=self._default_printer)
+            self.printer_font_device, default=self._default_printer)
         if result is None:
             return
-        address, port, dpi = result
+        address, port, dpi, font_device = result
         old_dpi = self.printer_dpi
         self.printer_address, self.printer_port, self.printer_dpi = address, port, dpi
+        self._set_font_device(font_device)
         self.update_status(f"Printing to {self.printer_address}:{self.printer_port} for this session")
         if dpi != old_dpi:
             note = self._offer_dpi_rescale()
@@ -781,7 +805,8 @@ class ZPLDesignerWindow(QMainWindow):
             self.renderer.register_font(name, path)
 
         dialog = qt_dialogs.PrinterFontsDialog(
-            self, self.printer_address, self.printer_port, on_uploaded)
+            self, self.printer_address, self.printer_port, on_uploaded,
+            self.printer_font_device)
         dialog.exec_()
 
     def on_printer_graphics(self):
@@ -830,6 +855,7 @@ class ZPLDesignerWindow(QMainWindow):
             return
         document = Document(*self._inches_to_dots(*self.label_inches),
                             dpi=self.printer_dpi)
+        document.font_device = self.printer_font_device
         self.canvas.set_document(document)
         self.current_filepath = None
         self.unsaved_changes = False
@@ -951,6 +977,7 @@ class ZPLDesignerWindow(QMainWindow):
         try:
             content, code_page = zpl_parser.read_file(filepath)
             document, loaded_dpi = zpl_parser.parse_zpl(content, self.renderer)
+            document.font_device = self.printer_font_device
             self.canvas.set_document(document)
             self.current_filepath = filepath
             self._update_title()
@@ -1092,6 +1119,12 @@ class ZPLDesignerWindow(QMainWindow):
             dpi = parser.getint('printer', 'dpi', fallback=self.printer_dpi)
             if dpi > 0:
                 self.printer_dpi = dpi
+            # Ignored unless it names a drive that exists: a hand-edited file
+            # must not point every upload at one the printer has not got.
+            font_device = parser.get('printer', 'font_device',
+                                     fallback=self.printer_font_device).strip().upper()
+            if font_device in zpl_fonts.DEVICES:
+                self.printer_font_device = font_device
             if parser.has_section('window'):
                 self.saved_geometry = tuple(
                     parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
@@ -1132,6 +1165,7 @@ class ZPLDesignerWindow(QMainWindow):
                 parser.set('printer', 'address', self._default_printer[0])
                 parser.set('printer', 'port', str(self._default_printer[1]))
                 parser.set('printer', 'dpi', str(self._default_printer[2]))
+                parser.set('printer', 'font_device', self._default_printer[3])
                 if not parser.has_section('label'):
                     parser.add_section('label')
                 # Inches, not dots: dots only mean a size once a resolution is

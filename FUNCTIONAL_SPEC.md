@@ -1161,9 +1161,9 @@ with whichever printer will render it.
 | Purpose | Payload | Reply |
 |---|---|---|
 | Print | the ZPL document | none |
-| List fonts | `^XA^HWE:*.TTF^XZ` | object names, parsed as `<name>.TTF` (up to 8 chars of `A-Z 0-9 _ -`) |
-| Upload font | `~DYE:<NAME>,A,TT,<size>,<size>,` followed by the raw font file bytes | none |
-| Delete font | `^XA^ID E:<NAME>.TTF^FS^XZ` (no space) | none |
+| List fonts | `^XA^HW<d>:*.TTF^XZ`, once per drive (`R:`/`E:`/`B:`/`A:`) | object names, parsed as `<name>.TTF` (up to 8 chars of `A-Z 0-9 _ -`), kept as `<d>:<NAME>.TTF` |
+| Upload font | `~DY<d>:<NAME>,A,TT,<size>,<size>,` followed by the raw font file bytes | none |
+| Delete font | `^XA^ID <d>:<NAME>.TTF^FS^XZ` (no space) | none |
 | Query resolution | `~HI` | model, firmware and head resolution in dots per mm |
 
 Reads use a 5 s timeout to first data, then a short 0.5 s timeout between
@@ -1193,7 +1193,9 @@ substitute a different font for a name that is not installed.
 
 ### 10.2 Printer object names
 
-A font stored on the printer is `E:<NAME>.TTF` where `<NAME>` is derived from
+A font stored on the printer is `<device>:<NAME>.TTF`. The device is the
+**Font memory** setting (§10.4.1) for a font this designer assigns, and
+whatever the file said for a font a loaded label named. `<NAME>` is derived from
 the font's filename: uppercased, non-ASCII dropped, every character outside
 `[A-Z0-9_-]` removed, truncated to **8 characters**. Empty results become
 `FONT`. Any character outside that set would corrupt the `~DY` header and every
@@ -1230,24 +1232,56 @@ printer only has the one object.
 Fonts are recorded when chosen and uploaded only at print time, so picking a
 font never blocks on the network.
 
-Before printing, collect the object names the label uses. If none (built-in
-fonts only), print. Otherwise ask the printer what it has and compare:
+Before printing, collect the font objects the label uses — as full
+`<d>:<NAME>.TTF` specs, not bare names, since the same name on two drives is
+two objects and only the one a `^A@` actually names will be used. If none
+(built-in fonts only), print. Otherwise ask the printer what it has and
+compare:
 
 | Situation | Prompt | Buttons |
 |---|---|---|
 | Printer did not answer | "The printer could not be asked which fonts it has." | Cancel (default), Print Anyway |
-| Fonts missing, source files known | Lists the missing `E:NAME.TTF` objects | Cancel, Print Anyway, **Upload & Print** (default) |
+| Fonts missing, source files known | Lists the missing `<d>:NAME.TTF` objects, naming the drive each is wanted on | Cancel, Print Anyway, **Upload & Print** (default) |
 | Fonts missing, source unknown (loaded from a `.zpl`) | Same, each marked "(source file unknown)" | Cancel, Print Anyway |
 | Nothing missing | — | prints |
 
-"Upload & Print" uploads each font it can, then prints; a failed upload aborts.
+"Upload & Print" uploads each font it can to the drive its own `^A@` names —
+not all to one — then prints; a failed upload aborts. A font the printer holds
+on a *different* drive from the one the label names counts as missing: the
+printer would not find it either, and would fall back to a substitute.
 
 ### 10.4 Printer font manager
 
-Lists the font objects on the printer, with Upload… (choose an installed
-family), Delete (the selected object) and Refresh. When the printer is
+Lists the font objects on the printer across `R:`/`E:`/`B:`/`A:`, each with its
+memory type in a second column (§10.5's naming), with Upload… (choose an
+installed family, then which memory to put it on), Delete (the selected
+object, from the drive that row is on) and Refresh. When the printer is
 unreachable it says so and disables Delete rather than showing an empty list as
-if the printer had no fonts.
+if the printer had no fonts. `Z:` is not offered, for the reason Graphics does
+not offer it either: `~DY` cannot write read-only factory content and `^ID`
+will not delete it.
+
+Upload… opens on the **Font memory** setting (§10.4.1) but is not bound to it —
+this is a manager, the same way Printer Graphics can store to any drive. A font
+put somewhere other than the setting serves labels that already name that
+drive, not ones this designer writes itself.
+
+#### 10.4.1 Font memory
+
+**Printer Settings** (and Default Printer) carry a **Font memory** choice
+alongside address, port and DPI: which memory a font *this app assigns* is
+written to and uploaded to. It is a printer setting rather than a per-element
+one because which memory a printer keeps its fonts in is a property of the
+printer being deployed to, not of one field on one label — and a label that
+genuinely mixes drives can only arrive by being loaded, in which case each
+element already carries its own path (§10.2).
+
+It is persisted with the other printer settings and **not** written into the
+`.zpl`: a saved file already records the answer concretely in each `^A@`. A
+value naming a drive outside `R:`/`E:`/`B:`/`A:` is ignored on load rather than
+used, so a hand-edited settings file cannot point every upload at a drive the
+printer has not got. Changing it moves every font this designer assigned in the
+open label at once, and leaves loaded paths alone.
 
 ### 10.5 Printer object manager
 
@@ -2024,15 +2058,20 @@ rather than requirements:
   performs the real exchanges instead — `~DG` for Store, `^HG` for Retrieve,
   `^ID` for Delete — directly against the printer, just never triggered by
   opening a file.
-- **A font's `^A@` path round-trips, but a font is still only ever uploaded
-  to `E:`.** The path a file wrote is carried back out verbatim (§10.2), so a
-  label naming `B:CYRI_UB.FNT` saves as that and not as `E:CYRI_UB.TTF`. What
-  that does *not* buy: **Printer → Fonts…** uploads, lists and deletes on `E:`
-  alone, and the missing-font prompt (§10.3) names a font it would upload as
-  `E:<NAME>.TTF` whatever drive the label named — a font read from a file has
-  no local source to upload anyway, so it is only ever reported as missing.
-  Reassigning an element's font in the designer replaces the carried path with
-  `E:<NAME>.TTF`, since the new font is one this app would upload.
+- **Which memory a font goes to is one printer setting, not a choice per text
+  element.** Font memory (§10.4.1) decides where every font this designer
+  assigns is written and uploaded; there is no per-element control, because a
+  label that genuinely mixes drives can only arrive by being loaded and those
+  elements already carry their own paths. An element's own path always wins
+  over the setting, so changing it moves the assigned fonts and leaves the
+  loaded ones where their file put them. The setting is not saved in the
+  `.zpl`: it describes the printer, not the label, and the saved `^A@` already
+  says where each font is wanted.
+- **A font read from a file can be reported missing but never uploaded.** It
+  has no local source (§10.2), so `Upload & Print` can only send the fonts this
+  machine can still find, whatever drive they are wanted on. Reassigning such
+  an element's font in the designer drops the carried path and the new font
+  follows the setting like any other.
 - **`^A@`'s carry-over is not implemented.** The manual says an `^A@` naming no
   font keeps the one the previous `^A@` named; here it names none, and the
   field falls back to `^CF`'s font as any other unnamed field does. Such a

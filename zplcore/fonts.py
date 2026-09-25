@@ -14,9 +14,17 @@ from typing import Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 from PIL import ImageFont
 
 from . import printer_io
+from .graphic_store import DEVICES
 
-# Fonts live in the printer's E: memory as 8.3 TrueType objects
-FONT_DEVICE = 'E:'
+# Fonts are 8.3 TrueType objects, and ~DY can write one to any of the four
+# devices DEVICES lists - the same four Graphics offers, and for the same
+# reason Z: is not among them: it is read-only factory content ~DY cannot
+# write and ^ID will not delete. E: is the default because that is where this
+# app has always put them, and the value every caller falls back to when no
+# device is chosen; ZPL's own default for an omitted one is R:, which is not
+# the same thing and is never relied on here - every command below spells the
+# device out.
+DEFAULT_FONT_DEVICE = 'E'
 FONT_EXTENSION = '.TTF'
 MAX_NAME_LEN = 8
 
@@ -318,44 +326,95 @@ def printer_font_name(font_path: str, taken: Iterable[str] = ()) -> str:
     return name
 
 
-def printer_font_path(name: str) -> str:
+def printer_font_path(name: str, device: str = DEFAULT_FONT_DEVICE) -> str:
     """Full printer path for a font object, e.g. E:DEJAVUSA.TTF."""
-    return f"{FONT_DEVICE}{name}{FONT_EXTENSION}"
+    return f"{device}:{name}{FONT_EXTENSION}"
 
 
 # --- printer I/O ------------------------------------------------------------
 
-def build_font_upload(font_path: str, name: str) -> bytes:
-    """The ~DY payload that stores a font file on the printer."""
+def split_font_spec(spec: str) -> Tuple[str, str]:
+    """A 'd:NAME.TTF' spec as (device, name), for a caller that has to hand
+    the two to upload_font or delete_printer_font separately.
+
+    Its own function rather than graphic_store.split_device_spec, which
+    defaults a spec with no device to 'R' and its extension to 'GRF': both
+    are right for a graphic and wrong here, where a missing device should
+    mean the font default rather than some other drive.
+    """
+    device, _, rest = (spec or '').partition(':')
+    if not rest:
+        device, rest = DEFAULT_FONT_DEVICE, (spec or '')
+    return device.upper() or DEFAULT_FONT_DEVICE, rest.rsplit('.', 1)[0]
+
+
+def build_font_upload(font_path: str, name: str,
+                      device: str = DEFAULT_FONT_DEVICE) -> bytes:
+    """The ~DY payload that stores a font file on the printer.
+
+    ~DYd:f,b,x,t,w,data - only `d` is chosen here. `b` and `x` are left at
+    the A,TT this app has always sent, which real hardware accepts, though
+    the manual's own tables give B for "uncompressed (.TTE, .TTF, binary)"
+    and T for TrueType and list no TT at all. Changing them is a question
+    for a printer, not for a reading of the manual, so it is not changed
+    here on the way past.
+    """
     data = Path(font_path).read_bytes()
-    header = f"~DY{FONT_DEVICE}{name},A,TT,{len(data)},{len(data)},".encode('ascii')
+    header = f"~DY{device}:{name},A,TT,{len(data)},{len(data)},".encode('ascii')
     return header + data
 
 
 def upload_font(address: str, port: int, font_path: str, name: str,
-                timeout: float = 30, cancel=None) -> None:
-    """Store a local font file on the printer as E:<name>.TTF."""
-    printer_io.send(address, port, build_font_upload(font_path, name), timeout,
-                    cancel=cancel)
+                device: str = DEFAULT_FONT_DEVICE, timeout: float = 30,
+                cancel=None) -> None:
+    """Store a local font file on the printer as <device>:<name>.TTF."""
+    printer_io.send(address, port, build_font_upload(font_path, name, device),
+                    timeout, cancel=cancel)
 
 
 def query_printer_fonts(address: str, port: int, timeout: float = 5,
                         cancel=None) -> Optional[Set[str]]:
-    """Font object names present on the printer, or None if it did not answer.
+    """Every font object on the printer as 'd:NAME.TTF', across all of
+    DEVICES, or None if it could not be asked.
+
+    Specs rather than bare names, because the same name on two devices is two
+    objects and only one of them is the one a label asked for: a ^A@ naming
+    E:MYFONT.TTF is not satisfied by an R:MYFONT.TTF, and a check keyed on
+    the name alone would call it present and let the print fall back to a
+    substitute.
 
     None and an empty set mean different things and callers rely on the
     difference: an empty set is "the printer has no fonts", None is "the
     printer could not be asked" - unreachable, or no ^HW support.
+
+    Which of the two an answer is cannot be decided on the first device
+    alone here, the way query_printer_graphics decides it. That rule was
+    safe while this function asked E: and nothing else; asking every device
+    puts R: first, and a printer with nothing on R: - or no R: at all - is
+    not an unreachable printer. So a failure to connect on the very first
+    attempt is still decisive, because that is the connection failing rather
+    than a drive being empty, but silence is only unreachable when *no*
+    device said anything at all. A drive that does answer, even to list
+    nothing, is proof the printer is there and understood the question.
     """
-    try:
-        reply = printer_io.send(address, port, b'^XA^HWE:*.TTF^XZ', timeout,
-                                read_reply=True, cancel=cancel)
-    except OSError:
-        return None
-    if not reply:
-        return None
-    text = reply.decode('ascii', 'replace')
-    return {m.group(1).upper() for m in _OBJECT_NAME.finditer(text)}
+    specs: Set[str] = set()
+    answered = False
+    for index, device in enumerate(DEVICES):
+        payload = f'^XA^HW{device}:*.TTF^XZ'.encode('ascii')
+        try:
+            reply = printer_io.send(address, port, payload, timeout,
+                                    read_reply=True, cancel=cancel)
+        except OSError:
+            if index == 0:
+                return None  # the connection itself failed
+            continue
+        if not reply:
+            continue
+        answered = True
+        text = reply.decode('ascii', 'replace')
+        for m in _OBJECT_NAME.finditer(text):
+            specs.add(f"{device}:{m.group(1).upper()}{FONT_EXTENSION}")
+    return specs if answered else None
 
 
 def query_resident_fonts(address: str, port: int, timeout: float = 5,
@@ -404,9 +463,15 @@ def query_printer_dpi(address: str, port: int, timeout: float = 5,
 
 
 def delete_printer_font(address: str, port: int, name: str,
+                        device: str = DEFAULT_FONT_DEVICE,
                         timeout: float = 10, cancel=None) -> None:
-    """Delete a font object from the printer."""
-    payload = f"^XA^ID{printer_font_path(name)}^FS^XZ".encode('ascii')
+    """Delete a font object from the printer.
+
+    Name and device, not a d:o.x spec: graphic_store.split_device_spec would
+    read a bare name as R:, and a delete aimed at the wrong device is one
+    that quietly removes nothing, or the wrong thing.
+    """
+    payload = f"^XA^ID{printer_font_path(name, device)}^FS^XZ".encode('ascii')
     printer_io.send(address, port, payload, timeout, cancel=cancel)
 
 

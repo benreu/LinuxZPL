@@ -409,7 +409,8 @@ class TextElement(DesignElement):
                           max(self.DEFAULT_MAX_LINES, len(lines)))
 
     def to_zpl(self, printer_font_name: Optional[str] = None,
-               offset=(0, 0)) -> str:
+               offset=(0, 0),
+               font_device: str = zpl_fonts.DEFAULT_FONT_DEVICE) -> str:
         """Convert to ZPL commands."""
         effective_font = self.printer_font_name or printer_font_name
         turn = self.orientation or 'N'
@@ -420,9 +421,11 @@ class TextElement(DesignElement):
             # .TTE rather than a .TTF, was rewritten into a different object
             # - silently, and then saved. Guarded on this element having a
             # font of its own: the path belongs to that name, not to the
-            # document-wide font this falls back to, which is always E:.
+            # document-wide font this falls back to, which goes wherever
+            # font_device says (Document.font_device, the Font memory
+            # setting).
             path = (self.printer_font_spec if self.printer_font_name
-                    else None) or f"E:{effective_font}.TTF"
+                    else None) or f"{font_device}:{effective_font}.TTF"
             zpl += f"^A@{turn},{self.font_height},{self.font_width},{path}\n"
         else:
             zpl += f"^A{self.font_code}{turn},{self.font_height},{self.font_width}\n"
@@ -1284,6 +1287,14 @@ class Document:
         self.label_width = label_width
         self.label_height = label_height
         self.dpi = dpi
+        # Which printer memory a font *this app assigns* is written to and
+        # uploaded to - the Font memory printer setting, which the frontends
+        # put here. Deliberately not serialised into the .zpl: it is a
+        # property of the printer being deployed to, not of the label, and a
+        # saved file already records the answer concretely in each ^A@. An
+        # element that came from a file carries its own path
+        # (TextElement.printer_font_spec) and that wins over this.
+        self.font_device = zpl_fonts.DEFAULT_FONT_DEVICE
 
         # A stored format (^DF) names where the printer keeps it; a recall
         # (^XF) names one to merge data into. A file can be either, and the
@@ -1980,18 +1991,32 @@ class Document:
                 if el is not exclude and getattr(el, 'printer_font_name', None)}
 
     def font_sources(self) -> dict:
-        """Printer font name -> local .ttf path, for fonts this label uses.
+        """Printer font spec ('d:NAME.TTF') -> local .ttf path, for fonts
+        this label uses.
+
+        Keyed on the whole spec rather than the bare name: the same name on
+        two devices is two objects, and only the one a ^A@ actually names
+        will be used - so a check keyed on the name alone would call a font
+        present when it is sitting on the wrong drive, and let the print fall
+        back to a substitute.
 
         A font loaded from a .zpl has no local file, so its value is None and it
         cannot be uploaded - only reported as missing.
         """
+        def spec_for(element, name):
+            return (getattr(element, 'printer_font_spec', None)
+                    or f"{self.font_device}:{name}{zpl_fonts.FONT_EXTENSION}")
+
         sources = {}
         for el in self.elements:
             name = getattr(el, 'printer_font_name', None)
             if name:
-                sources.setdefault(name, getattr(el, 'font_path', None))
+                sources.setdefault(spec_for(el, name),
+                                   getattr(el, 'font_path', None))
         if self.printer_font_name:
-            sources.setdefault(self.printer_font_name, self.font_path)
+            sources.setdefault(
+                f"{self.font_device}:{self.printer_font_name}"
+                f"{zpl_fonts.FONT_EXTENSION}", self.font_path)
         return sources
 
     # --- serialisation -------------------------------------------------------
@@ -2076,12 +2101,16 @@ class Document:
         zpl = ""
         groups = self._group_numbers()
         for element in self.elements:
-            if self.printer_font_name and element.element_type == 'text':
+            if element.element_type == 'text':
+                # By keyword throughout: a text element's first parameter is
+                # its printer font name, and a positional offset landed there
+                # instead. The document-wide font name is only passed when
+                # there is one; the device always is, since an element with a
+                # font of its own still needs somewhere to put it.
                 body = element.to_zpl(printer_font_name=self.printer_font_name,
-                                      offset=offset)
+                                      offset=offset,
+                                      font_device=self.font_device)
             else:
-                # By keyword: a text element's first parameter is its printer
-                # font name, and a positional offset landed there instead.
                 body = element.to_zpl(offset=offset)
             # The marker flags the next field the parser builds, so it goes
             # only in front of a field that will be there - an element with

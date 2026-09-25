@@ -99,6 +99,23 @@ def _buttons(dialog, accept_text="OK"):
     return box
 
 
+def _font_device_combo(device: str) -> QComboBox:
+    """Which printer memory a font goes to, offered the same way wherever it
+    is chosen - Printer Settings, and the Fonts manager's own Upload.
+
+    The same STORED_GRAPHIC_DEVICES the Store Graphic dialog offers, so a
+    memory type reads identically everywhere ("E: (Flash)"), and Z: is absent
+    for the same reason it is there: ~DY cannot write it and ^ID will not
+    delete it.
+    """
+    combo = QComboBox()
+    for label, code in STORED_GRAPHIC_DEVICES:
+        combo.addItem(label, code)
+    index = combo.findData((device or zpl_fonts.DEFAULT_FONT_DEVICE).upper())
+    combo.setCurrentIndex(index if index >= 0 else 0)
+    return combo
+
+
 def _dpi_combo(dpi: int) -> QComboBox:
     """The resolution choice, offered the same way wherever it is edited.
 
@@ -1174,6 +1191,30 @@ def store_graphic_dialog(parent) -> Optional[str]:
     return f"{device_combo.currentData()}:{object_name}.{extension}"
 
 
+def font_device_dialog(parent, default_device: str) -> Optional[str]:
+    """Which memory to upload a font to. None if cancelled.
+
+    Asked after the family, not before, so the question a user came to answer
+    comes first. Opens on the Font memory printer setting, since that is
+    where the designer's own ^A@ will point - picking another here is a
+    manager's freedom, the same one Store Graphic has, and puts the font
+    somewhere this label will not name on its own.
+    """
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Upload Font To")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    combo = _font_device_combo(default_device)
+    form.addRow("Memory:", combo)
+
+    layout.addWidget(_buttons(dialog))
+    if dialog.exec_() != QDialog.Accepted:
+        return None
+    return combo.currentData()
+
+
 def store_object_dialog(parent, default_name: str, default_ext: str):
     """Ask for the name and extension an arbitrary local file should be
     stored under on the printer's E: drive - the only device
@@ -1331,12 +1372,18 @@ def label_size_dialog(parent, document: Document, dpi: int):
 
 
 def printer_settings_dialog(parent, address: str, port: int, dpi: int,
+                            font_device: str = None,
                             title: str = "Printer Settings", default=None):
-    """New (address, port, dpi), or None if cancelled.
+    """New (address, port, dpi, font_device), or None if cancelled.
 
-    `default`, when given, is the persisted (address, port, dpi) to offer via
-    a "Use Default" button - for the session-only picker, which is opened
-    with whatever printer is currently in effect rather than the default.
+    `default`, when given, is the persisted (address, port, dpi, font_device)
+    to offer via a "Use Default" button - for the session-only picker, which
+    is opened with whatever printer is currently in effect rather than the
+    default.
+
+    Font memory belongs here rather than beside each text element: which
+    memory a printer keeps its fonts in is a property of the printer being
+    deployed to, not of one field on one label.
     """
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
@@ -1354,6 +1401,9 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
 
     dpi_combo = _dpi_combo(dpi)
     form.addRow("DPI:", dpi_combo)
+
+    font_device_combo = _font_device_combo(font_device)
+    form.addRow("Font memory:", font_device_combo)
 
     test_row = QHBoxLayout()
     test_btn = QPushButton("Test Connection")
@@ -1417,7 +1467,10 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
         layout.addWidget(default_btn)
 
         def on_use_default():
-            def_address, def_port, def_dpi = default
+            def_address, def_port, def_dpi, def_font_device = default
+            idx = font_device_combo.findData(def_font_device)
+            if idx >= 0:
+                font_device_combo.setCurrentIndex(idx)
             address_edit.setText(def_address)
             port_spin.setValue(def_port)
             if def_dpi in zpl_fonts.SUPPORTED_DPI:
@@ -1441,20 +1494,26 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
     if not new_address:
         show_error(parent, "Printer address cannot be empty.")
         return None
-    return new_address, port_spin.value(), _dpi_from(dpi_combo, dpi)
+    return (new_address, port_spin.value(), _dpi_from(dpi_combo, dpi),
+            font_device_combo.currentData())
 
 
 class PrinterFontsDialog(QDialog):
     """The fonts stored on the printer, with upload, delete and refresh, plus
     a read-only reference list of the printer's built-in resident fonts."""
 
-    def __init__(self, parent, address: str, port: int, on_uploaded=None):
+    def __init__(self, parent, address: str, port: int, on_uploaded=None,
+                 font_device: str = zpl_fonts.DEFAULT_FONT_DEVICE):
         super().__init__(parent)
         self.setWindowTitle("Printer Fonts")
-        self.resize(420, 520)
+        self.resize(480, 520)
         self._address, self._port = address, port
         self._on_uploaded = on_uploaded
-        self._font_names = []
+        # Where Upload... offers to put a font first: the Font memory printer
+        # setting. Only a default - this is a manager, so it can put one on
+        # any drive, the same way Printer Graphics can.
+        self._font_device = font_device or zpl_fonts.DEFAULT_FONT_DEVICE
+        self._font_specs = []
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("<b>Uploaded Fonts</b>"))
@@ -1462,7 +1521,14 @@ class PrinterFontsDialog(QDialog):
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
 
-        self._list = QListWidget()
+        # Font, then the memory its drive letter names - the same second
+        # column Printer Objects has, and for the same reason: a bare "B:"
+        # says nothing to a reader who has not memorised the ZPL manual's
+        # letter designations. Column 0 stays the full d:NAME.TTF spec.
+        self._list = QTreeWidget()
+        self._list.setHeaderLabels(["Font", "Memory"])
+        self._list.setRootIsDecorated(False)
+        self._list.setUniformRowHeights(True)
         layout.addWidget(self._list, 1)
 
         self._preview = QLabel()
@@ -1496,7 +1562,7 @@ class PrinterFontsDialog(QDialog):
         self._upload_btn.clicked.connect(self._on_upload)
         self._delete_btn.clicked.connect(self._on_delete)
         self._refresh_btn.clicked.connect(self.refresh)
-        self._list.currentRowChanged.connect(self._update_preview)
+        self._list.currentItemChanged.connect(self._update_preview)
         self.refresh()
 
     def reject(self):
@@ -1508,7 +1574,7 @@ class PrinterFontsDialog(QDialog):
         self._list.clear()
         self._preview.clear()
         self._resident_list.clear()
-        self._font_names = []
+        self._font_specs = []
         self._delete_btn.setEnabled(False)
         self._status.setText(f"Listing fonts on {self._address}...")
         self._resident_status.clear()
@@ -1532,9 +1598,10 @@ class PrinterFontsDialog(QDialog):
                 self._status.setText(f"Could not reach the printer at "
                                      f"{self._address}:{self._port}.")
             else:
-                self._font_names = sorted(fonts)
-                for name in self._font_names:
-                    self._list.addItem(zpl_fonts.printer_font_path(name))
+                self._font_specs = sorted(fonts)
+                for spec in self._font_specs:
+                    QTreeWidgetItem(self._list,
+                                    [spec, graphic_store.device_name(spec)])
                 self._delete_btn.setEnabled(bool(fonts))
                 self._status.setText(f"{len(fonts)} font(s) on {self._address}"
                                      if fonts else "No fonts stored on the printer.")
@@ -1561,11 +1628,12 @@ class PrinterFontsDialog(QDialog):
                 label += " — detected on this printer"
             self._resident_list.addItem(label)
 
-    def _update_preview(self, row: int):
-        if not (0 <= row < len(self._font_names)):
+    def _update_preview(self, current=None, _previous=None):
+        item = current if current is not None else self._list.currentItem()
+        if item is None:
             self._preview.clear()
             return
-        name = self._font_names[row]
+        _device, name = zpl_fonts.split_font_spec(item.text(0))
         path = zpl_fonts.file_for_printer_name(name)
         if path:
             self._show_preview(path)
@@ -1591,8 +1659,11 @@ class PrinterFontsDialog(QDialog):
         family, path = choose_font_family(self, title="Upload Font to Printer")
         if not path:
             return
+        device = font_device_dialog(self, self._font_device)
+        if device is None:
+            return
         name = zpl_fonts.printer_font_name(path)
-        shown = zpl_fonts.printer_font_path(name)
+        shown = zpl_fonts.printer_font_path(name, device)
         self._status.setText(f"Uploading {shown}...")
 
         def done(_result, error):
@@ -1607,14 +1678,15 @@ class PrinterFontsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: zpl_fonts.upload_font(
-            self._address, self._port, path, name, cancel=cancel), done)
+            self._address, self._port, path, name, device, cancel=cancel), done)
 
     def _on_delete(self):
         item = self._list.currentItem()
         if item is None:
             return
-        shown = item.text()
-        name = Path(shown).stem.split(':')[-1]
+        shown = item.text(0)
+        # The drive the selected row is actually on, not an assumed E:.
+        device, name = zpl_fonts.split_font_spec(shown)
         self._status.setText(f"Deleting {shown}...")
 
         def done(_result, error):
@@ -1627,7 +1699,7 @@ class PrinterFontsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: zpl_fonts.delete_printer_font(
-            self._address, self._port, name, cancel=cancel), done)
+            self._address, self._port, name, device, cancel=cancel), done)
 
 
 class PrinterGraphicsDialog(QDialog):

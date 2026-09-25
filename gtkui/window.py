@@ -180,14 +180,19 @@ def _dpi_from(combo: Gtk.ComboBoxText, fallback: int) -> int:
     return int(text) if text and text.isdigit() else fallback
 
 
-def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
-    """Address/Port/DPI picker with Test Connection.
+def _printer_picker_dialog(parent, title, address, port, dpi,
+                           font_device=None, default=None):
+    """Address/Port/DPI/Font memory picker with Test Connection.
 
     Shared by Default Printer and the session-only Printer Settings dialog, so
     the two can't drift apart. `default`, when given, is the persisted
-    (address, port, dpi) offered via a "Use Default" button.
+    (address, port, dpi, font_device) offered via a "Use Default" button.
 
-    Returns (address, port, dpi), or None if cancelled.
+    Font memory belongs here rather than beside each text element: which
+    memory a printer keeps its fonts in is a property of the printer being
+    deployed to, not of one field on one label.
+
+    Returns (address, port, dpi, font_device), or None if cancelled.
     """
     dialog = Gtk.Dialog(title=title, parent=parent, flags=0)
     dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
@@ -224,6 +229,15 @@ def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
     # Printer resolution
     dpi_combo = _dpi_combo(dpi)
     make_row("DPI:", dpi_combo)
+
+    # Where a font this app assigns is written and uploaded. The same
+    # STORED_GRAPHIC_DEVICES the Store Graphic dialog offers, so a memory type
+    # reads identically everywhere, and Z: is absent for the reason it is
+    # there: ~DY cannot write it and ^ID will not delete it.
+    font_device_combo, font_device_codes = _make_combo(
+        STORED_GRAPHIC_DEVICES,
+        (font_device or zpl_fonts.DEFAULT_FONT_DEVICE).upper())
+    make_row("Font memory:", font_device_combo)
 
     def set_dpi_value(value):
         try:
@@ -295,10 +309,13 @@ def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
 
     if default is not None:
         def on_use_default(btn):
-            def_address, def_port, def_dpi = default
+            def_address, def_port, def_dpi, def_font_device = default
             address_entry.set_text(def_address)
             port_spin.set_value(def_port)
             set_dpi_value(def_dpi)
+            if def_font_device in font_device_codes:
+                font_device_combo.set_active(
+                    font_device_codes.index(def_font_device))
 
         default_btn = Gtk.Button(label="Use Default")
         default_btn.connect("clicked", on_use_default)
@@ -315,7 +332,9 @@ def _printer_picker_dialog(parent, title, address, port, dpi, default=None):
             dialog.destroy()
             parent.show_error_dialog("Printer address cannot be empty.")
             return None
-        result = (new_address, int(port_spin.get_value()), _dpi_from(dpi_combo, dpi))
+        result = (new_address, int(port_spin.get_value()),
+                  _dpi_from(dpi_combo, dpi),
+                  font_device_codes[font_device_combo.get_active()])
     dialog.destroy()
     return result
 
@@ -352,6 +371,10 @@ class ZPLViewerWindow(Gtk.Window):
         self.printer_address = DEFAULT_PRINTER_ADDRESS
         self.printer_port = DEFAULT_PRINTER_PORT
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
+        # Which printer memory this app's own fonts are written to and
+        # uploaded to - see Document.font_device, which every document is
+        # given a copy of.
+        self.printer_font_device = zpl_fonts.DEFAULT_FONT_DEVICE
         # The one non-modal printer window - see on_printer_console_clicked.
         self.printer_console_window = None
         # The size last chosen in Label Settings, also persisted. Held in
@@ -363,7 +386,8 @@ class ZPLViewerWindow(Gtk.Window):
         # The persisted printer, snapshotted so a session-only override
         # (Printer Settings) can offer "Use Default" without re-reading the
         # settings file.
-        self._default_printer = (self.printer_address, self.printer_port, self.printer_dpi)
+        self._default_printer = (self.printer_address, self.printer_port,
+                                 self.printer_dpi, self.printer_font_device)
         self._place_on_screen()
         # Label size in dots, which depends on both settings above
         self.label_width, self.label_height = self.inches_to_dots(*self.label_inches)
@@ -752,6 +776,7 @@ class ZPLViewerWindow(Gtk.Window):
                                          label_width=self.label_width, 
                                          label_height=self.label_height)
         self.design_canvas.dpi = self.printer_dpi
+        self.design_canvas.document.font_device = self.printer_font_device
         # The element editors are non-modal, so more than one can be on screen
         # at once. One per element, keyed by id: an open editor holds its
         # element, so the id cannot be reused while it is registered here.
@@ -932,6 +957,7 @@ class ZPLViewerWindow(Gtk.Window):
             return
         document = Document(*self.inches_to_dots(*self.label_inches))
         document.dpi = self.printer_dpi
+        document.font_device = self.printer_font_device
         self.design_canvas.set_document(document)
         self.label_width = document.label_width
         self.label_height = document.label_height
@@ -1134,6 +1160,7 @@ class ZPLViewerWindow(Gtk.Window):
             content, code_page = zpl_parser.read_file(filepath)
 
             document, loaded_dpi = zpl_parser.parse_zpl(content, self.renderer)
+            document.font_device = self.printer_font_device
             self.design_canvas.set_document(document)
             self.current_zpl_content = content
             self.current_filepath = filepath
@@ -1304,7 +1331,7 @@ class ZPLViewerWindow(Gtk.Window):
         """Show the fonts stored on the printer, and add or remove them."""
         dialog = Gtk.Dialog(title="Printer Fonts", parent=self, flags=0)
         dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
-        dialog.set_default_size(420, 560)
+        dialog.set_default_size(480, 560)
 
         content = dialog.get_content_area()
         content.set_spacing(8)
@@ -1320,10 +1347,18 @@ class ZPLViewerWindow(Gtk.Window):
         status.set_line_wrap(True)
         content.pack_start(status, False, False, 0)
 
-        font_names = []
-        store = Gtk.ListStore(str)
+        # Font, then the memory its drive letter names - the same second
+        # column Printer Objects has, and for the same reason: a bare "B:"
+        # says nothing to a reader who has not memorised the ZPL manual's
+        # letter designations. Column 0 stays the full d:NAME.TTF spec.
+        font_specs = []
+        store = Gtk.ListStore(str, str)
         view = Gtk.TreeView(model=store)
-        view.append_column(Gtk.TreeViewColumn("Font", Gtk.CellRendererText(), text=0))
+        for title, index in (("Font", 0), ("Memory", 1)):
+            column = Gtk.TreeViewColumn(title, Gtk.CellRendererText(),
+                                        text=index)
+            column.set_resizable(True)
+            view.append_column(column)
         scroller = Gtk.ScrolledWindow()
         scroller.set_vexpand(True)
         scroller.add(view)
@@ -1394,11 +1429,8 @@ class ZPLViewerWindow(Gtk.Window):
             if treeiter is None:
                 preview.set_text("")
                 return
-            row = model_.get_path(treeiter).get_indices()[0]
-            if not (0 <= row < len(font_names)):
-                preview.set_text("")
-                return
-            name = font_names[row]
+            _device, name = zpl_fonts.split_font_spec(
+                model_.get_value(treeiter, 0))
             path = zpl_fonts.file_for_printer_name(name)
             if path:
                 show_preview(path)
@@ -1419,7 +1451,7 @@ class ZPLViewerWindow(Gtk.Window):
             store.clear()
             resident_store.clear()
             preview.set_text("")
-            font_names.clear()
+            font_specs.clear()
             delete_btn.set_sensitive(False)
             status.set_text(f"Listing fonts on {self.printer_address}...")
             resident_status.set_text("")
@@ -1441,9 +1473,9 @@ class ZPLViewerWindow(Gtk.Window):
                     status.set_text(f"Could not reach the printer at "
                                     f"{self.printer_address}:{self.printer_port}.")
                 else:
-                    font_names[:] = sorted(fonts)
-                    for name in font_names:
-                        store.append([zpl_fonts.printer_font_path(name)])
+                    font_specs[:] = sorted(fonts)
+                    for spec in font_specs:
+                        store.append([spec, graphic_store.device_name(spec)])
                     delete_btn.set_sensitive(bool(fonts))
                     status.set_text(f"{len(fonts)} font(s) on {self.printer_address}"
                                     if fonts else "No fonts stored on the printer.")
@@ -1468,8 +1500,11 @@ class ZPLViewerWindow(Gtk.Window):
             path = zpl_fonts.file_for_family(family) if family else None
             if not path:
                 return
+            device = self._ask_font_device(dialog)
+            if device is None:
+                return
             name = zpl_fonts.printer_font_name(path)
-            shown = zpl_fonts.printer_font_path(name)
+            shown = zpl_fonts.printer_font_path(name, device)
             status.set_text(f"Uploading {shown}...")
 
             def done(_result, error):
@@ -1483,7 +1518,7 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: zpl_fonts.upload_font(
-                self.printer_address, self.printer_port, path, name,
+                self.printer_address, self.printer_port, path, name, device,
                 cancel=cancel), done)
 
         def on_delete(_b):
@@ -1491,7 +1526,8 @@ class ZPLViewerWindow(Gtk.Window):
             if treeiter is None:
                 return
             shown = model[treeiter][0]
-            name = Path(shown).stem.split(':')[-1]
+            # The drive the selected row is actually on, not an assumed E:.
+            device, name = zpl_fonts.split_font_spec(shown)
             status.set_text(f"Deleting {shown}...")
 
             def done(_result, error):
@@ -1504,7 +1540,8 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: zpl_fonts.delete_printer_font(
-                self.printer_address, self.printer_port, name, cancel=cancel), done)
+                self.printer_address, self.printer_port, name, device,
+                cancel=cancel), done)
 
         upload_btn.connect("clicked", on_upload)
         delete_btn.connect("clicked", on_delete)
@@ -1515,6 +1552,36 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.run()
         busy.abandon()
         dialog.destroy()
+
+    def _ask_font_device(self, parent):
+        """Which memory to upload a font to. None if cancelled.
+
+        Asked after the family, not before, so the question a user came to
+        answer comes first. Opens on the Font memory printer setting, since
+        that is where the designer's own ^A@ will point - picking another
+        here is a manager's freedom, the same one Store Graphic has, and puts
+        the font somewhere this label will not name on its own.
+        """
+        dialog = Gtk.Dialog(title="Upload Font To", parent=parent, flags=0)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+        content = dialog.get_content_area()
+        content.set_spacing(4)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        combo, codes = _make_combo(STORED_GRAPHIC_DEVICES,
+                                   self.printer_font_device)
+        _make_row(content, "Memory:", combo)
+
+        content.show_all()
+        response = dialog.run()
+        device = codes[combo.get_active()] if response == Gtk.ResponseType.OK else None
+        dialog.destroy()
+        return device
 
     def _ask_device_spec(self, parent):
         """Prompt for device / name / extension. None if cancelled.
@@ -2263,6 +2330,13 @@ class ZPLViewerWindow(Gtk.Window):
             dpi = parser.getint('printer', 'dpi', fallback=self.printer_dpi)
             if dpi > 0:
                 self.printer_dpi = dpi
+            # Ignored unless it names a drive that exists: a hand-edited file
+            # must not point every upload at one the printer has not got.
+            font_device = parser.get(
+                'printer', 'font_device',
+                fallback=self.printer_font_device).strip().upper()
+            if font_device in zpl_fonts.DEVICES:
+                self.printer_font_device = font_device
             if parser.has_section('window'):
                 self.saved_geometry = tuple(
                     parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
@@ -2304,6 +2378,7 @@ class ZPLViewerWindow(Gtk.Window):
                 parser.set('printer', 'address', self._default_printer[0])
                 parser.set('printer', 'port', str(self._default_printer[1]))
                 parser.set('printer', 'dpi', str(self._default_printer[2]))
+                parser.set('printer', 'font_device', self._default_printer[3])
                 if not parser.has_section('label'):
                     parser.add_section('label')
                 # Inches, not dots: dots only mean a size once a resolution is
@@ -2334,15 +2409,19 @@ class ZPLViewerWindow(Gtk.Window):
         # Opened with the persisted default, not the printer currently in
         # effect: a session override (Printer Settings) must never leak into
         # this dialog and get re-saved as the new default just by clicking OK.
-        default_address, default_port, default_dpi = self._default_printer
+        (default_address, default_port, default_dpi,
+         default_font_device) = self._default_printer
         result = _printer_picker_dialog(
-            self, "Default Printer", default_address, default_port, default_dpi)
+            self, "Default Printer", default_address, default_port,
+            default_dpi, default_font_device)
         if result is None:
             return
-        self.printer_address, self.printer_port, new_dpi = result
+        self.printer_address, self.printer_port, new_dpi, font_device = result
         old_dpi = self.printer_dpi
         self.printer_dpi = new_dpi
-        self._default_printer = (self.printer_address, self.printer_port, self.printer_dpi)
+        self._set_font_device(font_device)
+        self._default_printer = (self.printer_address, self.printer_port,
+                                 self.printer_dpi, self.printer_font_device)
         self._save_settings()
         self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
         if self.printer_dpi != old_dpi:
@@ -2355,6 +2434,20 @@ class ZPLViewerWindow(Gtk.Window):
             if note:
                 self.on_canvas_changed()
                 self.update_status(note[0].upper() + note[1:])
+
+    def _set_font_device(self, device: str):
+        """Adopt a new Font memory setting, here and on the open document.
+
+        The document holds its own copy (Document.font_device), so changing
+        the setting has to reach it or the label would go on writing ^A@ at
+        the old drive. Elements that carry a path of their own - anything
+        loaded from a file - are unaffected by design, so this moves only the
+        fonts this app assigned.
+        """
+        self.printer_font_device = device
+        document = getattr(self.design_canvas, 'document', None)
+        if document is not None:
+            document.font_device = device
 
     def on_local_fonts_clicked(self, widget):
         """Show what the directory-scan font fallback sees, and whether it's
@@ -2428,12 +2521,14 @@ class ZPLViewerWindow(Gtk.Window):
         """Set the printer for this session only, without touching the persisted default."""
         result = _printer_picker_dialog(
             self, "Printer Settings", self.printer_address, self.printer_port,
-            self.printer_dpi, default=self._default_printer)
+            self.printer_dpi, self.printer_font_device,
+            default=self._default_printer)
         if result is None:
             return
-        self.printer_address, self.printer_port, new_dpi = result
+        self.printer_address, self.printer_port, new_dpi, font_device = result
         old_dpi = self.printer_dpi
         self.printer_dpi = new_dpi
+        self._set_font_device(font_device)
         self.update_status(
             f"Printing to {self.printer_address}:{self.printer_port} for this session")
         if self.printer_dpi != old_dpi:
@@ -2621,7 +2716,9 @@ class ZPLViewerWindow(Gtk.Window):
         # Only the DPI slot of the default moves - address/port stay whatever
         # the persisted default already was, so a session override on those
         # (Printer Settings) survives a Label Settings visit untouched.
-        self._default_printer = (self._default_printer[0], self._default_printer[1], dpi)
+        self._default_printer = (self._default_printer[0],
+                                 self._default_printer[1], dpi,
+                                 self._default_printer[3])
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.design_canvas.document.transform = transform

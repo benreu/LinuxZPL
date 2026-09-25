@@ -427,7 +427,8 @@ fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 gtk_main._config_path = lambda: blocked_dir / 'settings.ini'
 gtk_main._fallback_config_path = lambda: fallback_path
 try:
-    window._default_printer = ('10.0.0.9', window.printer_port, window.printer_dpi)
+    window._default_printer = ('10.0.0.9', window.printer_port,
+                               window.printer_dpi, window.printer_font_device)
     window._save_settings()
     written = configparser.ConfigParser(); written.read(fallback_path)
     check("a settings file the user config directory won't take is written to the project fallback instead",
@@ -449,11 +450,12 @@ gtk_main._config_path = lambda: session_path
 gtk_main._fallback_config_path = lambda: session_path
 try:
     window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.50', 9100, 203
-    window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+    window._default_printer = (window.printer_address, window.printer_port,
+                               window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
     real_dialog = gtk_main._printer_picker_dialog
-    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203, 'E')
     try:
         window.on_session_printer_clicked(None)
     finally:
@@ -472,8 +474,10 @@ try:
     # override just applied above - otherwise clicking OK on an unedited
     # dialog would silently promote the override into the new default.
     seen = {}
-    def capture_dialog(parent, title, address, port, dpi, default=None):
+    def capture_dialog(parent, title, address, port, dpi, font_device=None,
+                       default=None):
         seen['address'], seen['port'], seen['dpi'] = address, port, dpi
+        seen['font_device'] = font_device
         return None  # cancel, so nothing else about window state changes
     gtk_main._printer_picker_dialog = capture_dialog
     try:
@@ -484,7 +488,7 @@ try:
           (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
 
     # Contrast: Default Printer, given the same dialog result, does persist.
-    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203)
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203, 'E')
     try:
         window.on_default_printer_clicked(None)
     finally:
@@ -507,11 +511,12 @@ gtk_main._config_path = lambda: quit_path
 gtk_main._fallback_config_path = lambda: quit_path
 try:
     window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.70', 9100, 203
-    window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+    window._default_printer = (window.printer_address, window.printer_port,
+                               window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
     real_dialog = gtk_main._printer_picker_dialog
-    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203)
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203, 'E')
     try:
         window.on_session_printer_clicked(None)
     finally:
@@ -534,11 +539,12 @@ gtk_main._config_path = lambda: label_settings_path
 gtk_main._fallback_config_path = lambda: label_settings_path
 try:
     window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.80', 9100, 203
-    window._default_printer = (window.printer_address, window.printer_port, window.printer_dpi)
+    window._default_printer = (window.printer_address, window.printer_port,
+                               window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
     real_dialog = gtk_main._printer_picker_dialog
-    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203)
+    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203, 'E')
     try:
         window.on_session_printer_clicked(None)
     finally:

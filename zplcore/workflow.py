@@ -69,8 +69,13 @@ def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):
 
 def missing_printer_fonts(document, address, port, cancel=None):
     """The label's fonts the printer does not have, as (missing, uploadable)
-    name -> path dicts - both empty when there is nothing to do - or None if
+    spec -> path dicts - both empty when there is nothing to do - or None if
     the printer could not be asked.
+
+    Specs ('d:NAME.TTF'), not bare names, on both sides of the comparison: a
+    ^A@ naming E:MYFONT.TTF is not satisfied by the printer holding an
+    R:MYFONT.TTF, and matching on the name alone would report it present and
+    let the print fall back to a substitute typeface.
 
     None is not the same as "the printer has no fonts": it leads to a
     different prompt (font_problem_prompt(None)). `uploadable` is the subset
@@ -83,7 +88,11 @@ def missing_printer_fonts(document, address, port, cancel=None):
     installed = fonts.query_printer_fonts(address, port, cancel=cancel)
     if installed is None:
         return None
-    missing = {n: p for n, p in sources.items() if n.upper() not in installed}
+    # Upper on both sides: the printer's own listing is upper-cased on the way
+    # in, and a label may name a font in any case (see zplcore/parser.py's
+    # ^A@ reading, which keeps a path exactly as the file wrote it).
+    present = {spec.upper() for spec in installed}
+    missing = {n: p for n, p in sources.items() if n.upper() not in present}
     uploadable = {n: p for n, p in missing.items() if p}
     return missing, uploadable
 
@@ -95,9 +104,11 @@ def font_problem_prompt(missing):
         return ("The printer could not be asked which fonts it has.",
                 "It may be unreachable, or may not support font queries.\n"
                 "Printing anyway may fall back to a substitute font.")
-    lines = [f"  {fonts.printer_font_path(n)}" +
-             ("" if missing[n] else "   (source file unknown)")
-             for n in sorted(missing)]
+    # The keys are already d:NAME.TTF specs, so the drive a font is wanted on
+    # is named rather than assumed.
+    lines = [f"  {spec}" +
+             ("" if missing[spec] else "   (source file unknown)")
+             for spec in sorted(missing)]
     return ("Fonts used by this label are not on the printer.",
             "\n".join(lines) + "\n\nMissing fonts print in a substitute typeface.")
 
@@ -109,15 +120,19 @@ def upload_fonts(uploadable, address, port, on_progress=None, cancel=None):
     failed upload would use a substitute, so the caller must not carry on.
     A cancel passes through untouched, so it is not reported as a failure.
     """
-    for name, path in sorted(uploadable.items()):
+    for spec, path in sorted(uploadable.items()):
         if on_progress:
-            on_progress(f"Uploading {fonts.printer_font_path(name)}...")
+            on_progress(f"Uploading {spec}...")
+        # Each font goes to the drive its own ^A@ names, which is the whole
+        # point of keying on the spec: uploading them all to one drive would
+        # leave every label that named another still printing a substitute.
+        device, name = fonts.split_font_spec(spec)
         try:
-            fonts.upload_font(address, port, path, name, cancel=cancel)
+            fonts.upload_font(address, port, path, name, device, cancel=cancel)
         except printer_io.Cancelled:
             raise
         except Exception as e:
-            raise OSError(f"Upload of {name} failed: {e}") from e
+            raise OSError(f"Upload of {spec} failed: {e}") from e
 
 
 def unsaved_changes_gate(is_dirty, ask, save):

@@ -49,11 +49,14 @@ def query_printer_objects(address: str, port: int, timeout: float = 5,
     and Graphics managers scope their own requests to - since the point here
     is everything, including extensions neither of those recognizes.
     Reachability is judged by the first device alone, the same rule
-    query_printer_fonts and query_printer_graphics already use: no reply, or
-    the connection itself failing, means unreachable and the other devices
-    are not even tried. A later device failing the same way is not proof the
-    printer went away - just that this device has nothing, or does not exist
-    on this model.
+    query_printer_graphics uses: no reply, or the connection itself failing,
+    means unreachable and the other devices are not even tried. A later
+    device failing the same way is not proof the printer went away - just
+    that this device has nothing, or does not exist on this model.
+
+    fonts.query_printer_fonts no longer judges it that way - see the note in
+    query_printer_graphics - and the same argument would apply here; this
+    function has simply not been changed to match.
     """
     specs: List[str] = []
     for index, device in enumerate(DEVICES):
