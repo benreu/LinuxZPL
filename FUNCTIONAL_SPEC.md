@@ -869,8 +869,8 @@ path are caret-free and are stored as-is.
 `^A@`), `^CF`, `^FW`, `^FB`, `^GB`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
-`^PO`, `^PM`, `^LR`), `^PQ`, `^CV`, `^CI`, `^CW`, `^FL`, and the five
-metadata keys.
+`^PO`, `^PM`, `^LR`), `^FO`/`^FT`'s justification and `^FW`'s, `^PQ`, `^CV`,
+`^CI`, `^CW`, `^FL`, and the five metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -912,8 +912,9 @@ parameter at all, so a field with no `^A` has nothing but `^FW` to turn by. It
 is a running default like `^CF` and `^BY` — *"affects only fields that follow
 it"* — with a power-up value of `N`, and only the four letters change it: a
 bare `^FW`, an undefined letter, or the x.14 justification on its own
-(`^FW,1`) keep the value in force, which is the reading that never turns a
-field the file did not spell.
+(`^FW,1`) keep the *orientation* in force, which is the reading that never
+turns a field the file did not spell. `^FW`'s second parameter is read
+separately, as the justification default below.
 
 | Written | Means |
 |---|---|
@@ -1507,6 +1508,35 @@ anything that is not wholly a number.
 round-trip unchanged. They are editable from Label Settings (§7), because they
 apply to the whole label rather than to any field on it.
 
+**`^FO`/`^FT`'s third parameter says which edge the origin names.** `z` is
+`0` left, `1` right, `2` auto; left is ZPL's default. The manual's Field
+Interactions chart (Table 45, Normal Orientation) is the authority: with
+`^FPH`, the field-direction default, the origin sits at the top left of a left
+justified field and at the **top right** of a right justified one, which
+extends leftward from it. `^FT` is the same at the baseline.
+
+An element holds its **left edge** whatever the justification — so the canvas,
+dragging, clamping and alignment never have to know this exists — and the
+width goes back on when the `^FO` is written, the way `^FT`'s baseline offset
+already does:
+
+| Written | Element holds | Saves as |
+|---|---|---|
+| `^FO300,50` + a 150-dot field | left 300 | `^FO300,50` |
+| `^FO300,50,1` + a 150-dot field | left 150 | `^FO300,50,1` |
+| `^FO300,50,0` | left 300 | `^FO300,50` — trimmed, being the default |
+
+`^FW<r>,<z>` sets the default for every field after it, a running value like
+its orientation. Since `^FW` is resolved into each field rather than written
+back, an inherited justification is folded onto that field's own `^FO`, exactly
+as an inherited orientation is folded onto its `^A`.
+
+**The right edge is what a right justified field is pinned by**, so editing its
+text grows it leftward rather than moving the `^FO` the file named — clamped at
+the label edge like any other move, since `^FO`'s range starts at 0. A field
+whose *origin* leaves it overhanging the left edge is left overhanging: that is
+what the printer does, and moving it would change what prints.
+
 **Barcodes cannot rescale exactly.** Module width is a whole number of dots, so
 a module of 2 becomes 3 rather than 2.96 going from 203 to 300 dpi — a width
 error of up to half a dot per module. Positions and heights scale exactly.
@@ -1884,16 +1914,20 @@ rather than requirements:
   would make such a barcode a hairline on the canvas. A `^BY` that does give a
   height is always obeyed; this is the fallback when nothing in the file has
   said anything at all.
-- **`^FW`'s justification is not modelled.** `^FW<r>,<z>` also sets, on x.14
-  firmware, the default justification for `^FO`/`^FT`'s own `z` parameter —
-  which this designer does not read either, and since `^FW` is resolved into
-  each field rather than written back (§8.3) there is nowhere to carry it. A
-  `^FW` with only a `z` changes nothing.
 - **A `^FW` written inside a field is seen by the commands after it, not by
   the field's default font.** An `^A` or barcode command that follows it in
   the same field resolves against it, as a printer does; a field with no `^A`
   takes the value in force at its `^FO`. The canvas and the preview agree on
   this; a `^FW` between a `^FO` and its data is not something generators emit.
+- **Auto justification (`z` = 2) is carried but resolved as left.** ZPL calls
+  it *"script dependent"*; for the Latin scripts this designer writes it is
+  left, and the parameter round-trips unchanged either way. A right-to-left
+  script would want it resolved as right, which needs a script this model has
+  no notion of.
+- **`^FP`'s field direction is not modelled**, so justification is read as the
+  `^FPH` column of the manual's Table 45 — horizontal, the power-up default.
+  `^FPV` and `^FPR` place a justified field differently, and neither is
+  something a designer emits.
 - **`^FR` inverts whatever is already on the label under the field's own ink
   shape — glyph outlines, bar rectangles, the frame's own border or fill —
   and touches nothing outside it, confirmed against a real printer.**

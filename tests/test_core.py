@@ -4879,6 +4879,130 @@ check("send_command(): encodes the command as UTF-8 and asks for a reply",
 check("send_command(): a non-UTF-8 reply decodes with replacement chars, not a raise",
       _sc_reply == 'ok: ��', _sc_reply)
 
+
+# --- ^FO/^FT's third parameter: which edge the origin names -----------------
+# Left is ZPL's default and the only reading this had, so a right justified
+# field was drawn - and then saved - a whole field width to the right of where
+# it prints. The manual's Field Interactions chart (Table 45, Normal
+# Orientation) is the picture: the origin crosshair sits at the top left of a
+# left justified field and at the top right of a right justified one.
+
+_rj = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO300,50,1^A0N,30,30^FDhello^FS^XZ")[0]
+_rje = _rj.elements[0]
+check("a right justified ^FO names the field's right edge",
+      _rje.x + _rje.width == 300, (_rje.x, _rje.width))
+check("and the element holds its left edge like any other",
+      _rje.x == 300 - _rje.width, _rje.x)
+check("^FO's z comes back out of a save",
+      '^FO300,50,1' in _rj.to_zpl(),
+      [l for l in _rj.to_zpl().split('\n') if l.startswith('^FO')])
+
+_lj = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO300,50^A0N,30,30^FDhello^FS^XZ")[0]
+check("a field with no z is left justified, and writes none",
+      _lj.elements[0].x == 300 and '^FO300,50\n' in _lj.to_zpl(),
+      (_lj.elements[0].x, [l for l in _lj.to_zpl().split('\n') if l.startswith('^FO')]))
+check("an explicit left z is trimmed, being ZPL's own default",
+      '^FO300,50\n' in zpl_parser.parse_zpl(
+          "^XA^PW812^LL1218^FO300,50,0^A0N,30,30^FDhello^FS^XZ")[0].to_zpl())
+
+# ^FT justifies the same way, at the baseline rather than the top
+_ft = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FT300,150,1^A0N,30,30^FDhello^FS^XZ")[0]
+check("^FT carries the same justification, and keeps its baseline",
+      _ft.elements[0].x + _ft.elements[0].width == 300
+      and '^FT300,150,1' in _ft.to_zpl(),
+      [l for l in _ft.to_zpl().split('\n') if l.startswith('^FT')])
+
+# ^FWr,z sets the default for every field after it. ^FW is folded into each
+# field rather than written back, so an inherited justification is folded in
+# the same way its orientation already is.
+_fwj = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FW,1^FO300,50^A0N,30,30^FDhello^FS^XZ")[0]
+check("^FW,1 right justifies a field that names no z of its own",
+      _fwj.elements[0].x + _fwj.elements[0].width == 300
+      and '^FO300,50,1' in _fwj.to_zpl(),
+      (_fwj.elements[0].x, [l for l in _fwj.to_zpl().split('\n') if l.startswith('^FO')]))
+check("and a field's own z still wins over ^FW's",
+      zpl_parser.parse_zpl(
+          "^XA^PW812^LL1218^FW,1^FO300,50,0^A0N,30,30^FDhello^FS^XZ"
+      )[0].elements[0].x == 300)
+check("a ^FW with only an orientation leaves the justification alone",
+      zpl_parser.parse_zpl(
+          "^XA^PW812^LL1218^FW,1^FWR^FO300,50^A0N,30,30^FDhello^FS^XZ"
+      )[0].elements[0].justify == 1)
+
+# Every element type is placed by ^FO, so every one of them justifies
+_mixed = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO300,50,1^GB100,40,4^FS"
+    "^FO300,150,1^BY2^BCN,60^FD123^FS^XZ")[0]
+check("a frame and a barcode justify too",
+      [e.x + e.width for e in _mixed.elements] == [300, 300],
+      [(e.element_type, e.x, e.width) for e in _mixed.elements])
+
+# The right edge is what justification pins, so a string that grows grows
+# leftward rather than dragging the ^FO the file named.
+_grow = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO700,50,1^A0N,30,30^FDhi^FS^XZ")[0]
+_ge = _grow.elements[0]
+_ge.text = 'much longer now'
+_grow.sync_text_width(_ge)
+check("a right justified field grows leftward, keeping its right edge",
+      _ge.x + _ge.width == 700, (_ge.x, _ge.width))
+check("and still writes the same ^FO it came in with",
+      '^FO700,50,1' in _grow.to_zpl(),
+      [l for l in _grow.to_zpl().split('\n') if l.startswith('^FO')])
+_ge.text = 'hi'
+_grow.sync_text_width(_ge)
+check("and shrinks back to the same right edge",
+      _ge.x + _ge.width == 700, (_ge.x, _ge.width))
+
+# With no room to grow into, the left edge wins: clamped at the label like any
+# other move, rather than taking the ^FO negative.
+_tight = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO100,50,1^A0N,30,30^FDhi^FS^XZ")[0]
+_te = _tight.elements[0]
+_te.text = 'far too long to fit to the left of that origin'
+_tight.sync_text_width(_te)
+check("a field with no room left of its origin clamps at the label edge",
+      _te.x == 0 and '^FO' in _tight.to_zpl()
+      and '^FO-' not in _tight.to_zpl(),
+      (_te.x, [l for l in _tight.to_zpl().split('\n') if l.startswith('^FO')]))
+
+# ZPL has no room for a negative ^LH, and an element pushed off the left edge
+# used to produce one through the transform fit.
+_off = zpl_parser.parse_zpl(
+    "^XA^PW406^LL203^FO380,50,1^A0N,24,24^FDAcme Printing Co^FS^XZ")[0]
+check("a field overflowing the left edge still round-trips exactly",
+      '^FO380,50,1' in _off.to_zpl()
+      and '^LH' not in _off.to_zpl(),
+      [l for l in _off.to_zpl().split('\n') if l.startswith(('^FO', '^LH'))])
+
+# The preview has to agree with the canvas about which edge is named.
+_plain_ink = _preview_ink("^XA^PW500^LL200^FO300,50^A0N,30,30^FDhello^FS", 500, 200)
+_right_ink = _preview_ink("^XA^PW500^LL200^FO300,50,1^A0N,30,30^FDhello^FS", 500, 200)
+check("the preview draws a right justified field leftward of its origin",
+      _right_ink[0] + _right_ink[2] <= 300 and _right_ink[2] == _plain_ink[2],
+      (_plain_ink, _right_ink))
+check("and ^FW's default reaches the preview too",
+      _preview_ink("^XA^PW500^LL200^FW,1^FO300,50^A0N,30,30^FDhello^FS", 500, 200)
+      == _right_ink)
+_frame_ink = _preview_ink("^XA^PW500^LL200^FO300,50,1^GB100,40,4^FS", 500, 200)
+check("a right justified frame ends exactly on its origin",
+      _frame_ink == (200, 50, 100, 40), _frame_ink)
+
+# The fixture, as a whole file: three strings of different lengths lining up
+_just_raw = (FIXTURES / 'justified.zpl').read_text()
+_just = zpl_parser.parse_zpl(_just_raw)[0]
+check("every right justified field in the fixture shares one right edge",
+      [e.x + e.width for e in _just.elements if e.justify == 1]
+      == [380, 380, 380, 380],
+      [(e.text, e.x + e.width) for e in _just.elements])
+check("and nothing in it is reported as unsupported",
+      workflow.unsupported_commands(_just_raw) == [],
+      workflow.unsupported_commands(_just_raw))
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

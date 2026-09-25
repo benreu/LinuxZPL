@@ -65,6 +65,12 @@ class DesignElement:
     # or None when it was placed by ^FO. Kept rather than normalised away so a
     # file written with ^FT is written back with ^FT, at the same y.
     typeset = None
+
+    # ^FO/^FT's third parameter, or None when the field named none. An element
+    # holds the left edge whatever the justification, so the canvas, dragging
+    # and clamping never have to know this exists - the same arrangement
+    # `typeset` has for ^FT's baseline.
+    justify = None
     # ^FR: this field prints in reverse - white where the label would
     # otherwise be black, and vice versa.
     reverse_print = False
@@ -88,12 +94,18 @@ class DesignElement:
         absolute dot position - so the canvas, dragging and clamping need to
         know nothing about either command - and the offset comes back out here,
         which is what lets a file carrying one be written back unchanged.
+
+        Justification comes back out the same way: a right justified field's
+        ^FO names its right edge, so the width goes back on. The parameter is
+        trimmed when it is left, which is ZPL's default and what every file
+        written before this was read as - so nothing already on disk moves.
         """
-        x = self.x - offset[0]
+        x = geometry.justified_x(self.x - offset[0], self.width, self.justify)
         y = self.y - offset[1]
+        place = '' if self.justify in (None, geometry.JUSTIFY_LEFT) else f",{self.justify}"
         if self.typeset is None:
-            return f"^FO{x},{y}\n"
-        return f"^FT{x},{y + self.typeset}\n"
+            return f"^FO{x},{y}{place}\n"
+        return f"^FT{x},{y + self.typeset}{place}\n"
 
     def reverse_zpl(self) -> str:
         """^FR, if this field reverses its own print."""
@@ -1907,8 +1919,18 @@ class Document:
                                                 self.display_text(element)),
                           element.font_height)
         # The run is along the text, so a quarter turn swaps it with the stack.
+        was = element.width
         element.width, element.height = ((stack, run) if element.rotated()
                                          else (run, stack))
+        # A right justified field is pinned by its right edge - that is what
+        # the justification means - so a string that grows grows leftward.
+        # Leaving the left edge fixed instead would move the ^FO the file
+        # named, which reads as the designer having shifted the field.
+        if element.justify == geometry.JUSTIFY_RIGHT:
+            # Clamped at the label edge like every other move: a string long
+            # enough to push the left edge off the label would otherwise take
+            # the ^FO negative, which ZPL has no room for.
+            element.x = max(0, element.x - (element.width - was))
 
     def set_font(self, font_path: str, font_family: str, printer_font_name: str):
         """Set the document-wide font."""

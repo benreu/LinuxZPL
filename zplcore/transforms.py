@@ -170,7 +170,11 @@ class LabelTransform:
         fit = self.copy()
         # ^LS feeds the x offset alongside ^LH, so the home absorbs the change
         # and the shift is left as the file gave it.
-        fit.home = (min(dx, lowest[0]) + self.shift, min(dy, lowest[1]))
+        # Never below zero: ^LH's range starts there, and an element that has
+        # somehow been placed at a negative x would otherwise be described by
+        # a home outside the range instead of an ^FO outside it.
+        fit.home = (max(0, min(dx, lowest[0])) + self.shift,
+                    max(0, min(dy, lowest[1])))
         return fit
 
     def copy(self) -> 'LabelTransform':

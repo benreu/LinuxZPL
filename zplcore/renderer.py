@@ -202,6 +202,16 @@ class ZPLRenderer:
         box = (pos[0], pos[1], pos[0] + mask.width, pos[1] + mask.height)
         self.image.paste(ImageChops.invert(self.image.crop(box)), pos, mask)
 
+    def _left(self, run: int) -> int:
+        """Where this field's drawing starts, given ^FO's justification.
+
+        Through zplcore.geometry, the same function the parser folds the width
+        out with, so the preview and the canvas cannot disagree about which
+        edge a right justified ^FO names.
+        """
+        return geometry.justified_origin(self.current_x, run,
+                                         self.current_justify)
+
     def _turned(self, panel, run: int, stack: int):
         """Paste a drawn panel onto the label, turned to face the right way.
 
@@ -223,7 +233,7 @@ class ZPLRenderer:
             panel = panel.rotate(-angle, expand=True)
         offset = textraster.baseline_offset(self._font_path(),
                                             self.current_font_size)
-        pos = (self.current_x, self._top(offset))
+        pos = (self._left(run), self._top(offset))
         if self.current_reverse:
             self._invert_under(panel, pos)
         else:
@@ -302,10 +312,11 @@ class ZPLRenderer:
                 mask = Image.new('L', (w, h), 0)
                 ImageDraw.Draw(mask).text((-box[0], -box[1]), line,
                                           fill=255, font=font)
-                self._invert_under(mask, (self.current_x + block.indent + box[0], y + box[1]))
+                self._invert_under(mask, (self._left(block.width) + block.indent
+                                          + box[0], y + box[1]))
             else:
-                self.draw.text((self.current_x + block.indent, y), line,
-                               fill='black', font=font)
+                self.draw.text((self._left(block.width) + block.indent, y),
+                               line, fill='black', font=font)
 
     def _render_frame(self, params: str):
         """Draw a ^GB box through the same element the canvas draws.
@@ -319,6 +330,7 @@ class ZPLRenderer:
         """
         element = FrameElement(self.current_x, self.current_y,
                                *parser._read_frame(params))
+        element.x = self._left(element.width)
         element.y = self._top(element.height)
         thickness = max(1, element.thickness)
         radius = element.corner_radius()
@@ -376,7 +388,7 @@ class ZPLRenderer:
         inverted = bytes(b ^ 0xFF for b in raw[:rows * bytes_per_row])
         bitmap = Image.frombytes('1', (bytes_per_row * 8, rows), inverted)
         self.image.paste(bitmap.convert('RGB'),
-                         (self.current_x, self._top(rows)))
+                         (self._left(bytes_per_row * 8), self._top(rows)))
 
     def _render_stored_graphic(self, command: str, params: str):
         """Render a ^XG/^IM field, if this session's ^IS has the image it names.
@@ -393,7 +405,7 @@ class ZPLRenderer:
             image = image.resize((max(1, image.width * mag_x),
                                   max(1, image.height * mag_y)))
         self.image.paste(image.convert('RGB'),
-                         (self.current_x, self._top(image.height)))
+                         (self._left(image.width), self._top(image.height)))
 
     def render(self, zpl_content: str) -> Image.Image:
         """
@@ -432,6 +444,9 @@ class ZPLRenderer:
         # ^LH and ^LS displace every field, so the preview has to apply them or
         # it draws the label somewhere the printer will not.
         self.origin = (0, 0)
+        # ^FO/^FT's third parameter, and the ^FW default behind it
+        self.current_justify = None
+        self.default_justify = None
         self.transform = transforms.LabelTransform()
         
         # Parse and execute ZPL commands
@@ -541,10 +556,13 @@ class ZPLRenderer:
             self.origin = self.transform.field_offset()
         elif command in ('FO', 'FT'):
             # Field origin: ^FOx,y names the top-left, ^FTx,y the baseline.
-            match = re.match(r'(-?\d+),(-?\d+)', params)
+            match = re.match(r'(-?\d+),(-?\d+)(?:,\s*(\d+))?', params)
             if match:
                 self.current_x, self.current_y = self._parse_position(match.group(1), match.group(2))
                 self.current_x += self.origin[0]
+                self.current_justify = (int(match.group(3))
+                                        if match.group(3) is not None
+                                        else self.default_justify)
                 self.current_y += self.origin[1]
                 self.typeset = (command == 'FT')
                 self.unsupported_field = False
@@ -694,6 +712,8 @@ class ZPLRenderer:
             # read in an open field keeps the letter it resolved, and a field
             # with no ^A took the value in force at its ^FO, as it does in the
             # parser - so the preview turns exactly what the canvas turns.
+            self.default_justify = parser.read_field_justification(
+                params, self.default_justify)
             self.default_orientation = parser.read_field_orientation(
                 params, self.default_orientation)
         elif '^' + command in parser.BARCODE_COMMANDS:

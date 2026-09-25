@@ -56,6 +56,8 @@ FIXTURE_GRAPHIC_LOAD = ROOT / 'tests' / 'fixtures' / 'stored_graphic_load.zpl'
 # The commands that move or flip a whole label
 FIXTURE_HOME = ROOT / 'tests' / 'fixtures' / 'label_home.zpl'
 FIXTURE_FLIPPED = ROOT / 'tests' / 'fixtures' / 'flipped_label.zpl'
+# Fields whose ^FO names their right edge rather than their left
+FIXTURE_JUSTIFIED = ROOT / 'tests' / 'fixtures' / 'justified.zpl'
 # The manual's own ^CV example: a switch the printer acts on and nothing here
 # draws, which both frontends still have to write back
 FIXTURE_VALIDATED = ROOT / 'tests' / 'fixtures' / 'code_validation.zpl'
@@ -1127,6 +1129,16 @@ def sequence(driver, record):
     record('load a format placed from a ^LH origin')
     driver.load(FIXTURE_FLIPPED)
     record('load a format that is inverted and mirrored')
+
+    # A right justified field is placed from its right edge, so a frontend
+    # reading ^FO's z differently would put the whole column somewhere else.
+    driver.load(FIXTURE_JUSTIFIED)
+    record('load a format justified from the right')
+    driver.set_zoom(1.0)
+    driver.fresh_gesture()
+    _rj = driver.elements[0]
+    driver.drag_pointer(_rj.x + 3, _rj.y + 3, 15, 10)
+    record('drag a right justified field, which moves the ^FO it writes')
 
     # The editing canvas is not flipped, so a click lands on the element where
     # the canvas draws it - not where the printer will lay it down. If either

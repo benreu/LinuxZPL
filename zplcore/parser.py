@@ -13,6 +13,7 @@ import re
 from typing import Optional, Tuple
 
 from . import fields as zpl_fields
+from . import geometry
 from . import fonts as zpl_fonts
 from . import graphic_store
 from . import graphics
@@ -513,6 +514,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     # The ^LH/^LS offset in force. Elements hold the absolute dot position, so
     # the canvas, dragging and clamping never have to know these exist.
     origin = (0, 0)
+    # ^FW's justification, in force for every field that names none of its own
+    default_justify = None
     home = (0, 0)           # the ^LH in force, which is not always the first
     seen_home = False
 
@@ -671,6 +674,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
         if cmd == '^FW':
             default_orientation = read_field_orientation(params,
                                                          default_orientation)
+            default_justify = read_field_justification(params, default_justify)
             continue
 
         if cmd == '^BY':
@@ -688,7 +692,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
         if cmd in ('^FO', '^FT'):
             # A field that never saw ^FS still ends here, at the next one
             pending = _flush(field, doc, renderer, pending)
-            match = re.match(r'\s*(-?\d+),(-?\d+)', params)
+            match = re.match(r'\s*(-?\d+),(-?\d+)(?:,\s*(\d+))?', params)
             field = _new_field(int(match.group(1)) + origin[0],
                                int(match.group(2)) + origin[1],
                                default_font, default_barcode,
@@ -699,6 +703,13 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             # tool opened completely empty.
             if field is not None:
                 field['typeset'] = (cmd == '^FT')
+                # ^FO's own z wins; with none, whatever ^FW last set applies.
+                # ^FW is folded into each field rather than written back, so
+                # the inherited value is folded in here too, the way ^FW's
+                # orientation already lands on the field's own ^A.
+                field['justify'] = (int(match.group(3))
+                                    if match.group(3) is not None
+                                    else default_justify)
             continue
 
         if cmd == '^FS':
@@ -794,7 +805,8 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'default_orientation': default_orientation,
             'barcode': None, 'frame': None, 'graphic': None,
             'stored_graphic': None, 'data': None,
-            'preview': None, 'path': None, 'typeset': False, 'symbology': None,
+            'preview': None, 'path': None, 'typeset': False, 'justify': None,
+            'symbology': None,
             'reverse': False}
 
 
@@ -848,11 +860,28 @@ def read_field_orientation(params: str, current: str) -> str:
     Only the four letters change it. A bare ^FW, or one with a letter ZPL does
     not define, keeps the value in force: the ^CF rule for an omitted
     parameter, and the reading that never turns a field the file did not
-    spell. The justification ^FW also carries (^FWr,z, x.14 firmware) is not
-    read - ^FO's own z is not either. See FUNCTIONAL_SPEC.md section 18.
+    spell.
     """
     letter = params.strip()[:1].upper()
     return letter if letter in _ORIENTATION_LETTERS else current
+
+
+def read_field_justification(params: str, current):
+    """^FWr,z - which edge every later field's ^FO names unless it says.
+
+    The second parameter, added in x.14 firmware. An omitted or unreadable one
+    keeps the value in force, the same rule the orientation before it follows.
+    None means no ^FW has set one, which leaves ZPL's own default of left.
+    """
+    parts = params.split(',')
+    if len(parts) < 2 or not parts[1].strip():
+        return current
+    try:
+        value = int(parts[1].strip())
+    except ValueError:
+        return current
+    return value if value in (geometry.JUSTIFY_LEFT, geometry.JUSTIFY_RIGHT,
+                              geometry.JUSTIFY_AUTO) else current
 
 
 def _read_barcode_default(params: str, current: dict) -> dict:
@@ -1085,6 +1114,7 @@ def _flush(field, doc, renderer, pending) -> tuple:
     if element is not None:
         if field['typeset']:
             _apply_typeset(element, doc)
+        _apply_justification(element, field['justify'])
         element.reverse_print = field['reverse']
         doc.elements.append(element)
     for el in doc.elements[before:]:
@@ -1111,6 +1141,20 @@ def _apply_typeset(element, doc) -> None:
         offset = element.height
     element.typeset = offset
     element.y -= offset
+
+
+def _apply_justification(element, justify) -> None:
+    """Move a field whose ^FO names its right edge rather than its left.
+
+    Applied here rather than when the ^FO is read, because the width it turns
+    on is not known until the element exists - the same reason ^FT's baseline
+    offset waits for _apply_typeset. The element then holds its left edge like
+    any other, and origin_zpl puts the width back on the way out.
+    """
+    if justify is None:
+        return
+    element.justify = justify
+    element.x = geometry.justified_origin(element.x, element.width, justify)
 
 
 def _build_element(field, doc, renderer):

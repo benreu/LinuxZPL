@@ -24,6 +24,35 @@ TEXT_BASELINE_GAP = 2
 # Corner and edge-midpoint handles, in the order they are drawn
 HANDLE_NAMES = ('tl', 'tm', 'tr', 'ml', 'mr', 'bl', 'bm', 'br')
 
+# ^FO/^FT's third parameter: which edge of the field its x names. Left is
+# ZPL's default and the only one this designer used to read, so a right
+# justified field was drawn - and then saved - a whole field width to the
+# right of where it prints. Auto is script dependent; for the Latin scripts a
+# label designer here writes it resolves to left, and is carried unchanged.
+JUSTIFY_LEFT, JUSTIFY_RIGHT, JUSTIFY_AUTO = 0, 1, 2
+
+
+def justified_origin(x: int, width: int, justify) -> int:
+    """The left edge of a field whose ^FO names `x`.
+
+    The manual's Field Interactions chart (Table 45) is the authority: with
+    ^FPH, the field-direction default, the origin crosshair sits at the top
+    left of a left justified field and at the top right of a right justified
+    one, which extends leftward from it.
+    """
+    return x - width if justify == JUSTIFY_RIGHT else x
+
+
+def justified_x(x: int, width: int, justify) -> int:
+    """The x a ^FO must name for a field whose left edge is `x`.
+
+    The inverse of justified_origin, and its inverse by construction rather
+    than by two places agreeing about a sign - which is how ^LH's offset went
+    wrong, fold and unfold each doing their own arithmetic.
+    """
+    return x + width if justify == JUSTIFY_RIGHT else x
+
+
 # The alignments, in menu order: the three horizontal, then the three vertical
 ALIGNMENTS = ('left', 'center', 'right', 'top', 'middle', 'bottom')
 
