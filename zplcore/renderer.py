@@ -139,7 +139,7 @@ class ZPLRenderer:
         # PIL cannot rotate what has not been drawn, so the symbol is drawn
         # into its own image and turned as a whole.
         run = layout['run']
-        stack = max(1, element.bar_height) + element.text_height()
+        stack = layout['stack'] + element.text_height()
         # ^FR does not paint a background - it inverts whatever is already
         # there under its own bars and interpretation line. A panel with a 0
         # background and 255 ink is exactly the mask _invert_under() wants,
@@ -149,15 +149,12 @@ class ZPLRenderer:
         panel = Image.new('L', (max(1, run), max(1, stack)), bg)
         draw = ImageDraw.Draw(panel)
 
-        bar_x, bar_y, bar_w, bar_h = layout['bars']
-        mods = element.modules()
-        mod_w = bar_w / max(1, sum(mods))
-        cx = float(bar_x)
-        for i, m in enumerate(mods):
-            if i % 2 == 0:  # bars are at even indices
-                draw.rectangle([(round(cx), bar_y),
-                                (round(cx + m * mod_w), bar_y + bar_h)], fill=ink)
-            cx += m * mod_w
+        # PIL's rectangle includes both corners, so a rect w dots wide is
+        # drawn to x + w - 1. Drawing to x + w instead made every bar a dot
+        # wider than it prints, which a one-dot module - a matrix symbology
+        # at magnification 1 - would close up into a solid block.
+        for rx, ry, rw, rh in layout['rects']:
+            draw.rectangle([(rx, ry), (rx + rw - 1, ry + rh - 1)], fill=ink)
 
         if layout['text']:
             font = self._get_font(max(1, int(layout['font'][1])))

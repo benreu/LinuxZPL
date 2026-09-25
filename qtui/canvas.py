@@ -512,7 +512,7 @@ class DesignCanvas(QWidget):
         """
         layout = geometry.barcode_layout(element)
         run = layout['run']
-        stack = max(1, element.bar_height) + element.text_height()
+        stack = layout['stack'] + element.text_height()
 
         painter.save()
         dx, dy = layout['offset']
@@ -536,16 +536,10 @@ class DesignCanvas(QWidget):
             painter.fillRect(QRectF(0, 0, run, stack), QColor(255, 255, 255))
             fg = QColor(0, 0, 0)
 
-        bar_x, bar_y, bar_w, bar_h = layout['bars']
-        mods = element.modules()
-        mod_w = bar_w / max(1, sum(mods))
         painter.setPen(Qt.NoPen)
         painter.setBrush(fg)
-        cx = float(bar_x)
-        for i, m in enumerate(mods):
-            if i % 2 == 0:  # bars are at even indices
-                painter.drawRect(QRectF(cx, bar_y, m * mod_w, bar_h))
-            cx += m * mod_w
+        for rx, ry, rw, rh in layout['rects']:
+            painter.drawRect(QRectF(rx, ry, rw, rh))
         painter.setBrush(Qt.NoBrush)
 
         if layout['text']:

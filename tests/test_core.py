@@ -1627,6 +1627,41 @@ for symbology, value, options, ratio, expect in (
               (options[2] == 'Y') if len(options) > 2 else False),
           (back.symbology, back.barcode_value, back.show_text, back.text_above))
 
+# --- every symbology reaches the canvas as plain rectangles ------------------
+
+# The preview and both canvases draw `rects` and nothing else, so a symbology
+# they cannot walk the bar-and-space widths of - a matrix code, a postal code -
+# reaches all three without any of them learning a second shape.
+for symbology, value in (('code128', '12345'), ('code39', 'AB'),
+                         ('ean13', '400638133393'), ('interleaved2of5', '1234'),
+                         ('upcean_extension', '12')):
+    el = BarcodeElement(0, 0, 60, value, module_width=3, symbology=symbology)
+    layout = geometry.barcode_layout(el)
+    mods = el.modules()
+    # What the three sinks used to compute for themselves, from the widths.
+    # A symbology whose line prints above the bars - the UPC/EAN extension -
+    # starts them that far down, which is the offset barcode_layout applies.
+    top = el.text_height() if el.text_above else 0
+    expected, x = [], 0
+    for index, width in enumerate(mods):
+        if index % 2 == 0 and width:
+            expected.append((x, top, width * 3, 60))
+        x += width * 3
+    check(f"{symbology}'s rects are the bars it always drew",
+          layout['rects'] == expected,
+          (layout['rects'][:3], expected[:3]))
+    check(f"and {symbology}'s run and stack still bound them",
+          layout['run'] == sum(mods) * 3 and layout['stack'] == 60
+          and max(rx + rw for rx, ry, rw, rh in layout['rects']) <= layout['run'],
+          (layout['run'], layout['stack']))
+
+_above = BarcodeElement(0, 0, 60, '12345', module_width=3, options=('Y', 'Y'))
+check("an interpretation line above the bars moves the rects down, not the box",
+      all(ry == _above.text_height() for _rx, ry, _rw, _rh in
+          geometry.barcode_layout(_above)['rects'])
+      and _above.height == 60 + _above.text_height(),
+      (geometry.barcode_layout(_above)['rects'][0], _above.height))
+
 # --- ^FR (reverse print) -----------------------------------------------------
 for make, describe in (
         (lambda: TextElement(0, 0, 'Reversed'), 'text'),

@@ -546,14 +546,13 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
 
     if element.element_type == 'barcode':
         # A barcode is not free to be any size: its width is a whole number of
-        # modules and its height is the bars plus the interpretation line. Take
-        # the drag as a request for those two, then snap the box back to what
-        # they produce, rather than stretching the symbol to fill a rectangle.
+        # modules and its height is the symbol plus the interpretation line.
+        # Take the drag as a request for those two, then snap the box back to
+        # what they produce, rather than stretching the symbol to fill a
+        # rectangle.
         run, stack = ((element.height, element.width) if element.rotated()
                       else (element.width, element.height))
-        modules = sum(element.modules())
-        element.module_width = max(1, round(run / max(1, modules)))
-        element.bar_height = max(MIN_SIZE, stack - element.text_height())
+        _resize_barcode(element, run, stack - element.text_height())
         element.sync_box()
 
     # A box that snapped back to a derived size is rarely the one that was
@@ -567,6 +566,24 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
         element.x = box['x'] + box['width'] - element.width
     element.x = max(0, min(element.x, document.label_width - element.width))
     element.y = max(0, min(element.y, document.label_height - element.height))
+
+
+def _resize_barcode(element, run: int, stack: int) -> None:
+    """Take a dragged (run, stack), in dots, as a request for the two sizes a
+    barcode is actually free to choose: its module width and its height.
+
+    A one-dimensional symbol's run is a whole number of modules and its stack
+    is simply the bars' height, so the two are independent. A matrix symbology
+    has no such freedom - its grid is square-ish and fixed by the data, so one
+    magnification has to satisfy both axes, and it is the smaller of the two
+    that keeps the symbol inside the box the pointer drew.
+    """
+    kind, payload = element.symbol()
+    if kind == 'linear':
+        element.module_width = max(1, round(run / max(1, sum(payload))))
+        element.bar_height = max(MIN_SIZE, stack)
+        return
+    raise ValueError(f"unknown symbol kind {kind!r}")
 
 
 def turn(element) -> dict:
@@ -596,6 +613,35 @@ def text_layout(element) -> dict:
     return turn(element)
 
 
+def barcode_rects(element) -> list:
+    """Every dark rectangle the symbol is made of, as (x, y, w, h) in dots,
+    in the barcode's own unrotated frame with the symbol's top-left at 0,0.
+
+    One kind of drawing instruction for every symbology: a bar of a Code 128,
+    a run of dark modules in a QR row, a short bar of a Postnet code. The
+    three drawing paths - the preview and both canvases - each used to walk
+    the bar and space widths themselves, which only a one-dimensional symbol
+    has. Turning the symbol into rectangles here is what lets a matrix
+    symbology reach all three without any of them learning a second shape.
+    """
+    kind, payload = element.symbol()
+    run, stack = element.symbol_size()
+
+    if kind == 'linear':
+        # Bars are at the even indices, spaces at the odd ones, and every
+        # width is in modules.
+        module = max(1, element.module_width)
+        rects = []
+        x = 0
+        for index, width in enumerate(payload):
+            if index % 2 == 0 and width:
+                rects.append((x, 0, width * module, stack))
+            x += width * module
+        return rects
+
+    raise ValueError(f"unknown symbol kind {kind!r}")
+
+
 def barcode_layout(element) -> dict:
     """Where a barcode's parts go, in its own unrotated frame.
 
@@ -607,24 +653,29 @@ def barcode_layout(element) -> dict:
     rotation about the element's origin, after a translation that brings the
     rotated content back onto it. The footprint stays axis-aligned at every
     quarter turn, which is why nothing else here has to know about rotation.
+
+    `rects` is the symbol itself, already offset to sit where the
+    interpretation line leaves room for it - the one thing a canvas has to
+    draw, whatever the symbology.
     """
-    run = element.printed_width()
-    bars = max(1, element.bar_height)
+    run, stack = element.symbol_size()
     text_h = element.text_height()
 
     facing = turn(element)
     angle, offset = facing['angle'], facing['offset']
 
-    # The line goes above the bars or below them, and the bars move down to
-    # make room when it is above.
+    # The line goes above the symbol or below it, and the symbol moves down
+    # to make room when it is above.
     bars_y = text_h if (element.show_text and element.text_above) else 0
-    text_y = 0 if (element.show_text and element.text_above) else bars + TEXT_BASELINE_GAP
+    text_y = 0 if (element.show_text and element.text_above) else stack + TEXT_BASELINE_GAP
 
     return {
         'angle': angle,
         'offset': offset,
         'run': run,
-        'bars': (0, bars_y, run, bars),
+        'stack': stack,
+        'bars': (0, bars_y, run, stack),
+        'rects': [(x, y + bars_y, w, h) for x, y, w, h in barcode_rects(element)],
         'text': element.encoded_value() if element.show_text else None,
         'text_y': text_y,
         'font': element.font or element.DEFAULT_FONT,
