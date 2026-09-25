@@ -31,6 +31,7 @@ from . import plessey
 from . import twoof5
 from . import postal
 from . import datamatrix
+from . import pdf417
 from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
@@ -742,6 +743,19 @@ class BarcodeElement(DesignElement):
                                      rectangular=self.aspect == 2,
                                      rows=self.rows, columns=self.columns,
                                      escape=self.escape_char)
+        if self.symbology == 'pdf417':
+            base = pdf417.encode(self._raw_value(), columns=self.columns,
+                                 rows=self.rows, security=self.security,
+                                 truncate=self.truncate == 'Y')
+            # Each row of codewords is drawn this many modules tall. With no
+            # height of its own, ^B7 divides ^BY's whole-symbol height by
+            # however many rows the data turned out to need - which is not
+            # known until here, so it is worked out now and kept.
+            if self.bar_height < 1:
+                height = self.total_height or DESIGNER_BAR_HEIGHT
+                self.bar_height = max(
+                    1, round(height / len(base) / max(1, self.module_width)))
+            return [list(row) for row in base for _ in range(self.bar_height)]
         raise ValueError(f"no encoder for {self.symbology!r}")
 
     def modules(self) -> list:

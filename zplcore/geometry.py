@@ -8,6 +8,8 @@ comes out of the printer, and two copies of these rules would eventually
 disagree about it without ever raising an error.
 """
 
+from . import symbology
+
 # Handles are squares this many dots across, and a click within this distance
 # of a handle's centre counts as grabbing it.
 HANDLE_SIZE = 8
@@ -407,7 +409,11 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
         # 2.96 going 203 -> 300 dpi. Positions and heights scale exactly; a
         # barcode's width cannot.
         element.module_width = _scaled(element.module_width, run)
-        element.bar_height = _scaled(element.bar_height, stack)
+        if symbology.HEIGHT_UNIT.get(element.symbology) != 'modules':
+            # PDF417's row height is in modules, and the module it multiplies
+            # has just been scaled - scaling both would square the factor and
+            # give rows half as tall again as the label asked for.
+            element.bar_height = _scaled(element.bar_height, stack)
         if element.font:
             code, fh, fw = element.font
             element.font = (code, _scaled(fh, stack), _scaled(fw, run))

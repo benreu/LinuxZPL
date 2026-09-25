@@ -32,6 +32,7 @@ SYMBOLOGIES = {
     'postal': "POSTAL (Postnet / PLANET / Intelligent Mail)",
     'planet': "Planet Code",
     'datamatrix': "Data Matrix",
+    'pdf417': "PDF417",
     'qr': "QR Code",
 }
 
@@ -56,6 +57,7 @@ COMMAND = {
     'postal': '^BZ',
     'planet': '^B5',
     'datamatrix': '^BX',
+    'pdf417': '^B7',
     'qr': '^BQ',
 }
 
@@ -70,6 +72,7 @@ COMMAND_PARAMS = {
     '^BQ': ('o', 'qr_model', 'w', 'quality', 'qr_mask'),
     '^BX': ('o', 'w', 'quality_dm', 'columns', 'rows', 'format_id',
             'escape_char', 'aspect'),
+    '^B7': ('o', 'h', 'security', 'columns', 'rows', 'truncate'),
     '^BU': ('o', 'h', 'f', 'g', 'e'),
     '^B9': ('o', 'h', 'f', 'g', 'e'),
     '^B8': ('o', 'h', 'f', 'g'),
@@ -202,6 +205,13 @@ PARAMETERS = {
     'escape_char': Param(None, '_'),
     # ^BX a - 1 square, 2 rectangular.
     'aspect': Param(int, 1, choices=(1, 2)),
+    # ^B7 s - how many error-correction codewords to generate. 0 detects
+    # errors without correcting any; each level up roughly doubles them.
+    'security': Param(int, 0, choices=tuple(range(9))),
+    # ^B7 t - drop the right row indicator and the stop pattern, which is
+    # about a fifth narrower and worth having only where the label will not
+    # be damaged.
+    'truncate': Param(str, 'N', choices=('Y', 'N')),
 }
 
 # What an omitted f, g, e and m mean, per symbology, in that order - the
@@ -252,12 +262,19 @@ ALWAYS_WRITTEN = frozenset(('h', 'w'))
 # whose size is their grid. Anything not here is dots.
 HEIGHT_UNIT = {
     'qr': None,
+    'datamatrix': None,
+    # ^B7's h is how many modules tall each row of codewords is drawn, not
+    # how many dots: the manual says "this number multiplied by the module
+    # equals the height of the individual rows in dots". Scaling it for a
+    # different head resolution would double-count, since the module width
+    # it multiplies is scaled already.
+    'pdf417': 'modules',
 }
 
 # The symbologies whose symbol is a grid of square modules rather than bars
 # and spaces. Their size is the grid, so neither ^BY's height nor their own
 # command carries one.
-MATRIX = frozenset(('qr', 'datamatrix'))
+MATRIX = frozenset(('qr', 'datamatrix', 'pdf417'))
 
 # The symbologies drawn as bars of differing height rather than differing
 # width. Every bar is narrow and every gap the same; what carries the data is
@@ -266,14 +283,20 @@ MATRIX = frozenset(('qr', 'datamatrix'))
 POSTAL = frozenset(('postal', 'planet'))
 
 # Symbologies whose module width is ^BY's w rather than a magnification the
-# command carries itself. Everything not here writes ^BY; the rest write
-# their magnification in the command and no ^BY at all.
-READS_BY = frozenset(set(SYMBOLOGIES) - MATRIX)
+# command carries itself - which is exactly those whose own command has no w
+# in it. They write ^BY; the rest write their magnification in the command
+# and no ^BY at all, since ^BY's w is not what they are drawn at.
+#
+# Not every matrix symbology is in the second group: PDF417 is stacked out of
+# ordinary bars and spaces and takes both its module width and, when its own
+# command leaves the row height out, its height from ^BY.
+READS_BY = frozenset(key for key, command in COMMAND.items()
+                     if 'w' not in COMMAND_PARAMS[command])
 
 # Symbologies with no interpretation line at all - the matrix codes, whose
 # commands carry no f parameter. Everything else has one, on by default or
 # not as flag_defaults says.
-NO_TEXT = frozenset(('qr', 'datamatrix'))
+NO_TEXT = frozenset(('qr', 'datamatrix', 'pdf417'))
 
 
 # The matrix symbologies whose own command, with its size left out, means
@@ -352,6 +375,8 @@ BARCODE_FEATURES = {
     'planet':           _features(),
     'datamatrix':       _features(height=None, module_width="Module Size",
                                   text=False),
+    'pdf417':           _features(height=(1, 30), module_width="Module Width",
+                                  text=False),
     'qr':               _features(height=None, module_width="Magnification",
                                   text=False),
 }
@@ -377,6 +402,16 @@ BARCODE_PARAMETERS = {
                    ('rows', "Least Rows",
                     tuple((str(n) if n else "Fit the data", n)
                           for n in (0, 10, 16, 20, 26, 32, 36, 44, 52)))),
+    'pdf417': (('security', "Security Level",
+                tuple((str(n) if n else "0 (detection only)", n)
+                      for n in range(9))),
+               ('columns', "Columns",
+                tuple((str(n) if n else "Fit the aspect", n)
+                      for n in (0, 1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 30))),
+               ('rows', "Rows",
+                tuple((str(n) if n else "Fit the data", n)
+                      for n in (0, 3, 5, 10, 15, 20, 30, 45, 60, 90))),
+               ('truncate', "Truncated", (("No", 'N'), ("Yes", 'Y')))),
     'codabar': (('start_char', "Start Character",
                  tuple((c, c) for c in 'ABCD')),
                 ('stop_char', "Stop Character",

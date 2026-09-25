@@ -195,6 +195,41 @@ for name, value in (("digit pairs, in ASCII", "12345678901234567890"),
           f"^XA^PW600^LL600^FO60,60^BXN,6,200^FD{value}^FS^XZ",
           value, 'DataMatrix')
 
+# --- ^B7, PDF417 ------------------------------------------------------------
+
+reads("^B7 carries its value at the columns and security asked for",
+      "^XA^PW800^LL600^FO60,60^BY2^B7N,5,5^FDPDF417 test^FS^XZ",
+      "PDF417 test", 'PDF417')
+reads("the manual's own example, a paragraph of text",
+      "^XA^PW800^LL600^FO60,60^BY2^B7N,3,5,5"
+      "^FDZebra Technologies Corporation strives to be the expert supplier^FS^XZ",
+      "Zebra Technologies Corporation strives to be the expert supplier", 'PDF417')
+reads("a truncated symbol still reads, being narrower by an indicator and a stop",
+      "^XA^PW800^LL600^FO60,60^BY2^B7N,4,0,,,Y^FDTRUNCATED^FS^XZ",
+      "TRUNCATED", 'PDF417')
+reads("...and one sized from ^BY's height rather than its own parameter",
+      "^XA^PW800^LL600^FO60,60^BY3,3,200^B7N^FDZebra Technologies^FS^XZ",
+      "Zebra Technologies", 'PDF417')
+for facing in "NRIB":
+    reads(f"a PDF417 turned {facing} still reads",
+          f"^XA^PW800^LL600^FO60,60^BY2^B7{facing},4,3^FDTURN{facing}^FS^XZ",
+          f"TURN{facing}", 'PDF417')
+# Each compaction mode, picked by what the run is made of. A mode chosen but
+# mis-encoded decodes to something else - which is how a full stop sitting at
+# the wrong value in the upper submode was caught, having turned "a.b" into
+# "aAk".
+for name, value in (("upper-case text", "ZEBRA TECHNOLOGIES"),
+                    ("lower case, through its own submode", "lower case only"),
+                    ("mixed case, shifting between them", "Mixed Case Text"),
+                    ("punctuation, through the punct submode", "a.b;c<d>e@f"),
+                    ("a long run of digits, in numeric mode",
+                     "1234567890123456789012345678901234567890"),
+                    ("bytes above ASCII, in byte mode", "caf\u00e9 r\u00e9sum\u00e9"),
+                    ("text and digits together", "PART 12345678901234 REV A")):
+    reads(f"^B7 compacts {name}",
+          f"^XA^PW800^LL600^FO60,60^BY2^B7N,4,3^FD{value}^FS^XZ",
+          value, 'PDF417')
+
 # ^BI, ^BJ, ^B1, ^BM and ^BP have no decoder here - zxing reads none of
 # Industrial or Standard 2 of 5, Code 11, MSI or Plessey. Each was checked
 # module for module against BWIPP, the reference implementation, while it was

@@ -1029,10 +1029,19 @@ def _read_barcode(cmd: str, params: str, default_height=None,
     o = fields.get('o', '')
     if o[:1].isalpha():
         orientation = o[:1].upper()
+    symbology = symbologies.SYMBOLOGY_OF[cmd]
     try:
-        height = int(fields['h']) if fields.get('h') else fallback
+        height = int(fields['h']) if fields.get('h') else 0
     except ValueError:
-        height = fallback
+        height = 0
+    if not height:
+        # Left out. A height measured in modules rather than dots - PDF417's
+        # row height - means "divide ^BY's whole-symbol height by however
+        # many rows the data needs", which cannot be worked out until the
+        # data has been encoded, so it is left at zero for the element to
+        # resolve. Everything else takes ^BY's height as it stands.
+        height = 0 if symbologies.HEIGHT_UNIT.get(symbology) == 'modules' \
+            else fallback
 
     magnification = None
     if 'w' in names:
@@ -1045,11 +1054,10 @@ def _read_barcode(cmd: str, params: str, default_height=None,
             # ^BY gives", which cannot be worked out until the data has been
             # encoded, so it is left at zero for the element to resolve;
             # everything else means the manual's default for this head.
-            symbology = symbologies.SYMBOLOGY_OF[cmd]
             if symbology not in symbologies.SIZED_BY_HEIGHT:
                 magnification = symbologies.default_magnification(dpi)
 
-    return {'symbology': symbologies.SYMBOLOGY_OF[cmd],
+    return {'symbology': symbology,
             'orientation': orientation,
             'height': height,
             'magnification': magnification,

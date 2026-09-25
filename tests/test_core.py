@@ -1961,6 +1961,114 @@ check("a Data Matrix has no interpretation line either",
 check("^BX is no longer a command a save would drop",
       workflow.unsupported_commands("^XA^FO0,0^BXN,8,200^FDHI^FS^XZ") == [])
 
+# --- ^B7, PDF417 ------------------------------------------------------------
+from zplcore import pdf417 as zpl_pdf417
+from zplcore import pdf417_patterns as zpl_pdf417_patterns
+
+# The low-level table is the standard's own, so it is checked against the
+# standard's own rules rather than taken on trust: seventeen modules, eight
+# elements alternating bar and space, none wider than six, and each pattern in
+# the cluster whose number its bar widths give.
+def _pattern_widths(value, bits=17):
+    text = format(value, f'0{bits}b')
+    runs, current, count = [], text[0], 0
+    for bit in text:
+        if bit == current:
+            count += 1
+        else:
+            runs.append(count); current = bit; count = 1
+    runs.append(count)
+    return runs
+
+_wrong = []
+for _cluster, _patterns in enumerate(zpl_pdf417_patterns.PATTERNS):
+    for _value, _pattern in enumerate(_patterns):
+        _w = _pattern_widths(_pattern)
+        _bars = _w[0::2]
+        if (sum(_w) != 17 or len(_w) != 8 or max(_w) > 6
+                or (_bars[0] - _bars[1] + _bars[2] - _bars[3]) % 9 != _cluster * 3):
+            _wrong.append((_cluster, _value))
+check("every one of the 2787 low-level patterns obeys the standard's rules",
+      not _wrong and all(len(p) == 929 for p in zpl_pdf417_patterns.PATTERNS),
+      _wrong[:4])
+
+check("each of the four text submodes holds exactly thirty values",
+      all(len(table) == 30 for table in
+          (zpl_pdf417._UPPER, zpl_pdf417._LOWER, zpl_pdf417._MIXED,
+           zpl_pdf417._PUNCT)),
+      [len(t) for t in (zpl_pdf417._UPPER, zpl_pdf417._LOWER,
+                        zpl_pdf417._MIXED, zpl_pdf417._PUNCT)])
+check("and their last three values are switches, not characters",
+      zpl_pdf417._UPPER[27:] == '\0\0\0' and zpl_pdf417._LOWER[27:] == '\0\0\0',
+      "putting a full stop at 27 made a.b decode as aAk")
+
+_pdf = BarcodeElement(0, 0, 3, 'PDF417 test', symbology='pdf417',
+                      module_width=2)
+_kind, _grid = _pdf.symbol()
+check("PDF417 is a grid of rows, each drawn its own height in modules",
+      _kind == 'grid' and len(_grid) % _pdf.bar_height == 0,
+      (len(_grid), _pdf.bar_height))
+check("every row is the same width, and starts and ends on a bar",
+      len({len(row) for row in _grid}) == 1
+      and all(row[0] and row[-1] for row in _grid))
+check("a row is the start, an indicator, the data, an indicator and the stop",
+      (len(_grid[0]) - zpl_pdf417.STOP_WIDTH) % zpl_pdf417.CODEWORD == 0,
+      len(_grid[0]))
+
+_trunc = BarcodeElement(0, 0, 3, 'PDF417 test', symbology='pdf417',
+                        module_width=2, params={'truncate': 'Y'})
+check("truncation drops the right indicator and the stop pattern",
+      len(_trunc.symbol()[1][0]) < len(_grid[0])
+      and len(_trunc.symbol()[1][0]) == len(_grid[0]) - 17 - 18 + 1,
+      (len(_grid[0]), len(_trunc.symbol()[1][0])))
+
+check("more security means more codewords, so more rows at the same width",
+      len(BarcodeElement(0, 0, 3, 'PDF417 test', symbology='pdf417',
+                         params={'security': '5'}).symbol()[1])
+      > len(_grid))
+check("the columns asked for are the columns drawn",
+      len(BarcodeElement(0, 0, 3, 'PDF417 test', symbology='pdf417',
+                         module_width=2, params={'columns': '5'}).symbol()[1][0])
+      # start, left indicator, five data codewords, right indicator, stop -
+      # and the stop is the one pattern that is eighteen modules, not seventeen
+      == (5 + 3) * zpl_pdf417.CODEWORD + zpl_pdf417.STOP_WIDTH)
+
+for params, why in (({'columns': '30', 'rows': '31'},
+                     "thirty by thirty-one is over the 928 codeword limit"),
+                    ({'columns': '1', 'rows': '3'},
+                     "one column and three rows holds almost nothing")):
+    _over = BarcodeElement(0, 0, 3, 'x' * 300, symbology='pdf417', params=params)
+    check(f"a symbol that cannot be built draws nothing - {why}",
+          _over.symbol() == ('grid', []) and _over.symbol_error,
+          _over.symbol_error)
+
+# ^B7's h is a row height in modules, not a length in dots - so ^BY's height
+# divided by the rows is what an omitted one means, and a rescale must leave
+# it alone or the module width it multiplies is counted twice.
+_row_sized = zpl_parser.parse_zpl(
+    "^XA^PW700^LL500^FO20,20^BY2,3,100^B7N^FDPDF417 test^FS^XZ")[0].elements[0]
+check("^B7 with no row height divides ^BY's height by the rows it needs",
+      abs(_row_sized.height - 100) <= _row_sized.module_width * 2
+      and _row_sized.bar_height > 1,
+      (_row_sized.bar_height, _row_sized.height))
+_scaled_doc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO20,20^BY2^B7N,4,3^FDPDF417^FS^XZ")[0]
+_before = _scaled_doc.elements[0].bar_height
+_scaled_doc.rescale(300 / 203)
+check("a rescale leaves a row height in modules alone, and scales the module",
+      _scaled_doc.elements[0].bar_height == _before
+      and _scaled_doc.elements[0].module_width == 3,
+      (_before, _scaled_doc.elements[0].bar_height,
+       _scaled_doc.elements[0].module_width))
+
+check("PDF417 writes a ^BY, whose module width it really is drawn at",
+      '^BY3' in zpl_parser.parse_zpl(
+          "^XA^PW700^LL500^FO20,20^BY3^B7N,8,5^FDHELLO^FS^XZ"
+      )[0].elements[0].to_zpl(),
+      "only the symbologies carrying their own w in the command leave it out")
+check("^B7 is no longer a command a save would drop",
+      workflow.unsupported_commands("^XA^FO0,0^B7N,3,5^FDHI^FS^XZ") == [])
+
 # --- ^BQ, the QR code -------------------------------------------------------
 from zplcore import qr as zpl_qr
 
