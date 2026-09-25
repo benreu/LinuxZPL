@@ -29,6 +29,8 @@ SYMBOLOGIES = {
     'industrial2of5': "Industrial 2 of 5",
     'standard2of5': "Standard 2 of 5",
     'logmars': "LOGMARS",
+    'postal': "POSTAL (Postnet / PLANET / Intelligent Mail)",
+    'planet': "Planet Code",
     'qr': "QR Code",
 }
 
@@ -50,6 +52,8 @@ COMMAND = {
     'industrial2of5': '^BI',
     'standard2of5': '^BJ',
     'logmars': '^BL',
+    'postal': '^BZ',
+    'planet': '^B5',
     'qr': '^BQ',
 }
 
@@ -73,6 +77,8 @@ COMMAND_PARAMS = {
     '^BI': ('o', 'h', 'f', 'g'),
     '^BJ': ('o', 'h', 'f', 'g'),
     '^BL': ('o', 'h', 'g'),
+    '^BZ': ('o', 'h', 'f', 'g', 'postal_type'),
+    '^B5': ('o', 'h', 'f', 'g'),
     '^B3': ('o', 'e', 'h', 'f', 'g'),
     '^BE': ('o', 'h', 'f', 'g'),
     '^B2': ('o', 'h', 'f', 'g', 'e'),
@@ -170,6 +176,8 @@ PARAMETERS = {
     # whether the interpretation line shows it.
     'msi_check': Param(str, 'B', choices=('A', 'B', 'C', 'D')),
     'msi_show_check': Param(str, 'N', choices=('Y', 'N')),
+    # ^BZ t - which postal code. 2 is reserved, and draws nothing.
+    'postal_type': Param(str, '0', choices=('0', '1', '2', '3')),
 }
 
 # What an omitted f, g, e and m mean, per symbology, in that order - the
@@ -183,6 +191,10 @@ _FLAG_DEFAULTS = {
     # one whatever the command says.
     'upca': ('Y', 'N', 'Y', 'N'),
     'upce': ('Y', 'N', 'Y', 'N'),
+    # The postal codes print no interpretation line unless asked: they go on
+    # an envelope under an address, where a line of digits is clutter.
+    'postal': ('N', 'N', 'N', 'N'),
+    'planet': ('N', 'N', 'N', 'N'),
 }
 
 
@@ -222,6 +234,12 @@ HEIGHT_UNIT = {
 # and spaces. Their size is the grid, so neither ^BY's height nor their own
 # command carries one.
 MATRIX = frozenset(('qr',))
+
+# The symbologies drawn as bars of differing height rather than differing
+# width. Every bar is narrow and every gap the same; what carries the data is
+# how tall each bar is and where it sits, so ^BY's ratio means nothing to
+# them and their own encoders return extents rather than widths.
+POSTAL = frozenset(('postal', 'planet'))
 
 # Symbologies whose module width is ^BY's w rather than a magnification the
 # command carries itself. Everything not here writes ^BY; the rest write
@@ -300,6 +318,8 @@ BARCODE_FEATURES = {
     'standard2of5':     _features(ratio=True),
     # LOGMARS has no f parameter at all: the line always prints.
     'logmars':          _features(ratio=True, text='always'),
+    'postal':           _features(),
+    'planet':           _features(),
     'qr':               _features(height=None, module_width="Magnification",
                                   text=False),
 }
@@ -321,6 +341,9 @@ BARCODE_PARAMETERS = {
                  tuple((c, c) for c in 'ABCD'))),
     'code11': (('code11_check', "Check Characters",
                 (("Two", 'N'), ("One", 'Y'))),),
+    'postal': (('postal_type', "Postal Code",
+                (("Postnet", '0'), ("PLANET", '1'),
+                 ("USPS Intelligent Mail", '3'), ("Reserved", '2'))),),
     'msi': (('msi_check', "Check Digits",
              (("One Mod 10", 'B'), ("None", 'A'), ("Two Mod 10", 'C'),
               ("Mod 11 then Mod 10", 'D'))),

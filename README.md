@@ -156,7 +156,7 @@ zplcore/    no GUI toolkit, runs headless
                  what its parameters mean, what the editors offer for it
   code128.py, code39.py, ean13.py, i2of5.py, upcext.py, upca.py, upce.py,
   ean8.py, code93.py, codabar.py, code11.py, msi.py, plessey.py,
-  twoof5.py, qr.py
+  twoof5.py, postal.py, qr.py
                  barcode encoding, one file per symbology
 gtkui/      GTK3 frontend: Cairo painting, dialogs, menus
 qtui/       PySide2/Qt5 frontend: QPainter painting, dialogs, menus
@@ -244,8 +244,9 @@ Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
 
 - Barcodes are Code 128, Code 39, EAN-13, Interleaved 2 of 5, the UPC/EAN
   extension, UPC-A, UPC-E, EAN-8, Code 93, Codabar, Code 11, MSI, Plessey,
-  Industrial and Standard 2 of 5, LOGMARS and QR; Data Matrix, PDF417, Aztec,
-  GS1 DataBar and the postal codes are not offered yet. A QR code carries
+  Industrial and Standard 2 of 5, LOGMARS, the POSTAL family (Postnet,
+  PLANET and USPS Intelligent Mail) and QR; Data Matrix, PDF417, Aztec and
+  GS1 DataBar are not offered yet. A QR code carries
   what its `^FD` switches say and no interpretation line, and is drawn as
   model 2 whatever its command asks for. No symbology's value is validated
   against its own character set or length - except UPC-E, whose zero

@@ -10,6 +10,11 @@ numpy>=1.20.0
 # designer that cannot draw a QR code is not much of one.
 qrcode>=7.0
 
+# The USPS Intelligent Mail barcode's sixty-five four-state bars: a 102-bit
+# integer, an eleven-bit CRC, ten codewords and a table of thirteen-bit
+# characters, all of which reportlab already carries.
+reportlab>=3.6
+
 # Not required to run or to save a label: tests/test_decode.py uses it to
 # read back what the preview drew, and says so and passes when it is absent.
 # zxing-cpp

@@ -179,9 +179,10 @@ One element, seventeen symbologies: Code 128 (`^BC`, subsets B and C), Code
 39 (`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`), a UPC/EAN Extension
 add-on (`^BS`), UPC-A (`^BU`), UPC-E (`^B9`), EAN-8 (`^B8`), Code 93
 (`^BA`), Codabar (`^BK`), Code 11 (`^B1`), MSI (`^BM`), Plessey (`^BP`),
-Industrial 2 of 5 (`^BI`), Standard 2 of 5 (`^BJ`), LOGMARS (`^BL`) and QR
-(`^BQ`). Data Matrix, PDF417, Aztec and the rest are still not offered - see
-§18.
+Industrial 2 of 5 (`^BI`), Standard 2 of 5 (`^BJ`), LOGMARS (`^BL`), the
+POSTAL family (`^BZ` - Postnet, PLANET and the USPS Intelligent Mail
+barcode), Planet Code (`^B5`) and QR (`^BQ`). Data Matrix, PDF417, Aztec and
+the rest are still not offered - see §18.
 
 **Which command spells which symbology, and what each of its parameters
 means, is one table** - `zplcore/symbology.py` - read by the model, the
@@ -196,7 +197,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 
 | Property | Default |
 |---|---|
-| `symbology` | `code128` - which of the seventeen |
+| `symbology` | `code128` - which of the nineteen |
 | `barcode_value` | `"123456789"` |
 | `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots - and, for a matrix symbology, the magnification its own command carries instead of `^BY`'s w. An omitted one is the manual's default for the print resolution: 1 at 150 dpi, 2 at 200, 3 at 300, 6 at 600 |
@@ -208,6 +209,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `code11_check` | `N` - and it reads backwards: Code 11 is not self-checking, so `N` is *two* check characters and `Y` is one |
 | `msi_check` | `B` - MSI's four checksums: `A` none, `B` one Mod 10, `C` two Mod 10, `D` a Mod 11 then a Mod 10. `msi_show_check` says whether the line shows what they added |
 | `start_char`, `stop_char` | `A` - which of Codabar's four start and stop characters, a pair a reader can be told to expect |
+| `postal_type` | `0` - `^BZ`'s Postnet, `1` PLANET, `3` the USPS Intelligent Mail barcode. `2` is reserved and draws nothing |
 | `mode` | `N` - `A` lets Code 128 use subset C; no other symbology has a mode |
 | `quality` | QR's error correction: `Q` when `^BQ` leaves it out, `M` when `^BQ` names a letter QR has no level for - the manual distinguishes the two |
 | `qr_model` | `2`, the model the manual recommends. `1` is carried but drawn as 2 |
@@ -221,8 +223,16 @@ rotated:
 ```
 linear:  run = sum(module widths) × module_width,  stack = bar_height
 grid:    run = columns × module_width,             stack = rows × module_width
+postal:  run = (2 × bars - 1) × module_width,      stack = bar_height
 box      = (run, stack + text height) upright,  transposed rotated
 ```
+
+The postal codes are the one family that does not vary bar *width*. Every bar
+is one module wide with one module between them; what carries the data is how
+tall each bar is and where it sits, so `^BY`'s ratio means nothing to them.
+Their encoder returns each bar's top and bottom as a fraction of the symbol's
+height - `(0.0, 1.0)` a full bar, `(0.6, 1.0)` a short one - and the
+Intelligent Mail barcode uses four such extents rather than two.
 
 A matrix symbology has no bar height at all - its size is its grid - so
 neither its own command nor `^BY` carries one, and the Bar Height row is not
@@ -1688,7 +1698,7 @@ rather than requirements:
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
   drawn whole, wrapped, whether or not a font file is available.
-- **Seventeen symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
+- **Nineteen symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
   the postal codes and the stacked family are still not offered, and no
   symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are
   given rather than rejecting it (§3.3), and Code 39 draws an out-of-set
@@ -1699,6 +1709,12 @@ rather than requirements:
   its symbology has, with the reason on `symbol_error`. A printer prints no
   symbol in the same case. Refusing to open the label instead would lose
   every other field on it.
+- **The USPS Intelligent Mail barcode's bars come from reportlab.** The
+  conversion from twenty digits of tracking and up to eleven of routing to
+  sixty-five four-state bars is a 102-bit integer, an eleven-bit cyclic
+  redundancy check, ten codewords and a table of thirteen-bit characters;
+  reportlab already carries it. A machine without reportlab draws no symbol
+  and says so, as one without `qrcode` does for a QR code.
 - **`^BJ` Standard 2 of 5 is drawn with the IATA start and stop.** The
   manual prints neither pattern and describes `^BI` and `^BJ` in words that
   fit either; the only other reading of "Standard 2 of 5" is the Matrix

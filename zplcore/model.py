@@ -29,6 +29,7 @@ from . import code11
 from . import msi
 from . import plessey
 from . import twoof5
+from . import postal
 from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
@@ -657,6 +658,8 @@ class BarcodeElement(DesignElement):
             if self.check_digit:
                 value += code128.ucc_check_digit(value)
             return i2of5.normalize(value)
+        if symbology in symbologies.POSTAL:
+            return postal.normalize(self._raw_value(), self._postal_kind())
         if symbology == 'logmars':
             # LOGMARS is Code 39 with a check digit that is not optional and
             # lower case folded up, which is what the manual means by
@@ -692,9 +695,19 @@ class BarcodeElement(DesignElement):
         every other field on it.
         """
         self.symbol_error = None
-        matrix = self.symbology in symbologies.MATRIX
+        if self.symbology in symbologies.POSTAL:
+            kind = 'postal'
+        elif self.symbology in symbologies.MATRIX:
+            kind = 'grid'
+        else:
+            kind = 'linear'
         try:
-            return ('grid', self._grid()) if matrix else ('linear', self.modules())
+            if kind == 'grid':
+                return ('grid', self._grid())
+            if kind == 'postal':
+                return ('postal', postal.encode(self._raw_value(),
+                                                self._postal_kind()))
+            return ('linear', self.modules())
         except ImportError as exc:
             self.symbol_error = (
                 f"{symbologies.SYMBOLOGIES[self.symbology]} needs a Python "
@@ -702,7 +715,14 @@ class BarcodeElement(DesignElement):
         except Exception as exc:                        # noqa: BLE001
             self.symbol_error = (
                 f"{symbologies.SYMBOLOGIES[self.symbology]}: {exc}")
-        return ('grid', []) if matrix else ('linear', [])
+        return (kind, [])
+
+    def _postal_kind(self) -> str:
+        """Which postal code this is: ^BZ names one and ^B5 is always
+        PLANET."""
+        if self.symbology == 'planet':
+            return 'planet'
+        return postal.TYPES.get(self.postal_type, self.postal_type)
 
     def _grid(self) -> list:
         """The matrix symbology's own modules, as rows of booleans."""
@@ -791,6 +811,10 @@ class BarcodeElement(DesignElement):
             rows = len(payload) or symbologies.PLACEHOLDER_GRID
             columns = len(payload[0]) if payload else symbologies.PLACEHOLDER_GRID
             return (columns * module, rows * module)
+        if kind == 'postal':
+            # Narrow bars at a one-to-one pitch: n bars and n - 1 gaps.
+            bars = len(payload) or symbologies.PLACEHOLDER_MODULES
+            return (max(1, 2 * bars - 1) * module, max(1, self.bar_height))
         raise ValueError(f"unknown symbol kind {kind!r}")
 
     def printed_width(self) -> int:

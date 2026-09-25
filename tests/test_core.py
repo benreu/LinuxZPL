@@ -1817,6 +1817,74 @@ for command in ('^BU', '^B9', '^B8', '^BA', '^BK', '^B1', '^BM', '^BP',
           workflow.unsupported_commands(
               f"^XA^FO0,0{command}N,60^FD1234^FS^XZ") == [])
 
+# --- ^BZ and ^B5, the postal codes ------------------------------------------
+from zplcore import postal as zpl_postal
+
+# The one family drawn as bars of differing height rather than differing
+# width: every bar is narrow, every gap the same, and what carries the data is
+# how tall each bar is and where it sits.
+_post = BarcodeElement(0, 0, 40, '12345', symbology='postal', module_width=3)
+check("Postnet is a frame bar, five bars a digit, and a frame bar",
+      _post.symbol()[0] == 'postal' and len(_post.symbol()[1]) == 2 + 5 * 6,
+      len(_post.symbol()[1]))
+check("its check digit brings the digit sum to a multiple of ten",
+      zpl_postal.normalize('12345') == '123455'
+      and sum(int(c) for c in zpl_postal.normalize('12345')) % 10 == 0,
+      zpl_postal.normalize('12345'))
+check("two of every digit's five bars are full height",
+      all(sum(1 for top, _b in _post.symbol()[1][1 + n * 5:6 + n * 5] if top == 0.0) == 2
+          for n in range(6)))
+_planet = BarcodeElement(0, 0, 40, '12345', symbology='postal', module_width=3,
+                         params={'postal_type': '1'})
+check("PLANET is Postnet inverted - three full bars a digit, not two",
+      all(sum(1 for top, _b in _planet.symbol()[1][1 + n * 5:6 + n * 5] if top == 0.0) == 3
+          for n in range(6)))
+check("^B5 is PLANET too, without a type to choose",
+      BarcodeElement(0, 0, 40, '12345', symbology='planet').symbol()[1]
+      == _planet.symbol()[1])
+
+_imb = BarcodeElement(0, 0, 40, '00123123456123456789', symbology='postal',
+                      module_width=3, params={'postal_type': '3'})
+check("the Intelligent Mail barcode is always sixty-five bars",
+      len(_imb.symbol()[1]) == 65, len(_imb.symbol()[1]))
+check("and uses all four of its states, which are four distinct rectangles",
+      len({(r[1], r[3]) for r in geometry.barcode_layout(_imb)['rects']}) == 4,
+      sorted({(r[1], r[3]) for r in geometry.barcode_layout(_imb)['rects']}))
+
+_reserved = BarcodeElement(0, 0, 40, '12345', symbology='postal',
+                           params={'postal_type': '2'})
+check("^BZ's reserved type draws nothing rather than a Postnet it never asked for",
+      _reserved.symbol() == ('postal', []) and _reserved.symbol_error
+      and geometry.barcode_layout(_reserved)['rects'] == [],
+      _reserved.symbol_error)
+
+check("a postal barcode's bars are one module wide at a one-to-one pitch",
+      all(r[2] == 3 for r in geometry.barcode_layout(_post)['rects'])
+      and [r[0] for r in geometry.barcode_layout(_post)['rects'][:3]] == [0, 6, 12])
+check("and its footprint is the bars and the gaps between them",
+      _post.width == (2 * 32 - 1) * 3, _post.width)
+check("the postal codes print no interpretation line unless asked",
+      not _post.show_text and not _planet.show_text
+      and BarcodeElement(0, 0, 40, '1', symbology='postal',
+                         options=('Y',)).show_text)
+
+for zpl_text, expect in (('^BZN,40', ('postal', '0')),
+                         ('^BZN,40,N,N,1', ('postal', '1')),
+                         ('^BZN,40,Y,N,3', ('postal', '3')),
+                         ('^B5N,40', ('planet', '0'))):
+    page = f"^XA^PW812^LL1218^FO10,10^BY3\n{zpl_text}\n^FD12345^FS^XZ"
+    read = zpl_parser.parse_zpl(page)[0].elements[0]
+    check(f"{zpl_text} reads as {expect[0]} type {expect[1]}",
+          (read.symbology, read.postal_type) == expect,
+          (read.symbology, read.postal_type))
+    check(f"and {zpl_text} writes itself back unchanged",
+          zpl_text + '\n' in read.to_zpl(), read.to_zpl().replace(chr(10), ' '))
+
+for command in ('^BZ', '^B5'):
+    check(f"{command} is no longer a command a save would drop",
+          workflow.unsupported_commands(
+              f"^XA^FO0,0{command}N,40^FD12345^FS^XZ") == [])
+
 # --- ^BQ, the QR code -------------------------------------------------------
 from zplcore import qr as zpl_qr
 

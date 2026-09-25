@@ -593,6 +593,11 @@ def _resize_barcode(element, run: int, stack: int) -> None:
         columns = len(payload[0]) if payload else 1
         element.module_width = max(1, round(min(run / columns, stack / rows)))
         return
+    if kind == 'postal':
+        bars = max(1, 2 * len(payload) - 1)
+        element.module_width = max(1, round(run / bars))
+        element.bar_height = max(MIN_SIZE, stack)
+        return
     raise ValueError(f"unknown symbol kind {kind!r}")
 
 
@@ -668,6 +673,18 @@ def barcode_rects(element) -> list:
             if start is not None:
                 rects.append((start * module, index * module,
                               (len(row) - start) * module, module))
+        return rects
+
+    if kind == 'postal':
+        # Every bar is one module wide with one module between them; what
+        # differs is how tall each is and where it sits, which is what the
+        # encoder returns as a fraction of the symbol's height.
+        module = max(1, element.module_width)
+        rects = []
+        for index, (top, bottom) in enumerate(payload):
+            y = round(top * stack)
+            height = max(1, round(bottom * stack) - y)
+            rects.append((index * 2 * module, y, module, height))
         return rects
 
     raise ValueError(f"unknown symbol kind {kind!r}")
