@@ -266,6 +266,34 @@ for name, value in (("upper case", "ZEBRA TECHNOLOGIES"),
     reads(f"^B0 encodes {name}",
           f"^XA^PW700^LL500^FO60,60^B0N,5^FD{value}^FS^XZ", value, 'Aztec')
 
+# --- ^BR, the six of twelve that are drawn ----------------------------------
+
+reads("^BR type 7 is a UPC-A, composite half and all left off",
+      "^XA^PW900^LL400^FO60,60^BRN,7,3,2,100^FD12345678901|composite^FS^XZ",
+      "0123456789012", 'EAN13')
+reads("^BR type 8 is a UPC-E",
+      "^XA^PW900^LL400^FO60,60^BRN,8,3,2,100^FD4210000526^FS^XZ",
+      "0042100005264", 'UPCE')
+reads("^BR type 9 is an EAN-13",
+      "^XA^PW900^LL400^FO60,60^BRN,9,3,2,100^FD400638133393^FS^XZ",
+      "4006381333931", 'EAN13')
+reads("^BR type 10 is an EAN-8",
+      "^XA^PW900^LL400^FO60,60^BRN,10,3,2,100^FD9638507^FS^XZ",
+      "96385074", 'EAN8')
+# Types 11 and 12 are GS1-128, and the FNC1 in front is the whole difference:
+# a reader reports the application identifier rather than bare digits.
+reads("^BR type 11 is a GS1-128, read as application identifiers",
+      "^XA^PW900^LL400^FO60,60^BRN,11,3,2,100^FD0112345678901231^FS^XZ",
+      "(01)12345678901231", 'Code128')
+reads("^BR type 12 is the same, with a different composite it does not draw",
+      "^XA^PW900^LL400^FO60,60^BRN,12,3,2,100^FD0112345678901231^FS^XZ",
+      "(01)12345678901231", 'Code128')
+check("and a plain ^BC of the same digits is not a GS1 symbol",
+      decoded("^XA^PW900^LL400^FO60,60^BY3^BCN,100,Y,N,N,A"
+              "^FD0112345678901231^FS^XZ")[0][1] == "0112345678901231",
+      decoded("^XA^PW900^LL400^FO60,60^BY3^BCN,100,Y,N,N,A"
+              "^FD0112345678901231^FS^XZ"))
+
 # ^BI, ^BJ, ^B1, ^BM and ^BP have no decoder here - zxing reads none of
 # Industrial or Standard 2 of 5, Code 11, MSI or Plessey. Each was checked
 # module for module against BWIPP, the reference implementation, while it was

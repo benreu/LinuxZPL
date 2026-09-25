@@ -33,6 +33,7 @@ from . import postal
 from . import datamatrix
 from . import pdf417
 from . import aztec
+from . import databar
 from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
@@ -667,6 +668,9 @@ class BarcodeElement(DesignElement):
             if self.check_digit:
                 value += code128.ucc_check_digit(value)
             return i2of5.normalize(value)
+        if symbology == 'databar':
+            return databar.normalize(value, databar.TYPES.get(
+                self.databar_type, 'omnidirectional'))
         if symbology in symbologies.POSTAL:
             return postal.normalize(self._raw_value(), self._postal_kind())
         if symbology == 'logmars':
@@ -824,6 +828,9 @@ class BarcodeElement(DesignElement):
             return plessey.encode(raw)
         if symbology in ('industrial2of5', 'standard2of5'):
             return self._ratio_scaled(twoof5.encode(raw, symbology))
+        if symbology == 'databar':
+            return databar.encode(raw, databar.TYPES.get(self.databar_type,
+                                                         'omnidirectional'))
 
         value = self.encoded_value()
         if symbology == 'code128':

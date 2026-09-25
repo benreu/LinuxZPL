@@ -34,6 +34,7 @@ SYMBOLOGIES = {
     'datamatrix': "Data Matrix",
     'pdf417': "PDF417",
     'aztec': "Aztec Code",
+    'databar': "GS1 DataBar",
     'qr': "QR Code",
 }
 
@@ -60,6 +61,7 @@ COMMAND = {
     'datamatrix': '^BX',
     'pdf417': '^B7',
     'aztec': '^B0',
+    'databar': '^BR',
     'qr': '^BQ',
 }
 
@@ -77,6 +79,7 @@ COMMAND_PARAMS = {
     '^B7': ('o', 'h', 'security', 'columns', 'rows', 'truncate'),
     '^B0': ('o', 'w', 'eci', 'aztec_size', 'menu', 'append_count',
             'append_id'),
+    '^BR': ('o', 'databar_type', 'w', 'separator', 'h', 'segments'),
     '^BO': ('o', 'w', 'eci', 'aztec_size', 'menu', 'append_count',
             'append_id'),
     '^BU': ('o', 'h', 'f', 'g', 'e'),
@@ -237,6 +240,16 @@ PARAMETERS = {
     # identifier. Carried, not simulated.
     'append_count': Param(int, 1),
     'append_id': Param(None, ''),
+    # ^BR b - which of the twelve, by the manual's own numbering.
+    'databar_type': Param(str, '1',
+                          choices=tuple(str(n) for n in range(1, 13))),
+    # ^BR d - how tall the separator between a composite component and the
+    # linear symbol under it is, in modules. Carried; nothing draws a
+    # composite yet.
+    'separator': Param(int, 1, choices=(1, 2)),
+    # ^BR f - how many segments per line a DataBar Expanded Stacked symbol
+    # runs to, even numbers only.
+    'segments': Param(int, 22),
 }
 
 # What an omitted f, g, e and m mean, per symbology, in that order - the
@@ -396,6 +409,7 @@ BARCODE_FEATURES = {
     'standard2of5':     _features(ratio=True),
     # LOGMARS has no f parameter at all: the line always prints.
     'logmars':          _features(ratio=True, text='always'),
+    'databar':          _features(),
     'postal':           _features(),
     'planet':           _features(),
     'datamatrix':       _features(height=None, module_width="Module Size",
@@ -453,6 +467,15 @@ BARCODE_PARAMETERS = {
                  tuple((c, c) for c in 'ABCD'))),
     'code11': (('code11_check', "Check Characters",
                 (("Two", 'N'), ("One", 'Y'))),),
+    'databar': (('databar_type', "DataBar Type",
+                 (("UPC-A (7)", '7'), ("UPC-E (8)", '8'),
+                  ("EAN-13 (9)", '9'), ("EAN-8 (10)", '10'),
+                  ("GS1-128 with CC-A/B (11)", '11'),
+                  ("GS1-128 with CC-C (12)", '12'),
+                  ("Omnidirectional (1)", '1'), ("Truncated (2)", '2'),
+                  ("Stacked (3)", '3'), ("Stacked Omnidirectional (4)", '4'),
+                  ("Limited (5)", '5'), ("Expanded (6)", '6'))),
+                ('separator', "Separator Height", (("1", 1), ("2", 2)))),
     'postal': (('postal_type', "Postal Code",
                 (("Postnet", '0'), ("PLANET", '1'),
                  ("USPS Intelligent Mail", '3'), ("Reserved", '2'))),),

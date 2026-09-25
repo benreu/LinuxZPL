@@ -61,6 +61,10 @@ def encode_b(data: str) -> list:
 # Symbol values that are not data
 _START_B, _START_C = 104, 105
 _CODE_C, _CODE_B = 99, 100
+# FNC1, which is what makes a Code 128 symbol a GS1-128 one: as the first
+# character after the start code it says the data is application identifiers
+# rather than free text, and a reader reports it as such.
+FNC1 = 102
 
 
 def _symbols(data: str, mode: str) -> list:
@@ -127,14 +131,21 @@ def _modules(syms: list) -> list:
     return mods
 
 
-def encode(data: str, mode: str = 'N') -> list:
+def encode(data: str, mode: str = 'N', gs1: bool = False) -> list:
     """Module widths for a Code 128 barcode, alternating bar/space.
 
     The width of a barcode is the sum of these, so nothing else needs a formula
     for it - which matters because no formula covers subset C, where two digits
     share one symbol.
+
+    `gs1` puts an FNC1 straight after the start code, which is the whole
+    difference between Code 128 and GS1-128: the same bars, read as
+    application identifiers rather than as text.
     """
-    return _modules(_symbols(data or "", mode or 'N'))
+    syms = _symbols(data or "", mode or 'N')
+    if gs1:
+        syms = [syms[0], FNC1] + syms[1:]
+    return _modules(syms)
 
 
 def ucc_check_digit(data: str) -> str:

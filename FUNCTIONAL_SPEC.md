@@ -182,7 +182,8 @@ add-on (`^BS`), UPC-A (`^BU`), UPC-E (`^B9`), EAN-8 (`^B8`), Code 93
 Industrial 2 of 5 (`^BI`), Standard 2 of 5 (`^BJ`), LOGMARS (`^BL`), the
 POSTAL family (`^BZ` - Postnet, PLANET and the USPS Intelligent Mail
 barcode), Planet Code (`^B5`), Data Matrix (`^BX`), PDF417 (`^B7`), Aztec
-(`^B0`, also spelled `^BO`) and QR (`^BQ`). GS1 DataBar and the rest are
+(`^B0`, also spelled `^BO`), six of `^BR`'s twelve, and QR (`^BQ`). Code 49,
+Codablock, MaxiCode, MicroPDF417, TLC39 and the GS1 DataBar family proper are
 still not offered - see §18.
 
 **Which command spells which symbology, and what each of its parameters
@@ -198,7 +199,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 
 | Property | Default |
 |---|---|
-| `symbology` | `code128` - which of the twenty-two |
+| `symbology` | `code128` - which of the twenty-three |
 | `barcode_value` | `"123456789"` |
 | `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots - and, for a matrix symbology, the magnification its own command carries instead of `^BY`'s w. An omitted one is the manual's default for the print resolution: 1 at 150 dpi, 2 at 200, 3 at 300, 6 at 600 |
@@ -217,6 +218,8 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `truncate` | `N` - drop `^B7`'s right row indicator and stop pattern, about a fifth narrower and worth having only where the label will not be damaged |
 | `aztec_size` | `0` - `^B0`'s error control and symbol size in one number: `0` the default, `1`–`99` a percentage of correction, `101`–`104` a compact symbol of that many layers, `201`–`232` a full-range one, `300` a Rune |
 | `eci`, `menu`, `append_count`, `append_id` | `N`, `N`, `1`, none - `^B0`'s extended channel codes, reader-initialisation flag and structured append. All carried, none simulated |
+| `databar_type` | `1` - which of `^BR`'s twelve. `7`–`10` are UPC-A, UPC-E, EAN-13 and EAN-8, and `11`–`12` GS1-128; `1`–`6` are the DataBar family and are not drawn (§18) |
+| `separator`, `segments` | `1`, `22` - `^BR`'s separator height and segments per line. Carried; nothing draws a composite yet |
 | `postal_type` | `0` - `^BZ`'s Postnet, `1` PLANET, `3` the USPS Intelligent Mail barcode. `2` is reserved and draws nothing |
 | `mode` | `N` - `A` lets Code 128 use subset C; no other symbology has a mode |
 | `quality` | QR's error correction: `Q` when `^BQ` leaves it out, `M` when `^BQ` names a letter QR has no level for - the manual distinguishes the two |
@@ -1707,7 +1710,7 @@ rather than requirements:
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
   drawn whole, wrapped, whether or not a font file is available.
-- **Twenty-two symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
+- **Twenty-three symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
   the postal codes and the stacked family are still not offered, and no
   symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are
   given rather than rejecting it (§3.3), and Code 39 draws an out-of-set
@@ -1718,6 +1721,21 @@ rather than requirements:
   its symbology has, with the reason on `symbol_error`. A printer prints no
   symbol in the same case. Refusing to open the label instead would lose
   every other field on it.
+- **`^BR` draws six of its twelve types.** Types 7 to 10 are UPC-A, UPC-E,
+  EAN-13 and EAN-8, and 11 and 12 are GS1-128 - Code 128 with an FNC1 in
+  front, which is what makes a reader take the digits as application
+  identifiers. Types 1 to 6, the GS1 DataBar family proper, are **not
+  drawn**: their data characters are ranked combinations of element widths,
+  and while the number of combinations in each group can be derived from the
+  group boundaries, the order the standard ranks them in cannot - so an
+  implementation written without the standard in hand is right for most
+  values and wrong for some, which is worse than drawing nothing. Such a
+  field keeps its footprint and says which type is missing; its data,
+  including the composite half, round-trips unchanged.
+- **`^BR`'s composite component is carried, not drawn.** The field data is
+  the linear value, a `|`, and a component that would print above it as a
+  MicroPDF417 or PDF417. Only the linear part is drawn; the rest survives a
+  save untouched.
 - **`^B0` and `^BO` are one symbology.** The manual lists Aztec twice under
   both spellings; a file that used `^BO` reads the same and comes back as
   `^B0`, the one this designer writes.

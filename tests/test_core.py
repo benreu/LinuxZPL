@@ -2162,6 +2162,66 @@ for command in ('^B0', '^BO'):
           workflow.unsupported_commands(
               f"^XA^FO0,0{command}N,4^FDHI^FS^XZ") == [])
 
+# --- ^BR, the GS1 DataBar family and its relations --------------------------
+from zplcore import databar as zpl_databar
+
+# ^BR's field data is the linear value, a bar, and a composite component that
+# would print above it. Only the linear part is drawn; the rest round-trips.
+check("^BR splits its field data at the bar the manual uses",
+      zpl_databar.split('12345678901|this is composite info')
+      == ('12345678901', 'this is composite info'),
+      zpl_databar.split('12345678901|this is composite info'))
+check("and a field with no bar in it is all linear",
+      zpl_databar.split('12345678901') == ('12345678901', ''))
+
+# Six of the twelve are not DataBar at all, and are drawn by the encoders
+# those symbologies already have.
+for kind, value, modules in (('upca', '12345678901', 95), ('upce', '4210000526', 51),
+                             ('ean13', '400638133393', 95), ('ean8', '9638507', 67)):
+    _el = BarcodeElement(0, 0, 60, value + '|composite', symbology='databar',
+                         params={'databar_type': str(
+                             [k for k, v in zpl_databar.TYPES.items() if v == kind][0])})
+    check(f"^BR's {kind} is the same {modules} modules that symbology always was",
+          sum(_el.modules()) == modules, sum(_el.modules()))
+    check(f"and its composite half is not drawn into the {kind} symbol",
+          _el.modules() == BarcodeElement(0, 0, 60, value, symbology='databar',
+                                          params={'databar_type': str(
+                                              [k for k, v in zpl_databar.TYPES.items()
+                                               if v == kind][0])}).modules())
+
+_gs1 = BarcodeElement(0, 0, 60, '0112345678901231', symbology='databar',
+                      params={'databar_type': '11'})
+_plain = BarcodeElement(0, 0, 60, '0112345678901231', symbology='code128',
+                        options=('Y', 'N', 'N', 'A'))
+check("^BR's types 11 and 12 are GS1-128: Code 128 with an FNC1 in front",
+      sum(_gs1.modules()) == sum(_plain.modules()) + 11,
+      (sum(_gs1.modules()), sum(_plain.modules())))
+check("and the FNC1 is what a reader takes as an application identifier",
+      code128.FNC1 == 102)
+
+# The six that are DataBar are carried but not drawn.
+for number in ('1', '2', '3', '4', '5', '6'):
+    _not_yet = BarcodeElement(0, 0, 60, '12345678901|composite',
+                              symbology='databar',
+                              params={'databar_type': number})
+    check(f"^BR type {number} keeps its footprint and says it is not drawn",
+          _not_yet.symbol() == ('linear', []) and _not_yet.symbol_error
+          and 'DataBar' in _not_yet.symbol_error and _not_yet.width > 0,
+          (_not_yet.symbol_error or '')[:60])
+
+_br = zpl_parser.parse_zpl(
+    "^XA^PW700^LL500^FO10,10^BRN,7,5,2,100"
+    "^FD12345678901|this is composite info^FS^XZ")[0].elements[0]
+check("^BR round-trips every parameter, and the composite half of its data",
+      '^BRN,7,5,2,100' in _br.to_zpl()
+      and _br.barcode_value == '12345678901|this is composite info',
+      _br.to_zpl().replace(chr(10), ' '))
+check("^BR carries its own magnification, so it writes no ^BY",
+      '^BY' not in _br.to_zpl() and _br.module_width == 5)
+check("^BR is no longer a command a save would drop",
+      workflow.unsupported_commands(
+          "^XA^FO0,0^BRN,7,3^FD12345678901^FS^XZ") == [])
+
 # --- ^BQ, the QR code -------------------------------------------------------
 from zplcore import qr as zpl_qr
 
