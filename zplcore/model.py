@@ -19,6 +19,7 @@ from . import code128
 from . import code39
 from . import ean13
 from . import i2of5
+from . import qr
 from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
@@ -612,14 +613,41 @@ class BarcodeElement(DesignElement):
     def symbol(self) -> tuple:
         """What the printer will actually lay down, as (kind, payload).
 
-        `('linear', modules)` is the bar and space widths of a one-dimensional
-        symbol, alternating, starting with a bar. The two-dimensional and
-        postal kinds arrive with their own symbologies; every drawing path
-        goes through `geometry.barcode_layout`, which turns whichever kind
-        this is into plain rectangles, so no canvas has to know the
-        difference.
+        `('linear', modules)` is the bar and space widths of a
+        one-dimensional symbol, alternating, starting with a bar.
+        `('grid', rows)` is a matrix symbology, a list of rows of booleans,
+        dark where True. Every drawing path goes through
+        `geometry.barcode_layout`, which turns whichever kind this is into
+        plain rectangles, so no canvas has to know the difference.
+
+        An encoder that cannot produce a symbol - data too long for any
+        version, or its package not installed on this machine - leaves the
+        element its footprint and draws nothing, with the reason on
+        `symbol_error` for the frontends to show. A printer prints no symbol
+        in the same case; refusing to open the label instead would lose
+        every other field on it.
         """
-        return ('linear', self.modules())
+        self.symbol_error = None
+        if self.symbology not in symbologies.MATRIX:
+            return ('linear', self.modules())
+        try:
+            return ('grid', self._grid())
+        except ImportError as exc:
+            self.symbol_error = (
+                f"{symbologies.SYMBOLOGIES[self.symbology]} needs a Python "
+                f"package this machine does not have: {exc.name}.")
+        except Exception as exc:                        # noqa: BLE001
+            self.symbol_error = (
+                f"{symbologies.SYMBOLOGIES[self.symbology]}: {exc}")
+        return ('grid', [])
+
+    def _grid(self) -> list:
+        """The matrix symbology's own modules, as rows of booleans."""
+        if self.symbology == 'qr':
+            value = self._raw_value()
+            return qr.encode(value, qr.error_correction(value, self.quality),
+                             self.qr_mask)
+        raise ValueError(f"no encoder for {self.symbology!r}")
 
     def modules(self) -> list:
         """The bar and space widths of the symbol, in modules.
@@ -659,9 +687,17 @@ class BarcodeElement(DesignElement):
         itself is what the footprint and every layout are measured from.
         """
         kind, payload = self.symbol()
+        module = max(1, self.module_width)
         if kind == 'linear':
-            run = max(1, sum(payload) * max(1, self.module_width))
+            run = max(1, sum(payload) * module)
             return (run, max(1, self.bar_height))
+        if kind == 'grid':
+            # A symbol that could not be built keeps the footprint of the
+            # smallest one its symbology has, so the element stays somewhere
+            # the user can select it and read why.
+            rows = len(payload) or symbologies.PLACEHOLDER_GRID
+            columns = len(payload[0]) if payload else symbologies.PLACEHOLDER_GRID
+            return (columns * module, rows * module)
         raise ValueError(f"unknown symbol kind {kind!r}")
 
     def printed_width(self) -> int:
@@ -698,6 +734,10 @@ class BarcodeElement(DesignElement):
             return self.orientation
         if name == 'h':
             return str(self.bar_height)
+        if name == 'w':
+            # A matrix symbology spells its module width in its own command,
+            # as a magnification, rather than deferring to ^BY.
+            return str(max(1, self.module_width))
         if name == 'f':
             return 'Y' if self.show_text else 'N'
         if name == 'g':
@@ -712,9 +752,8 @@ class BarcodeElement(DesignElement):
         """What that parameter means when the command leaves it out."""
         if name == 'o':
             return ''
-        if name in symbologies.SHARED_PARAMS:
-            index = ('f', 'g', 'e', 'm').index(name)
-            return self.DEFAULTS[index]
+        if name in symbologies.FLAG_PARAMS:
+            return self.DEFAULTS[symbologies.FLAG_PARAMS.index(name)]
         return symbologies.PARAMETERS[name].default_zpl(self.symbology)
 
     def _command_zpl(self) -> str:

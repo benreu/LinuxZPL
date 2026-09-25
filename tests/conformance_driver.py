@@ -715,6 +715,18 @@ def sequence(driver, record):
     barcode.width = barcode.printed_width()
     record('barcode value changed')
 
+    # A matrix symbology, whose size is its own grid rather than a height the
+    # command carries - so the two frontends have to agree about a footprint
+    # neither of them can get from bar_height.
+    barcode.symbology = 'qr'
+    barcode.barcode_value = 'MM,ACONFORM-1234'
+    barcode.module_width = 4
+    barcode.show_text = False
+    barcode.sync_box()
+    record('barcode becomes a QR code')
+    driver.resize(barcode, 'br', 140, 40)
+    record('resize the QR code, which stays square')
+
     driver.select(frame)
     driver.bring_forward()
     record('bring frame forward')

@@ -26,6 +26,7 @@ from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
                      workflow)
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
                            BARCODE_MODES, BARCODE_ORIENTATIONS,
+                           BARCODE_PARAMETERS,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
                            FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
@@ -970,11 +971,43 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     height_spin.setRange(20, 300)
     height_spin.setValue(element.bar_height)
     form.addRow("Bar Height:", height_spin)
+    height_label = form.labelForField(height_spin)
 
     module_spin = QSpinBox()
     module_spin.setRange(1, 20)
     module_spin.setValue(element.module_width)
     form.addRow("Module Width:", module_spin)
+    module_label = form.labelForField(module_spin)
+
+    # The rows a symbology adds for its own parameters - a QR code's error
+    # correction and mask, and so on. Built from the same catalogue the
+    # parser and the model read, so a symbology cannot arrive with a
+    # parameter no editor can reach. They go here, after the value, so the
+    # rows above keep the positions other code looks for them in.
+    extra_rows = {}
+    for symbology_key, rows in BARCODE_PARAMETERS.items():
+        for attribute, label, choices in rows:
+            if attribute in extra_rows:
+                continue
+            combo = QComboBox()
+            for choice_label, value in choices:
+                combo.addItem(choice_label, value)
+            form.addRow(label + ":", combo)
+            extra_rows[attribute] = (combo, form.labelForField(combo), choices)
+
+    def _load_extra_rows():
+        """Show each row the chosen symbology has, set to its value."""
+        wanted = dict((attribute, True) for attribute, _l, _c
+                      in BARCODE_PARAMETERS.get(symbology_combo.currentData(), ()))
+        for attribute, (combo, label, choices) in extra_rows.items():
+            shown = attribute in wanted
+            combo.setVisible(shown)
+            label.setVisible(shown)
+            if not shown:
+                continue
+            current = getattr(element, attribute, None)
+            values = [value for _l, value in choices]
+            combo.setCurrentIndex(values.index(current) if current in values else 0)
 
     ratio_spin = QDoubleSpinBox()
     ratio_spin.setRange(2.0, 3.0)
@@ -1048,6 +1081,21 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
             widget.setVisible(check_visible)
         if check_visible:
             check_label.setText(features['check_digit'] + ":")
+        # A matrix symbology's size is its own grid, so it has no bar height
+        # to offer and its module width is a magnification of that grid.
+        for widget in (height_spin, height_label):
+            widget.setVisible(features['height'] is not None)
+        if features['height'] is not None:
+            height_spin.setRange(*features['height'])
+        for widget in (module_spin, module_label):
+            widget.setVisible(features['module_width'] is not None)
+        if features['module_width'] is not None:
+            module_label.setText(features['module_width'] + ":")
+        # ...and no interpretation line, so neither the line nor its font.
+        for widget in (text_combo, form.labelForField(text_combo),
+                       font_spin, form.labelForField(font_spin)):
+            widget.setVisible(bool(features['text']))
+        _load_extra_rows()
 
     symbology_combo.currentIndexChanged.connect(_update_visible_rows)
     _update_visible_rows()
@@ -1062,6 +1110,14 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         element.ratio = ratio_spin.value()
         element.orientation = orientation_combo.currentData()
         element.show_text, element.text_above = text_combo.currentData()
+        # Which parameters to write comes from the catalogue, not from
+        # whether the row is on screen: a dialog that was never shown has no
+        # visible widgets at all, so asking the widget silently dropped every
+        # change when the editor was driven rather than clicked.
+        for attribute, _label, _choices in BARCODE_PARAMETERS.get(
+                element.symbology, ()):
+            combo = extra_rows[attribute][0]
+            setattr(element, attribute, combo.currentData())
         element.check_digit = check_combo.currentData()
         element.mode = mode_combo.currentData()
         element.reverse_print = fr_check.isChecked()

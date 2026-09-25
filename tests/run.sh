@@ -5,7 +5,8 @@
 cd "$(dirname "$0")/.."
 status=0
 
-for suite in tests/test_core.py tests/test_deviations.py tests/test_font_fallback.py; do
+for suite in tests/test_core.py tests/test_deviations.py tests/test_font_fallback.py \
+             tests/test_decode.py; do
   echo "=== $suite ==="
   QT_QPA_PLATFORM=offscreen python3 -u "$suite" || status=1
 done

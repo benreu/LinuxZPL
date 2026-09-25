@@ -16,6 +16,7 @@ from . import fields as zpl_fields
 from . import fonts as zpl_fonts
 from . import graphic_store
 from . import graphics
+from . import symbology as symbologies
 from . import transforms as zpl_transforms
 from .model import (ORIENTATIONS, BarcodeElement, Document, FieldBlock,
                     FrameElement, ImageElement, StoredGraphicElement,
@@ -715,9 +716,10 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['block'] = FieldBlock.from_zpl(params)
         elif cmd == '^FR':
             field['reverse'] = True
-        elif cmd in ('^BC', '^B3', '^BE', '^B2', '^BS'):
+        elif cmd in BARCODE_COMMANDS:
             field['barcode'] = _read_barcode(cmd, params, field['bar_height'],
-                                             default_orientation)
+                                             default_orientation,
+                                             loaded_dpi or doc.dpi)
         elif cmd.startswith('^B') or cmd == '^GS':
             # QR, Data Matrix, PDF417 and the rest - a symbology this designer
             # cannot draw. Recorded so the field is dropped, because falling
@@ -986,36 +988,32 @@ def _read_frame(params: str):
             thickness, colour, number(4, 0))
 
 
-BARCODE_SYMBOLOGY = {'^BC': 'code128', '^B3': 'code39', '^BE': 'ean13',
-                     '^B2': 'interleaved2of5', '^BS': 'upcean_extension'}
-
-# Where each command's own trailing flags land, keyed by the canonical
-# (show_text, text_above, check_digit, mode) BarcodeElement's own `options`
-# tuple always uses. ^B3 is not here: its check digit comes before the
-# height, not after, so `_read_barcode` reads it separately.
-_BARCODE_PARAMS = {
-    '^BC': ('o', 'h', 'f', 'g', 'e', 'm'),
-    '^BE': ('o', 'h', 'f', 'g'),
-    '^B2': ('o', 'h', 'f', 'g', 'e'),
-    '^BS': ('o', 'h', 'f', 'g'),
-}
+BARCODE_COMMANDS = symbologies.COMMAND_PARAMS
 
 
 def _read_barcode(cmd: str, params: str, default_height=None,
-                  default_orientation=DEFAULT_ORIENTATION) -> dict:
-    """A barcode command's own parameters, whichever of ^BC/^B3/^BE/^B2/^BS.
+                  default_orientation=DEFAULT_ORIENTATION,
+                  dpi=zpl_fonts.DEFAULT_DPI) -> dict:
+    """A barcode command's own parameters, whichever command it is.
 
-    Everything after the height is carried through untouched: those flags
-    decide whether the digits print under the bars and, where a symbology
-    has one, whether and how a check digit is added - re-emitting a barcode
-    without them would change the label. Each command spells its own subset
-    of them in its own order, which is what `_BARCODE_PARAMS` (and, for ^B3,
-    the code below) exists to put back into one shape: the (show, above,
-    check, mode) order `options` always uses regardless of symbology.
+    Every parameter is carried through: the flags decide whether the digits
+    print under the bars and, where a symbology has one, whether and how a
+    check digit is added, and the rest - a QR code's error correction, a
+    Data Matrix's quality - decide what the symbol is at all. Re-emitting a
+    barcode without them would change the label. Each command spells its own
+    subset in its own order, which is what zplcore.symbology's catalogue
+    exists to put back into one shape: the (show, above, check, mode) order
+    `options` always uses regardless of symbology, plus the rest by name.
 
     An omitted height is ^BY's, which is what its third parameter is for.
     Hard-coding 100 here turned ^BY3,3.0,150^BCN into a barcode a third
     shorter than the file asked for.
+
+    An omitted magnification is the one the manual gives for the print
+    resolution - 2 at 200 dpi, 3 at 300 - since a matrix symbology has no
+    ^BY to fall back on. It is resolved here rather than left blank so the
+    file this designer writes states the size it is drawing, instead of
+    coming back a different size on a printer with a different head.
 
     An omitted orientation is ^FW's, as an ^A's is. It stays the empty string
     while ^FW is at its power-up N, so a barcode a file never turned is written
@@ -1024,13 +1022,8 @@ def _read_barcode(cmd: str, params: str, default_height=None,
     """
     parts = [p.strip() for p in params.split(',')]
     fallback = DESIGNER_BAR_HEIGHT if default_height is None else default_height
-
-    if cmd == '^B3':
-        # ^B3o,e,h,f,g - the one command whose check digit comes before the
-        # height rather than after it, among the other trailing options.
-        fields = dict(zip(('o', 'e', 'h', 'f', 'g'), parts))
-    else:
-        fields = dict(zip(_BARCODE_PARAMS[cmd], parts))
+    names = BARCODE_COMMANDS[cmd]
+    fields = dict(zip(names, parts))
 
     orientation = '' if default_orientation == 'N' else default_orientation
     o = fields.get('o', '')
@@ -1041,10 +1034,22 @@ def _read_barcode(cmd: str, params: str, default_height=None,
     except ValueError:
         height = fallback
 
-    return {'symbology': BARCODE_SYMBOLOGY[cmd], 'orientation': orientation,
+    magnification = None
+    if 'w' in names:
+        try:
+            magnification = int(fields['w']) if fields.get('w') else 0
+        except ValueError:
+            magnification = 0
+        magnification = magnification or symbologies.default_magnification(dpi)
+
+    return {'symbology': symbologies.SYMBOLOGY_OF[cmd],
+            'orientation': orientation,
             'height': height,
+            'magnification': magnification,
             'options': (fields.get('f', ''), fields.get('g', ''),
-                        fields.get('e', ''), fields.get('m', ''))}
+                        fields.get('e', ''), fields.get('m', '')),
+            'params': {name: fields.get(name, '') for name in names
+                       if name not in symbologies.SHARED_PARAMS}}
 
 
 def _flush(field, doc, renderer, pending) -> tuple:
@@ -1152,9 +1157,15 @@ def _build_element(field, doc, renderer):
         value = field['data']
         if value is None:
             value = '' if printer_generated else "123456789"
+        # A matrix symbology carries its own magnification and ignores ^BY's
+        # module width entirely, so the command's own number wins where it
+        # has one.
+        module_width = bc['magnification'] or field['module_width']
         return BarcodeElement(x, y, height=bc['height'],
                               barcode_value=value,
-                              module_width=field['module_width'],
+                              module_width=module_width,
+                              params=bc['params'],
+                              total_height=field['bar_height'],
                               ratio=field['ratio'],
                               orientation=bc['orientation'],
                               options=bc['options'],

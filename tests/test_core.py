@@ -453,7 +453,7 @@ check("the round trip is stable", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
 
 # markers ahead of a field the model cannot hold are used up by it
 leak = ("^XA^PW400^LL400\n^FXDESIGNER_GROUP:7\n^FXDESIGNER_NOPRINT\n"
-        "^FO10,10^BQN,2,3^FDqr^FS\n^FO20,20^A0N,30,30^FDafter^FS\n^XZ")
+        "^FO10,10^BDN,2,3^FDmaxi^FS\n^FO20,20^A0N,30,30^FDafter^FS\n^XZ")
 back, _ = zpl_parser.parse_zpl(leak)
 check("neither marker leaks onto the next supported field",
       len(back.elements) == 1 and back.elements[0].group is None
@@ -1315,7 +1315,7 @@ check("nothing is reported for the templates",
       workflow.unsupported_commands(product) == []
       and workflow.unsupported_commands(serial) == [])
 check("unmodelled commands are reported",
-      workflow.unsupported_commands("^XA^FO1,1^BQN,2,10^FDQR^FS^FH^XZ") == ['^BQ'])
+      workflow.unsupported_commands("^XA^FO1,1^BDN,2,10^FDmaxi^FS^FH^XZ") == ['^BD'])
 check("and the label transforms are not, now that they survive a save",
       workflow.unsupported_commands(
           "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [],
@@ -1351,19 +1351,19 @@ check("a redefinition with nothing after it is recorded bare and breaks nothing"
       and redefs("^XA^FO1,1^FDx^FS^CC\n^XZ") == ['^CC'])
 
 heard = []
-said = workflow.warn_unsupported("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ",
+said = workflow.warn_unsupported("^XA^CC//FO1,1/BDN,2,10/FDmaxi/FS/CC^^XZ",
                                  lambda cmds: heard.append(('dropped', cmds)),
                                  lambda found: heard.append(('redefined', found)))
 check("a redefining label hears the redefinition notice, then the ordinary "
-      "list - read on the canonical text, so it names the real ^BQ",
-      heard == [('redefined', ['^CC/', '/CC^']), ('dropped', ['^BQ'])]
-      and said == ['^CC/', '/CC^', '^BQ'], heard)
+      "list - read on the canonical text, so it names the real ^BD",
+      heard == [('redefined', ['^CC/', '/CC^']), ('dropped', ['^BD'])]
+      and said == ['^CC/', '/CC^', '^BD'], heard)
 heard = []
-said = workflow.warn_unsupported("^XA^FO1,1^BQN,2,10^FDQR^FS^XZ",
+said = workflow.warn_unsupported("^XA^FO1,1^BDN,2,10^FDmaxi^FS^XZ",
                                  lambda cmds: heard.append(('dropped', cmds)),
                                  lambda found: heard.append(('redefined', found)))
 check("and one that does not is reported exactly as before",
-      heard == [('dropped', ['^BQ'])] and said == ['^BQ'], heard)
+      heard == [('dropped', ['^BD'])] and said == ['^BD'], heard)
 heard = []
 check("a clean label says nothing either way",
       workflow.warn_unsupported(product, lambda c: heard.append(c),
@@ -1455,9 +1455,9 @@ check("and the image it decodes to is the same one",
 
 check("the redefinitions themselves are not in the unsupported list - the "
       "notice covers them - and what follows them is read for real",
-      workflow.unsupported_commands("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ")
-      == ['^BQ'],
-      workflow.unsupported_commands("^XA^CC//FO1,1/BQN,2,10/FDQR/FS/CC^^XZ"))
+      workflow.unsupported_commands("^XA^CC//FO1,1/BDN,2,10/FDmaxi/FS/CC^^XZ")
+      == ['^BD'],
+      workflow.unsupported_commands("^XA^CC//FO1,1/BDN,2,10/FDmaxi/FS/CC^^XZ"))
 check("a stray prefix left by the restore is skipped, as a stray ^ is today",
       canon("^XA^CC//FO1,1/FDx/FS/CC^^^XZ")[0] == "^XA^FO1,1^FDx^FS^^XZ"
       and [(e.text) for e in zpl_parser.parse_zpl(
@@ -1533,15 +1533,26 @@ for cmd in ('^B3', '^BE', '^B2', '^BS'):
           cmd not in workflow.unsupported_commands(f"^XA^FO0,0{cmd}N^FD1^FS^XZ"),
           workflow.unsupported_commands(f"^XA^FO0,0{cmd}N^FD1^FS^XZ"))
 
-check("both frontends are offered the same five symbologies",
-      [v for _l, v in BARCODE_SYMBOLOGIES]
-      == ['code128', 'code39', 'ean13', 'interleaved2of5', 'upcean_extension'])
-check("only Code 128 and Code 39 offer a mode or a check digit label apiece",
-      [(name, feat['mode'], feat['check_digit'] is not None)
-       for name, feat in BARCODE_FEATURES.items()]
-      == [('code128', True, True), ('code39', False, True),
-          ('ean13', False, False), ('interleaved2of5', False, True),
-          ('upcean_extension', False, False)])
+from zplcore import symbology as zpl_symbology
+
+check("both frontends are offered every symbology the catalogue holds, and "
+      "the same one for each command",
+      [v for _l, v in BARCODE_SYMBOLOGIES] == list(zpl_symbology.SYMBOLOGIES)
+      and set(zpl_symbology.COMMAND) == set(zpl_symbology.SYMBOLOGIES)
+      and all(zpl_symbology.SYMBOLOGY_OF[cmd] == key
+              for key, cmd in zpl_symbology.COMMAND.items()),
+      [v for _l, v in BARCODE_SYMBOLOGIES])
+check("every symbology has a dialog entry, and every command a parameter list",
+      set(BARCODE_FEATURES) == set(zpl_symbology.SYMBOLOGIES)
+      and set(zpl_symbology.COMMAND.values()) <= set(zpl_symbology.COMMAND_PARAMS),
+      (sorted(set(BARCODE_FEATURES) ^ set(zpl_symbology.SYMBOLOGIES)),
+       sorted(set(zpl_symbology.COMMAND.values()) - set(zpl_symbology.COMMAND_PARAMS))))
+check("only Code 128 offers a mode, and only the three with one a check digit",
+      [name for name, feat in BARCODE_FEATURES.items() if feat['mode']] == ['code128']
+      and [name for name, feat in BARCODE_FEATURES.items()
+           if feat['check_digit'] is not None]
+      == ['code128', 'code39', 'interleaved2of5'],
+      [(n, f['mode'], f['check_digit']) for n, f in BARCODE_FEATURES.items()])
 
 # Code 39: self-checking, so every character costs the same twelve modules -
 # three wide (2) plus six narrow (1) plus the inter-character gap.
@@ -1626,6 +1637,123 @@ for symbology, value, options, ratio, expect in (
           == (symbology, value, options[0] != 'N', options[1] == 'Y',
               (options[2] == 'Y') if len(options) > 2 else False),
           (back.symbology, back.barcode_value, back.show_text, back.text_above))
+
+def _qr_square():
+    """Drag a QR code's corner handle into a wide, short box."""
+    doc = Document()
+    el = BarcodeElement(10, 10, barcode_value='MM,AAC-42', symbology='qr',
+                        module_width=4)
+    doc.elements.append(el)
+    was = el.module_width
+    el.width, el.height = 400, 120
+    geometry.resize_by_handle(doc, el, 'br', 0, 0,
+                              {'x': 10, 'y': 10, 'width': 400, 'height': 120})
+    return (el.width == el.height, el.module_width != was)
+
+
+# --- ^BQ, the QR code -------------------------------------------------------
+from zplcore import qr as zpl_qr
+
+# Most of what ^BQ encodes is in the field data, not the command: the manual's
+# own examples put the error correction, the input mode and the character mode
+# in front of the value, and the value itself starts after them.
+for data, expect in (
+        # the manual's Example 2: standard reliability, manual, alphanumeric
+        ('MM,AAC-42', ('M', 'M', None, [('A', 'AC-42')])),
+        # its Example 1: high reliability, automatic
+        ('QA,0123456789ABCD 2D code',
+         ('Q', 'A', None, [(None, '0123456789ABCD 2D code')])),
+        # manual input, numeric
+        ('HM,N123456789012345', ('H', 'M', None, [('N', '123456789012345')])),
+        # mixed mode: code 03 of 04 divisions, parity 8F, three segments
+        ('D03048F,LM,N0123456789,A12AABB,B0006qrcode',
+         ('L', 'M', ('03', '04', '8F'),
+          [('N', '0123456789'), ('A', '12AABB'), ('B', 'qrcode')])),
+        # a field with no switches at all is the whole value, automatic
+        ('www.example.com', (None, 'A', None, [(None, 'www.example.com')]))):
+    read = zpl_qr.read_switches(data)
+    check(f"^BQ reads the switches in {data!r}",
+          (read['ecc'], read['input'], read['mixed'], read['segments']) == expect,
+          read)
+
+check("a value that only looks like a switch keeps its first characters",
+      zpl_qr.read_switches('HELLO')['segments'] == [(None, 'HELLO')],
+      zpl_qr.read_switches('HELLO'))
+check("the switch's own error correction wins over the command's",
+      zpl_qr.error_correction('HM,Nx', 'L') == 'H',
+      "the mandatory one is the switch; a file that spells both means it")
+check("an omitted level is Q and an unreadable one is M, which are different",
+      (zpl_qr.error_correction('x', ''), zpl_qr.error_correction('x', 'Z'))
+      == ('Q', 'M'),
+      "the manual is explicit: 'Q = if empty, M = invalid values'")
+
+_qr = BarcodeElement(0, 0, barcode_value='MM,AAC-42', symbology='qr',
+                     module_width=10)
+check("the manual's own example is a 21-module symbol",
+      _qr.symbol()[0] == 'grid' and len(_qr.symbol()[1]) == 21
+      and len(_qr.symbol()[1][0]) == 21, len(_qr.symbol()[1]))
+check("and its box is the grid at the magnification, square",
+      (_qr.width, _qr.height) == (210, 210), (_qr.width, _qr.height))
+check("a QR code has no interpretation line to draw its own switches in",
+      not _qr.show_text and _qr.text_height() == 0
+      and geometry.barcode_layout(_qr)['text'] is None)
+check("more data needs a bigger grid, at the same magnification",
+      len(BarcodeElement(0, 0, barcode_value='QA,' + 'x' * 200,
+                         symbology='qr').symbol()[1]) > 21)
+check("a higher error correction level needs a bigger grid than a lower one",
+      len(BarcodeElement(0, 0, barcode_value='HA,' + 'x' * 100,
+                         symbology='qr').symbol()[1])
+      > len(BarcodeElement(0, 0, barcode_value='LA,' + 'x' * 100,
+                           symbology='qr').symbol()[1]))
+
+# ^BQ's magnification has no ^BY to fall back on, so an omitted one is the
+# manual's own default for the resolution the label was made for.
+for dpi, expect in ((150, 1), (203, 2), (300, 3), (600, 6)):
+    page = (f"^XA^PW400^LL400^FXDESIGNER_DPI:{dpi}\n"
+            f"^FO20,20^BQ^FDLA,hi^FS^XZ")
+    read = zpl_parser.parse_zpl(page)[0].elements[0]
+    check(f"an omitted magnification at {dpi} dpi is {expect}",
+          read.module_width == expect, read.module_width)
+    check(f"and it is written back, not left for the printer to guess at {dpi}",
+          f",{expect}" in read.to_zpl().split('^BQ')[1].split(chr(10))[0],
+          read.to_zpl().replace(chr(10), ' '))
+
+_qr_round = BarcodeElement(1, 2, barcode_value='MM,AAC-42', symbology='qr',
+                           module_width=10, orientation='N',
+                           params={'quality': 'H', 'qr_model': '1',
+                                   'qr_mask': '3'})
+check("^BQ writes every parameter it was given, in the manual's order",
+      '^BQN,1,10,H,3\n' in _qr_round.to_zpl(), _qr_round.to_zpl())
+_qr_back = zpl_parser.parse_zpl(f"^XA{_qr_round.to_zpl()}^XZ")[0].elements[0]
+check("and reads them all back",
+      (_qr_back.symbology, _qr_back.quality, _qr_back.qr_model,
+       _qr_back.qr_mask, _qr_back.module_width, _qr_back.barcode_value)
+      == ('qr', 'H', 1, 3, 10, 'MM,AAC-42'),
+      (_qr_back.quality, _qr_back.qr_model, _qr_back.qr_mask))
+check("the field data round-trips byte for byte, switches and all",
+      _qr_back.barcode_value == 'MM,AAC-42',
+      "the switches are the encoder's business, never the parser's")
+
+check("a defaulted ^BQ writes only what it must",
+      BarcodeElement(1, 2, barcode_value='x', symbology='qr',
+                     module_width=2).to_zpl().split(chr(10))[1] == '^BQ,2,2',
+      BarcodeElement(1, 2, barcode_value='x', symbology='qr',
+                     module_width=2).to_zpl().replace(chr(10), ' '))
+check("^BQ carries no ^BY, whose module width it would not be drawn at",
+      '^BY' not in BarcodeElement(0, 0, barcode_value='x', symbology='qr').to_zpl())
+
+check("a QR code resized by a handle stays square",
+      _qr_square() == (True, True), _qr_square())
+
+check("^BQ is no longer reported as a command a save would drop",
+      workflow.unsupported_commands("^XA^FO0,0^BQ,2,4^FDMM,AHI^FS^XZ") == [])
+# Data no QR version can hold draws nothing and says why, the way a printer
+# prints no symbol - rather than losing every other field on the label.
+_qr_huge = BarcodeElement(0, 0, barcode_value='HA,' + 'x' * 5000, symbology='qr')
+check("data too long for any version draws nothing and keeps a footprint",
+      _qr_huge.symbol() == ('grid', []) and _qr_huge.symbol_error
+      and _qr_huge.width > 0 and geometry.barcode_layout(_qr_huge)['rects'] == [],
+      _qr_huge.symbol_error)
 
 # --- every symbology reaches the canvas as plain rectangles ------------------
 
@@ -2807,9 +2935,10 @@ check("rescaling carries the ^FT offset with the dots",
 # ^GS draws a glyph from the symbol font. It is the same trap as an unsupported
 # symbology and was missed by the fix for those because it is not a ^B command:
 # ^GSN,50,50^FDA saved as ^AAN,9,5^FDA, a 50-dot symbol arriving as 9-dot text.
-# ^B3 and ^BE are no longer in this list - they draw for real now, checked below.
-for symbology, source in (("^BQ", "^BQN,2,5^FDMM,AHELLO^FS"),
-                          ("^BX", "^BXN,6,200^FDdata^FS"),
+# ^B3, ^BE and ^BQ are no longer in this list - they draw for real now, checked
+# below. ^BD MaxiCode and ^B4 Code 49 are the ones that still do not.
+for symbology, source in (("^BD", "^BDN,2,5^FDMM,AHELLO^FS"),
+                          ("^B4", "^B4N,6,200^FDdata^FS"),
                           ("^GS", "^GSN,50,50^FDA^FS")):
     page = f"^XA^PW812^LL1218^FO50,50{source}^XZ"
     read = zpl_parser.parse_zpl(page)[0]
@@ -2820,9 +2949,14 @@ for symbology, source in (("^BQ", "^BQN,2,5^FDMM,AHELLO^FS"),
           workflow.unsupported_commands(page))
 
 check("the preview draws nothing for one still unsupported either",
-      _preview_ink("^XA^PW400^LL300^FO50,50^BQN,2,5^FDMM,AHELLO^FS^XZ",
+      _preview_ink("^XA^PW400^LL300^FO50,50^BDN,2,5^FDMM,AHELLO^FS^XZ",
                    400, 300) is None,
-      _preview_ink("^XA^PW400^LL300^FO50,50^BQN,2,5^FDMM,AHELLO^FS^XZ", 400, 300))
+      _preview_ink("^XA^PW400^LL300^FO50,50^BDN,2,5^FDMM,AHELLO^FS^XZ", 400, 300))
+
+check("the preview draws a QR code for real, at the magnification the command gives",
+      _preview_ink("^XA^PW400^LL400^FO50,50^BQ,2,4^FDMM,AAC-42^FS^XZ", 400, 400)
+      == (50, 50, 21 * 4, 21 * 4),
+      _preview_ink("^XA^PW400^LL400^FO50,50^BQ,2,4^FDMM,AAC-42^FS^XZ", 400, 400))
 
 check("but the preview draws ^B3 for real, the same as the canvas would",
       _preview_ink("^XA^PW400^LL300^FO50,50^B3N,N,60,Y,N^FD123ABC^FS^XZ",

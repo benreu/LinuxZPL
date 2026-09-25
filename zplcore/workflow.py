@@ -10,7 +10,7 @@ than being written twice.
 
 import os.path
 
-from . import fonts, printer_io
+from . import fonts, printer_io, symbology
 
 # Distinguishes "the printer's resolution changed under an open document" from
 # "a file was opened that recorded no resolution", which are answered
@@ -218,6 +218,9 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # print-time switch with nothing to draw, carried the way ^LT is: it survives
 # a save, and the print path states it, but no barcode is checked here; see
 # FUNCTIONAL_SPEC.md section 18.
+# The barcode commands are added below rather than listed here: they come
+# from zplcore.symbology, which is also where the parser and both editors
+# learn which symbologies exist.
 # ^CI is the encoding the field data is in, carried verbatim - national
 # replacements and remap pairs included, none of them simulated - and
 # replaced by ^CI28 once the label holds anything outside ASCII, since what a
@@ -225,14 +228,19 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # assigned to a downloaded font and a font linked to another for the glyphs
 # it lacks: carried verbatim, nothing to draw; see FUNCTIONAL_SPEC.md
 # section 18.
-MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY', '^BC', '^B3', '^BE', '^B2',
-            '^BS', '^GB', '^FB', '^FR',
+MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY',
+            '^GB', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF', '^FW',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC', '^FH',
             '^LH', '^LS', '^LT', '^PO', '^PM', '^LR',
             '^IM', '^XG', '^IL', '^IS', '^PQ', '^CV',
             '^CI', '^CW', '^FL'}
+
+# Every barcode command this designer draws, from the one catalogue the
+# model, the parser and the preview read - so a symbology cannot be added
+# without the load warning learning about it at the same time.
+MODELLED |= set(symbology.COMMAND_PARAMS)
 
 
 def unsupported_commands(zpl_content: str) -> list:

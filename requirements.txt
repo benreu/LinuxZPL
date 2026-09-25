@@ -2,3 +2,14 @@
 # core tests; install one of the extras below to run the app.
 Pillow>=9.0.0
 numpy>=1.20.0
+
+# The symbologies whose encoders are somebody else's work rather than ours:
+# QR's version table, its four error-correction levels and its eight masks.
+# A label holding one opens without it - the symbol draws nothing and says
+# which package is missing - so this is not quite a hard requirement, but a
+# designer that cannot draw a QR code is not much of one.
+qrcode>=7.0
+
+# Not required to run or to save a label: tests/test_decode.py uses it to
+# read back what the preview drew, and says so and passes when it is absent.
+# zxing-cpp

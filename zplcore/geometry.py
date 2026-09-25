@@ -583,6 +583,16 @@ def _resize_barcode(element, run: int, stack: int) -> None:
         element.module_width = max(1, round(run / max(1, sum(payload))))
         element.bar_height = max(MIN_SIZE, stack)
         return
+    if kind == 'grid':
+        # The grid is fixed by the data, so the only thing a drag can ask for
+        # is how many dots a module is - and one number has to satisfy both
+        # axes. The smaller of the two wins, so the symbol stays inside the
+        # box the pointer drew rather than spilling out of the side that was
+        # dragged less.
+        rows = len(payload) or 1
+        columns = len(payload[0]) if payload else 1
+        element.module_width = max(1, round(min(run / columns, stack / rows)))
+        return
     raise ValueError(f"unknown symbol kind {kind!r}")
 
 
@@ -637,6 +647,27 @@ def barcode_rects(element) -> list:
             if index % 2 == 0 and width:
                 rects.append((x, 0, width * module, stack))
             x += width * module
+        return rects
+
+    if kind == 'grid':
+        # One rectangle per run of dark modules along a row, rather than one
+        # per module: a QR code is a few hundred rectangles that way instead
+        # of a few thousand, which is the difference between a canvas that
+        # redraws while a label is dragged and one that does not.
+        module = max(1, element.module_width)
+        rects = []
+        for index, row in enumerate(payload):
+            start = None
+            for column, dark in enumerate(row):
+                if dark and start is None:
+                    start = column
+                elif not dark and start is not None:
+                    rects.append((start * module, index * module,
+                                  (column - start) * module, module))
+                    start = None
+            if start is not None:
+                rects.append((start * module, index * module,
+                              (len(row) - start) * module, module))
         return rects
 
     raise ValueError(f"unknown symbol kind {kind!r}")

@@ -175,33 +175,52 @@ the frame is a solid filled rectangle. Clamp to that maximum, minimum 1.
 
 #### Barcode
 
-One element, five symbologies: Code 128 (`^BC`, subsets B and C), Code 39
-(`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`) and a UPC/EAN Extension
-add-on (`^BS`). QR, Data Matrix, PDF417 and the rest are still not offered -
-see §18.
+One element, six symbologies: Code 128 (`^BC`, subsets B and C), Code 39
+(`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`), a UPC/EAN Extension
+add-on (`^BS`) and QR (`^BQ`). Data Matrix, PDF417, Aztec and the rest are
+still not offered - see §18.
+
+**Which command spells which symbology, and what each of its parameters
+means, is one table** - `zplcore/symbology.py` - read by the model, the
+parser, the preview and both editors. A symbology is added there, not in
+five places that could disagree about where `^B3` spells its check digit.
+
+**The symbol reaches the canvas as rectangles.** `symbol()` says what kind of
+thing the printer will lay down - `linear` for bars and spaces, `grid` for a
+matrix of square modules - and `geometry.barcode_rects()` turns either into
+`(x, y, w, h)` in dots. The preview and both canvases draw those and nothing
+else, so a symbology that is not bars and spaces needs nothing from them.
 
 | Property | Default |
 |---|---|
-| `symbology` | `code128` - which of the five |
+| `symbology` | `code128` - which of the six |
 | `barcode_value` | `"123456789"` |
 | `bar_height` | 100 dots - the bars themselves |
-| `module_width` | 2 dots |
+| `module_width` | 2 dots - and, for a matrix symbology, the magnification its own command carries instead of `^BY`'s w. An omitted one is the manual's default for the print resolution: 1 at 150 dpi, 2 at 200, 3 at 300, 6 at 600 |
 | `ratio` | 3.0 - the wide-to-narrow ratio Code 39 and Interleaved 2 of 5 draw their wide elements at; the other three are fixed-ratio and ignore it |
 | `orientation` | none - `N` upright, `R` 90°, `I` 180°, `B` 270°. None is written as no letter; a letter the file leaves out is `^FW`'s (§8.3) |
 | `show_text` | true - whether the value prints as an interpretation line |
 | `text_above` | false for every symbology but the UPC/EAN extension, where it is true - the line goes above the bars instead of below |
 | `check_digit` | false - append a check digit (Code 128's UCC/EAN one, Code 39's own Mod-43, or Interleaved 2 of 5's Mod-10); EAN-13 and the UPC/EAN extension have no such flag at all, because EAN-13's own check digit is never optional and the extension has none |
-| `mode` | `N` - `A` lets Code 128 use subset C; the other four symbologies have no mode |
+| `mode` | `N` - `A` lets Code 128 use subset C; no other symbology has a mode |
+| `quality` | QR's error correction: `Q` when `^BQ` leaves it out, `M` when `^BQ` names a letter QR has no level for - the manual distinguishes the two |
+| `qr_model` | `2`, the model the manual recommends. `1` is carried but drawn as 2 |
+| `qr_mask` | `7`, the manual's own default rather than "whichever scores best" |
 | `font` | none - the `^A` before the barcode command, which sets the interpretation line's font |
 
 **`width` and `height` are the footprint, not the bars.** The element box is
-the bars plus the interpretation line, transposed when the barcode is rotated:
+the symbol plus the interpretation line, transposed when the barcode is
+rotated:
 
 ```
-run   = sum(module widths) × module_width
-stack = bar_height + interpretation line height
-box   = (run, stack) upright,  (stack, run) rotated
+linear:  run = sum(module widths) × module_width,  stack = bar_height
+grid:    run = columns × module_width,             stack = rows × module_width
+box      = (run, stack + text height) upright,  transposed rotated
 ```
+
+A matrix symbology has no bar height at all - its size is its grid - so
+neither its own command nor `^BY` carries one, and the Bar Height row is not
+offered for it.
 
 Because a quarter turn leaves the box axis-aligned, rotation needs nothing from
 hit-testing, dragging or the resize handles - they only ever see the box.
@@ -679,7 +698,7 @@ file choosers and the prompts — are modal.
 |---|---|---|
 | **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across every element editor that has one. |
 | **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) inverts whatever is already on the label, ignoring Colour (§18). |
-| **Edit Barcode** | Symbology; Value; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the five choices of §3.3; the rest are that symbology's own parameters, and Ratio, Check Digit and Mode are shown only for the symbologies that have one — Check Digit's own label changes with it. Width is derived from the symbol, never entered. |
+| **Edit Barcode** | Symbology; Value; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
@@ -709,7 +728,7 @@ file choosers and the prompts — are modal.
 | Text in a block | as above, with `^FB<width>,<lines>,<spacing>,<justification>,<indent>` between the font and the data |
 | Text, downloaded font | `^FO<x>,<y>` / `^A@<orientation>,<font_height>,<font_width>,E:<NAME>.TTF` / `^FD<text>^FS` |
 | Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>[,<colour>[,<rounding>]]` / `^FS` — the colour and rounding are written only when they are not `B` and `0` |
-| Barcode | `^FO<x>,<y>` / `^BY<module_width>[,<ratio>]` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` — or `^B3`, `^BE`, `^B2`, `^BS` for the other four symbologies, each in its own parameter order (§3.3) |
+| Barcode | `^FO<x>,<y>` / `^BY<module_width>[,<ratio>]` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` — or `^B3`, `^BE`, `^B2`, `^BS`, `^BQ` for the other symbologies, each in its own parameter order (§3.3). Every parameter is trimmed after the last one that is not that position's default, except the height and the magnification, which are always written: they are the two a printer would otherwise resolve from its own settings, so a file that left them out would come back a different size on a different head. A matrix symbology writes no `^BY`, whose module width it is not drawn at |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
 
 Each command is on its own line. `^BY` must be emitted: without it the printer
@@ -961,13 +980,16 @@ where a baseline sits inside a character cell is measured from the font file and
 is only an estimate of what the printer will do - and normalising bakes that
 estimate into the file every time such a label is opened and saved.
 
-**A symbology that cannot be drawn is dropped, not redrawn as text.** `^BQ`,
-`^BX` and the rest still reach the text branch's own trap otherwise, so a QR
+**A symbology that cannot be drawn is dropped, not redrawn as text.** `^BD`,
+`^B4` and the rest still reach the text branch's own trap otherwise, so a QR
 code sixty dots tall would arrive as nine-dot text holding its data, and save
 that way. The label gaining something that was never in it is worse than
 losing the barcode, which the load warning names either way. `^B3`, `^BE`,
-`^B2` and `^BS` used to be dropped the same way; they are real symbologies now
-(§3.3) and reach the barcode branch instead.
+`^B2`, `^BS` and `^BQ` used to be dropped the same way; they are real
+symbologies now (§3.3) and reach the barcode branch instead. Which commands
+those are is `zplcore/symbology.py`'s catalogue, which is also what the load
+warning's own list of modelled commands is built from - so a symbology cannot
+be added without the warning learning about it at the same time.
 
 **Read the source as commands, not as lines.** A ZPL command is a caret (or
 tilde) plus exactly two characters, and its parameters run to the next caret -
@@ -1660,12 +1682,31 @@ rather than requirements:
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
   drawn whole, wrapped, whether or not a font file is available.
-- **Five symbologies: Code 128, Code 39, EAN-13, Interleaved 2 of 5 and the
-  UPC/EAN extension.** QR, Data Matrix, PDF417 and the rest are still not
-  offered, and no symbology's value is validated against its own character
-  set or length - EAN-13 and the extension fit whatever they are given rather
-  than rejecting it (§3.3), and Code 39 draws an out-of-set character as a
-  blank rather than refusing the barcode.
+- **Six symbologies: Code 128, Code 39, EAN-13, Interleaved 2 of 5, the
+  UPC/EAN extension and QR.** Data Matrix, PDF417, Aztec and the rest are
+  still not offered, and no symbology's value is validated against its own
+  character set or length - EAN-13 and the extension fit whatever they are
+  given rather than rejecting it (§3.3), and Code 39 draws an out-of-set
+  character as a blank rather than refusing the barcode.
+- **A symbol that cannot be built draws nothing and keeps its footprint.**
+  Data too long for any QR version, or the `qrcode` package missing from the
+  machine, leaves the element where it is at the size of the smallest symbol
+  its symbology has, with the reason on `symbol_error`. A printer prints no
+  symbol in the same case. Refusing to open the label instead would lose
+  every other field on it.
+- **`^BQ`'s model 1 is carried but drawn as model 2.** Model 2 is what the
+  manual recommends, what every reader expects, and the only one the encoder
+  builds. The parameter round-trips, so a printer still does what the file
+  asked.
+- **`^BQ`'s Kanji character mode is drawn in byte mode.** `K` declares
+  Shift-JIS text under JIS X 0208; this designer's labels are UTF-8 and it
+  has no Shift-JIS table, so the data is encoded as bytes. A scanner reads
+  the same characters back from a UTF-8 reader; one expecting Shift-JIS will
+  not. The switch round-trips.
+- **A `^BQ` character mode the data cannot be written in falls back to one
+  that can.** `N` in front of letters would otherwise refuse the symbol; it
+  is drawn in the most compact mode that holds the data instead, which is
+  bigger than the file asked for but visible, where a missing barcode is not.
 - **Code 39's Full ASCII Mode is not simulated.** The `+$`/`-$` escapes a
   scanner configured for it would read specially are drawn as the literal `+`,
   `$` and `-` characters they are - Code 39 itself has no such mode; it is a

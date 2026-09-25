@@ -3359,10 +3359,24 @@ class ZPLViewerWindow(Gtk.Window):
             make_row("Barcode Value:", value_entry)
 
             height_spin = make_spin(element.bar_height, 20, 300)
-            make_row("Bar Height:", height_spin)
+            height_row, _height_label = make_row("Bar Height:", height_spin)
 
             module_spin = make_spin(element.module_width, 1, 20)
-            make_row("Module Width:", module_spin)
+            module_row, module_label = make_row("Module Width:", module_spin)
+
+            # The rows a symbology adds for its own parameters - a QR code's
+            # error correction and mask, and so on - built from the same
+            # catalogue the parser and the model read, so a symbology cannot
+            # arrive carrying a parameter no editor can reach.
+            extra_rows = {}
+            for _symbology_key, rows in model.BARCODE_PARAMETERS.items():
+                for attribute, row_label, choices in rows:
+                    if attribute in extra_rows:
+                        continue
+                    combo, codes = make_combo(choices,
+                                              getattr(element, attribute, None))
+                    row, _label = make_row(row_label + ":", combo)
+                    extra_rows[attribute] = (combo, codes, row)
 
             ratio_spin = _make_ratio_spin(element.ratio, 2.0, 3.0)
             ratio_row, _ratio_label = make_row("Ratio:", ratio_spin)
@@ -3375,10 +3389,10 @@ class ZPLViewerWindow(Gtk.Window):
             text_combo, text_codes = make_combo(
                 model.BARCODE_TEXT_CHOICES,
                 (element.show_text, element.text_above))
-            make_row("Value Text:", text_combo)
+            text_row, _text_label = make_row("Value Text:", text_combo)
 
             font_spin = make_spin(int((element.font or element.DEFAULT_FONT)[1]), 6, 200)
-            make_row("Text Height:", font_spin)
+            text_height_row, _font_label = make_row("Text Height:", font_spin)
 
             check_combo, check_codes = make_combo(model.BARCODE_CHECK_DIGIT,
                                                   element.check_digit)
@@ -3402,12 +3416,33 @@ class ZPLViewerWindow(Gtk.Window):
                 # the two not drawn at a fixed one. Showing every row for
                 # every symbology would offer a Mode a Code 39 barcode has
                 # no ZPL parameter for at all.
-                features = model.BARCODE_FEATURES[symbology_codes[symbology_combo.get_active()]]
+                chosen = symbology_codes[symbology_combo.get_active()]
+                features = model.BARCODE_FEATURES[chosen]
                 mode_row.set_visible(features['mode'])
                 ratio_row.set_visible(features['ratio'])
                 check_row.set_visible(features['check_digit'] is not None)
                 if features['check_digit'] is not None:
                     check_label.set_text(features['check_digit'] + ":")
+                # A matrix symbology's size is its own grid, so it has no bar
+                # height to offer and its module width is a magnification of
+                # that grid - and no interpretation line either.
+                height_row.set_visible(features['height'] is not None)
+                if features['height'] is not None:
+                    height_spin.get_adjustment().set_lower(features['height'][0])
+                    height_spin.get_adjustment().set_upper(features['height'][1])
+                module_row.set_visible(features['module_width'] is not None)
+                if features['module_width'] is not None:
+                    module_label.set_text(features['module_width'] + ":")
+                text_row.set_visible(bool(features['text']))
+                text_height_row.set_visible(bool(features['text']))
+                wanted = [attribute for attribute, _l, _c
+                          in model.BARCODE_PARAMETERS.get(chosen, ())]
+                for attribute, (combo, codes, row) in extra_rows.items():
+                    row.set_visible(attribute in wanted)
+                    if attribute in wanted:
+                        current = getattr(element, attribute, None)
+                        combo.set_active(codes.index(current)
+                                         if current in codes else 0)
                 # A dialog GTK already grew to fit more rows does not shrink
                 # back on its own just because some of them hid.
                 dialog.resize(1, 1)
@@ -3423,6 +3458,13 @@ class ZPLViewerWindow(Gtk.Window):
                     element.ratio = ratio_spin.get_value()
                     element.orientation = orientation_codes[orientation_combo.get_active()]
                     element.show_text, element.text_above = text_codes[text_combo.get_active()]
+                    # From the catalogue rather than from whether the row is
+                    # on screen: an editor driven rather than clicked has no
+                    # visible widgets at all.
+                    for attribute, _l, _c in model.BARCODE_PARAMETERS.get(
+                            element.symbology, ()):
+                        combo, codes, _row = extra_rows[attribute]
+                        setattr(element, attribute, codes[combo.get_active()])
                     apply_field_number(element)
                     element.check_digit = check_codes[check_combo.get_active()]
                     element.mode = mode_codes[mode_combo.get_active()]

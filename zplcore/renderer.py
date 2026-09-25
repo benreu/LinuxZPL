@@ -7,7 +7,7 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 import re
 from typing import Tuple, List, Optional
-from . import fields, geometry, graphic_store, graphics, parser, textraster, transforms
+from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphics, parser, textraster, transforms
 from .model import BarcodeElement, FieldBlock, FrameElement, TextElement
 
 
@@ -18,16 +18,22 @@ class ZPLRenderer:
     DEFAULT_WIDTH = 812
     DEFAULT_HEIGHT = 1218
     
-    def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT):
+    def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
+                 dpi: int = zpl_fonts.DEFAULT_DPI):
         """
         Initialize the ZPL renderer.
-        
+
         Args:
             width: Image width in pixels
             height: Image height in pixels
+            dpi: the head resolution to read the label at, which a matrix
+                symbology's omitted magnification is measured from. A label
+                that records its own (^FXDESIGNER_DPI) overrides it.
         """
         self.width = width
         self.height = height
+        self.dpi = dpi
+        self.default_dpi = dpi
         self.image = None
         self.draw = None
         self.current_x = 0
@@ -60,8 +66,13 @@ class ZPLRenderer:
         self.barcode_orientation = ''
         self.barcode_options = ()
         self.barcode_symbology = 'code128'
+        self.barcode_params: dict = {}
         self.module_width = 2
         self.ratio = 3.0
+        # ^BY's own height, which is what a barcode with no height of its own
+        # takes - and, for the symbologies whose size is their whole symbol
+        # rather than one row of it, the only height there is.
+        self.barcode_default_height = None
         self.custom_font_path: Optional[str] = None
         self.current_field_font_path: Optional[str] = None
         self.font_registry: dict = {}
@@ -126,10 +137,13 @@ class ZPLRenderer:
         """
         element = BarcodeElement(
             x, y, height, barcode_value,
-            module_width=max(1, getattr(self, 'module_width', 2)),
+            module_width=(getattr(self, 'barcode_magnification', None)
+                          or max(1, getattr(self, 'module_width', 2))),
             orientation=self.barcode_orientation,
             options=self.barcode_options,
             symbology=getattr(self, 'barcode_symbology', 'code128'),
+            params=getattr(self, 'barcode_params', None),
+            total_height=self.barcode_default_height,
             ratio=getattr(self, 'ratio', 3.0),
             font=(('0', self.current_font_size,
                    self.current_font_width or self.current_font_size)
@@ -402,6 +416,16 @@ class ZPLRenderer:
         self.current_reverse = False
         self.hex_indicator = None
         self.pending_frame = None
+        # ^BY is a running default, and this renderer is a long-lived object
+        # the window reuses for every preview - so one label's ^BY3 used to
+        # widen the next label's barcodes, which carried no ^BY at all.
+        self.is_barcode_mode = False
+        self.module_width = 2
+        self.ratio = 3.0
+        self.barcode_default_height = None
+        self.barcode_params = {}
+        self.barcode_magnification = None
+        self.dpi = self.default_dpi
         # ^FN's data can be declared after the field that uses it, so the table
         # is built in a pass of its own before anything is drawn.
         self.fields = parser.read_field_table(parser.tokenise(zpl_content))
@@ -527,6 +551,8 @@ class ZPLRenderer:
                 self.current_reverse = False
                 self.hex_indicator = None
                 self.pending_frame = None
+                self.is_barcode_mode = False
+                self.barcode_params = {}
                 # A field names its own font with ^A or inherits ^CF's, and a
                 # printer starts every field from the latter.
                 self._use_default_font()
@@ -584,6 +610,11 @@ class ZPLRenderer:
                     self.ratio = float(parts[1])
                 except ValueError:
                     pass
+            if len(parts) > 2 and parts[2]:
+                try:
+                    self.barcode_default_height = int(parts[2])
+                except ValueError:
+                    pass
         elif command == 'FB':
             # Field block: the text that follows is wrapped into it
             self.current_block = FieldBlock.from_zpl(params)
@@ -610,6 +641,8 @@ class ZPLRenderer:
                     self.barcode_orientation = ''
                     self.barcode_options = ()
                     self.barcode_symbology = 'code128'
+                    self.barcode_params = {}
+                    self.barcode_magnification = None
                     self.current_block = None
                 else:
                     self._render_text(self.field_data)
@@ -637,6 +670,18 @@ class ZPLRenderer:
             if print_flag == 'N':
                 self.image = Image.new('RGB', (self.width, self.height), color='white')
                 self.draw = ImageDraw.Draw(self.image)
+        elif command == 'FX':
+            # A comment, bar the markers this designer writes in one. The
+            # resolution is the one that matters here: a matrix symbology
+            # whose command leaves its magnification out is drawn at the
+            # manual's default for the head the label was made for, so the
+            # preview has to know which head that was.
+            marker = params.strip()
+            if marker.startswith(parser.DPI_PARAM):
+                try:
+                    self.dpi = int(marker[len(parser.DPI_PARAM):])
+                except ValueError:
+                    pass
         elif command == 'CF':
             # ^CFf,h,w - the font every later field prints in unless it names
             # its own. Ignoring it drew a default-font field at this class's
@@ -651,40 +696,28 @@ class ZPLRenderer:
             # parser - so the preview turns exactly what the canvas turns.
             self.default_orientation = parser.read_field_orientation(
                 params, self.default_orientation)
-        elif command == 'BC':
-            # Barcode: ^BCo,h,f,g,e,m - every parameter changes the label, so
-            # the preview keeps them all and draws from the same element the
-            # canvas would.
-            parts = [p.strip() for p in params.split(',')]
-            # An omitted orientation is ^FW's, as parser._read_barcode reads it
-            self.barcode_orientation = (parts[0][:1].upper()
-                                        if parts and parts[0][:1].isalpha()
-                                        else self.default_orientation)
-            try:
-                self.barcode_height = int(parts[1]) if len(parts) > 1 and parts[1] else 50
-            except ValueError:
-                self.barcode_height = 50
-            self.barcode_options = tuple(parts[2:])
-            self.barcode_symbology = 'code128'
-            self.is_barcode_mode = True
-        elif command in ('B3', 'BE', 'B2', 'BS'):
-            # Code 39, EAN-13, Interleaved 2 of 5 and the UPC/EAN extension -
-            # reusing parser._read_barcode rather than a second copy of its
-            # per-command parameter order is what stops the preview and a
-            # save disagreeing about where one of them spells its own check
-            # digit or its own trailing flags.
+        elif '^' + command in parser.BARCODE_COMMANDS:
+            # Every symbology this designer draws, read through the parser's
+            # own catalogue rather than a second copy of each command's
+            # parameter order - that is what stops the preview and a save
+            # disagreeing about where one of them spells its check digit, its
+            # error correction or its trailing flags.
             bc = parser._read_barcode(
                 '^' + command, params,
-                default_orientation=self.default_orientation)
+                default_height=self.barcode_default_height,
+                default_orientation=self.default_orientation,
+                dpi=self.dpi)
             self.barcode_orientation = bc['orientation']
             self.barcode_height = bc['height']
             self.barcode_options = bc['options']
             self.barcode_symbology = bc['symbology']
+            self.barcode_params = bc['params']
+            self.barcode_magnification = bc['magnification']
             self.is_barcode_mode = True
         elif command[0] == 'B':
-            # QR, Data Matrix, PDF417 and the rest - a symbology this
-            # designer cannot draw. ^BY and the other four are matched
-            # above, so only the rest reach here.
+            # Code 49, Codablock, MaxiCode, MicroPDF417 and TLC39 - the
+            # symbologies this designer still cannot draw. ^BY and every
+            # other ^B command are matched above, so only those reach here.
             self.unsupported_field = True
     
     def render_from_file(self, filepath: str) -> Image.Image:
