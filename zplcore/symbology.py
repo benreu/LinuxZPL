@@ -33,6 +33,7 @@ SYMBOLOGIES = {
     'planet': "Planet Code",
     'datamatrix': "Data Matrix",
     'pdf417': "PDF417",
+    'aztec': "Aztec Code",
     'qr': "QR Code",
 }
 
@@ -58,6 +59,7 @@ COMMAND = {
     'planet': '^B5',
     'datamatrix': '^BX',
     'pdf417': '^B7',
+    'aztec': '^B0',
     'qr': '^BQ',
 }
 
@@ -73,6 +75,10 @@ COMMAND_PARAMS = {
     '^BX': ('o', 'w', 'quality_dm', 'columns', 'rows', 'format_id',
             'escape_char', 'aspect'),
     '^B7': ('o', 'h', 'security', 'columns', 'rows', 'truncate'),
+    '^B0': ('o', 'w', 'eci', 'aztec_size', 'menu', 'append_count',
+            'append_id'),
+    '^BO': ('o', 'w', 'eci', 'aztec_size', 'menu', 'append_count',
+            'append_id'),
     '^BU': ('o', 'h', 'f', 'g', 'e'),
     '^B9': ('o', 'h', 'f', 'g', 'e'),
     '^B8': ('o', 'h', 'f', 'g'),
@@ -100,7 +106,13 @@ FLAG_PARAMS = ('f', 'g', 'e', 'm')
 # The symbology each command reads as. More than one command can spell the
 # same symbology (^B0 and ^BO are both Aztec); COMMAND above picks the one a
 # save writes.
+# A second spelling some commands have. ^BO is ^B0 with the letter O, which
+# the manual lists twice under the same name; a file that used it reads the
+# same, and comes back spelled the way COMMAND above says.
+ALIASES = {'^BO': 'aztec'}
+
 SYMBOLOGY_OF = {cmd: sym for sym, cmd in COMMAND.items()}
+SYMBOLOGY_OF.update(ALIASES)
 
 class Param:
     """One parameter beyond the shared six: how its ZPL spelling is read,
@@ -212,6 +224,19 @@ PARAMETERS = {
     # about a fifth narrower and worth having only where the label will not
     # be damaged.
     'truncate': Param(str, 'N', choices=('Y', 'N')),
+    # ^B0 c - whether the field data carries extended channel interpretation
+    # codes, and ^B0 e, whether this is a reader-initialisation symbol.
+    # Carried, neither simulated.
+    'eci': Param(str, 'N', choices=('Y', 'N')),
+    'menu': Param(str, 'N', choices=('Y', 'N')),
+    # ^B0 d - error control and symbol size in one number: 0 the default,
+    # 1 to 99 a percentage of correction, 101 to 104 a compact symbol of
+    # that many layers, 201 to 232 a full-range one, and 300 a Rune.
+    'aztec_size': Param(int, 0),
+    # ^B0 f and g - how many symbols a structured append runs to, and its
+    # identifier. Carried, not simulated.
+    'append_count': Param(int, 1),
+    'append_id': Param(None, ''),
 }
 
 # What an omitted f, g, e and m mean, per symbology, in that order - the
@@ -274,7 +299,7 @@ HEIGHT_UNIT = {
 # The symbologies whose symbol is a grid of square modules rather than bars
 # and spaces. Their size is the grid, so neither ^BY's height nor their own
 # command carries one.
-MATRIX = frozenset(('qr', 'datamatrix', 'pdf417'))
+MATRIX = frozenset(('qr', 'datamatrix', 'pdf417', 'aztec'))
 
 # The symbologies drawn as bars of differing height rather than differing
 # width. Every bar is narrow and every gap the same; what carries the data is
@@ -296,7 +321,7 @@ READS_BY = frozenset(key for key, command in COMMAND.items()
 # Symbologies with no interpretation line at all - the matrix codes, whose
 # commands carry no f parameter. Everything else has one, on by default or
 # not as flag_defaults says.
-NO_TEXT = frozenset(('qr', 'datamatrix', 'pdf417'))
+NO_TEXT = frozenset(('qr', 'datamatrix', 'pdf417', 'aztec'))
 
 
 # The matrix symbologies whose own command, with its size left out, means
@@ -377,6 +402,8 @@ BARCODE_FEATURES = {
                                   text=False),
     'pdf417':           _features(height=(1, 30), module_width="Module Width",
                                   text=False),
+    'aztec':            _features(height=None, module_width="Magnification",
+                                  text=False),
     'qr':               _features(height=None, module_width="Magnification",
                                   text=False),
 }
@@ -412,6 +439,14 @@ BARCODE_PARAMETERS = {
                 tuple((str(n) if n else "Fit the data", n)
                       for n in (0, 3, 5, 10, 15, 20, 30, 45, 60, 90))),
                ('truncate', "Truncated", (("No", 'N'), ("Yes", 'Y')))),
+    'aztec': (('aztec_size', "Size and Correction",
+               (("Default (23%)", 0), ("Minimum (5%)", 5),
+                ("Low (10%)", 10), ("High (50%)", 50), ("Maximum (95%)", 95),
+                ("Compact, 1 layer", 101), ("Compact, 2 layers", 102),
+                ("Compact, 3 layers", 103), ("Compact, 4 layers", 104),
+                ("Full range, 1 layer", 201), ("Full range, 4 layers", 204),
+                ("Full range, 8 layers", 208), ("Full range, 16 layers", 216),
+                ("Full range, 32 layers", 232))),),
     'codabar': (('start_char', "Start Character",
                  tuple((c, c) for c in 'ABCD')),
                 ('stop_char', "Stop Character",

@@ -32,6 +32,7 @@ from . import twoof5
 from . import postal
 from . import datamatrix
 from . import pdf417
+from . import aztec
 from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
@@ -725,6 +726,27 @@ class BarcodeElement(DesignElement):
                 f"{symbologies.SYMBOLOGIES[self.symbology]}: {exc}")
         return (kind, [])
 
+    def _aztec_shape(self) -> tuple:
+        """What ^B0's own d parameter asks for, as (layers, compact, percent).
+
+        One number carries two different things: 1 to 99 is how much error
+        correction to spend, and 101 upward is a symbol size outright - 101
+        to 104 a compact symbol of that many layers, 201 to 232 a full-range
+        one. Zero is neither, and means the manual's own default.
+        """
+        value = self.aztec_size
+        if value == 300:
+            raise ValueError(
+                "an Aztec Rune carries a number rather than a message, and "
+                "is not drawn")
+        if 101 <= value <= 104:
+            return value - 100, True, aztec.DEFAULT_PERCENT
+        if 201 <= value <= 232:
+            return value - 200, False, aztec.DEFAULT_PERCENT
+        if 1 <= value <= 99:
+            return 0, None, value
+        return 0, None, aztec.DEFAULT_PERCENT
+
     def _postal_kind(self) -> str:
         """Which postal code this is: ^BZ names one and ^B5 is always
         PLANET."""
@@ -743,6 +765,10 @@ class BarcodeElement(DesignElement):
                                      rectangular=self.aspect == 2,
                                      rows=self.rows, columns=self.columns,
                                      escape=self.escape_char)
+        if self.symbology == 'aztec':
+            layers, compact, percent = self._aztec_shape()
+            return aztec.encode(self._raw_value(), layers=layers,
+                                compact=compact, percent=percent)
         if self.symbology == 'pdf417':
             base = pdf417.encode(self._raw_value(), columns=self.columns,
                                  rows=self.rows, security=self.security,

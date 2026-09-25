@@ -2069,6 +2069,99 @@ check("PDF417 writes a ^BY, whose module width it really is drawn at",
 check("^B7 is no longer a command a save would drop",
       workflow.unsupported_commands("^XA^FO0,0^B7N,3,5^FDHI^FS^XZ") == [])
 
+# --- ^B0, Aztec Code --------------------------------------------------------
+from zplcore import aztec as zpl_aztec
+
+# The Reed-Solomon behind Aztec runs over four different fields depending on
+# how big the symbol is, and a fifth for the mode message. A systematic
+# codeword must vanish at each of the generator's roots, which is a check on
+# all five that does not depend on drawing anything.
+_rs_bad = []
+for _width in (4, 6, 8, 10, 12):
+    _exp, _log = zpl_aztec._field(_width)
+    _mul = lambda a, b: 0 if a == 0 or b == 0 else _exp[_log[a] + _log[b]]
+    _data = [(i * 37 + 5) % ((1 << _width) - 1) + 1 for i in range(6)]
+    for _count in (3, 5, 8):
+        _word = _data + zpl_aztec.error_codewords(_data, _count, _width)
+        for _power in range(1, _count + 1):
+            _total = 0
+            for _value in _word:
+                _total = _mul(_total, _exp[_power]) ^ _value
+            if _total:
+                _rs_bad.append((_width, _count, _power))
+check("every Aztec field's Reed-Solomon leaves no syndrome behind",
+      not _rs_bad, _rs_bad[:4])
+
+# No codeword may be all ones or all zeros, since a reader uses those to find
+# its way. Getting the stuffing wrong shifts every bit after it, which is a
+# symbol that decodes to nothing at all.
+for _width in (6, 8, 10, 12):
+    _stuffed = zpl_aztec._stuffed([0] * (_width * 4), _width)
+    _words = [_stuffed[i:i + _width] for i in range(0, len(_stuffed), _width)]
+    check(f"a run of zeros is stuffed at width {_width}",
+          all(any(word) for word in _words) and len(_stuffed) > _width * 4,
+          (len(_stuffed), _width * 4))
+    _stuffed = zpl_aztec._stuffed([1] * (_width * 4), _width)
+    _words = [_stuffed[i:i + _width] for i in range(0, len(_stuffed), _width)]
+    check(f"and a run of ones is too, at width {_width}",
+          all(not all(word) for word in _words))
+
+_az = BarcodeElement(0, 0, 60, 'Aztec test', symbology='aztec', module_width=6)
+check("an Aztec symbol is a square grid of odd size, so it has a centre",
+      _az.symbol()[0] == 'grid' and len(_az.symbol()[1]) % 2 == 1
+      and len(_az.symbol()[1]) == len(_az.symbol()[1][0]),
+      len(_az.symbol()[1]))
+_centre = len(_az.symbol()[1]) // 2
+check("its bullseye is rings of alternating dark and light about that centre",
+      _az.symbol()[1][_centre][_centre]
+      and not _az.symbol()[1][_centre][_centre + 1]
+      and _az.symbol()[1][_centre][_centre + 2]
+      and not _az.symbol()[1][_centre][_centre + 3]
+      and _az.symbol()[1][_centre][_centre + 4])
+check("and its box is that grid at the magnification the command gives",
+      (_az.width, _az.height) == (len(_az.symbol()[1]) * 6,) * 2,
+      (_az.width, _az.height))
+
+# ^B0's d carries two different things in one number.
+for value, shape in ((0, (0, None)), (50, (0, None)), (101, (1, True)),
+                     (104, (4, True)), (201, (1, False)), (232, (32, False))):
+    _el = BarcodeElement(0, 0, 60, 'x', symbology='aztec',
+                         params={'aztec_size': str(value)})
+    check(f"^B0's d of {value} asks for layers {shape[0]}, compact {shape[1]}",
+          _el._aztec_shape()[:2] == shape, _el._aztec_shape())
+check("a percentage asks for more correction, not a bigger symbol outright",
+      BarcodeElement(0, 0, 60, 'x', symbology='aztec',
+                     params={'aztec_size': '95'})._aztec_shape()[2] == 95)
+check("forcing four compact layers gives a symbol of exactly that size",
+      len(BarcodeElement(0, 0, 60, 'x', symbology='aztec',
+                         params={'aztec_size': '104'}).symbol()[1]) == 11 + 4 * 4)
+
+_rune = BarcodeElement(0, 0, 60, '42', symbology='aztec',
+                       params={'aztec_size': '300'})
+check("an Aztec Rune is carried but not drawn - it holds a number, not a message",
+      _rune.symbol() == ('grid', []) and 'Rune' in (_rune.symbol_error or ''),
+      _rune.symbol_error)
+
+# ^BO is ^B0 spelled with the letter, which the manual lists twice.
+_alias = zpl_parser.parse_zpl(
+    "^XA^PW700^LL500^FO20,20^BON,4^FDalias^FS^XZ")[0].elements[0]
+check("^BO reads as the same symbology as ^B0",
+      _alias.symbology == 'aztec' and _alias.module_width == 4)
+check("and comes back spelled ^B0, the one this designer writes",
+      '^B0N,4' in _alias.to_zpl(), _alias.to_zpl().replace(chr(10), ' '))
+
+_az_round = zpl_parser.parse_zpl(
+    "^XA^PW700^LL500^FO20,20^B0R,7,N,0,N,1,0^FDlabel 7^FS^XZ")[0].elements[0]
+check("the manual's own ^B0 example round-trips every parameter",
+      '^B0R,7,N,0,N,1,0' in _az_round.to_zpl(),
+      _az_round.to_zpl().replace(chr(10), ' '))
+check("^B0 carries no ^BY, whose module width it is not drawn at",
+      '^BY' not in _az_round.to_zpl())
+for command in ('^B0', '^BO'):
+    check(f"{command} is no longer a command a save would drop",
+          workflow.unsupported_commands(
+              f"^XA^FO0,0{command}N,4^FDHI^FS^XZ") == [])
+
 # --- ^BQ, the QR code -------------------------------------------------------
 from zplcore import qr as zpl_qr
 

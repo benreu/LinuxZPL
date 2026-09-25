@@ -181,8 +181,9 @@ add-on (`^BS`), UPC-A (`^BU`), UPC-E (`^B9`), EAN-8 (`^B8`), Code 93
 (`^BA`), Codabar (`^BK`), Code 11 (`^B1`), MSI (`^BM`), Plessey (`^BP`),
 Industrial 2 of 5 (`^BI`), Standard 2 of 5 (`^BJ`), LOGMARS (`^BL`), the
 POSTAL family (`^BZ` - Postnet, PLANET and the USPS Intelligent Mail
-barcode), Planet Code (`^B5`), Data Matrix (`^BX`), PDF417 (`^B7`) and QR
-(`^BQ`). Aztec, GS1 DataBar and the rest are still not offered - see §18.
+barcode), Planet Code (`^B5`), Data Matrix (`^BX`), PDF417 (`^B7`), Aztec
+(`^B0`, also spelled `^BO`) and QR (`^BQ`). GS1 DataBar and the rest are
+still not offered - see §18.
 
 **Which command spells which symbology, and what each of its parameters
 means, is one table** - `zplcore/symbology.py` - read by the model, the
@@ -197,7 +198,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 
 | Property | Default |
 |---|---|
-| `symbology` | `code128` - which of the twenty-one |
+| `symbology` | `code128` - which of the twenty-two |
 | `barcode_value` | `"123456789"` |
 | `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots - and, for a matrix symbology, the magnification its own command carries instead of `^BY`'s w. An omitted one is the manual's default for the print resolution: 1 at 150 dpi, 2 at 200, 3 at 300, 6 at 600 |
@@ -214,6 +215,8 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `format_id`, `escape_char`, `aspect` | `6`, `_`, `1` - `^BX`'s format ID (carried; it applies to the quality levels that are not drawn), the character that introduces an escape sequence in the field data, and square or rectangular |
 | `security` | `0` - `^B7`'s error correction, 0 to 8. Level 0 detects errors without correcting any; each level up roughly doubles the codewords spent |
 | `truncate` | `N` - drop `^B7`'s right row indicator and stop pattern, about a fifth narrower and worth having only where the label will not be damaged |
+| `aztec_size` | `0` - `^B0`'s error control and symbol size in one number: `0` the default, `1`–`99` a percentage of correction, `101`–`104` a compact symbol of that many layers, `201`–`232` a full-range one, `300` a Rune |
+| `eci`, `menu`, `append_count`, `append_id` | `N`, `N`, `1`, none - `^B0`'s extended channel codes, reader-initialisation flag and structured append. All carried, none simulated |
 | `postal_type` | `0` - `^BZ`'s Postnet, `1` PLANET, `3` the USPS Intelligent Mail barcode. `2` is reserved and draws nothing |
 | `mode` | `N` - `A` lets Code 128 use subset C; no other symbology has a mode |
 | `quality` | QR's error correction: `Q` when `^BQ` leaves it out, `M` when `^BQ` names a letter QR has no level for - the manual distinguishes the two |
@@ -1704,7 +1707,7 @@ rather than requirements:
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
   drawn whole, wrapped, whether or not a font file is available.
-- **Twenty-one symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
+- **Twenty-two symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
   the postal codes and the stacked family are still not offered, and no
   symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are
   given rather than rejecting it (§3.3), and Code 39 draws an out-of-set
@@ -1715,6 +1718,15 @@ rather than requirements:
   its symbology has, with the reason on `symbol_error`. A printer prints no
   symbol in the same case. Refusing to open the label instead would lose
   every other field on it.
+- **`^B0` and `^BO` are one symbology.** The manual lists Aztec twice under
+  both spellings; a file that used `^BO` reads the same and comes back as
+  `^B0`, the one this designer writes.
+- **An Aztec Rune (`^B0`'s `d` of 300) is carried but not drawn.** It holds a
+  number from 0 to 255 rather than a message, which is a different thing from
+  every other symbology here, and nothing on a label has a use for it.
+- **Aztec's encodation is greedy rather than optimal**: a shift where one
+  exists and only one character needs it, a latch otherwise. Within a few
+  bits of the best for label data, and any reader accepts it.
 - **`^B7`'s `h` is a row height in modules, not dots**, which is what the
   manual means by "this number multiplied by the module equals the height of
   the individual rows". A rescale for another head resolution therefore

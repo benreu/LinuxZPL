@@ -230,6 +230,42 @@ for name, value in (("upper-case text", "ZEBRA TECHNOLOGIES"),
           f"^XA^PW800^LL600^FO60,60^BY2^B7N,4,3^FD{value}^FS^XZ",
           value, 'PDF417')
 
+# --- ^B0, Aztec Code --------------------------------------------------------
+
+reads("^B0 carries its value, at the magnification its own command gives",
+      "^XA^PW700^LL500^FO60,60^B0N,6^FDAztec test^FS^XZ",
+      "Aztec test", 'Aztec')
+reads("the manual's own example, turned as the manual turns it",
+      "^XA^PW700^LL500^FO60,60^B0R,7,N,0,N,1,0"
+      "^FD 7. This is testing label 7^FS^XZ",
+      " 7. This is testing label 7", 'Aztec')
+reads("^BO is the same command spelled with the letter",
+      "^XA^PW700^LL500^FO60,60^BON,6^FDalias works^FS^XZ",
+      "alias works", 'Aztec')
+for size, why in ((102, "a compact symbol of two layers"),
+                  (104, "a compact symbol of four"),
+                  (203, "a full-range symbol of three"),
+                  (50, "half the symbol given over to correction"),
+                  (95, "almost all of it")):
+    reads(f"^B0 draws {why}",
+          f"^XA^PW700^LL500^FO60,60^B0N,5,N,{size}^FDSIZE {size}^FS^XZ",
+          f"SIZE {size}", 'Aztec')
+for facing in "NRIB":
+    reads(f"an Aztec turned {facing} still reads",
+          f"^XA^PW700^LL500^FO60,60^B0{facing},6^FDTURN{facing}^FS^XZ",
+          f"TURN{facing}", 'Aztec')
+# Each character mode, and the switches between them. A mis-encoded mode
+# decodes to something else, which is the only way to catch it.
+for name, value in (("upper case", "ZEBRA TECHNOLOGIES"),
+                    ("lower case", "lower case only"),
+                    ("mixed case, shifting", "Mixed Case Text"),
+                    ("digits, in their own four-bit mode", "1234567890"),
+                    ("punctuation", "a.b, c: d"),
+                    ("bytes above ASCII", "caf\u00e9 r\u00e9sum\u00e9"),
+                    ("a URL", "https://example.com/a?b=1")):
+    reads(f"^B0 encodes {name}",
+          f"^XA^PW700^LL500^FO60,60^B0N,5^FD{value}^FS^XZ", value, 'Aztec')
+
 # ^BI, ^BJ, ^B1, ^BM and ^BP have no decoder here - zxing reads none of
 # Industrial or Standard 2 of 5, Code 11, MSI or Plessey. Each was checked
 # module for module against BWIPP, the reference implementation, while it was
