@@ -175,10 +175,13 @@ the frame is a solid filled rectangle. Clamp to that maximum, minimum 1.
 
 #### Barcode
 
-One element, six symbologies: Code 128 (`^BC`, subsets B and C), Code 39
-(`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`), a UPC/EAN Extension
-add-on (`^BS`) and QR (`^BQ`). Data Matrix, PDF417, Aztec and the rest are
-still not offered - see §18.
+One element, seventeen symbologies: Code 128 (`^BC`, subsets B and C), Code
+39 (`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`), a UPC/EAN Extension
+add-on (`^BS`), UPC-A (`^BU`), UPC-E (`^B9`), EAN-8 (`^B8`), Code 93
+(`^BA`), Codabar (`^BK`), Code 11 (`^B1`), MSI (`^BM`), Plessey (`^BP`),
+Industrial 2 of 5 (`^BI`), Standard 2 of 5 (`^BJ`), LOGMARS (`^BL`) and QR
+(`^BQ`). Data Matrix, PDF417, Aztec and the rest are still not offered - see
+§18.
 
 **Which command spells which symbology, and what each of its parameters
 means, is one table** - `zplcore/symbology.py` - read by the model, the
@@ -193,7 +196,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 
 | Property | Default |
 |---|---|
-| `symbology` | `code128` - which of the six |
+| `symbology` | `code128` - which of the seventeen |
 | `barcode_value` | `"123456789"` |
 | `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots - and, for a matrix symbology, the magnification its own command carries instead of `^BY`'s w. An omitted one is the manual's default for the print resolution: 1 at 150 dpi, 2 at 200, 3 at 300, 6 at 600 |
@@ -201,7 +204,10 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `orientation` | none - `N` upright, `R` 90°, `I` 180°, `B` 270°. None is written as no letter; a letter the file leaves out is `^FW`'s (§8.3) |
 | `show_text` | true - whether the value prints as an interpretation line |
 | `text_above` | false for every symbology but the UPC/EAN extension, where it is true - the line goes above the bars instead of below |
-| `check_digit` | false - append a check digit (Code 128's UCC/EAN one, Code 39's own Mod-43, or Interleaved 2 of 5's Mod-10); EAN-13 and the UPC/EAN extension have no such flag at all, because EAN-13's own check digit is never optional and the extension has none |
+| `check_digit` | false - and it means two different things. For Code 128, Code 39 and Interleaved 2 of 5 it *adds* one (a UCC/EAN, a Mod-43 or a Mod-10). For UPC-A, UPC-E, Code 93 and Plessey it only *shows* one: those symbologies carry theirs whatever the command says, so the symbol is identical either way and the interpretation line is not. EAN-13, EAN-8, the UPC/EAN extension and the 2 of 5 pair have no such flag; Codabar's command spells one that ZPL fixes at N, since Codabar has no checksum at all. Defaults to true for UPC-A and UPC-E |
+| `code11_check` | `N` - and it reads backwards: Code 11 is not self-checking, so `N` is *two* check characters and `Y` is one |
+| `msi_check` | `B` - MSI's four checksums: `A` none, `B` one Mod 10, `C` two Mod 10, `D` a Mod 11 then a Mod 10. `msi_show_check` says whether the line shows what they added |
+| `start_char`, `stop_char` | `A` - which of Codabar's four start and stop characters, a pair a reader can be told to expect |
 | `mode` | `N` - `A` lets Code 128 use subset C; no other symbology has a mode |
 | `quality` | QR's error correction: `Q` when `^BQ` leaves it out, `M` when `^BQ` names a letter QR has no level for - the manual distinguishes the two |
 | `qr_model` | `2`, the model the manual recommends. `1` is carried but drawn as 2 |
@@ -1682,10 +1688,9 @@ rather than requirements:
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
   drawn whole, wrapped, whether or not a font file is available.
-- **Six symbologies: Code 128, Code 39, EAN-13, Interleaved 2 of 5, the
-  UPC/EAN extension and QR.** Data Matrix, PDF417, Aztec and the rest are
-  still not offered, and no symbology's value is validated against its own
-  character set or length - EAN-13 and the extension fit whatever they are
+- **Seventeen symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
+  the postal codes and the stacked family are still not offered, and no
+  symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are
   given rather than rejecting it (§3.3), and Code 39 draws an out-of-set
   character as a blank rather than refusing the barcode.
 - **A symbol that cannot be built draws nothing and keeps its footprint.**
@@ -1694,6 +1699,19 @@ rather than requirements:
   its symbology has, with the reason on `symbol_error`. A printer prints no
   symbol in the same case. Refusing to open the label instead would lose
   every other field on it.
+- **`^BJ` Standard 2 of 5 is drawn with the IATA start and stop.** The
+  manual prints neither pattern and describes `^BI` and `^BJ` in words that
+  fit either; the only other reading of "Standard 2 of 5" is the Matrix
+  variant, whose start carries a wide *space*, and `^BJ` is explicit that
+  "all of the information is contained in the bars".
+- **`^BP` Plessey is drawn at fixed proportions.** Every other ratio-bearing
+  symbology draws its wide elements at `^BY`'s ratio; Plessey's reference
+  rendering uses its own, and its terminator is a fixed pattern rather than
+  four more bits. The ratio round-trips but does not change the symbol.
+- **Industrial and Standard 2 of 5, Code 11, MSI and Plessey are not read
+  back by the test decoder**, which does not know them. Each was checked
+  module for module against BWIPP, the reference implementation, when it was
+  written - see `tests/test_decode.py`.
 - **`^BQ`'s model 1 is carried but drawn as model 2.** Model 2 is what the
   manual recommends, what every reader expects, and the only one the encoder
   builds. The parameter round-trips, so a printer still does what the file

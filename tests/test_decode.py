@@ -125,6 +125,45 @@ reads("^B2 Interleaved 2 of 5 reads back",
       "^XA^PW600^LL600^FO60,60^BY3^B2N,100^FD123456^FS^XZ",
       "123456", 'ITF')
 
+# --- the symbologies added with this one ------------------------------------
+# A UPC-A is an EAN-13 with a leading zero, bar for bar, so a decoder is free
+# to call it either - and reports the thirteen digits. A UPC-E is reported
+# expanded, as the UPC-A it stands for, which is the real check on the
+# zero-suppression table: a wrong rule gives a well-formed symbol for the
+# wrong product code.
+reads("^BU UPC-A reads back, with the check digit it added itself",
+      "^XA^PW600^LL600^FO60,60^BY3^BUN,100^FD03600029145^FS^XZ",
+      "0036000291452", 'EAN13')
+reads("^B9 UPC-E expands to the UPC-A number it was given",
+      "^XA^PW600^LL600^FO60,60^BY3^B9N,100^FD4210000526^FS^XZ",
+      "0042100005264", 'UPCE')
+reads("...and a different suppression rule expands to its own number",
+      "^XA^PW600^LL600^FO60,60^BY3^B9N,100^FD1230000045^FS^XZ",
+      "0012300000451", 'UPCE')
+reads("^B8 EAN-8 reads back",
+      "^XA^PW600^LL600^FO60,60^BY3^B8N,100^FD9638507^FS^XZ",
+      "96385074", 'EAN8')
+reads("^BA Code 93 reads back, its two check characters checking out",
+      "^XA^PW600^LL600^FO60,60^BY3^BAN,100^FDTEST93^FS^XZ",
+      "TEST93", 'Code93')
+reads("^BA Code 93 carries the full alphanumeric set",
+      "^XA^PW600^LL600^FO60,60^BY2^BAN,100^FDABC-123. $/+%^FS^XZ",
+      "ABC-123. $/+%", 'Code93')
+reads("^BK Codabar reads back between the start and stop it was given",
+      "^XA^PW600^LL600^FO60,60^BY3^BKN,N,100,Y,N,A,A^FD123456^FS^XZ",
+      "A123456A", 'Codabar')
+reads("...and a different start and stop pair comes back as that pair",
+      "^XA^PW600^LL600^FO60,60^BY3^BKN,N,100,Y,N,B,C^FD12-34^FS^XZ",
+      "B12-34C", 'Codabar')
+reads("^BL LOGMARS reads back as the Code 39 it is, check digit and all",
+      "^XA^PW600^LL600^FO60,60^BY3^BLN,100^FD12AB^FS^XZ",
+      "12ABO", 'Code39')
+
+# ^BI, ^BJ, ^B1, ^BM and ^BP have no decoder here - zxing reads none of
+# Industrial or Standard 2 of 5, Code 11, MSI or Plessey. Each was checked
+# module for module against BWIPP, the reference implementation, while it was
+# written; see FUNCTIONAL_SPEC.md section 18.
+
 if fails:
     print(f"\n{len(fails)} DECODE CHECK(S) FAILED")
     for name in fails:

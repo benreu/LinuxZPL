@@ -20,6 +20,15 @@ from . import code39
 from . import ean13
 from . import i2of5
 from . import qr
+from . import upca
+from . import upce
+from . import ean8
+from . import code93
+from . import codabar
+from . import code11
+from . import msi
+from . import plessey
+from . import twoof5
 from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
@@ -595,20 +604,75 @@ class BarcodeElement(DesignElement):
         return zpl_fields.decode_hex(self.barcode_value, self.hex_indicator)
 
     def encoded_value(self) -> str:
-        """The data the symbol carries, and the interpretation line shows."""
+        """What the interpretation line shows.
+
+        Usually the data the symbol carries, but not always: several
+        symbologies carry a check digit whether or not one is asked for, and
+        their own e parameter says whether to *print* it rather than whether
+        to add it. The UPC/EAN family and Code 93 are the cases - a UPC-A
+        with `check_digit` off still carries its twelfth digit, and a reader
+        still returns it.
+        """
         value = self._raw_value()
-        if self.symbology == 'ean13':
+        symbology = self.symbology
+
+        if symbology == 'ean13':
             return ean13.normalize(value)
-        if self.symbology == 'upcean_extension':
+        if symbology == 'upcean_extension':
             return upcext.normalize(value)
-        if self.symbology == 'interleaved2of5':
+        if symbology == 'ean8':
+            return ean8.normalize(value)
+        if symbology == 'upca':
+            full = upca.normalize(value)
+            return full if self.check_digit else full[:-1]
+        if symbology == 'upce':
+            try:
+                full = upce.normalize(value)
+            except ValueError:
+                return value
+            return full if self.check_digit else full[:-1]
+        if symbology == 'code93':
+            kept = value.upper()
+            return kept + (code93.check_characters(kept) if self.check_digit else '')
+        if symbology == 'codabar':
+            return codabar.normalize(value)
+        if symbology == 'code11':
+            return code11.normalize(value, self._code11_count())
+        if symbology == 'msi':
+            full = msi.normalize(value, self.msi_check)
+            if self.msi_show_check == 'Y':
+                return full
+            return full[:len(full) - len(msi.check_digits(
+                ''.join(c for c in value if c.isdigit()), self.msi_check))] or full
+        if symbology == 'plessey':
+            kept = plessey.normalize(value)
+            if not self.check_digit:
+                return kept
+            bits = plessey.check_bits(kept)
+            digits = sum(bit << (7 - index) for index, bit in enumerate(bits))
+            return kept + f"{digits:02X}"
+        if symbology in ('industrial2of5', 'standard2of5'):
+            return twoof5.normalize(value)
+        if symbology == 'interleaved2of5':
             if self.check_digit:
                 value += code128.ucc_check_digit(value)
             return i2of5.normalize(value)
+        if symbology == 'logmars':
+            # LOGMARS is Code 39 with a check digit that is not optional and
+            # lower case folded up, which is what the manual means by
+            # "lowercase letters in the ^FD string are converted".
+            value = value.upper()
+            return value + code39.mod43_check_digit(value)
         if self.check_digit:
-            value += (code39.mod43_check_digit(value) if self.symbology == 'code39'
+            value += (code39.mod43_check_digit(value) if symbology == 'code39'
                       else code128.ucc_check_digit(value))
         return value
+
+    def _code11_count(self) -> int:
+        """How many check characters Code 11 carries: one when ^B1's own e
+        says Y, two when it says N - which is the manual's default, and the
+        opposite way round from every other e in ZPL."""
+        return 1 if self.code11_check == 'Y' else 2
 
     def symbol(self) -> tuple:
         """What the printer will actually lay down, as (kind, payload).
@@ -628,10 +692,9 @@ class BarcodeElement(DesignElement):
         every other field on it.
         """
         self.symbol_error = None
-        if self.symbology not in symbologies.MATRIX:
-            return ('linear', self.modules())
+        matrix = self.symbology in symbologies.MATRIX
         try:
-            return ('grid', self._grid())
+            return ('grid', self._grid()) if matrix else ('linear', self.modules())
         except ImportError as exc:
             self.symbol_error = (
                 f"{symbologies.SYMBOLOGIES[self.symbology]} needs a Python "
@@ -639,7 +702,7 @@ class BarcodeElement(DesignElement):
         except Exception as exc:                        # noqa: BLE001
             self.symbol_error = (
                 f"{symbologies.SYMBOLOGIES[self.symbology]}: {exc}")
-        return ('grid', [])
+        return ('grid', []) if matrix else ('linear', [])
 
     def _grid(self) -> list:
         """The matrix symbology's own modules, as rows of booleans."""
@@ -658,14 +721,42 @@ class BarcodeElement(DesignElement):
         rather than from that result avoids re-fitting an already-fitted
         string, which would corrupt it.
         """
-        if self.symbology == 'ean13':
-            return ean13.encode(self._raw_value())
-        if self.symbology == 'upcean_extension':
-            return upcext.encode(self._raw_value())
+        raw = self._raw_value()
+        symbology = self.symbology
+
+        # The symbologies that fit and checksum their own way encode straight
+        # from the raw value: encoding from `encoded_value` instead would
+        # re-fit an already-fitted string, and for the several whose own e
+        # only hides a digit from the line it would drop it from the symbol.
+        if symbology == 'ean13':
+            return ean13.encode(raw)
+        if symbology == 'upcean_extension':
+            return upcext.encode(raw)
+        if symbology == 'upca':
+            return upca.encode(raw)
+        if symbology == 'upce':
+            return upce.encode(raw)
+        if symbology == 'ean8':
+            return ean8.encode(raw)
+        if symbology == 'code93':
+            return code93.encode(raw.upper())
+        if symbology == 'codabar':
+            return self._ratio_scaled(
+                codabar.encode(raw, self.start_char, self.stop_char))
+        if symbology == 'code11':
+            return self._ratio_scaled(
+                code11.encode(raw, self._code11_count()))
+        if symbology == 'msi':
+            return msi.encode(raw, self.msi_check)
+        if symbology == 'plessey':
+            return plessey.encode(raw)
+        if symbology in ('industrial2of5', 'standard2of5'):
+            return self._ratio_scaled(twoof5.encode(raw, symbology))
+
         value = self.encoded_value()
-        if self.symbology == 'code128':
+        if symbology == 'code128':
             return code128.encode(value, self.mode)
-        if self.symbology == 'code39':
+        if symbology in ('code39', 'logmars'):
             return self._ratio_scaled(code39.encode(value))
         return self._ratio_scaled(i2of5.encode(value))  # interleaved2of5
 
@@ -689,8 +780,10 @@ class BarcodeElement(DesignElement):
         kind, payload = self.symbol()
         module = max(1, self.module_width)
         if kind == 'linear':
-            run = max(1, sum(payload) * module)
-            return (run, max(1, self.bar_height))
+            # A symbol that could not be built keeps a footprint, so the
+            # element stays somewhere the user can select it and read why.
+            modules = sum(payload) or symbologies.PLACEHOLDER_MODULES
+            return (modules * module, max(1, self.bar_height))
         if kind == 'grid':
             # A symbol that could not be built keeps the footprint of the
             # smallest one its symbology has, so the element stays somewhere

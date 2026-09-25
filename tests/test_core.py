@@ -1547,12 +1547,27 @@ check("every symbology has a dialog entry, and every command a parameter list",
       and set(zpl_symbology.COMMAND.values()) <= set(zpl_symbology.COMMAND_PARAMS),
       (sorted(set(BARCODE_FEATURES) ^ set(zpl_symbology.SYMBOLOGIES)),
        sorted(set(zpl_symbology.COMMAND.values()) - set(zpl_symbology.COMMAND_PARAMS))))
-check("only Code 128 offers a mode, and only the three with one a check digit",
-      [name for name, feat in BARCODE_FEATURES.items() if feat['mode']] == ['code128']
-      and [name for name, feat in BARCODE_FEATURES.items()
-           if feat['check_digit'] is not None]
-      == ['code128', 'code39', 'interleaved2of5'],
-      [(n, f['mode'], f['check_digit']) for n, f in BARCODE_FEATURES.items()])
+check("only Code 128 offers a mode, since no other symbology has one",
+      [name for name, feat in BARCODE_FEATURES.items() if feat['mode']] == ['code128'],
+      [n for n, f in BARCODE_FEATURES.items() if f['mode']])
+check("a symbology offers a check-digit row exactly when its command has an e",
+      [name for name, feat in BARCODE_FEATURES.items()
+       if feat['check_digit'] is not None]
+      == [name for name in BARCODE_FEATURES
+          if zpl_symbology.varies(name, 'e')],
+      [(n, f['check_digit'] is not None, zpl_symbology.varies(n, 'e'))
+       for n, f in BARCODE_FEATURES.items()])
+check("Codabar spells a check digit its own command fixes at N",
+      'e' in zpl_symbology.COMMAND_PARAMS['^BK']
+      and not zpl_symbology.varies('codabar', 'e')
+      and BARCODE_FEATURES['codabar']['check_digit'] is None,
+      "the manual gives it as a fixed value; Codabar has no checksum")
+check("and a matrix symbology offers neither a height nor a line",
+      [name for name, feat in BARCODE_FEATURES.items()
+       if feat['height'] is None or not feat['text']]
+      == sorted(zpl_symbology.MATRIX, key=list(BARCODE_FEATURES).index),
+      [(n, f['height'], f['text']) for n, f in BARCODE_FEATURES.items()
+       if f['height'] is None or not f['text']])
 
 # Code 39: self-checking, so every character costs the same twelve modules -
 # three wide (2) plus six narrow (1) plus the inter-character gap.
@@ -1650,6 +1665,157 @@ def _qr_square():
                               {'x': 10, 'y': 10, 'width': 400, 'height': 120})
     return (el.width == el.height, el.module_width != was)
 
+
+# --- the UPC/EAN family and the rest of the 1-D set --------------------------
+from zplcore import (code11 as zpl_code11, code93 as zpl_code93,
+                     codabar as zpl_codabar, ean8 as zpl_ean8,
+                     msi as zpl_msi, plessey as zpl_plessey,
+                     twoof5 as zpl_twoof5, upca as zpl_upca, upce as zpl_upce)
+
+# Each symbology's own fixed length or module count - the thing that is wrong
+# first when a guard pattern or a digit table is off by one.
+for name, value, modules, shows in (
+        ('upca', '03600029145', 95, '036000291452'),
+        ('ean8', '9638507', 67, '96385074'),
+        ('upce', '4210000526', 51, '04252614'),
+        ('code93', 'TEST93', 9 * (6 + 2 + 2) + 1, 'TEST93'),
+):
+    el = BarcodeElement(0, 0, 60, value, symbology=name)
+    check(f"{name} is {modules} modules",
+          sum(el.modules()) == modules, sum(el.modules()))
+    check(f"and its line shows {shows!r}",
+          el.encoded_value() == shows, el.encoded_value())
+
+check("UPC-A pads a short value on the left, as EAN-13 does",
+      zpl_upca.normalize('45').startswith('000000000'), zpl_upca.normalize('45'))
+check("EAN-8 and UPC-A share one mod-10 check digit, at different lengths",
+      zpl_ean8.normalize('1234567')[-1] == code128.ucc_check_digit('1234567')
+      and zpl_upca.normalize('03600029145')[-1]
+      == code128.ucc_check_digit('03600029145'))
+
+# UPC-E's zero suppression is a table that runs both ways, so a number it
+# cannot shorten has no symbol at all: drawing its last six digits would give
+# a perfectly readable barcode for a different product code.
+for full, short in (('1230000045', '123453'), ('4210000526', '425261'),
+                    ('0000000015', '000150'), ('0210000005', '020051')):
+    check(f"UPC-E shortens {full} to {short}",
+          zpl_upce.compress(full) == short, zpl_upce.compress(full))
+_bad = BarcodeElement(0, 0, 60, '0425000026', symbology='upce')
+check("a number UPC-E cannot shorten draws nothing and says why",
+      _bad.symbol() == ('linear', []) and 'UPC-E' in (_bad.symbol_error or '')
+      and geometry.barcode_layout(_bad)['rects'] == [], _bad.symbol_error)
+check("and it still has a footprint, so it can be selected and corrected",
+      _bad.width > 0 and _bad.height > 0, (_bad.width, _bad.height))
+
+# Code 93's two check characters are not optional the way Code 39's is: ^BA's
+# own e says whether the line shows them, not whether the symbol carries them.
+check("Code 93's check characters for TEST93 are +6",
+      zpl_code93.check_characters('TEST93') == '+6',
+      zpl_code93.check_characters('TEST93'))
+_c93 = BarcodeElement(0, 0, 60, 'TEST93', symbology='code93')
+_c93_shown = BarcodeElement(0, 0, 60, 'TEST93', symbology='code93',
+                            options=('Y', 'N', 'Y'))
+check("the symbol carries them either way, and only the line changes",
+      _c93.modules() == _c93_shown.modules()
+      and _c93.encoded_value() == 'TEST93'
+      and _c93_shown.encoded_value() == 'TEST93+6',
+      (_c93.encoded_value(), _c93_shown.encoded_value()))
+
+# Code 11 is the one command whose e reads backwards: Y is one check
+# character and N - the default - is two.
+check("^B1's N means two check characters and Y means one",
+      (len(zpl_code11.check_characters('123456', 2)),
+       len(zpl_code11.check_characters('123456', 1))) == (2, 1))
+check("and 123456 checks out to 11, by the C then K weightings",
+      zpl_code11.check_characters('123456') == '11',
+      zpl_code11.check_characters('123456'))
+_c11 = BarcodeElement(0, 0, 60, '123456', symbology='code11')
+check("the element defaults to two, as the manual does",
+      _c11.code11_check == 'N' and _c11.encoded_value() == '12345611',
+      _c11.encoded_value())
+
+# Codabar names its start and stop separately - the whole point of having
+# four of them - and they are not data.
+_cb = BarcodeElement(0, 0, 60, '12-34', symbology='codabar',
+                     params={'start_char': 'B', 'stop_char': 'C'})
+check("Codabar's start and stop round-trip through its own command",
+      '^BK,N,60,Y,N,B,C\n' in _cb.to_zpl(), _cb.to_zpl())
+check("a start character typed into the data is dropped, not drawn",
+      zpl_codabar.normalize('A12A') == '12',
+      "a second start character mid-symbol is not something a reader gets past")
+
+# MSI's four schemes, and the flag that says whether the line shows what they
+# added.
+check("MSI's schemes add none, one, two, and a mod 11 then a mod 10",
+      [len(zpl_msi.check_digits('1234', s)) for s in 'ABCD'] == [0, 1, 2, 2],
+      [zpl_msi.check_digits('1234', s) for s in 'ABCD'])
+_msi_hidden = BarcodeElement(0, 0, 60, '1234', symbology='msi')
+_msi_shown = BarcodeElement(0, 0, 60, '1234', symbology='msi',
+                            params={'msi_show_check': 'Y'})
+check("the symbol carries the check digit either way; the line may not",
+      _msi_hidden.modules() == _msi_shown.modules()
+      and (_msi_hidden.encoded_value(), _msi_shown.encoded_value())
+      == ('1234', '12344'),
+      (_msi_hidden.encoded_value(), _msi_shown.encoded_value()))
+
+# Plessey's CRC is eight bits over the whole message, and is never optional.
+check("Plessey's check is eight bits, shown as two hex digits when asked",
+      len(zpl_plessey.check_bits('1234')) == 8
+      and BarcodeElement(0, 0, 60, '1234', symbology='plessey',
+                         options=('Y', 'N', 'Y')).encoded_value() == '12340B',
+      BarcodeElement(0, 0, 60, '1234', symbology='plessey',
+                     options=('Y', 'N', 'Y')).encoded_value())
+
+# Both 2 of 5 variants put every bit of information in the bars, and differ
+# only in how they start and stop.
+_ind = zpl_twoof5.encode('1234')
+_std = zpl_twoof5.encode('1234', 'standard2of5')
+check("Industrial and Standard 2 of 5 share a digit table and differ at the ends",
+      _ind[6:-5] == _std[4:-3] and _ind != _std,
+      (len(_ind), len(_std)))
+check("every space in both is narrow - all the information is in the bars",
+      set(_ind[1::2]) == {1} and set(_std[1::2]) == {1})
+
+# LOGMARS is Code 39 with a check digit that is not optional, and no way to
+# switch its interpretation line off.
+_log = BarcodeElement(0, 0, 60, '12ab', symbology='logmars')
+check("LOGMARS folds to upper case and always adds its Mod-43 digit",
+      _log.encoded_value() == '12AB' + code39.mod43_check_digit('12AB'),
+      _log.encoded_value())
+check("and its command has no f at all, so the line always prints",
+      'f' not in zpl_symbology.COMMAND_PARAMS['^BL']
+      and BARCODE_FEATURES['logmars']['text'] == 'always'
+      and _log.show_text)
+
+# Every new command round-trips through its own parameter order.
+for zpl_text, expect in (
+        ('^BUN,60,Y,N,N', ('upca', False)),
+        ('^B9N,60,Y,N,Y', ('upce', True)),
+        ('^B8N,60', ('ean8', False)),
+        ('^BAN,60,Y,N,Y', ('code93', True)),
+        ('^BKN,N,60,Y,N,D,D', ('codabar', False)),
+        ('^B1Y,60', ('code11', False)),
+        ('^BMN,C,60,Y,N,Y', ('msi', False)),
+        ('^BPN,Y,60', ('plessey', True)),
+        ('^BIN,60', ('industrial2of5', False)),
+        ('^BJN,60', ('standard2of5', False)),
+        ('^BLN,60,N', ('logmars', False))):
+    page = f"^XA^PW812^LL1218^FO10,10^BY2\n{zpl_text}\n^FD1234^FS^XZ"
+    read = zpl_parser.parse_zpl(page)[0].elements[0]
+    check(f"{zpl_text} reads as {expect[0]}",
+          (read.symbology, read.check_digit) == expect,
+          (read.symbology, read.check_digit))
+    check(f"and {zpl_text} writes back the same command",
+          zpl_text.split(',')[0] in read.to_zpl(), read.to_zpl().replace(chr(10), ' '))
+    again = zpl_parser.parse_zpl(f"^XA{read.to_zpl()}^XZ")[0].elements[0]
+    check(f"and {zpl_text} is stable across a second save",
+          again.to_zpl() == read.to_zpl(), (read.to_zpl(), again.to_zpl()))
+
+for command in ('^BU', '^B9', '^B8', '^BA', '^BK', '^B1', '^BM', '^BP',
+                '^BI', '^BJ', '^BL'):
+    check(f"{command} is no longer a command a save would drop",
+          workflow.unsupported_commands(
+              f"^XA^FO0,0{command}N,60^FD1234^FS^XZ") == [])
 
 # --- ^BQ, the QR code -------------------------------------------------------
 from zplcore import qr as zpl_qr

@@ -18,6 +18,17 @@ SYMBOLOGIES = {
     'ean13': "EAN-13",
     'interleaved2of5': "Interleaved 2 of 5",
     'upcean_extension': "UPC/EAN Extension",
+    'upca': "UPC-A",
+    'upce': "UPC-E",
+    'ean8': "EAN-8",
+    'code93': "Code 93",
+    'codabar': "Codabar",
+    'code11': "Code 11",
+    'msi': "MSI",
+    'plessey': "Plessey",
+    'industrial2of5': "Industrial 2 of 5",
+    'standard2of5': "Standard 2 of 5",
+    'logmars': "LOGMARS",
     'qr': "QR Code",
 }
 
@@ -28,6 +39,17 @@ COMMAND = {
     'ean13': '^BE',
     'interleaved2of5': '^B2',
     'upcean_extension': '^BS',
+    'upca': '^BU',
+    'upce': '^B9',
+    'ean8': '^B8',
+    'code93': '^BA',
+    'codabar': '^BK',
+    'code11': '^B1',
+    'msi': '^BM',
+    'plessey': '^BP',
+    'industrial2of5': '^BI',
+    'standard2of5': '^BJ',
+    'logmars': '^BL',
     'qr': '^BQ',
 }
 
@@ -40,6 +62,17 @@ COMMAND = {
 COMMAND_PARAMS = {
     '^BC': ('o', 'h', 'f', 'g', 'e', 'm'),
     '^BQ': ('o', 'qr_model', 'w', 'quality', 'qr_mask'),
+    '^BU': ('o', 'h', 'f', 'g', 'e'),
+    '^B9': ('o', 'h', 'f', 'g', 'e'),
+    '^B8': ('o', 'h', 'f', 'g'),
+    '^BA': ('o', 'h', 'f', 'g', 'e'),
+    '^BK': ('o', 'e', 'h', 'f', 'g', 'start_char', 'stop_char'),
+    '^B1': ('o', 'code11_check', 'h', 'f', 'g'),
+    '^BM': ('o', 'msi_check', 'h', 'f', 'g', 'msi_show_check'),
+    '^BP': ('o', 'e', 'h', 'f', 'g'),
+    '^BI': ('o', 'h', 'f', 'g'),
+    '^BJ': ('o', 'h', 'f', 'g'),
+    '^BL': ('o', 'h', 'g'),
     '^B3': ('o', 'e', 'h', 'f', 'g'),
     '^BE': ('o', 'h', 'f', 'g'),
     '^B2': ('o', 'h', 'f', 'g', 'e'),
@@ -124,6 +157,19 @@ PARAMETERS = {
     # ^BQ e - which of the eight masks to apply. The manual's default is 7
     # rather than "whichever scores best", so that is what is drawn.
     'qr_mask': Param(int, 7, choices=tuple(range(8))),
+    # ^BK k and l - which of the four start and stop characters to use. They
+    # are a pair a reader can be told to expect, which is the only reason
+    # Codabar has four of them.
+    'start_char': Param(str, 'A', choices=('A', 'B', 'C', 'D')),
+    'stop_char': Param(str, 'A', choices=('A', 'B', 'C', 'D')),
+    # ^B1 e - one check character or two. The manual's default is two, and
+    # it spells that N, which is the opposite way round from every other e
+    # in ZPL: Code 11 is not self-checking, so it always carries at least one.
+    'code11_check': Param(str, 'N', choices=('Y', 'N')),
+    # ^BM e - which of MSI's four checksums the symbol carries, and ^BM e2,
+    # whether the interpretation line shows it.
+    'msi_check': Param(str, 'B', choices=('A', 'B', 'C', 'D')),
+    'msi_show_check': Param(str, 'N', choices=('Y', 'N')),
 }
 
 # What an omitted f, g, e and m mean, per symbology, in that order - the
@@ -132,6 +178,11 @@ PARAMETERS = {
 # default; every other symbology below it.
 _FLAG_DEFAULTS = {
     'upcean_extension': ('Y', 'Y', 'N', 'N'),
+    # UPC-A and UPC-E print their check digit in the interpretation line
+    # unless told not to - their e means "show it", not "add it": both carry
+    # one whatever the command says.
+    'upca': ('Y', 'N', 'Y', 'N'),
+    'upce': ('Y', 'N', 'Y', 'N'),
 }
 
 
@@ -139,6 +190,20 @@ def flag_defaults(symbology: str) -> tuple:
     """(show_text, text_above, check_digit, mode) as ZPL letters, for an
     omitted parameter of this symbology."""
     return _FLAG_DEFAULTS.get(symbology, ('Y', 'N', 'N', 'N'))
+
+
+# Parameters a command spells but whose value ZPL fixes. ^BK's check digit
+# is the only one: the manual gives it as "Fixed Value: N", because Codabar
+# has no checksum at all and the parameter exists to keep the ones after it
+# in position. It is written, since the start and stop characters follow it,
+# but nothing offers to change it.
+FIXED = {'codabar': ('e',)}
+
+
+def varies(symbology: str, name: str) -> bool:
+    """Whether this symbology's own command lets that parameter change."""
+    return (name in COMMAND_PARAMS[COMMAND[symbology]]
+            and name not in FIXED.get(symbology, ()))
 
 
 # Parameters written even when they hold the default: the ones the printer
@@ -153,29 +218,32 @@ HEIGHT_UNIT = {
     'qr': None,
 }
 
+# The symbologies whose symbol is a grid of square modules rather than bars
+# and spaces. Their size is the grid, so neither ^BY's height nor their own
+# command carries one.
+MATRIX = frozenset(('qr',))
+
 # Symbologies whose module width is ^BY's w rather than a magnification the
 # command carries itself. Everything not here writes ^BY; the rest write
 # their magnification in the command and no ^BY at all.
-READS_BY = frozenset(('code128', 'code39', 'ean13', 'interleaved2of5',
-                      'upcean_extension'))
+READS_BY = frozenset(set(SYMBOLOGIES) - MATRIX)
 
 # Symbologies with no interpretation line at all - the matrix codes, whose
 # commands carry no f parameter. Everything else has one, on by default or
 # not as flag_defaults says.
 NO_TEXT = frozenset(('qr',))
 
-# The symbologies whose symbol is a grid of square modules rather than bars
-# and spaces. Their size is the grid, so neither ^BY's height nor their own
-# command carries one.
-MATRIX = frozenset(('qr',))
 
-# How wide a placeholder a matrix symbology that could not be built stands
-# in, in modules - the smallest QR symbol, which is the smallest of them all.
+# How big a placeholder a symbology that could not be built stands in, in
+# modules - the smallest QR symbol either way, and the width of a UPC-A for a
+# one-dimensional one. Enough to be seen and clicked, which is the point.
 PLACEHOLDER_GRID = 21
+PLACEHOLDER_MODULES = 95
 
 # ^BY's ratio only changes symbologies whose wide elements are drawn at it.
 # The manual is explicit that it "has no effect on fixed-ratio bar codes".
-USES_RATIO = frozenset(('code39', 'interleaved2of5'))
+USES_RATIO = frozenset(('code39', 'interleaved2of5', 'logmars', 'codabar',
+                        'code11', 'industrial2of5', 'standard2of5'))
 
 
 def default_magnification(dpi: int) -> int:
@@ -218,6 +286,20 @@ BARCODE_FEATURES = {
     'ean13':            _features(),
     'interleaved2of5':  _features(ratio=True, check_digit="Mod-10 Check Digit"),
     'upcean_extension': _features(),
+    # The UPC/EAN family's e says whether the interpretation line shows the
+    # check digit the symbol always carries - not whether to add one.
+    'upca':             _features(check_digit="Print Check Digit"),
+    'upce':             _features(check_digit="Print Check Digit"),
+    'ean8':             _features(),
+    'code93':           _features(check_digit="Print Check Characters"),
+    'codabar':          _features(ratio=True),
+    'code11':           _features(ratio=True),
+    'msi':              _features(),
+    'plessey':          _features(check_digit="Print Check Digits"),
+    'industrial2of5':   _features(ratio=True),
+    'standard2of5':     _features(ratio=True),
+    # LOGMARS has no f parameter at all: the line always prints.
+    'logmars':          _features(ratio=True, text='always'),
     'qr':               _features(height=None, module_width="Magnification",
                                   text=False),
 }
@@ -233,4 +315,15 @@ BARCODE_PARAMETERS = {
            ('qr_model', "Model",
             (("2 (recommended)", 2), ("1 (original)", 1))),
            ('qr_mask', "Mask", tuple((str(n), n) for n in range(8)))),
+    'codabar': (('start_char', "Start Character",
+                 tuple((c, c) for c in 'ABCD')),
+                ('stop_char', "Stop Character",
+                 tuple((c, c) for c in 'ABCD'))),
+    'code11': (('code11_check', "Check Characters",
+                (("Two", 'N'), ("One", 'Y'))),),
+    'msi': (('msi_check', "Check Digits",
+             (("One Mod 10", 'B'), ("None", 'A'), ("Two Mod 10", 'C'),
+              ("Mod 11 then Mod 10", 'D'))),
+            ('msi_show_check', "Show Check Digits",
+             (("No", 'N'), ("Yes", 'Y')))),
 }

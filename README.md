@@ -154,7 +154,9 @@ zplcore/    no GUI toolkit, runs headless
   workflow.py    the decisions that decide whether a label prints correctly
   symbology.py   the barcode catalogue: which command spells each symbology,
                  what its parameters mean, what the editors offer for it
-  code128.py, code39.py, ean13.py, i2of5.py, upcext.py, qr.py
+  code128.py, code39.py, ean13.py, i2of5.py, upcext.py, upca.py, upce.py,
+  ean8.py, code93.py, codabar.py, code11.py, msi.py, plessey.py,
+  twoof5.py, qr.py
                  barcode encoding, one file per symbology
 gtkui/      GTK3 frontend: Cairo painting, dialogs, menus
 qtui/       PySide2/Qt5 frontend: QPainter painting, dialogs, menus
@@ -241,10 +243,14 @@ Sent to the printer but not rendered:
 Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
 
 - Barcodes are Code 128, Code 39, EAN-13, Interleaved 2 of 5, the UPC/EAN
-  extension and QR; Data Matrix, PDF417, Aztec and the rest are not offered
-  yet. A QR code carries what its `^FD` switches say and no interpretation
-  line, and is drawn as model 2 whatever its command asks for. No symbology's
-  value is validated against its own character set or length.
+  extension, UPC-A, UPC-E, EAN-8, Code 93, Codabar, Code 11, MSI, Plessey,
+  Industrial and Standard 2 of 5, LOGMARS and QR; Data Matrix, PDF417, Aztec,
+  GS1 DataBar and the postal codes are not offered yet. A QR code carries
+  what its `^FD` switches say and no interpretation line, and is drawn as
+  model 2 whatever its command asks for. No symbology's value is validated
+  against its own character set or length - except UPC-E, whose zero
+  suppression is a table, so a number it cannot shorten draws nothing rather
+  than a readable barcode for a different product code.
 - Rescaling between resolutions cannot be exact for barcodes: a module is a
   whole number of dots, so 2 becomes 3 going from 203 to 300 dpi. Positions and
   heights scale exactly.
