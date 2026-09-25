@@ -19,7 +19,8 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QFormLayout, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QListWidget, QMessageBox,
                                QPlainTextEdit, QPushButton, QSpinBox,
-                               QDoubleSpinBox, QVBoxLayout, QWidget)
+                               QDoubleSpinBox, QTreeWidget, QTreeWidgetItem,
+                               QVBoxLayout, QWidget)
 
 from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
                      graphic_store, printer_io, printer_objects, textraster,
@@ -1870,7 +1871,7 @@ class PrinterObjectsDialog(QDialog):
     def __init__(self, parent, address: str, port: int, on_changed=None):
         super().__init__(parent)
         self.setWindowTitle("Printer Objects")
-        self.resize(380, 340)
+        self.resize(460, 340)
         self._address, self._port = address, port
         self._on_changed = on_changed
 
@@ -1879,7 +1880,18 @@ class PrinterObjectsDialog(QDialog):
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
 
-        self._list = QListWidget()
+        # Object, then the memory type its device letter names - "Z:" and
+        # "E:" say nothing to a user who has not memorised the ZPL manual's
+        # letter designations, so the second column says it in words (see
+        # graphic_store.DEVICE_NAMES). Column 0 stays the full d:NAME.EXT
+        # spec, so what the list shows still matches every status message and
+        # confirmation prompt below verbatim. A QTreeWidget, not the flat
+        # QListWidget the font and graphic managers use, purely because this
+        # one has columns to head.
+        self._list = QTreeWidget()
+        self._list.setHeaderLabels(["Object", "Memory"])
+        self._list.setRootIsDecorated(False)
+        self._list.setUniformRowHeights(True)
         layout.addWidget(self._list, 1)
 
         row = QHBoxLayout()
@@ -1906,7 +1918,7 @@ class PrinterObjectsDialog(QDialog):
         self._retrieve_btn.clicked.connect(self._on_retrieve)
         self._delete_btn.clicked.connect(self._on_delete)
         self._refresh_btn.clicked.connect(self.refresh)
-        self._list.currentRowChanged.connect(self._on_selection_changed)
+        self._list.currentItemChanged.connect(self._on_selection_changed)
         self.refresh()
 
     def reject(self):
@@ -1928,7 +1940,8 @@ class PrinterObjectsDialog(QDialog):
                                      f"{self._address}:{self._port}.")
                 return
             for spec in specs:
-                self._list.addItem(spec)
+                QTreeWidgetItem(self._list,
+                                [spec, graphic_store.device_name(spec)])
             self._status.setText(f"{len(specs)} object(s) on {self._address}"
                                  if specs else "No objects on the printer.")
 
@@ -1937,9 +1950,9 @@ class PrinterObjectsDialog(QDialog):
 
     def _selected_spec(self) -> Optional[str]:
         item = self._list.currentItem()
-        return item.text() if item is not None else None
+        return item.text(0) if item is not None else None
 
-    def _on_selection_changed(self, _row: int):
+    def _on_selection_changed(self, _current, _previous):
         spec = self._selected_spec()
         self._retrieve_btn.setEnabled(spec is not None)
         # ^ID silently ignores Z: (read-only factory content), so Delete

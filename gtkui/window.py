@@ -1898,7 +1898,7 @@ class ZPLViewerWindow(Gtk.Window):
         """
         dialog = Gtk.Dialog(title="Printer Objects", parent=self, flags=0)
         dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
-        dialog.set_default_size(380, 340)
+        dialog.set_default_size(460, 340)
 
         content = dialog.get_content_area()
         content.set_spacing(8)
@@ -1911,10 +1911,19 @@ class ZPLViewerWindow(Gtk.Window):
         status.set_line_wrap(True)
         content.pack_start(status, False, False, 0)
 
-        list_store = Gtk.ListStore(str)
+        # Object, then the memory type its device letter names - "Z:" and
+        # "E:" say nothing to a user who has not memorised the ZPL manual's
+        # letter designations, so the second column says it in words (see
+        # graphic_store.DEVICE_NAMES). Column 0 stays the full d:NAME.EXT
+        # spec, so what the list shows still matches every status message
+        # and confirmation prompt below verbatim.
+        list_store = Gtk.ListStore(str, str)
         tree_view = Gtk.TreeView(model=list_store)
-        tree_view.append_column(
-            Gtk.TreeViewColumn("Object", Gtk.CellRendererText(), text=0))
+        for title, index in (("Object", 0), ("Memory", 1)):
+            column = Gtk.TreeViewColumn(title, Gtk.CellRendererText(),
+                                        text=index)
+            column.set_resizable(True)
+            tree_view.append_column(column)
         scroller = Gtk.ScrolledWindow()
         scroller.set_vexpand(True)
         scroller.add(tree_view)
@@ -1934,19 +1943,15 @@ class ZPLViewerWindow(Gtk.Window):
         buttons.pack_end(busy, False, False, 0)
         content.pack_start(buttons, False, False, 0)
 
-        entries = []
         changed_any = False
 
         def refresh(*_a):
-            nonlocal entries
             list_store.clear()
-            entries = []
             retrieve_btn.set_sensitive(False)
             delete_btn.set_sensitive(False)
             status.set_text(f"Listing objects on {self.printer_address}...")
 
             def done(specs, error):
-                nonlocal entries
                 if isinstance(error, printer_io.Cancelled):
                     status.set_text("Listing cancelled.")
                     return
@@ -1954,12 +1959,12 @@ class ZPLViewerWindow(Gtk.Window):
                     status.set_text(f"Could not reach the printer at "
                                     f"{self.printer_address}:{self.printer_port}.")
                     return
-                entries = specs
-                for spec in entries:
-                    list_store.append([spec])
+                for spec in specs:
+                    list_store.append(
+                        [spec, graphic_store.device_name(spec)])
                 status.set_text(
-                    f"{len(entries)} object(s) on {self.printer_address}"
-                    if entries else "No objects on the printer.")
+                    f"{len(specs)} object(s) on {self.printer_address}"
+                    if specs else "No objects on the printer.")
 
             busy.run(lambda cancel: printer_objects.query_printer_objects(
                 self.printer_address, self.printer_port, cancel=cancel), done)
@@ -1969,8 +1974,9 @@ class ZPLViewerWindow(Gtk.Window):
             model, treeiter = tree_view.get_selection().get_selected()
             if treeiter is None:
                 return None
-            index = model.get_path(treeiter).get_indices()[0]
-            return entries[index] if index < len(entries) else None
+            # Column 0 is the spec itself, so no parallel list of entries has
+            # to be kept in step with the model just to resolve a selection.
+            return model.get_value(treeiter, 0)
 
         def on_selection_changed(_selection):
             spec = selected_entry()

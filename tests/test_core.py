@@ -4046,6 +4046,44 @@ check("build_object_upload(): case preserved, not forced to upper",
 check("build_object_upload(): the data itself follows the header verbatim",
       obj_payload.endswith(b'hello'), obj_payload)
 
+# graphic_store.DEVICE_NAMES / device_name(): what a device letter means in
+# words, for the Memory column of the Printer Objects list and the device
+# choices in the stored-graphic editors. Names come from the ZPL manual's
+# Table 67; the point of the checks below is that nothing here ever invents
+# a memory type for a letter it does not know.
+_unnamed = sorted({d for d in printer_objects.DEVICES
+                   if d not in graphic_store.DEVICE_NAMES}
+                  | {d for d in graphic_store.DEVICES
+                     if d not in graphic_store.DEVICE_NAMES})
+check("every device Objects and Graphics list has a human-readable name",
+      _unnamed == [], _unnamed)
+check("device_name(): R: is DRAM, E: is Flash, per the manual's Table 67",
+      (graphic_store.device_name('R:LABEL.ZPL'),
+       graphic_store.device_name('E:SAMPLE.GRF')) == ("DRAM", "Flash"),
+      (graphic_store.device_name('R:LABEL.ZPL'),
+       graphic_store.device_name('E:SAMPLE.GRF')))
+check("device_name(): Z: is named read-only Zebra content, not left as 'Z:'",
+      graphic_store.device_name('Z:INDEX.WML') == "Zebra read-only",
+      graphic_store.device_name('Z:INDEX.WML'))
+# split_device_spec() defaults a prefix-less spec to 'R', which is right for
+# a filename and wrong for a memory column - device_name must not inherit it.
+check("device_name(): a spec with no device prefix is blank, not 'DRAM'",
+      graphic_store.device_name('SAMPLE.GRF') == "",
+      graphic_store.device_name('SAMPLE.GRF'))
+check("device_name(): an unknown letter comes back as itself, not a guess",
+      graphic_store.device_name('D:THING.DAT') == "D:",
+      graphic_store.device_name('D:THING.DAT'))
+# The stored-graphic device combos are generated from the same map, so their
+# codes - the half that reaches the ZPL - must be untouched by that.
+check("STORED_GRAPHIC_DEVICES still offers R/E/B/A, in that order",
+      tuple(code for _label, code in zpl_model.STORED_GRAPHIC_DEVICES)
+      == ('R', 'E', 'B', 'A'),
+      zpl_model.STORED_GRAPHIC_DEVICES)
+check("STORED_GRAPHIC_DEVICES labels name real memory types, no placeholders",
+      not any("memory)" in label
+              for label, _code in zpl_model.STORED_GRAPHIC_DEVICES),
+      zpl_model.STORED_GRAPHIC_DEVICES)
+
 # printer_objects.download_printer_object(): a printer answering a .TTF
 # retrieval with total silence (blocked to protect font distribution
 # rights - see zplcore/fonts.py) must not be treated as broken for every

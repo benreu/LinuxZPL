@@ -93,6 +93,42 @@ def split_device_spec(spec: str):
     return device, name or 'UNKNOWN', ext or 'GRF'
 
 
+# What each device letter means, in words a user has not memorised the ZPL
+# manual can read - the source is that manual's own Table 67, "Letter
+# Designations for Different Memory Options". Several memory options share a
+# letter there (EPROM and Flash both default to E:; PCMCIA, socket Flash and
+# battery backed-up RAM all to B:), so each letter gets the one term that
+# names it best rather than the full list.
+#
+# Table 67 is the *factory default* assignment - "Memory IDs default to these
+# values when the printer is reset to factory defaults" - and a printer's own
+# configuration label shows the letters actually assigned on that unit. So
+# these are what a letter means by default, not what it must mean everywhere.
+#
+# Z: is named here even though DEVICES below deliberately excludes it: naming
+# a device is not the same as offering it as a destination. It is absent from
+# Table 67 entirely; the manual describes it under ^TO - "Zebra files (Z:*.*)
+# cannot be transferred. These files are copyrighted by Zebra Technologies" -
+# which is the same read-only nature that makes ^ID ignore a Z: target.
+DEVICE_NAMES = {'R': "DRAM", 'E': "Flash", 'B': "PCMCIA card",
+                'A': "Compact Flash", 'Z': "Zebra read-only"}
+
+
+def device_name(spec: str) -> str:
+    """Zebra's default name for the memory `spec` names, for a UI column.
+
+    Deliberately not built on split_device_spec above: that one defaults a
+    spec with no `d:` prefix to 'R', which is harmless when all it feeds is a
+    filename, but here would print "DRAM" beside an object whose device is
+    actually unknown. A spec with no prefix gets an empty string and an
+    unrecognised letter gets itself back - neither invents a memory type.
+    """
+    if len(spec) > 1 and spec[1] == ':':
+        letter = spec[0].upper()
+        return DEVICE_NAMES.get(letter, f"{letter}:")
+    return ""
+
+
 # --- printer I/O --------------------------------------------------------
 # Real printer memory, not this module's own dict above - reached the same
 # way zplcore/fonts.py already reaches a printer's fonts: raw ZPL/control

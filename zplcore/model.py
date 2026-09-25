@@ -1060,8 +1060,14 @@ TEXT_JUSTIFICATIONS = (("Left", 'L'), ("Centred", 'C'),
 # does.
 STORED_GRAPHIC_COMMANDS = (("Recall Graphic (^XG)", 'XG'),
                            ("Image Move (^IM)", 'IM'))
-STORED_GRAPHIC_DEVICES = (("R: (DRAM)", 'R'), ("E: (Flash)", 'E'),
-                          ("B: (B: memory)", 'B'), ("A: (A: memory)", 'A'))
+# The device half of that spec, labelled from the one letter->name map the
+# Printer Objects list also reads, so a memory type is named the same wherever
+# it is shown. graphic_store.DEVICES is the right tuple to iterate: it is
+# already the set that excludes Z:, for exactly the reason a user's own
+# graphic should never be offered that destination.
+STORED_GRAPHIC_DEVICES = tuple(
+    (f"{d}: ({graphic_store.DEVICE_NAMES[d]})", d)
+    for d in graphic_store.DEVICES)
 
 
 class ImageElement(DesignElement):

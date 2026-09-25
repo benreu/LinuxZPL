@@ -1247,6 +1247,22 @@ put there. `Z:` is queried here but not by Graphics: it is read-only
 factory content (a default WML menu, an RFID recipe file), not somewhere a
 user's own graphic would ever be stored.
 
+Each object is listed with its full `d:NAME.EXT` spec and, in a second
+column, the memory type that device letter names in words — DRAM, Flash,
+PCMCIA card, Compact Flash — since a bare `R:`/`E:`/`B:`/`A:` says nothing
+to a user who has not memorised the letter designations. The names are the
+ZPL manual's own (Table 67, *Letter Designations for Different Memory
+Options*), which are the assignments a printer defaults to when reset to
+factory defaults; a given unit can have different ones assigned, shown on
+its printer configuration label, so this column reports what a letter means
+by default rather than claiming what it must mean on that printer. `Z:` is
+absent from that table and is named as read-only Zebra content, matching
+the manual's own description of `Z:*.*` as copyrighted files that cannot be
+transferred — the same read-only nature behind Delete being withheld for it
+below. The same letter→name map labels the device choices in the
+stored-graphic editors, so a memory type is named identically wherever it
+is shown.
+
 Store and Retrieve both exist here, unlike Upload in the font and graphic
 managers, because both have a genuinely generic printer command behind
 them. Store sends `CISDFCRC16`, which writes an arbitrary local file to the
