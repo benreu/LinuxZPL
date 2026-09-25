@@ -117,7 +117,8 @@ def read_file(path: str) -> Tuple[str, Optional[str]]:
 # ZPL's own factory default font, used by any field that carries neither an ^A
 # of its own nor a ^CF before it. No orientation: ^CF has no such parameter,
 # and a field relying on it turns with ^FW alone.
-DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None}
+DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None,
+                'spec': None}
 
 # ^FW's power-up value: the orientation of every field that has an orientation
 # parameter and leaves it out - an ^A with no letter, a field with no ^A at
@@ -821,6 +822,7 @@ def _read_default_font(params: str, current: dict) -> dict:
     if parts and parts[0]:
         font['code'] = parts[0][0].upper()
         font['name'] = None
+        font['spec'] = None
     for index, key in ((1, 'height'), (2, 'width')):
         if len(parts) > index and parts[index]:
             try:
@@ -979,13 +981,28 @@ def read_font(code: str, params: str, default_font=None,
     if code in SCALABLE_FONTS and current['code'] not in SCALABLE_FONTS:
         inherited = height
 
-    name = None
+    name, spec = None, None
     if code == '@':
-        named = re.search(r'[^:,]*:([^.,]+)', params)
-        if named:
-            name = named.group(1).upper()
+        # ^A@o,h,w,d:f.x - the path is the fourth parameter, taken whole and
+        # kept as written, since that is what is written back (see
+        # TextElement.to_zpl). Two of its three parts used to be thrown away
+        # by reading it with r'[^:,]*:([^.,]+)': that pattern needs a drive to
+        # be present at all, though the manual's own default is R: and a path
+        # may name none - and it stops at the dot, so .FNT and .TTE both came
+        # back as .TTF. A font on another device, or in another format, was
+        # silently rewritten into a different object and then saved that way.
+        #
+        # `name` stays what it always was - drive and extension off, upper
+        # case - because it is the lookup key: the renderer's font registry,
+        # file_for_printer_name, and the set of names a new font must not
+        # collide with. Only the written path is verbatim.
+        pieces = params.split(',', 3)
+        if len(pieces) > 3 and pieces[3].strip():
+            spec = pieces[3].strip()
+            bare = spec.split(':', 1)[1] if ':' in spec else spec
+            name = bare.rsplit('.', 1)[0].upper() or None
     return {'code': code, 'height': height, 'width': number(2, inherited),
-            'name': name,
+            'name': name, 'spec': spec,
             'orientation': (letter.group(1).upper() if letter
                             else default_orientation)}
 
@@ -1280,6 +1297,7 @@ def _build_text(x, y, field, doc, renderer):
                            else field['default_orientation'])
     element.height = font['height']
     element.printer_font_name = font['name']
+    element.printer_font_spec = font['spec']
     element.block = field['block']
 
     # A .zpl records only the printer font name, but that name is derived from

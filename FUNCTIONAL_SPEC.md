@@ -754,7 +754,7 @@ file choosers and the prompts — are modal.
 |---|---|
 | Text, built-in font | `^FO<x>,<y>` / `^A<font_code><orientation>,<font_height>,<font_width>` / `^FD<text>^FS` |
 | Text in a block | as above, with `^FB<width>,<lines>,<spacing>,<justification>,<indent>` between the font and the data |
-| Text, downloaded font | `^FO<x>,<y>` / `^A@<orientation>,<font_height>,<font_width>,E:<NAME>.TTF` / `^FD<text>^FS` |
+| Text, downloaded font | `^FO<x>,<y>` / `^A@<orientation>,<font_height>,<font_width>,<path>` / `^FD<text>^FS` — `<path>` is `E:<NAME>.TTF` for a font this designer assigned, since that is where it uploads one; a font a loaded file named is written back at the path that file gave, verbatim (§10.2) |
 | Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>[,<colour>[,<rounding>]]` / `^FS` — the colour and rounding are written only when they are not `B` and `0` |
 | Barcode | `^FO<x>,<y>` / `^BY<module_width>[,<ratio>]` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` — or `^B3`, `^BE`, `^B2`, `^BS`, `^BQ` for the other symbologies, each in its own parameter order (§3.3). Every parameter is trimmed after the last one that is not that position's default, except the height and the magnification, which are always written: they are the two a printer would otherwise resolve from its own settings, so a file that left them out would come back a different size on a different head. A matrix symbology writes no `^BY`, whose module width it is not drawn at |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
@@ -992,10 +992,12 @@ be written back as real text on the next save. The file-chooser preview reads
 the same way, so it shows the accents the file will open with.
 
 `^CW` is carried rather than resolved into the fields the way `^CF` and `^FW`
-are: resolving `^CWQ,R:MYFONT.FNT` would have to spell the font as an `^A@`,
-and the `^A@` this designer writes is always `E:<NAME>.TTF` (§8.1), naming an
-object that is not there. The `^AQ` that calls the letter already round-trips
-as a letter (§3.3), so the saved file names the same font the printer had.
+are. The `^AQ` that calls the letter already round-trips as a letter (§3.3), so
+the saved file names the same font the printer had, and resolving it would gain
+nothing while costing the letter itself — a later `^CW` reassigning that letter,
+or a printer whose own `^CW` set it, would no longer line up. (An `^A@` can
+spell `R:MYFONT.FNT` since §10.2, so the spelling is no longer what stands in
+the way; it was the original reason and is recorded here as no longer one.)
 
 **`^FT` places a field from its baseline, and `^FO` from its top.** `^FT`
 opens a field exactly as `^FO` does; ignoring it does not misplace such a field
@@ -1201,9 +1203,23 @@ Truncation makes collisions easy (`DejaVuSans` and `DejaVuSans-Bold` both give
 `DEJAVUSA`), so a name already in use within the same label gets a numeric
 suffix instead of overwriting.
 
-A saved `.zpl` records only the object name, never the font file. On load, the
-name is mapped back to an installed `.ttf` by deriving each candidate's object
-name and comparing. Because truncation is lossy, several faces can match;
+**A path a file named is written back as that file gave it.** `^A@`'s fourth
+parameter is `d:f.x` — drive (`R:`, `E:`, `B:` or `A:`, defaulting to `R:`, not
+`E:`) then name then extension (`.FNT` a bitmap font, `.TTF` TrueType, `.TTE`
+TrueType Extension). Only the name used to be read, and `E:`/`.TTF` assumed on
+the way out, so a font held anywhere but `E:`, or in any format but TrueType,
+was silently rewritten into a *different object* and then saved that way; a
+path naming no drive lost its font reference altogether. The whole path is
+carried now, case included, so a label goes back naming the font it named. The
+name is still uppercased and stripped of drive and extension for *lookup* —
+that is what the renderer's font registry, the search for a local `.ttf` and
+the collision check above are keyed on. Uploading is unaffected: a font this
+app stores still goes to `E:` as a `.TTF` (§10.4), wherever a label says its
+fonts live.
+
+A saved `.zpl` records only the object name and its path, never the font file.
+On load, the name is mapped back to an installed `.ttf` by deriving each
+candidate's object name and comparing. Because truncation is lossy, several faces can match;
 prefer the family's canonical face, then the shortest filename, so the base
 face wins over Bold/Italic. A label saved with a bold face may therefore reopen
 in the regular face of the same family — what prints is unaffected, since the
@@ -2008,6 +2024,19 @@ rather than requirements:
   performs the real exchanges instead — `~DG` for Store, `^HG` for Retrieve,
   `^ID` for Delete — directly against the printer, just never triggered by
   opening a file.
+- **A font's `^A@` path round-trips, but a font is still only ever uploaded
+  to `E:`.** The path a file wrote is carried back out verbatim (§10.2), so a
+  label naming `B:CYRI_UB.FNT` saves as that and not as `E:CYRI_UB.TTF`. What
+  that does *not* buy: **Printer → Fonts…** uploads, lists and deletes on `E:`
+  alone, and the missing-font prompt (§10.3) names a font it would upload as
+  `E:<NAME>.TTF` whatever drive the label named — a font read from a file has
+  no local source to upload anyway, so it is only ever reported as missing.
+  Reassigning an element's font in the designer replaces the carried path with
+  `E:<NAME>.TTF`, since the new font is one this app would upload.
+- **`^A@`'s carry-over is not implemented.** The manual says an `^A@` naming no
+  font keeps the one the previous `^A@` named; here it names none, and the
+  field falls back to `^CF`'s font as any other unnamed field does. Such a
+  command round-trips unchanged, so a saved file still says what it said.
 - **`^CC`, `^CT` and `^CD` are honoured by rewriting, not by parsing
   (§8.3), and a save drops them.** What that cannot express: a literal `,`
   inside a *parameter* while the delimiter is moved (`^A@N;40;40;E:A,B.TTF`)

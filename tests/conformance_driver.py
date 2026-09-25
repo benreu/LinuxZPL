@@ -65,6 +65,10 @@ FIXTURE_VALIDATED = ROOT / 'tests' / 'fixtures' / 'code_validation.zpl'
 # and an ^FL - carried verbatim, and nothing here draws for them either
 FIXTURE_FONT_IDENTITY = ROOT / 'tests' / 'fixtures' / 'font_identity.zpl'
 
+# ^A@'s own d:f.x path, in the shapes the manual allows and this app does
+# not write: another drive, a .FNT or .TTE, no drive at all, lower case.
+FIXTURE_FONT_PATH = ROOT / 'tests' / 'fixtures' / 'font_path.zpl'
+
 # A font every step can rely on; text width is the most divergence-prone rule,
 # so the sequence exercises the measured path as well as the fixed-width one.
 FONT_FAMILY = 'DejaVu Sans'
@@ -1162,6 +1166,11 @@ def sequence(driver, record):
     # and the ^CI28 is what both have to agree on over the non-ASCII text.
     driver.load(FIXTURE_FONT_IDENTITY)
     record('load a format that names its encoding and font table')
+
+    # Each ^A@ here names a path this designer would never write itself, so
+    # both frontends have to carry one rather than resolve it to E:NAME.TTF.
+    driver.load(FIXTURE_FONT_PATH)
+    record('load a format whose fonts name their own drives')
 
     # Setting a home and a flip from Label Settings has to reach the file the
     # same way in both, including the ^FO each element is written back at.

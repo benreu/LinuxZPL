@@ -70,6 +70,12 @@ row0 = bytes.fromhex(hexdata)[:bpr]
 check("a set bit is black (all-black row -> 0xFF)", row0[0] == 0xFF, hex(row0[0]))
 check("padding bits are white/0 (13 cols -> last byte 0xF8)", row0[1] == 0xF8, hex(row0[1]))
 
+def _font_written(document):
+    """The ^A command `document` writes for its first text element."""
+    return next((w for w in document.to_zpl().split() if w.startswith('^A')),
+                None)
+
+
 # --- printer object naming --------------------------------------------------
 check("unsafe chars stripped, truncated to 8",
       zpl_fonts.printer_font_name('/x/Catrina Demo.ttf') == 'CATRINAD',
@@ -79,6 +85,62 @@ second = zpl_fonts.printer_font_name('/x/DejaVuSans-Bold.ttf', taken=taken)
 check("collision gets a numeric suffix", second != 'DEJAVUSA' and len(second) <= 8, second)
 check("empty result becomes FONT", zpl_fonts.printer_font_name('/x/...ttf') == 'FONT',
       zpl_fonts.printer_font_name('/x/...ttf'))
+
+# --- ^A@'s own d:f.x path ----------------------------------------------------
+# ^A@o,h,w,d:f.x names a drive (R:/E:/B:/A:, defaulting to R: - not E:) and an
+# extension (.FNT, .TTF or .TTE). Only the font name was ever read back, and
+# E:/.TTF was assumed on the way out, so a font anywhere but E: - or in any
+# format but TrueType - was rewritten into a different object and then saved
+# that way. The path is carried as the file wrote it now, case included.
+def _font_roundtrip(command):
+    """The ^A@ that `command` comes back as, after a load and a save."""
+    _doc = zpl_parser.parse_zpl('^XA^FO50,50' + command + '^FDx^FS^XZ')[0]
+    _written = [w for w in _doc.to_zpl().split() if w.startswith('^A')]
+    return _written[0] if _written else None
+
+for _path, _why in (('R:MYFONT.TTF', "the manual's own default drive"),
+                    ('B:CYRI_UB.FNT', "a .FNT, as the manual's own example"),
+                    ('A:MYFONT.TTE', 'a .TTE'),
+                    ('MYFONT.TTF', 'no drive named at all'),
+                    ('E:myfont.ttf', 'lower case')):
+    _cmd = '^A@N,53,19,' + _path
+    check(f"^A@ carries {_why} through a save: {_path}",
+          _font_roundtrip(_cmd) == _cmd, _font_roundtrip(_cmd))
+
+check("^A@ naming no path at all is still written back naming none",
+      _font_roundtrip('^A@N,53,19') == '^A@N,53,19',
+      _font_roundtrip('^A@N,53,19'))
+
+# The name stays the lookup key - drive and extension off, upper case - since
+# the renderer's font registry, file_for_printer_name and the collision set
+# are all keyed on it. Only the written path is verbatim.
+_named = {p: zpl_parser.parse_zpl(
+              '^XA^FO50,50^A@N,53,19,' + p + '^FDx^FS^XZ')[0]
+          .elements[0].printer_font_name
+          for p in ('E:MYFONT.TTF', 'R:MYFONT.TTF', 'A:MYFONT.TTE',
+                    'MYFONT.TTF', 'E:myfont.ttf')}
+check("every path shape still resolves to the same upper-case lookup name",
+      set(_named.values()) == {'MYFONT'}, _named)
+
+# A font this app assigns is one it uploads, so it is written at E: as a .TTF
+# whatever the element was loaded naming - otherwise the old path would be
+# written against the new name.
+_reassign = zpl_parser.parse_zpl(
+    '^XA^FO50,50^A@N,53,19,R:MYFONT.TTF^FDx^FS^XZ')[0]
+_reassign.set_element_font(_reassign.elements[0], '/x/NewFace.ttf',
+                           'New Face', 'NEWFACE')
+check("reassigning an element's font writes it at E:, not the loaded path",
+      _font_written(_reassign) == '^A@N,53,19,E:NEWFACE.TTF',
+      _font_written(_reassign))
+
+# And a document-wide font, which this app also uploads, is unaffected by any
+# path an element carried.
+_designed = Document(400, 400)
+_designed.set_font('/x/NewFace.ttf', 'New Face', 'NEWFACE')
+_designed.add_text_element('designed here')
+check("a font assigned in the designer is still written at E: as a .TTF",
+      (_font_written(_designed) or '').endswith(',E:NEWFACE.TTF'),
+      _font_written(_designed))
 
 # --- hidden elements --------------------------------------------------------
 doc = Document(400, 400)

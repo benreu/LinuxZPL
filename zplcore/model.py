@@ -323,6 +323,11 @@ class TextElement(DesignElement):
         self.font_path: Optional[str] = None
         self.font_family: Optional[str] = None
         self.printer_font_name: Optional[str] = None
+        # ^A@'s path is d:f.x - drive, font name, extension - and a file that
+        # named one is written back naming the same one. None means this
+        # app's own font, which it uploads to E: as a .TTF; it does not mean
+        # E:, since ZPL's own default drive for an omitted d is R:.
+        self.printer_font_spec: Optional[str] = None
         # Built-in font designator: 'F' is what this designer has always
         # written, '0' the scalable font most other tools reach for.
         self.font_code = font_code
@@ -410,7 +415,15 @@ class TextElement(DesignElement):
         turn = self.orientation or 'N'
         zpl = self.origin_zpl(offset)
         if effective_font:
-            zpl += f"^A@{turn},{self.font_height},{self.font_width},E:{effective_font}.TTF\n"
+            # The path the file named, when it named one. Only the font name
+            # used to be read back, so a font on another drive, or a .FNT or
+            # .TTE rather than a .TTF, was rewritten into a different object
+            # - silently, and then saved. Guarded on this element having a
+            # font of its own: the path belongs to that name, not to the
+            # document-wide font this falls back to, which is always E:.
+            path = (self.printer_font_spec if self.printer_font_name
+                    else None) or f"E:{effective_font}.TTF"
+            zpl += f"^A@{turn},{self.font_height},{self.font_width},{path}\n"
         else:
             zpl += f"^A{self.font_code}{turn},{self.font_height},{self.font_width}\n"
         if self.block is not None:
@@ -1953,6 +1966,11 @@ class Document:
         element.font_path = font_path
         element.font_family = font_family
         element.printer_font_name = printer_font_name
+        # The one place an element keeps a printer font name while changing
+        # which font it is: a path carried in from the file would otherwise
+        # be written against the new name. This font is one this app will
+        # upload, so it goes to E: like any other.
+        element.printer_font_spec = None
         zpl_fonts.register_app_font(font_path)
         self.sync_text_width(element)
 
