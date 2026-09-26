@@ -1242,6 +1242,7 @@ compare:
 |---|---|---|
 | Printer did not answer | "The printer could not be asked which fonts it has." | Cancel (default), Print Anyway |
 | Fonts missing, source files known | Lists the missing `<d>:NAME.TTF` objects, naming the drive each is wanted on | Cancel, Print Anyway, **Upload & Print** (default) |
+| A drive could not be read | Fonts wanted there are **not** counted missing; the prompt names the drive and says they went unchecked | as above for whatever else is missing |
 | Fonts missing, source unknown (loaded from a `.zpl`) | Same, each marked "(source file unknown)" | Cancel, Print Anyway |
 | Nothing missing | — | prints |
 
@@ -1260,6 +1261,16 @@ unreachable it says so and disables Delete rather than showing an empty list as
 if the printer had no fonts. `Z:` is not offered, for the reason Graphics does
 not offer it either: `~DY` cannot write read-only factory content and `^ID`
 will not delete it.
+
+**Every manager's status line names the drives that gave nothing**, and words
+an empty drive differently from one that could not be read — *"4 object(s) on
+192.168.50.21 — nothing on B:; A: could not be read"*. A listing is merged from
+one `^HW` per drive, so without this a drive erroring or falling silent
+midway leaves a short list presented as a complete one. Empty drives go
+unnamed when nothing at all was found: the count sentence has already said so,
+and listing every drive after it reads as a fault rather than an empty
+printer. The wording is built once in `zplcore/workflow.py` and used by both
+frontends, so the two cannot drift.
 
 Upload… opens on the **Font memory** setting (§10.4.1) but is not bound to it —
 this is a manager, the same way Printer Graphics can store to any drive. A font

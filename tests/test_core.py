@@ -86,6 +86,44 @@ check("collision gets a numeric suffix", second != 'DEJAVUSA' and len(second) <=
 check("empty result becomes FONT", zpl_fonts.printer_font_name('/x/...ttf') == 'FONT',
       zpl_fonts.printer_font_name('/x/...ttf'))
 
+# --- the line under a printer manager's list ---------------------------------
+# One function builds it for both frontends (workflow.listing_status), so the
+# two cannot word this differently, and a drive that gave nothing is named
+# whether it was empty or unreadable.
+_LS_DEVICES = ('R', 'E', 'B', 'A')
+check("listing_status(): just the count when every drive gave something",
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES,
+                              ['R:A.GRF', 'E:B.GRF', 'B:C.GRF', 'A:D.GRF'], [])
+      == '4 object(s) on 10.0.0.1',
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES,
+                              ['R:A.GRF', 'E:B.GRF', 'B:C.GRF', 'A:D.GRF'], []))
+check("listing_status(): empty drives are named",
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES,
+                              ['E:B.GRF'], [])
+      == '1 object(s) on 10.0.0.1 \u2014 nothing on R:, B:, A:',
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES, ['E:B.GRF'], []))
+check("listing_status(): an unreadable drive is worded apart from an empty one",
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES,
+                              ['E:B.GRF'], ['A'])
+      == '1 object(s) on 10.0.0.1 \u2014 nothing on R:, B:; A: could not be read',
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES, ['E:B.GRF'], ['A']))
+# With nothing found at all the count sentence has already said every drive
+# gave nothing; repeating it as a list reads as an error rather than an empty
+# printer, so only the unreadable drives are worth adding.
+check("listing_status(): no empties clause when nothing was found at all",
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES, [], ['A'])
+      == 'No objects on 10.0.0.1 \u2014 A: could not be read',
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES, [], ['A']))
+check("listing_status(): and nothing appended when a printer is simply empty",
+      workflow.listing_status('10.0.0.1', 'font', _LS_DEVICES, [], [])
+      == 'No fonts on 10.0.0.1',
+      workflow.listing_status('10.0.0.1', 'font', _LS_DEVICES, [], []))
+check("listing_status(): drives are named in the order they were asked",
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES, ['E:B.GRF'],
+                              ['A', 'R']).endswith('R:, A: could not be read'),
+      workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES, ['E:B.GRF'],
+                              ['A', 'R']))
+
 # --- which memory a font is written to ---------------------------------------
 # ~DYd:f,... and ^A@o,h,w,d:f.x both take a drive, and this app used to spell
 # E: into every one of them. The drive is a parameter now, defaulting to E: so
@@ -130,7 +168,9 @@ check("query_printer_fonts(): one ^HW per drive, in DEVICES order",
       _font_sent[1:] == [f'^XA^HW{d}:*.TTF^XZ'.encode()
                          for d in zpl_fonts.DEVICES], _font_sent[1:])
 check("query_printer_fonts(): answers with specs, so the drive is not lost",
-      _listed == {f'{d}:ANI.TTF' for d in zpl_fonts.DEVICES}, _listed)
+      _listed[0] == {f'{d}:ANI.TTF' for d in zpl_fonts.DEVICES}, _listed)
+check("query_printer_fonts(): no drive is unreadable when every one answers",
+      _listed[1] == [], _listed[1])
 
 # A real ^HW reply, captured from a printer rather than composed here: its
 # entries carry the drive themselves ("* E:ANI.TTF"), which the manual's own
@@ -154,15 +194,18 @@ try:
 finally:
     _font_pio.send = _font_real_send
 check("query_printer_fonts(): a real ^HW reply parses to its fonts and nothing else",
-      _real_listed == {'E:ABYSSINI.TTF', 'E:ANI.TTF', 'E:TT0003M_.TTF'}, _real_listed)
+      _real_listed[0] == {'E:ABYSSINI.TTF', 'E:ANI.TTF', 'E:TT0003M_.TTF'},
+      _real_listed)
 # Reachability cannot be judged on the first device alone once every device is
 # asked: R: comes first, and a printer with nothing on R: is not unreachable.
 check("query_printer_fonts(): silence on R: is not unreachable when E: answers",
-      _real_listed is not None and len(_real_listed) == 3, _real_listed)
+      _real_listed is not None and len(_real_listed[0]) == 3, _real_listed)
+check("query_printer_fonts(): and the silent drives come back named",
+      _real_listed[1] == ['R', 'B', 'A'], _real_listed[1])
 check("query_printer_fonts(): None only when no device answered at all",
       _silent is None, _silent)
 check("query_printer_fonts(): a drive that lists nothing is an empty set, not None",
-      _empty == set(), _empty)
+      _empty[0] == set(), _empty)
 
 # Document.font_device is where a font this app assigns goes; an element that
 # carries a path of its own - anything loaded from a file - overrides it.
@@ -4351,18 +4394,21 @@ def _dead_host(_a, _p, payload, _t, read_reply=False, cancel=None):
     _attempts.append(payload)
     raise OSError("no route to host")
 
-for _label, _query, _wanted in (
+for _label, _query, _devices, _wanted in (
         ("query_printer_graphics", zpl_graphic_store.query_printer_graphics,
-         ['E:LOGO.GRF']),
+         zpl_graphic_store.DEVICES, ['E:LOGO.GRF']),
         ("query_printer_objects", printer_objects.query_printer_objects,
-         ['E:ANI.TTF', 'E:LOGO.GRF'])):
+         printer_objects.DEVICES, ['E:ANI.TTF', 'E:LOGO.GRF'])):
     zpl_printer_io.send = _only_e_answers
     try:
         _found = _query('10.0.0.1', 9100)
     finally:
         zpl_printer_io.send = _real_send
     check(f"{_label}(): silence on R: is not an unreachable printer",
-          _found == _wanted, _found)
+          _found is not None and _found[0] == _wanted, _found)
+    check(f"{_label}(): and every drive that gave nothing is named",
+          _found is not None and _found[1] == [d for d in _devices if d != 'E'],
+          _found)
 
     zpl_printer_io.send = _nothing_answers
     try:
@@ -4378,7 +4424,9 @@ for _label, _query, _wanted in (
     finally:
         zpl_printer_io.send = _real_send
     check(f"{_label}(): a printer that lists nothing is empty, not unreachable",
-          _none_stored == [], _none_stored)
+          _none_stored is not None and _none_stored[0] == [], _none_stored)
+    check(f"{_label}(): a drive that answers but holds nothing is not unreadable",
+          _none_stored is not None and _none_stored[1] == [], _none_stored)
 
     # The fast path: a host that cannot be connected to at all must still
     # cost one attempt, not one timeout per device.
@@ -4463,34 +4511,54 @@ try:
     zpl_fonts.query_printer_fonts = lambda *a, **k: None
     check("missing_printer_fonts(): None when the printer could not be asked",
           workflow.missing_printer_fonts(_FontDoc({'E:ARIAL.TTF': '/a.ttf'}), 'h', 1) is None)
-    zpl_fonts.query_printer_fonts = lambda *a, **k: {'E:ARIAL.TTF'}
+    zpl_fonts.query_printer_fonts = lambda *a, **k: ({'E:ARIAL.TTF'}, [])
     check("missing_printer_fonts(): nothing missing when the printer has them all",
-          workflow.missing_printer_fonts(_FontDoc({'e:arial.ttf': '/a.ttf'}), 'h', 1) == ({}, {}))
+          workflow.missing_printer_fonts(_FontDoc({'e:arial.ttf': '/a.ttf'}), 'h', 1) == ({}, {}, []))
     _m = workflow.missing_printer_fonts(_FontDoc(
         {'E:ARIAL.TTF': '/a.ttf', 'E:ROBOTO.TTF': '/r.ttf', 'E:MYSTERY.TTF': None}), 'h', 1)
     check("missing_printer_fonts(): missing vs uploadable (only those with a source file)",
           _m == ({'E:ROBOTO.TTF': '/r.ttf', 'E:MYSTERY.TTF': None},
-                 {'E:ROBOTO.TTF': '/r.ttf'}), _m)
+                 {'E:ROBOTO.TTF': '/r.ttf'}, []), _m)
     # The check the whole device design turns on: the right font on the wrong
     # drive is not the font the label asked for. Matching on the bare name
     # would call this present and let the print fall back to a substitute.
-    zpl_fonts.query_printer_fonts = lambda *a, **k: {'R:ARIAL.TTF'}
+    zpl_fonts.query_printer_fonts = lambda *a, **k: ({'R:ARIAL.TTF'}, [])
     _wrong = workflow.missing_printer_fonts(_FontDoc({'E:ARIAL.TTF': '/a.ttf'}), 'h', 1)
     check("missing_printer_fonts(): a font on another drive does not satisfy the label",
-          _wrong == ({'E:ARIAL.TTF': '/a.ttf'}, {'E:ARIAL.TTF': '/a.ttf'}), _wrong)
-    zpl_fonts.query_printer_fonts = lambda *a, **k: {'R:ARIAL.TTF'}
+          _wrong == ({'E:ARIAL.TTF': '/a.ttf'}, {'E:ARIAL.TTF': '/a.ttf'}, []), _wrong)
+    zpl_fonts.query_printer_fonts = lambda *a, **k: ({'R:ARIAL.TTF'}, [])
     check("missing_printer_fonts(): and on the drive it does name, it is present",
-          workflow.missing_printer_fonts(_FontDoc({'R:ARIAL.TTF': '/a.ttf'}), 'h', 1) == ({}, {}))
+          workflow.missing_printer_fonts(_FontDoc({'R:ARIAL.TTF': '/a.ttf'}), 'h', 1) == ({}, {}, []))
+
+    # A drive that could not be read leaves its fonts unjudged. Calling them
+    # missing would offer to upload them - to the very drive that is failing -
+    # on no evidence that they are not already there.
+    zpl_fonts.query_printer_fonts = lambda *a, **k: ({'E:ARIAL.TTF'}, ['B'])
+    _unknown = workflow.missing_printer_fonts(
+        _FontDoc({'B:CYRI_UB.TTF': '/c.ttf', 'E:ROBOTO.TTF': '/r.ttf'}), 'h', 1)
+    check("missing_printer_fonts(): a font on an unreadable drive is unknown, not missing",
+          _unknown == ({'E:ROBOTO.TTF': '/r.ttf'}, {'E:ROBOTO.TTF': '/r.ttf'},
+                       ['B']), _unknown)
     _calls = []
     def _fake_qpf(*a, **k):
-        _calls.append('asked'); return set()
+        _calls.append('asked'); return (set(), [])
     zpl_fonts.query_printer_fonts = _fake_qpf
     check("missing_printer_fonts(): a label with only built-in fonts never asks the printer",
-          workflow.missing_printer_fonts(_FontDoc({}), 'h', 1) == ({}, {}) and _calls == [], _calls)
+          workflow.missing_printer_fonts(_FontDoc({}), 'h', 1) == ({}, {}, [])
+          and _calls == [], _calls)
 
     _t, _d = workflow.font_problem_prompt(None)
     check("font_problem_prompt(None): the could-not-ask wording",
           'could not be asked' in _t and 'substitute' in _d, (_t, _d))
+    # A drive that went unchecked is said so, rather than leaving a reader to
+    # assume every drive was looked at.
+    _t, _du = workflow.font_problem_prompt({'E:ROBOTO.TTF': '/r.ttf'}, ['B', 'A'])
+    check("font_problem_prompt(): names the drives that could not be checked",
+          'B:, A: could not be read' in _du and 'not checked' in _du, _du)
+    _t, _dn = workflow.font_problem_prompt({'E:ROBOTO.TTF': '/r.ttf'})
+    check("font_problem_prompt(): and says nothing about drives when all were read",
+          'could not be read' not in _dn, _dn)
+
     _t, _d = workflow.font_problem_prompt(
         {'E:ROBOTO.TTF': '/r.ttf', 'B:MYSTERY.TTF': None})
     check("font_problem_prompt(): lists each font, flagging the ones with no source",

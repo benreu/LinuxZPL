@@ -68,9 +68,9 @@ def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):
 # cannot drift on it.
 
 def missing_printer_fonts(document, address, port, cancel=None):
-    """The label's fonts the printer does not have, as (missing, uploadable)
-    spec -> path dicts - both empty when there is nothing to do - or None if
-    the printer could not be asked.
+    """The label's fonts the printer does not have, as (missing, uploadable,
+    unreadable) - two spec -> path dicts and the drives that could not be
+    read - or None if the printer could not be asked at all.
 
     Specs ('d:NAME.TTF'), not bare names, on both sides of the comparison: a
     ^A@ naming E:MYFONT.TTF is not satisfied by the printer holding an
@@ -84,22 +84,73 @@ def missing_printer_fonts(document, address, port, cancel=None):
     """
     sources = document.font_sources()
     if not sources:
-        return {}, {}  # nothing but built-in fonts, nothing to check
-    installed = fonts.query_printer_fonts(address, port, cancel=cancel)
-    if installed is None:
+        return {}, {}, []  # nothing but built-in fonts, nothing to check
+    answer = fonts.query_printer_fonts(address, port, cancel=cancel)
+    if answer is None:
         return None
+    installed, unreadable = answer
     # Upper on both sides: the printer's own listing is upper-cased on the way
     # in, and a label may name a font in any case (see zplcore/parser.py's
     # ^A@ reading, which keeps a path exactly as the file wrote it).
     present = {spec.upper() for spec in installed}
-    missing = {n: p for n, p in sources.items() if n.upper() not in present}
+    # A font wanted on a drive that could not be read is unknown, not missing.
+    # Calling it missing would offer to upload it - to the very drive that is
+    # failing - on no evidence that it is not already sitting there.
+    unknown = {d.upper() for d in unreadable}
+    missing = {n: p for n, p in sources.items()
+               if n.upper() not in present
+               and n.split(':', 1)[0].upper() not in unknown}
     uploadable = {n: p for n, p in missing.items() if p}
-    return missing, uploadable
+    return missing, uploadable, unreadable
 
 
-def font_problem_prompt(missing):
+def listing_status(address, noun, devices, specs, unreadable) -> str:
+    """The line under a printer manager's list, saying what came back and
+    which drives did not.
+
+    Lives here rather than in either frontend for the reason
+    font_problem_prompt does: both show this, and two copies of a sentence
+    are two sentences that can drift. `noun` is the singular ("object",
+    "font", "graphic"), `devices` the tuple that manager asked, and `specs`
+    and `unreadable` are what its query answered.
+
+    A drive that gave nothing is named whether it errored or was simply
+    empty, since "this drive holds none of what you are looking at" is the
+    thing a user wants to know either way - but the two are worded
+    differently, because an empty drive is a working drive and an unreadable
+    one means the list in front of them is short of something. Empty drives
+    go unmentioned when nothing at all was found: the count sentence has
+    already said as much, and listing every drive after it reads as an error
+    rather than as an empty printer.
+    """
+    count = len(specs)
+    sentence = (f"{count} {noun}(s) on {address}" if count
+                else f"No {noun}s on {address}")
+
+    held = {spec.split(':', 1)[0].upper() for spec in specs if ':' in spec}
+    unread = set(unreadable)
+    # Both lists follow `devices`, so the drives are named in the order they
+    # were asked rather than the order they happened to fail in.
+    unread_drives = [d for d in devices if d in unread]
+    empty_drives = [d for d in devices if d not in held and d not in unread]
+
+    clauses = []
+    if count and empty_drives:
+        clauses.append("nothing on " + ", ".join(f"{d}:" for d in empty_drives))
+    if unread_drives:
+        clauses.append(", ".join(f"{d}:" for d in unread_drives)
+                       + " could not be read")
+    return sentence + (" \u2014 " + "; ".join(clauses) if clauses else "")
+
+
+def font_problem_prompt(missing, unreadable=()):
     """(text, detail) for the frontend's ask(); `missing` is
-    missing_printer_fonts' dict, or None when the printer could not be asked."""
+    missing_printer_fonts' dict, or None when the printer could not be asked.
+
+    `unreadable` is its third value, the drives that did not answer. Fonts
+    wanted there were not judged either way, so the prompt says so rather
+    than leaving a user to assume every drive was checked.
+    """
     if missing is None:
         return ("The printer could not be asked which fonts it has.",
                 "It may be unreachable, or may not support font queries.\n"
@@ -109,8 +160,12 @@ def font_problem_prompt(missing):
     lines = [f"  {spec}" +
              ("" if missing[spec] else "   (source file unknown)")
              for spec in sorted(missing)]
+    note = ("" if not unreadable else
+            "\n\n" + ", ".join(f"{d}:" for d in unreadable)
+            + " could not be read, so fonts wanted there were not checked.")
     return ("Fonts used by this label are not on the printer.",
-            "\n".join(lines) + "\n\nMissing fonts print in a substitute typeface.")
+            "\n".join(lines)
+            + "\n\nMissing fonts print in a substitute typeface." + note)
 
 
 def upload_fonts(uploadable, address, port, on_progress=None, cancel=None):

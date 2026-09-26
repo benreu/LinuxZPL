@@ -1591,7 +1591,8 @@ class PrinterFontsDialog(QDialog):
             if isinstance(error, printer_io.Cancelled):
                 self._status.setText("Listing cancelled.")
                 return
-            fonts, detected = (None, None) if error is not None else result
+            answer, detected = (None, None) if error is not None else result
+            fonts, unreadable = (None, ()) if answer is None else answer
             if fonts is None:
                 # Not the same as "no fonts": say the printer could not be
                 # asked, rather than showing an empty list as if it had answered.
@@ -1603,8 +1604,9 @@ class PrinterFontsDialog(QDialog):
                     QTreeWidgetItem(self._list,
                                     [spec, graphic_store.device_name(spec)])
                 self._delete_btn.setEnabled(bool(fonts))
-                self._status.setText(f"{len(fonts)} font(s) on {self._address}"
-                                     if fonts else "No fonts stored on the printer.")
+                self._status.setText(workflow.listing_status(
+                    self._address, "font", zpl_fonts.DEVICES,
+                    self._font_specs, unreadable))
             self._show_resident(detected)
 
         self._busy.run(query, done)
@@ -1791,14 +1793,14 @@ class PrinterGraphicsDialog(QDialog):
                 self._status.setText(f"Could not reach the printer at "
                                      f"{self._address}:{self._port}.")
                 return
-            self._entries = specs
+            self._entries, unreadable = specs
             for spec in self._entries:
                 cached = graphic_store.recall(spec)
                 suffix = f" ({cached.width}×{cached.height})" if cached else ""
                 self._list.addItem(f"{spec}{suffix}")
-            self._status.setText(
-                f"{len(self._entries)} graphic(s) on {self._address}"
-                if self._entries else f"No graphics on {self._address}.")
+            self._status.setText(workflow.listing_status(
+                self._address, "graphic", graphic_store.DEVICES,
+                self._entries, unreadable))
 
         self._busy.run(lambda cancel: graphic_store.query_printer_graphics(
             self._address, self._port, cancel=cancel), done)
@@ -2011,11 +2013,13 @@ class PrinterObjectsDialog(QDialog):
                 self._status.setText(f"Could not reach the printer at "
                                      f"{self._address}:{self._port}.")
                 return
-            for spec in specs:
+            entries, unreadable = specs
+            for spec in entries:
                 QTreeWidgetItem(self._list,
                                 [spec, graphic_store.device_name(spec)])
-            self._status.setText(f"{len(specs)} object(s) on {self._address}"
-                                 if specs else "No objects on the printer.")
+            self._status.setText(workflow.listing_status(
+                self._address, "object", printer_objects.DEVICES,
+                entries, unreadable))
 
         self._busy.run(lambda cancel: printer_objects.query_printer_objects(
             self._address, self._port, cancel=cancel), done)

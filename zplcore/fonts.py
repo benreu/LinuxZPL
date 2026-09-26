@@ -375,7 +375,8 @@ def upload_font(address: str, port: int, font_path: str, name: str,
 def query_printer_fonts(address: str, port: int, timeout: float = 5,
                         cancel=None) -> Optional[Set[str]]:
     """Every font object on the printer as 'd:NAME.TTF', across all of
-    DEVICES, or None if it could not be asked.
+    DEVICES, with the devices that could not be read, or None if the printer
+    could not be asked at all.
 
     Specs rather than bare names, because the same name on two devices is two
     objects and only one of them is the one a label asked for: a ^A@ naming
@@ -386,6 +387,13 @@ def query_printer_fonts(address: str, port: int, timeout: float = 5,
     None and an empty set mean different things and callers rely on the
     difference: an empty set is "the printer has no fonts", None is "the
     printer could not be asked" - unreachable, or no ^HW support.
+
+    Answers `(specs, unreadable)` rather than the specs alone: `unreadable` is
+    every device that errored or said nothing, so a caller can say which
+    drives a listing is short of rather than present a partial one as
+    complete. It is not an error in itself - a drive that is simply not
+    fitted looks exactly like this - which is why it rides alongside the
+    result instead of replacing it.
 
     A failure to *connect* on the very first attempt is decisive - that is
     the socket, not a drive - and returns None straight away, which is what
@@ -402,6 +410,7 @@ def query_printer_fonts(address: str, port: int, timeout: float = 5,
     same reason.
     """
     specs: Set[str] = set()
+    unreadable: List[str] = []
     answered = False
     for index, device in enumerate(DEVICES):
         payload = f'^XA^HW{device}:*.TTF^XZ'.encode('ascii')
@@ -411,14 +420,16 @@ def query_printer_fonts(address: str, port: int, timeout: float = 5,
         except OSError:
             if index == 0:
                 return None  # the connection itself failed
+            unreadable.append(device)
             continue
         if not reply:
+            unreadable.append(device)
             continue
         answered = True
         text = reply.decode('ascii', 'replace')
         for m in _OBJECT_NAME.finditer(text):
             specs.add(f"{device}:{m.group(1).upper()}{FONT_EXTENSION}")
-    return specs if answered else None
+    return (specs, unreadable) if answered else None
 
 
 def query_resident_fonts(address: str, port: int, timeout: float = 5,

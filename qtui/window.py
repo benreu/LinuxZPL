@@ -1086,11 +1086,16 @@ class ZPLDesignerWindow(QMainWindow):
                 self.show_error(str(error))
                 self.update_status("Printing failed")
                 return
-            missing, uploadable = (None, {}) if result is None else result
+            missing, uploadable, unreadable = (
+                (None, {}, ()) if result is None else result)
+            # A drive that could not be read leaves its fonts unjudged, so a
+            # label whose fonts are all on such a drive still has nothing
+            # missing - and still prints without a prompt, as before. The
+            # prompt says which drives went unchecked when there is one.
             if result is not None and not missing:
                 send_label({})
                 return
-            text, detail = workflow.font_problem_prompt(missing)
+            text, detail = workflow.font_problem_prompt(missing, unreadable)
             answer = qt_dialogs.ask_font_problem(self, text, detail, uploadable)
             if answer == 'upload':
                 send_label(uploadable)

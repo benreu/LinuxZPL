@@ -1289,11 +1289,16 @@ class ZPLViewerWindow(Gtk.Window):
                 self.show_error_dialog(str(error))
                 self.update_status("Printing failed")
                 return
-            missing, uploadable = (None, {}) if result is None else result
+            missing, uploadable, unreadable = (
+                (None, {}, ()) if result is None else result)
+            # A drive that could not be read leaves its fonts unjudged, so a
+            # label whose fonts are all on such a drive still has nothing
+            # missing - and still prints without a prompt, as before. The
+            # prompt says which drives went unchecked when there is one.
             if result is not None and not missing:
                 send_label({})
                 return
-            text, detail = workflow.font_problem_prompt(missing)
+            text, detail = workflow.font_problem_prompt(missing, unreadable)
             answer = self._ask_font_problem(text, detail, uploadable)
             if answer == 'upload':
                 send_label(uploadable)
@@ -1468,7 +1473,8 @@ class ZPLViewerWindow(Gtk.Window):
                 if isinstance(error, printer_io.Cancelled):
                     status.set_text("Listing cancelled.")
                     return
-                fonts, detected = (None, None) if error is not None else result
+                answer, detected = (None, None) if error is not None else result
+                fonts, unreadable = (None, ()) if answer is None else answer
                 if fonts is None:
                     status.set_text(f"Could not reach the printer at "
                                     f"{self.printer_address}:{self.printer_port}.")
@@ -1477,8 +1483,9 @@ class ZPLViewerWindow(Gtk.Window):
                     for spec in font_specs:
                         store.append([spec, graphic_store.device_name(spec)])
                     delete_btn.set_sensitive(bool(fonts))
-                    status.set_text(f"{len(fonts)} font(s) on {self.printer_address}"
-                                    if fonts else "No fonts stored on the printer.")
+                    status.set_text(workflow.listing_status(
+                        self.printer_address, "font", zpl_fonts.DEVICES,
+                        font_specs, unreadable))
                 show_resident(detected)
 
             busy.run(query, done)
@@ -1769,14 +1776,14 @@ class ZPLViewerWindow(Gtk.Window):
                     status.set_text(f"Could not reach the printer at "
                                     f"{self.printer_address}:{self.printer_port}.")
                     return
-                entries = specs
+                entries, unreadable = specs
                 for spec in entries:
                     cached = graphic_store.recall(spec)
                     suffix = f" ({cached.width}×{cached.height})" if cached else ""
                     list_store.append([f"{spec}{suffix}"])
-                status.set_text(
-                    f"{len(entries)} graphic(s) on {self.printer_address}"
-                    if entries else f"No graphics on {self.printer_address}.")
+                status.set_text(workflow.listing_status(
+                    self.printer_address, "graphic", graphic_store.DEVICES,
+                    entries, unreadable))
 
             busy.run(lambda cancel: graphic_store.query_printer_graphics(
                 self.printer_address, self.printer_port, cancel=cancel), done)
@@ -2026,12 +2033,13 @@ class ZPLViewerWindow(Gtk.Window):
                     status.set_text(f"Could not reach the printer at "
                                     f"{self.printer_address}:{self.printer_port}.")
                     return
-                for spec in specs:
+                entries, unreadable = specs
+                for spec in entries:
                     list_store.append(
                         [spec, graphic_store.device_name(spec)])
-                status.set_text(
-                    f"{len(specs)} object(s) on {self.printer_address}"
-                    if specs else "No objects on the printer.")
+                status.set_text(workflow.listing_status(
+                    self.printer_address, "object", printer_objects.DEVICES,
+                    entries, unreadable))
 
             busy.run(lambda cancel: printer_objects.query_printer_objects(
                 self.printer_address, self.printer_port, cancel=cancel), done)

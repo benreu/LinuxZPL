@@ -43,7 +43,8 @@ _OBJECT_SPEC = re.compile(r'([A-Za-z0-9_\-]{1,8})\.([A-Za-z0-9_\-]{1,8})',
 def query_printer_objects(address: str, port: int, timeout: float = 5,
                           cancel=None) -> Optional[List[str]]:
     """Every object stored on the printer, across R:/E:/B:/A:/Z:, as
-    'd:NAME.EXT', or None if it could not be asked.
+    'd:NAME.EXT', with the devices that could not be read, or None if the
+    printer could not be asked at all.
 
     One unscoped ^HW per device - *.* rather than the *.TTF/*.GRF the Fonts
     and Graphics managers scope their own requests to - since the point here
@@ -59,8 +60,16 @@ def query_printer_objects(address: str, port: int, timeout: float = 5,
 
     fonts.query_printer_fonts and graphic_store.query_printer_graphics judge
     it the same way, for the same reason.
+
+    Answers `(specs, unreadable)` rather than the specs alone: `unreadable` is
+    every device that errored or said nothing, so a caller can say which
+    drives a listing is short of rather than present a partial one as
+    complete. It is not an error in itself - a drive that is simply not
+    fitted looks exactly like this - which is why it rides alongside the
+    result instead of replacing it.
     """
     specs: List[str] = []
+    unreadable: List[str] = []
     answered = False
     for index, device in enumerate(DEVICES):
         payload = f'^XA^HW{device}:*.*^XZ'.encode('ascii')
@@ -70,15 +79,17 @@ def query_printer_objects(address: str, port: int, timeout: float = 5,
         except OSError:
             if index == 0:
                 return None  # the connection itself failed
+            unreadable.append(device)
             continue
         if not reply:
+            unreadable.append(device)
             continue
         answered = True
         text = reply.decode('ascii', 'replace')
         for m in _OBJECT_SPEC.finditer(text):
             # Case preserved, not forced to upper - see the module docstring.
             specs.append(f"{device}:{m.group(1)}.{m.group(2)}")
-    return sorted(set(specs)) if answered else None
+    return (sorted(set(specs)), unreadable) if answered else None
 
 
 def delete_printer_object(address: str, port: int, raw_spec: str,
