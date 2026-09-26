@@ -4110,6 +4110,37 @@ check("^FV no longer loses the field it carries",
       len(_fv) == 1 and _fv[0].text == 'variable',
       [(e.element_type, getattr(e, 'text', None)) for e in _fv])
 
+# And it is written back as ^FV. Saving it as ^FD turned a field the printer
+# clears after each label into one that persists, which changes what the
+# second label of a run prints - silently, since ^FV is modelled.
+def _fv_saved(zpl):
+    return zpl_parser.parse_zpl(zpl)[0].to_zpl()
+
+_fvz = _fv_saved("^XA^PW812^LL1218^FO50,50^A0N,30,30^FVvariable^FS^XZ")
+check("^FV is written back as ^FV, not ^FD",
+      '^FVvariable^FS' in _fvz and '^FD' not in _fvz, _fvz)
+_fdz = _fv_saved("^XA^PW812^LL1218^FO50,50^A0N,30,30^FDfixed^FS^XZ")
+check("and ^FD is still written as ^FD",
+      '^FDfixed^FS' in _fdz and '^FV' not in _fdz, _fdz)
+_fvn = _fv_saved('^XA^PW812^LL1218^FO50,50^A0N,30,30^FN1"Lot"^FVabc^FS^XZ')
+check("a numbered ^FV field keeps ^FV beside its ^FN",
+      '^FN1"Lot"^FVabc^FS' in _fvn, _fvn)
+_fvh = _fv_saved("^XA^PW812^LL1218^FO50,50^A0N,30,30^FH^FVa_41b^FS^XZ")
+check("^FH still precedes a ^FV it escapes",
+      '^FH_^FVa_41b^FS' in _fvh, _fvh)
+_fvb = _fv_saved("^XA^PW812^LL1218^FO50,50^BY2^BCN,80^FV12345^FS^XZ")
+check("a barcode's ^FV is kept too", '^FV12345^FS' in _fvb, _fvb)
+_fvr = _fv_saved("^XA^XFR:SAMPLE.GRF^FN1^FVabc^FS^FN2^FDdef^FS^XZ")
+check("a recall call's ^FN#^FV pair keeps ^FV, and its ^FD pair ^FD",
+      '^FN1^FVabc^FS' in _fvr and '^FN2^FDdef^FS' in _fvr, _fvr)
+_fv_png = ZPLRenderer(400, 200).render(
+    "^XA^PW400^LL200^FO20,20^A0N,40,40^FVSHOWN^FS^XZ").convert('L')
+_fd_png = ZPLRenderer(400, 200).render(
+    "^XA^PW400^LL200^FO20,20^A0N,40,40^FDSHOWN^FS^XZ").convert('L')
+check("the preview draws a ^FV field exactly as it draws ^FD",
+      _fv_png.tobytes() == _fd_png.tobytes()
+      and _fv_png.getextrema()[0] < 128, _fv_png.getextrema())
+
 # The box has to match what is drawn, or a visible placeholder cannot be
 # clicked on the element it belongs to.
 _ph = zpl_parser.parse_zpl(

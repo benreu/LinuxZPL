@@ -505,7 +505,7 @@ def read_field_table(tokens):
                 table.set_prompt(number, prompt)
                 pending = number
         elif cmd in ('^FD', '^FV') and pending is not None:
-            table.set_value(pending, params)
+            table.set_value(pending, params, variable=(cmd == '^FV'))
             pending = None
         elif cmd in ('^FS', '^FO', '^FT', '^XA', '^XZ'):
             pending = None
@@ -829,10 +829,14 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['hex_indicator'] = zpl_fields.read_hex_indicator(params)
         elif cmd == '^FD':
             field['data'] = params
+            field['variable_data'] = False
         elif cmd == '^FV':
             # ^FV is ^FD for a field the printer clears after printing. Reading
-            # it as data is what stops such a field vanishing outright.
+            # it as data is what stops such a field vanishing outright, and
+            # remembering which one it was is what stops a save turning it
+            # into a field that persists.
             field['data'] = params
+            field['variable_data'] = True
 
     _flush(field, doc, renderer, pending)
 
@@ -860,6 +864,7 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'serial_leading_zero': False,
             'clock_format': False, 'clock_chars': None,
             'serial_field_raw': None, 'hex_indicator': None,
+            'variable_data': False,
             'module_width': inherited['module_width'],
             'ratio': inherited['ratio'],
             'bar_height': inherited['height'],
@@ -1366,6 +1371,7 @@ def _build_element(field, doc, renderer):
                               clock_chars=field['clock_chars'],
                               serial_field_raw=field['serial_field_raw'],
                               hex_indicator=field['hex_indicator'],
+                              variable_data=field['variable_data'],
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
 
@@ -1398,7 +1404,8 @@ def _build_text(x, y, field, doc, renderer):
                           clock_format=field['clock_format'],
                           clock_chars=field['clock_chars'],
                           serial_field_raw=field['serial_field_raw'],
-                          hex_indicator=field['hex_indicator'])
+                          hex_indicator=field['hex_indicator'],
+                          variable_data=field['variable_data'])
     # ^A's letter when the field named a font - read against the ^FW in force
     # at the ^A - and ^FW's own when it relies on ^CF, which carries none.
     element.orientation = (font['orientation'] if field['font']

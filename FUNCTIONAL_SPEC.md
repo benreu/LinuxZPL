@@ -1581,7 +1581,15 @@ nothing but such declarations.
 | `^FN1^FS` | a field showing `«FN1»` | `^FN1^FS` |
 | `^FN1"Ship to"^FS` | a field showing `«Ship to»` | `^FN1"Ship to"^FS` |
 | `^FN1"Ship to"^FDAcme^FS` | a field showing `Acme` | `^FN1"Ship to"^FDAcme^FS` |
-| `^FVtext^FS` | a field showing `text` | `^FDtext^FS` |
+| `^FVtext^FS` | a field showing `text` | `^FVtext^FS` |
+
+**`^FV` is written back as `^FV`.** The manual: "`^FV` fields are always
+cleared after the label is printed. `^FD` fields are not cleared." Rewriting
+one as the other turned a field that clears itself into one that persists,
+which changed what the second label of a run printed - the manual's own `^FV`
+example depends on that clearing - and did so without a word, since `^FV` is a
+command the model holds. Each field, and each `^FN#` pair in a recall call,
+remembers which of the two it was given.
 
 Requiring `^FD` before building an element discarded **every text field in a
 stored format**, and a `^FN` barcode field was handed the value `123456789` — a

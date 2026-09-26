@@ -175,6 +175,9 @@ class FieldTable:
     def __init__(self):
         self._values = {}
         self._prompts = {}
+        # Numbers whose value came from ^FV rather than ^FD, so a recall call
+        # writes back the field the printer clears after printing.
+        self._variable = set()
 
     def __bool__(self):
         return bool(self._values or self._prompts)
@@ -182,13 +185,18 @@ class FieldTable:
     def __eq__(self, other):
         return (isinstance(other, FieldTable)
                 and self._values == other._values
-                and self._prompts == other._prompts)
+                and self._prompts == other._prompts
+                and self._variable == other._variable)
 
-    def set_value(self, number, value) -> None:
-        """Record the data a ^FN#^FD pair gives field `number`."""
+    def set_value(self, number, value, variable=False) -> None:
+        """Record the data a ^FN#^FD (or ^FN#^FV) pair gives field `number`."""
         if value is None:
             return
         self._values[int(number)] = value
+        if variable:
+            self._variable.add(int(number))
+        else:
+            self._variable.discard(int(number))
 
     def set_prompt(self, number, prompt) -> None:
         """Record the quoted name a ^FN#"a" gives field `number`."""
@@ -239,7 +247,9 @@ class FieldTable:
         the printer - so it has to survive a load and a save intact or the file
         is destroyed by opening it.
         """
-        return ''.join(f"^FN{n}^FD{value}^FS\n" for n, value in self.pairs())
+        return ''.join(
+            f"^FN{n}^{'FV' if n in self._variable else 'FD'}{value}^FS\n"
+            for n, value in self.pairs())
 
     def copy(self) -> 'FieldTable':
         """A copy no later edit can reach back through.
@@ -251,4 +261,5 @@ class FieldTable:
         clone = FieldTable()
         clone._values = dict(self._values)
         clone._prompts = dict(self._prompts)
+        clone._variable = set(self._variable)
         return clone

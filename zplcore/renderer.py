@@ -662,8 +662,9 @@ class ZPLRenderer:
             # Field hex indicator: ^FHa marks a-XX escapes in the ^FD that
             # follows, decoded here since the preview never re-saves ZPL.
             self.hex_indicator = fields.read_hex_indicator(params)
-        elif command == 'FD':
-            # Field data: ^FD<data>
+        elif command in ('FD', 'FV'):
+            # Field data: ^FD<data>, or ^FV<data> for a field the printer
+            # clears after printing - the one label previewed still shows it.
             self.field_data = fields.decode_hex(params, self.hex_indicator)
         elif command == 'FN':
             # A numbered field prints whatever its ^FN#^FD pair gave it, and

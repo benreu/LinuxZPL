@@ -138,6 +138,13 @@ class DesignElement:
     # only display_text()/encoded_value() decode it.
     hex_indicator = None
 
+    # ^FV: this field's literal came from ^FV rather than ^FD. The manual:
+    # "^FV fields are always cleared after the label is printed. ^FD fields
+    # are not cleared." Writing it back as ^FD turned a field that clears
+    # itself into one that persists, changing what the next label of a run
+    # printed - so the spelling is kept, not normalised.
+    variable_data = False
+
     # ^SF (deprecated): kept only as opaque, unparsed params so a file that
     # carries one round-trips unchanged - its mask-character semantics are
     # not modelled.
@@ -191,11 +198,12 @@ class DesignElement:
             zpl += f"^FC{zpl_fields.clock_chars_zpl(chars)}"
         if self.hex_indicator:
             zpl += f"^FH{self.hex_indicator}"
+        verb = '^FV' if self.variable_data else '^FD'
         if self.field_number is None:
-            zpl += f"^FD{literal}"
+            zpl += f"{verb}{literal}"
         else:
             name = f'"{self.field_prompt}"' if self.field_prompt is not None else ''
-            data = f"^FD{literal}" if literal else ''
+            data = f"{verb}{literal}" if literal else ''
             zpl += f"^FN{self.field_number}{name}{data}"
         if self.serial_increment is not None:
             leading_zero = 'Y' if self.serial_leading_zero else 'N'
@@ -296,7 +304,8 @@ class TextElement(DesignElement):
                  serial_start=None, serial_increment=None,
                  serial_leading_zero=False,
                  clock_format=False, clock_chars=None,
-                 serial_field_raw=None, hex_indicator=None):
+                 serial_field_raw=None, hex_indicator=None,
+                 variable_data=False):
         self.x = x
         self.y = y
         self.text = text
@@ -315,6 +324,7 @@ class TextElement(DesignElement):
         self.clock_chars = clock_chars
         self.serial_field_raw = serial_field_raw
         self.hex_indicator = hex_indicator
+        self.variable_data = variable_data
         self.font_height = font_height
         self.font_width = font_width
         self.width = len(text) * font_width
@@ -557,7 +567,8 @@ class BarcodeElement(DesignElement):
                  serial_start=None, serial_increment=None,
                  serial_leading_zero=False,
                  clock_format=False, clock_chars=None,
-                 serial_field_raw=None, hex_indicator=None):
+                 serial_field_raw=None, hex_indicator=None,
+                 variable_data=False):
         self.x = x
         self.y = y
         self.bar_height = height
@@ -571,6 +582,7 @@ class BarcodeElement(DesignElement):
         self.clock_chars = clock_chars
         self.serial_field_raw = serial_field_raw
         self.hex_indicator = hex_indicator
+        self.variable_data = variable_data
         self.module_width = module_width
         self.ratio = float(ratio)
         self.orientation = orientation
