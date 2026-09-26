@@ -564,6 +564,43 @@ def _usage(free: Optional[str], total: Optional[str]) -> Optional[float]:
     return max(0.0, min(1.0, (total_count - free_count) / total_count))
 
 
+# A run of four or more digits that is not already part of a longer number or
+# the fractional half of one. Three-digit runs are left alone: "257" gains
+# nothing from a separator, and the threshold keeps a year or a short count
+# from being punctuated.
+_LONG_NUMBER = re.compile(r'(?<![\d.])(\d{4,})(?!\d)')
+
+
+def _group_digits(text: str) -> str:
+    """Thousands separators through a reply, leaving everything else as sent."""
+    return _LONG_NUMBER.sub(lambda m: f"{int(m.group(1)):,}", text)
+
+
+# The comma-and-space the printer puts between the two halves of a distance.
+# A grouping separator never has a space after it, so this cannot match one.
+_UNIT_SEPARATOR = re.compile(r',\s+')
+
+
+def _distance(value: str) -> str:
+    """An odometer reading, grouped and unambiguously punctuated.
+
+    These arrive as the printer worded them - `8560 INCHES, 21744 CENTIMETERS` -
+    and are long enough to be hard to read at a glance, which is the whole
+    reason a panel shows them rather than leaving them to the console. Two
+    things are done, both to the punctuation only:
+
+    The digits are grouped. That then makes the printer's own comma between the
+    two halves ambiguous - `8,560 INCHES, 21,744 CENTIMETERS` reads as though it
+    might be one list of four numbers - so the separator becomes a semicolon,
+    which no grouped number contains.
+
+    The figures, their units and the order of the two halves stay exactly as
+    sent. Converting or relabelling either would report a distance the
+    printer's own front panel disagrees with.
+    """
+    return _UNIT_SEPARATOR.sub('; ', _group_digits(value))
+
+
 def _bytes(value: str) -> str:
     """A byte count with its digits grouped and its unit named once.
 
@@ -925,9 +962,9 @@ def _wear_section(session: _Session) -> Section:
 
     Distances are shown in the units the printer sends. The attributes answer
     both at once (*"8560 INCHES, 21744 CENTIMETERS"*), and ~HQOD answers in
-    whichever single unit ^MA was set to - either way the figure is passed
-    through rather than converted, so it matches what the printer's own front
-    panel shows.
+    whichever single unit ^MA was set to - either way the figure is never
+    converted or relabelled, so it matches what the printer's own front panel
+    shows. Only its punctuation is touched, for reading (see _distance).
     """
     readings: List[Reading] = []
     for attribute, label in _ODOMETERS:
@@ -935,7 +972,7 @@ def _wear_section(session: _Session) -> Section:
             attribute, f'! U1 getvar "{attribute}"\r\n'.encode('ascii'),
             record=False) or '')
         if value:
-            readings.append(Reading(label, value))
+            readings.append(Reading(label, _distance(value)))
 
     if not readings:
         # No attribute answered, so this is the older generation: ~HQ is the
@@ -946,7 +983,7 @@ def _wear_section(session: _Session) -> Section:
         for name, payload in (('~HQOD', b'~HQOD'), ('~HQPH', b'~HQPH')):
             reply = session.ask(name, payload, record=False)
             for label, value in (parse_meters(reply) if reply else None) or ():
-                readings.append(Reading(label, value))
+                readings.append(Reading(label, _distance(value)))
 
     if not readings:
         readings.append(Reading("Wear", "could not be read", WARN))

@@ -1396,6 +1396,14 @@ rewinder has no flag in either table**, so a printer silenced by one reports
 silence and all-zero flags together, and the note says so rather than sending
 the user hunting for a fault the printer never reported.
 
+**A distance is never converted or relabelled** — the odometer attributes
+answer in both units at once (*"8560 INCHES, 21744 CENTIMETERS"*) and `~HQOD`
+answers in whichever single unit `^MA` was set to, and either way the figure and
+its unit are the printer's own, so they match what its front panel shows. Only
+the punctuation is touched: the digits are grouped for reading, and because that
+then makes the printer's own comma between the two halves ambiguous, the halves
+are separated by a semicolon — *"8,560 INCHES; 21,744 CENTIMETERS"*.
+
 **There is no printhead temperature anywhere in ZPL**, so none is shown. No
 `getvar` reports one; `~HD`'s reply is documented only as a picture of a
 terminal, with no field layout; `~HB` gives a head *voltage* and a battery

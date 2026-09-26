@@ -5499,6 +5499,38 @@ check("parse_getvar(): '?' is a refusal, not a value",
 # the bare number the manual's format line implies - captured from hardware as
 # "66369536 Bytes Free". Left verbatim it collides with the sentence it goes
 # in, reading "66369536 Bytes Free free of ...", so only the count is used.
+# _group_digits(): the odometer readings arrive as the printer worded them and
+# are long enough to be hard to read at a glance, which is the whole reason the
+# panel shows them. Only the digits are touched - never the unit, its spelling
+# or the order of the two halves.
+check("_distance(): both counts of a two-unit odometer reply are grouped",
+      zpl_status._distance('8560 INCHES, 21744 CENTIMETERS')
+      == '8,560 INCHES; 21,744 CENTIMETERS',
+      zpl_status._distance('8560 INCHES, 21744 CENTIMETERS'))
+# Once the numbers carry commas, the printer's own comma between the two halves
+# reads as though it might be one list of four numbers - so the halves are
+# separated by a semicolon, which no grouped number contains.
+check("_distance(): the two halves are separated by a semicolon, not a comma",
+      zpl_status._distance('8560 INCHES, 21744 CENTIMETERS').count(';') == 1
+      and zpl_status._distance('8560 INCHES, 21744 CENTIMETERS')
+      .split(';')[0].count(',') == 1)
+check("_distance(): a grouping separator is never mistaken for the unit one",
+      zpl_status._distance('1234567 INCHES, 3134234 CENTIMETERS')
+      == '1,234,567 INCHES; 3,134,234 CENTIMETERS',
+      zpl_status._distance('1234567 INCHES, 3134234 CENTIMETERS'))
+check("_distance(): a ~HQOD figure in the printer's own single unit too",
+      (zpl_status._distance('8560 \"'), zpl_status._distance('21744 cm'))
+      == ('8,560 \"', '21,744 cm'))
+# Three digits gain nothing from a separator, and the threshold is what keeps a
+# version string from being punctuated into nonsense.
+check("_group_digits(): short counts and version strings are left alone",
+      (zpl_status._group_digits('257 \"'), zpl_status._group_digits('999'),
+       zpl_status._group_digits('V53.17.7Z'))
+      == ('257 \"', '999', 'V53.17.7Z'))
+check("_group_digits(): a decimal's fractional half is not grouped",
+      zpl_status._group_digits('1234.5678') == '1,234.5678',
+      zpl_status._group_digits('1234.5678'))
+
 check("_bytes(): the printer's own 'Bytes Free' wording is not repeated",
       zpl_status._bytes('66369536 Bytes Free') == '66,369,536 bytes',
       zpl_status._bytes('66369536 Bytes Free'))
@@ -5658,6 +5690,35 @@ check("query_printer_specs(): model, firmware and resolution come off ~HI",
       [r.value for r in _spec.sections[0].readings[:3]]
       == ['ZTC ZT230-203dpi ZPL', 'V53.17.7Z', '203 dpi'],
       _spec.sections[0].readings)
+# The wear readings, grouped on whichever family the printer speaks.
+_wear_log = []
+zpl_printer_io.send = _status_fake(
+    {'~HI': b'ZTC ZT230-203dpi ZPL,V53.17.7Z,8,8192KB,XML',
+     'odometer.total_print_length': b'"8560 INCHES, 21744 CENTIMETERS"'},
+    _wear_log)
+try:
+    _wear_modern = zpl_status.query_printer_specs('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("query_printer_specs(): the odometer reads grouped, units untouched",
+      [s.title for s in _wear_modern.sections if s.title == 'Wear']
+      and _wear_modern.sections[-1].readings[0].value
+      == '8,560 INCHES; 21,744 CENTIMETERS',
+      _wear_modern.sections[-1].readings)
+
+_wear_old_log = []
+zpl_printer_io.send = _status_fake(
+    {'~HI': b'ZM400,V53.17.1Z,8,2048KB,',
+     '~HQOD': (b'\x02PRINT METERS\r\n    TOTAL NONRESETTABLE: 8560 "\r\n\x03')},
+    _wear_old_log)
+try:
+    _wear_old = zpl_status.query_printer_specs('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("query_printer_specs(): and so does the ~HQOD fallback",
+      _wear_old.sections[-1].readings[0].value == '8,560 "',
+      _wear_old.sections[-1].readings)
+
 check("query_printer_specs(): holds only what does not move",
       [s.title for s in _spec.sections] == ['Printer', 'Wear'],
       [s.title for s in _spec.sections])
