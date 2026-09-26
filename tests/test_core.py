@@ -4320,6 +4320,77 @@ finally:
 check("a cancel propagates out of query_printer_objects rather than becoming None",
       _q_outcome == "raised Cancelled", _q_outcome)
 
+# How all three device queries decide a printer is unreachable. Nothing
+# covered this before, which is how the rule drifted between them unnoticed:
+# silence on the first device (R:) used to condemn the whole query, so a
+# printer with nothing on R: reported itself unreachable while answering
+# perfectly well on E:.
+def _hw_reply(device, entries):
+    """A ^HW listing in the shape a real printer sends one."""
+    body = ''.join(f"* {device}:{name}    {size}          \r\n"
+                   for name, size in entries)
+    return (f"\r\n- DIR {device}:*.* \r\n{body}"
+            f"\r\n-  66119680 bytes free {device}: ONBOARD FLASH \r\n"
+            ).encode('ascii')
+
+def _only_e_answers(_a, _p, payload, _t, read_reply=False, cancel=None):
+    """A printer whose R: says nothing at all, but whose E: has objects."""
+    if b'^HWE:' in payload:
+        return _hw_reply('E', [('LOGO.GRF', 4488), ('ANI.TTF', 120404)])
+    return b''
+
+def _nothing_answers(*a, **k):
+    return b''
+
+def _empty_listing(_a, _p, payload, _t, read_reply=False, cancel=None):
+    device = payload.split(b'^HW')[1][:1].decode()
+    return _hw_reply(device, [])
+
+_attempts = []
+def _dead_host(_a, _p, payload, _t, read_reply=False, cancel=None):
+    _attempts.append(payload)
+    raise OSError("no route to host")
+
+for _label, _query, _wanted in (
+        ("query_printer_graphics", zpl_graphic_store.query_printer_graphics,
+         ['E:LOGO.GRF']),
+        ("query_printer_objects", printer_objects.query_printer_objects,
+         ['E:ANI.TTF', 'E:LOGO.GRF'])):
+    zpl_printer_io.send = _only_e_answers
+    try:
+        _found = _query('10.0.0.1', 9100)
+    finally:
+        zpl_printer_io.send = _real_send
+    check(f"{_label}(): silence on R: is not an unreachable printer",
+          _found == _wanted, _found)
+
+    zpl_printer_io.send = _nothing_answers
+    try:
+        _silent = _query('10.0.0.1', 9100)
+    finally:
+        zpl_printer_io.send = _real_send
+    check(f"{_label}(): None only when no device answered at all",
+          _silent is None, _silent)
+
+    zpl_printer_io.send = _empty_listing
+    try:
+        _none_stored = _query('10.0.0.1', 9100)
+    finally:
+        zpl_printer_io.send = _real_send
+    check(f"{_label}(): a printer that lists nothing is empty, not unreachable",
+          _none_stored == [], _none_stored)
+
+    # The fast path: a host that cannot be connected to at all must still
+    # cost one attempt, not one timeout per device.
+    _attempts.clear()
+    zpl_printer_io.send = _dead_host
+    try:
+        _dead = _query('10.0.0.1', 9100)
+    finally:
+        zpl_printer_io.send = _real_send
+    check(f"{_label}(): a dead host is one attempt, not one per device",
+          _dead is None and len(_attempts) == 1, (_dead, len(_attempts)))
+
 # cancel= is threaded through every wrapper the same way timeout= is.
 _fwd = []
 def _capture_send(address, port, payload, timeout, read_reply=False, cancel=None):

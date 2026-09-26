@@ -387,15 +387,19 @@ def query_printer_fonts(address: str, port: int, timeout: float = 5,
     difference: an empty set is "the printer has no fonts", None is "the
     printer could not be asked" - unreachable, or no ^HW support.
 
-    Which of the two an answer is cannot be decided on the first device
-    alone here, the way query_printer_graphics decides it. That rule was
-    safe while this function asked E: and nothing else; asking every device
-    puts R: first, and a printer with nothing on R: - or no R: at all - is
-    not an unreachable printer. So a failure to connect on the very first
-    attempt is still decisive, because that is the connection failing rather
-    than a drive being empty, but silence is only unreachable when *no*
-    device said anything at all. A drive that does answer, even to list
-    nothing, is proof the printer is there and understood the question.
+    A failure to *connect* on the very first attempt is decisive - that is
+    the socket, not a drive - and returns None straight away, which is what
+    keeps a dead host failing fast rather than timing out once per device.
+    Silence is a weaker signal and is not treated the same way: R: is asked
+    first, and a printer with nothing on R: - or no R: at all - is not an
+    unreachable printer, so a device that says nothing is skipped and only a
+    run in which *no* device said anything at all reads as unreachable. A
+    device that answers, even to list nothing, is proof the printer is there
+    and understood the question.
+
+    graphic_store.query_printer_graphics and
+    printer_objects.query_printer_objects judge it the same way, for the
+    same reason.
     """
     specs: Set[str] = set()
     answered = False

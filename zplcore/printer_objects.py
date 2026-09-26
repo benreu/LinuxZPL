@@ -48,17 +48,20 @@ def query_printer_objects(address: str, port: int, timeout: float = 5,
     One unscoped ^HW per device - *.* rather than the *.TTF/*.GRF the Fonts
     and Graphics managers scope their own requests to - since the point here
     is everything, including extensions neither of those recognizes.
-    Reachability is judged by the first device alone, the same rule
-    query_printer_graphics uses: no reply, or the connection itself failing,
-    means unreachable and the other devices are not even tried. A later
-    device failing the same way is not proof the printer went away - just
-    that this device has nothing, or does not exist on this model.
+    A failure to *connect* on the very first attempt is decisive - that is
+    the socket, not a drive - and returns None straight away, which is what
+    keeps a dead host failing fast rather than timing out once per device.
+    Silence is a weaker signal and is not treated the same way: R: is asked
+    first, and a printer with nothing on R: is not an unreachable printer, so
+    a device that says nothing is skipped and only a run in which *no* device
+    said anything at all reads as unreachable. A device that answers, even to
+    list nothing, is proof the printer is there and understood the question.
 
-    fonts.query_printer_fonts no longer judges it that way - see the note in
-    query_printer_graphics - and the same argument would apply here; this
-    function has simply not been changed to match.
+    fonts.query_printer_fonts and graphic_store.query_printer_graphics judge
+    it the same way, for the same reason.
     """
     specs: List[str] = []
+    answered = False
     for index, device in enumerate(DEVICES):
         payload = f'^XA^HW{device}:*.*^XZ'.encode('ascii')
         try:
@@ -66,17 +69,16 @@ def query_printer_objects(address: str, port: int, timeout: float = 5,
                                     read_reply=True, cancel=cancel)
         except OSError:
             if index == 0:
-                return None
+                return None  # the connection itself failed
             continue
         if not reply:
-            if index == 0:
-                return None
             continue
+        answered = True
         text = reply.decode('ascii', 'replace')
         for m in _OBJECT_SPEC.finditer(text):
             # Case preserved, not forced to upper - see the module docstring.
             specs.append(f"{device}:{m.group(1)}.{m.group(2)}")
-    return sorted(set(specs))
+    return sorted(set(specs)) if answered else None
 
 
 def delete_printer_object(address: str, port: int, raw_spec: str,
