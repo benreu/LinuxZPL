@@ -1317,14 +1317,15 @@ class Document:
         # label as a whole rather than about any one field on it.
         self.transform = zpl_transforms.LabelTransform()
 
-        # ^PQ - how many copies to print, and the pause/RFID options that ride
-        # along with it. Only quantity has an editor (Label Settings); the
+        # ^PQ - how many copies to print, and the pause/RFID/cutter options
+        # that ride along with it. Only quantity has an editor (Label Settings); the
         # rest are carried the way ^LT is - present so a save does not
         # silently drop them.
         self.print_quantity = 1
         self.print_pause_count = 0
         self.print_replicates = 0
         self.print_override_pause = False
+        self.print_cut_on_error = True
 
         # ^CV - whether the printer checks each barcode's data as it prints
         # and prints INVALID - X in place of a bad one. A print-time check
@@ -2143,13 +2144,14 @@ class Document:
     def _print_quantity_zpl(self) -> str:
         """^PQ, trimmed after the last parameter still worth writing.
 
-        q, p, r and o are positional, so anything before the last non-default
+        q, p, r, o and e are positional, so anything before the last non-default
         one has to be spelled even when it is itself still the default.
         """
         given = [self.print_quantity, self.print_pause_count,
                  self.print_replicates,
-                 'Y' if self.print_override_pause else 'N']
-        defaults = [1, 0, 0, 'N']
+                 'Y' if self.print_override_pause else 'N',
+                 'Y' if self.print_cut_on_error else 'N']
+        defaults = [1, 0, 0, 'N', 'Y']
         keep = 0
         for index, value in enumerate(given):
             if value != defaults[index]:

@@ -765,10 +765,11 @@ to the head resolution and makes it the one element that cannot be rescaled.
 Its ratio is written too, for Code 39 and Interleaved 2 of 5, when it is not
 the default 3.0.
 
-`^PQ<quantity>[,<pause count>,<replicates>,<override pause>]` is written last,
-immediately before `^XZ`, and only when at least one of its four values is not
-ZPL's own default (`1,0,0,N`) — trimmed to however many of them that takes, so
-a quantity-only label writes just `^PQ5` rather than `^PQ5,0,0,N`.
+`^PQ<quantity>[,<pause count>,<replicates>,<override pause>,<cut on error>]` is
+written last, immediately before `^XZ`, and only when at least one of its five
+values is not ZPL's own default (`1,0,0,N,Y`) — trimmed to however many of them
+that takes, so a quantity-only label writes just `^PQ5` rather than
+`^PQ5,0,0,N,Y`, and a label that turns cut-on-error off writes all five.
 
 `^CVY` is written after the `^FXDESIGNER_DPI` line and before the first
 element — it is a switch over the barcodes that follow it — and only when the
@@ -2077,10 +2078,10 @@ rather than requirements:
   inversion against whatever is beneath — not a whole-image invert. Inverting
   the finished image would turn the white background black, which is not what a
   printer does, so nothing is drawn for it in either the canvas or the preview.
-- **`^PQ`'s pause count, RFID replicates and override-pause flag round-trip but
-  have no editor and are not otherwise acted on.** Only quantity, the common
-  case, is exposed in Label Settings; a file from another tool that sets the
-  other three keeps them through a save, the same treatment `^LT` gets.
+- **`^PQ`'s pause count, RFID replicates, override-pause flag and
+  cut-on-error flag round-trip but have no editor and are not otherwise acted
+  on.** Only quantity, the common case, is exposed in Label Settings; a file
+  from another tool that sets the other four keeps them through a save, the same treatment `^LT` gets.
 - **`^CV` round-trips but is not simulated.** It asks the printer to check
   each barcode's data as it prints — character set, check digit, length — and
   to print `INVALID - X` in reverse image in place of a bad one. Nothing here

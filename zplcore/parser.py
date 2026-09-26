@@ -675,7 +675,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
 
         if cmd == '^PQ':
             (doc.print_quantity, doc.print_pause_count,
-             doc.print_replicates, doc.print_override_pause) = \
+             doc.print_replicates, doc.print_override_pause,
+             doc.print_cut_on_error) = \
                 _read_print_quantity(params)
             continue
 
@@ -1008,7 +1009,9 @@ def _read_barcode_default(params: str, current: dict) -> dict:
 
 
 def _read_print_quantity(params: str) -> tuple:
-    """^PQq,p,r,o - copies, pause count, RFID replicates, override-pause flag.
+    """^PQq,p,r,o,e - copies, pause count, RFID replicates, override-pause
+    flag and cut-on-error flag (whether the cutter still cuts after a label
+    whose RFID tag was voided).
 
     Each is independently optional; a blank or unreadable one falls back to
     ZPL's own default rather than raising, since this is exactly the kind of
@@ -1028,7 +1031,9 @@ def _read_print_quantity(params: str) -> tuple:
     pause_count = integer(1, 0)
     replicates = integer(2, 0)
     override_pause = len(parts) > 3 and parts[3].strip().upper() == 'Y'
-    return quantity, pause_count, replicates, override_pause
+    # Y is the default, so only an explicit N turns it off.
+    cut_on_error = not (len(parts) > 4 and parts[4].upper() == 'N')
+    return quantity, pause_count, replicates, override_pause, cut_on_error
 
 
 def read_font(code: str, params: str, default_font=None,
