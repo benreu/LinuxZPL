@@ -5495,9 +5495,20 @@ check("parse_getvar(): a two-unit odometer value survives intact",
 # read timeout. A '?' read as a value would put nonsense on the panel.
 check("parse_getvar(): '?' is a refusal, not a value",
       zpl_status.parse_getvar('?') is None)
-check("_bytes(): a byte count is grouped and named, a non-number left alone",
-      (zpl_status._bytes('66119680'), zpl_status._bytes('8 MB'))
-      == ('66,119,680 bytes', '8 MB'))
+# A real printer answers memory.flash_free with its own wording rather than
+# the bare number the manual's format line implies - captured from hardware as
+# "66369536 Bytes Free". Left verbatim it collides with the sentence it goes
+# in, reading "66369536 Bytes Free free of ...", so only the count is used.
+check("_bytes(): the printer's own 'Bytes Free' wording is not repeated",
+      zpl_status._bytes('66369536 Bytes Free') == '66,369,536 bytes',
+      zpl_status._bytes('66369536 Bytes Free'))
+check("_bytes(): a bare count and a 'Bytes' suffix both group the same way",
+      (zpl_status._bytes('66119680'), zpl_status._bytes('67108864 Bytes'))
+      == ('66,119,680 bytes', '67,108,864 bytes'))
+# A figure already stated in some other unit must not be relabelled as bytes.
+check("_bytes(): a value in another unit is left exactly as it came",
+      (zpl_status._bytes('8 MB'), zpl_status._bytes('512 KB'),
+       zpl_status._bytes('unknown')) == ('8 MB', '512 KB', 'unknown'))
 
 # silence_note(): ~HS is silent in five states, but of those five a full
 # rewinder has no flag in either table - so the "which one" claim is only made
@@ -5651,6 +5662,21 @@ check("query_printer_specs(): flash free is grouped and named in bytes",
       _spec.sections[1].readings[0].value
       == '66,119,680 bytes free of 68,157,440 bytes',
       _spec.sections[1].readings)
+
+# The same reading, but with the wording a real printer actually sends.
+_real_flash_log = []
+zpl_printer_io.send = _status_fake(
+    {'~HI': b'ZTC ZT230-203dpi ZPL,V53.17.7Z,8,8192KB,XML',
+     'memory.flash_size': b'"67108864 Bytes"',
+     'memory.flash_free': b'"66369536 Bytes Free"'}, _real_flash_log)
+try:
+    _real_flash = zpl_status.query_printer_specs('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("query_printer_specs(): a real printer's 'Bytes Free' reads once, not twice",
+      _real_flash.sections[1].readings[0].value
+      == '66,369,536 bytes free of 67,108,864 bytes',
+      _real_flash.sections[1].readings[0].value)
 check("query_printer_specs(): storage is asked as attributes, so an unfitted "
       "drive costs no ^HW timeout",
       not any('^HW' in payload for payload in _spec_log), _spec_log)

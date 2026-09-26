@@ -522,16 +522,29 @@ def _thousands(number: int) -> str:
     return f"{number:,}"
 
 
-def _bytes(value: str) -> str:
-    """A byte count with its digits grouped and its unit named.
+# A count followed by nothing, or by the printer's own byte wording -
+# `66369536`, `67108864 Bytes`, `66369536 Bytes Free`. A trailing unit
+# that is *not* bytes must not match, or a figure stated in some other
+# unit would be relabelled as bytes.
+_BYTE_COUNT = re.compile(r'^\s*(\d+)\s*(?:bytes?\s*)?(?:free\s*)?$', re.I)
 
-    The memory attributes document no unit, but ^HW's own footer calls the same
-    figure `bytes free`, so that is what these are. A value that is not a plain
-    number is passed through untouched rather than relabelled - guessing a unit
-    onto something unrecognised is how a panel starts lying.
+
+def _bytes(value: str) -> str:
+    """A byte count with its digits grouped and its unit named once.
+
+    The count is taken from the front and the rest of the reply discarded,
+    because a real printer answers memory.flash_free with its own wording -
+    `66369536 Bytes Free`, not the bare number the manual's format line implies.
+    Kept verbatim, that wording collides with the sentence it gets put in and
+    reads "66369536 Bytes Free free of ...". Only the number is dependable, so
+    only the number is used, and the unit is said once here.
+
+    A value with no leading count is passed through untouched rather than
+    relabelled - guessing a unit onto something unrecognised is how a panel
+    starts lying.
     """
-    digits = value.strip()
-    return f"{int(digits):,} bytes" if digits.isdigit() else value
+    count = _BYTE_COUNT.match(value or '')
+    return f"{int(count.group(1)):,} bytes" if count else value
 
 
 class _Session:
