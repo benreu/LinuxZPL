@@ -2298,6 +2298,55 @@ class ZPLViewerWindow(Gtk.Window):
                        printer_status.WARN: '#b9770e',
                        printer_status.OK: '#1e8449'}
 
+    def _status_bar(self, reading, colour):
+        """A reading the core gave a fraction to: its text, with a slim gauge
+        under it.
+
+        The text is a plain label above the bar rather than drawn on it. Set as
+        the bar's own text it renders small and, once the fill reaches it, in
+        poor contrast against it - and the two toolkits put it in different
+        places, GTK above the trough and Qt inside it. Stacked this way the
+        figure stays full size and legible in both, and the bar is left to do
+        the one thing a bar is better at than a number: showing the proportion
+        at a glance.
+
+        The gauge shows what is *used* (printer_status.Reading.fraction) while
+        the text says what is free - the pair a disk gauge shows, and the pair
+        someone deciding whether a font will fit needs.
+
+        Colour needs a CSS provider here, unlike Qt's stylesheet: only the
+        filled part is styled, so the trough keeps the theme's own background
+        and the bar stays legible in a dark one. The provider is attached to
+        this widget alone rather than to the screen, so it cannot leak into any
+        other progress bar in the app - the BusyBar spinner included.
+        """
+        stack = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        stack.set_hexpand(True)
+        stack.set_margin_bottom(4)
+
+        text = Gtk.Label(xalign=0)
+        text.set_line_wrap(True)
+        if colour:
+            text.set_markup(f'<span foreground="{colour}" weight="bold">'
+                            f'{GLib.markup_escape_text(reading.value)}</span>')
+        else:
+            text.set_text(reading.value)
+        stack.pack_start(text, False, False, 0)
+
+        bar = Gtk.ProgressBar()
+        bar.set_fraction(reading.fraction)
+        bar.set_show_text(False)
+        bar.set_hexpand(True)
+        if colour:
+            provider = Gtk.CssProvider()
+            provider.load_from_data(
+                f"progressbar progress {{ background-color: {colour}; }}"
+                .encode())
+            bar.get_style_context().add_provider(
+                provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        stack.pack_start(bar, False, False, 0)
+        return stack
+
     def on_printer_status_clicked(self, widget):
         """What the printer says about its own state - faults, what it is
         working on, memory, and how its head is wearing.
@@ -2378,14 +2427,17 @@ class ZPLViewerWindow(Gtk.Window):
                     for row, reading in enumerate(section.readings):
                         name = Gtk.Label(label=reading.label + ":", xalign=0)
                         colour = self._STATUS_COLOURS.get(reading.level)
-                        value = Gtk.Label(xalign=0)
-                        value.set_line_wrap(True)
-                        if colour:
-                            value.set_markup(
-                                f'<span foreground="{colour}" weight="bold">'
-                                f'{GLib.markup_escape_text(reading.value)}</span>')
+                        if reading.fraction is not None:
+                            value = self._status_bar(reading, colour)
                         else:
-                            value.set_text(reading.value)
+                            value = Gtk.Label(xalign=0)
+                            value.set_line_wrap(True)
+                            if colour:
+                                value.set_markup(
+                                    f'<span foreground="{colour}" weight="bold">'
+                                    f'{GLib.markup_escape_text(reading.value)}</span>')
+                            else:
+                                value.set_text(reading.value)
                         grid.attach(name, 0, row, 1, 1)
                         grid.attach(value, 1, row, 1, 1)
                     if section.note:

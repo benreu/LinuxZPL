@@ -46,8 +46,8 @@ disagree.
   retrieve one back out to a file, or delete one
 - **Printer status**: **Printer -> Status...** asks the printer about itself -
   the faults it is raising, whether it is paused or its buffer is full, how much
-  RAM and Flash is left, how far its head has printed - with an optional
-  auto-refresh and a Copy button for a support ticket. It asks the fault flags
+  RAM and Flash is left (each as a bar), how far its head has printed - with an
+  optional auto-refresh and a Copy button for a support ticket. It asks the fault flags
   before `~HS`, because a Zebra answers no status query at all while its head is
   open or its media is out, so the panel explains that silence instead of going
   blank

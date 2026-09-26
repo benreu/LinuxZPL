@@ -493,10 +493,20 @@ PLAIN, OK, WARN, ERROR = '', 'ok', 'warn', 'error'
 
 class Reading(NamedTuple):
     """One labelled figure. `value` is already formatted for display, so a
-    frontend never has to decide how a number is written."""
+    frontend never has to decide how a number is written.
+
+    `fraction` is how full the thing being reported is, 0.0 to 1.0, for a
+    reading a bar says more about than a number - so far the two memories. It
+    is the proportion **in use**, not free, so the bar fills as the memory
+    fills, the way a disk gauge does. Computed here rather than in each
+    frontend for the same reason `level` is: two frontends dividing separately
+    is two bars that can disagree. None means this reading has no bar, which is
+    most of them.
+    """
     label: str
     value: str
     level: str = PLAIN
+    fraction: Optional[float] = None
 
 
 class Section(NamedTuple):
@@ -522,11 +532,36 @@ def _thousands(number: int) -> str:
     return f"{number:,}"
 
 
+_LEADING_DIGITS = re.compile(r'^\s*(\d+)')
+
 # A count followed by nothing, or by the printer's own byte wording -
 # `66369536`, `67108864 Bytes`, `66369536 Bytes Free`. A trailing unit
 # that is *not* bytes must not match, or a figure stated in some other
 # unit would be relabelled as bytes.
 _BYTE_COUNT = re.compile(r'^\s*(\d+)\s*(?:bytes?\s*)?(?:free\s*)?$', re.I)
+
+
+def _leading_int(value: Optional[str]) -> Optional[int]:
+    """The count at the front of a printer's reply, ignoring its own wording."""
+    match = _LEADING_DIGITS.match(value or '')
+    return int(match.group(1)) if match else None
+
+
+def _usage(free: Optional[str], total: Optional[str]) -> Optional[float]:
+    """How much of a memory is in use, 0.0 to 1.0, or None if it cannot be
+    worked out.
+
+    Both figures come as the printer worded them, in whatever unit it chose, so
+    only their leading counts are used - and only when they share a reply, so
+    the ratio is unit-free and a printer reporting KB is not divided by one
+    reporting bytes. A free figure larger than the total is clamped rather than
+    trusted: it would put a bar past its own end, and a printer that reports it
+    is wrong about one of the two, not about the ratio.
+    """
+    free_count, total_count = _leading_int(free), _leading_int(total)
+    if free_count is None or not total_count:
+        return None
+    return max(0.0, min(1.0, (total_count - free_count) / total_count))
 
 
 def _bytes(value: str) -> str:
@@ -696,24 +731,90 @@ def _work_section(host: Optional[HostStatus]) -> Section:
     return Section("Work", readings)
 
 
-def _ram_section(ram: Optional[Tuple[int, int, int]]) -> Section:
-    """RAM, the one memory figure that moves while the printer runs: the manual
-    notes the installed and maximum figures do not change after power-on, and
-    that a downloaded graphic, font or saved bitmap comes out of what is left.
+def _flash_readings(session: _Session) -> List[Reading]:
+    """Flash, read as Set/Get/Do attributes.
 
-    All three are shown because a free figure means nothing without the total
-    it is free out of, and the free one is marked once it drops under a tenth
-    of the maximum - the point at which the next graphic is the one that fails.
+    Asked this way rather than by reading the free-space footer off a ^HW
+    listing per drive, even though that footer is the only per-drive figure ZPL
+    has and this app already has three parsers that walk past it. The reason is
+    what an absent drive costs: ^HW must be sent per device, and a drive that is
+    not fitted answers nothing at all, so probing R:/E:/B:/A:/Z: on a printer
+    with two of them spends three full read timeouts to learn that - every
+    refresh. An attribute the printer has not got is refused with '?' at once
+    (see parse_getvar). ^HW is kept as a fallback and only for E:, for firmware
+    without the attributes: one drive, the one that matters.
     """
-    if ram is None:
-        return Section("Memory", [Reading("RAM", "could not be read", WARN)])
-    total, maximum, free = ram
-    level = WARN if maximum and free * 10 < maximum else PLAIN
-    return Section("Memory", [
-        Reading("RAM installed", f"{_thousands(total)} KB"),
-        Reading("RAM available to the user", f"{_thousands(maximum)} KB"),
-        Reading("RAM free now", f"{_thousands(free)} KB", level),
-    ])
+    readings: List[Reading] = []
+    for size_attr, free_attr, name in _MEMORIES:
+        size = parse_getvar(session.ask(
+            size_attr, f'! U1 getvar "{size_attr}"\r\n'.encode('ascii'),
+            record=False) or '')
+        free = parse_getvar(session.ask(
+            free_attr, f'! U1 getvar "{free_attr}"\r\n'.encode('ascii'),
+            record=False) or '')
+        if free is None and size is None:
+            continue
+        value = (f"{_bytes(free)} free of {_bytes(size)}" if free and size
+                 else f"{_bytes(free)} free" if free
+                 else f"{_bytes(size)} fitted")
+        readings.append(Reading(name, value, _memory_level(free, size),
+                                _usage(free, size)))
+
+    if not readings:
+        reply = session.ask('^HWE:', b'^XA^HWE:*.*^XZ', record=False)
+        free = parse_free_space(reply) if reply else None
+        if free is not None:
+            described = free[1] or f"E: {DEVICE_NAMES['E']}"
+            # No bar: ^HW's footer gives what is free but never the total it is
+            # free out of, and a bar drawn against a guessed total would be an
+            # invented figure rather than a reported one.
+            readings.append(Reading(
+                described if described.upper().startswith('E:')
+                else f"E: {described}",
+                f"{_thousands(free[0])} bytes free, "
+                f"{_thousands(_object_count(reply))} object(s)"))
+    return readings
+
+
+def _memory_level(free, total) -> str:
+    """Marked once less than a tenth is left - the point at which the next font
+    or graphic is the one that will not fit."""
+    fraction = _usage(free, total)
+    return WARN if fraction is not None and fraction > 0.9 else PLAIN
+
+
+def _memory_section(session: _Session,
+                    ram: Optional[Tuple[int, int, int]]) -> Section:
+    """Both memories together, each as a bar: RAM from ~HM, Flash from its own
+    attributes.
+
+    One section rather than two, and both re-asked on every refresh, because
+    both are the same question - how much room is left - and both move for the
+    same reason. The manual notes that a downloaded graphic, font or saved
+    bitmap comes out of RAM; Flash is where a font this app uploads actually
+    lands (fonts.DEFAULT_FONT_DEVICE is E:), so it is the one that drops when
+    someone uses Printer -> Fonts. Watching either fill is the point, so
+    neither belongs in the half of the report that is asked once.
+
+    RAM is measured against what the manual calls the maximum available to the
+    user, not against what is installed: firmware holds some of the latter back
+    permanently, so a bar drawn against it would never fill and would read as
+    healthier than the printer is. What is installed is still shown, as a plain
+    row, since it is the figure on the printer's own configuration label.
+    """
+    readings: List[Reading] = []
+    if ram is not None:
+        total, maximum, free = ram
+        readings.append(Reading(
+            "RAM", f"{_thousands(free)} KB free of {_thousands(maximum)} KB",
+            _memory_level(str(free), str(maximum)),
+            _usage(str(free), str(maximum))))
+    readings.extend(_flash_readings(session))
+    if ram is not None:
+        readings.append(Reading("RAM installed", f"{_thousands(ram[0])} KB"))
+    if not readings:
+        readings.append(Reading("Memory", "could not be read", WARN))
+    return Section("Memory", readings)
 
 
 def query_printer_activity(address: str, port: int, timeout: float = 5,
@@ -746,7 +847,7 @@ def query_printer_activity(address: str, port: int, timeout: float = 5,
     if not session.answered:
         return None
     sections = [_fault_section(status, host_silent=host_reply is None),
-                _work_section(host), _ram_section(ram)]
+                _work_section(host), _memory_section(session, ram)]
     return StatusReport(sections, session.unanswered)
 
 
@@ -758,61 +859,6 @@ def query_printer_activity(address: str, port: int, timeout: float = 5,
 # because of something done here: it is where a font goes by default
 # (fonts.DEFAULT_FONT_DEVICE is E:) and where Objects stores what it writes.
 _MEMORIES = (('memory.flash_size', 'memory.flash_free', "Flash"),)
-
-
-def _storage_section(session: _Session) -> Section:
-    """How much of the printer's memory is left.
-
-    Asked as Set/Get/Do attributes rather than by reading the free-space footer
-    off a ^HW listing per drive, even though that footer is the only per-drive
-    figure ZPL has and this app already has three parsers that walk past it. The
-    reason is what an absent drive costs: ^HW has to be sent per device, and a
-    drive that is not fitted answers nothing at all, so probing R:/E:/B:/A:/Z:
-    on a printer with two of them spends three full read timeouts to learn that
-    - every time this panel is opened. An attribute the printer has not got is
-    refused with '?' at once (see parse_getvar), which is the whole reason to
-    prefer this shape.
-
-    ^HW is kept as a fallback, and only for E:, for firmware without the
-    attributes: one drive, the one that matters, one timeout at worst.
-    """
-    readings: List[Reading] = []
-    for size_attr, free_attr, name in _MEMORIES:
-        size = parse_getvar(session.ask(
-            size_attr, f'! U1 getvar "{size_attr}"\r\n'.encode('ascii'),
-            record=False) or '')
-        free = parse_getvar(session.ask(
-            free_attr, f'! U1 getvar "{free_attr}"\r\n'.encode('ascii'),
-            record=False) or '')
-        if free is None and size is None:
-            continue
-        # Marked once less than a tenth is left - the point at which the next
-        # font or graphic is the one that will not fit.
-        level = PLAIN
-        digits = re.match(r'(\d+)', free or '')
-        size_digits = re.match(r'(\d+)', size or '')
-        if digits and size_digits and int(size_digits.group(1)):
-            if int(digits.group(1)) * 10 < int(size_digits.group(1)):
-                level = WARN
-        value = (f"{_bytes(free)} free of {_bytes(size)}" if free and size
-                 else f"{_bytes(free)} free" if free
-                 else f"{_bytes(size)} fitted")
-        readings.append(Reading(name, value, level))
-
-    if not readings:
-        reply = session.ask('^HWE:', b'^XA^HWE:*.*^XZ', record=False)
-        free = parse_free_space(reply) if reply else None
-        if free is not None:
-            described = free[1] or f"E: {DEVICE_NAMES['E']}"
-            readings.append(Reading(
-                described if described.upper().startswith('E:')
-                else f"E: {described}",
-                f"{_thousands(free[0])} bytes free, "
-                f"{_thousands(_object_count(reply))} object(s)"))
-
-    if not readings:
-        readings.append(Reading("Storage", "could not be read", WARN))
-    return Section("Storage", readings)
 
 
 def _printer_section(session: _Session) -> Section:
@@ -922,8 +968,7 @@ def query_printer_specs(address: str, port: int, timeout: float = 5,
     printer could not be asked.
     """
     session = _Session(address, port, timeout, cancel)
-    sections = [_printer_section(session), _storage_section(session),
-                _wear_section(session)]
+    sections = [_printer_section(session), _wear_section(session)]
     if not session.answered:
         return None
     return StatusReport(sections, session.unanswered)

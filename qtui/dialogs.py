@@ -19,7 +19,8 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QFrame, QGroupBox, QHBoxLayout,
                                QLabel, QLineEdit, QListWidget, QMessageBox,
-                               QPlainTextEdit, QPushButton, QScrollArea,
+                               QPlainTextEdit, QProgressBar, QPushButton,
+                               QScrollArea,
                                QSpinBox, QDoubleSpinBox, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -2367,9 +2368,13 @@ class PrinterStatusDialog(QDialog):
         form = QFormLayout(box)
         form.setLabelAlignment(Qt.AlignLeft)
         for reading in section.readings:
+            colour = self._COLOURS.get(reading.level)
+            if reading.fraction is not None:
+                form.addRow(QLabel(reading.label + ":"),
+                            self._bar(reading, colour))
+                continue
             value = QLabel(reading.value)
             value.setWordWrap(True)
-            colour = self._COLOURS.get(reading.level)
             if colour:
                 value.setStyleSheet(f"color: {colour}; font-weight: bold;")
             form.addRow(QLabel(reading.label + ":"), value)
@@ -2379,6 +2384,48 @@ class PrinterStatusDialog(QDialog):
             note.setStyleSheet("font-style: italic;")
             form.addRow(note)
         return box
+
+    def _bar(self, reading, colour):
+        """A reading the core gave a fraction to: its text, with a slim gauge
+        under it.
+
+        The text is a plain label above the bar rather than drawn on it. Set as
+        the bar's own format it renders small and, once the fill reaches it, in
+        poor contrast against it - and the two toolkits put it in different
+        places, Qt inside the trough and GTK above it. Stacked this way the
+        figure stays full size and legible in both, and the bar is left to do
+        the one thing a bar is better at than a number: showing the proportion
+        at a glance.
+
+        The gauge shows what is *used* (printer_status.Reading.fraction) while
+        the text says what is free - the pair a disk gauge shows, and the pair
+        someone deciding whether a font will fit needs. Thousandths rather than
+        percent, so a nearly empty Flash does not round to a bar that reads as
+        empty when it is not.
+        """
+        holder = QWidget()
+        stack = QVBoxLayout(holder)
+        stack.setContentsMargins(0, 0, 0, 4)
+        stack.setSpacing(2)
+
+        text = QLabel(reading.value)
+        text.setWordWrap(True)
+        if colour:
+            text.setStyleSheet(f"color: {colour}; font-weight: bold;")
+        stack.addWidget(text)
+
+        bar = QProgressBar()
+        bar.setRange(0, 1000)
+        bar.setValue(round(reading.fraction * 1000))
+        bar.setTextVisible(False)
+        bar.setFixedHeight(8)
+        if colour:
+            # Only the filled part is coloured; the groove keeps the theme's
+            # own background so the bar stays legible in a dark one.
+            bar.setStyleSheet(
+                f"QProgressBar::chunk {{ background-color: {colour}; }}")
+        stack.addWidget(bar)
+        return holder
 
     # --- the other controls --------------------------------------------------
 

@@ -5658,25 +5658,79 @@ check("query_printer_specs(): model, firmware and resolution come off ~HI",
       [r.value for r in _spec.sections[0].readings[:3]]
       == ['ZTC ZT230-203dpi ZPL', 'V53.17.7Z', '203 dpi'],
       _spec.sections[0].readings)
-check("query_printer_specs(): flash free is grouped and named in bytes",
-      _spec.sections[1].readings[0].value
-      == '66,119,680 bytes free of 68,157,440 bytes',
-      _spec.sections[1].readings)
+check("query_printer_specs(): holds only what does not move",
+      [s.title for s in _spec.sections] == ['Printer', 'Wear'],
+      [s.title for s in _spec.sections])
 
-# The same reading, but with the wording a real printer actually sends.
-_real_flash_log = []
+# --- the two memory bars -----------------------------------------------------
+# RAM and Flash are one section and both re-asked every refresh: they answer the
+# same question, and both move for the same reason - a font or graphic uploaded
+# from this very app comes out of one or the other.
+_mem_log = []
 zpl_printer_io.send = _status_fake(
-    {'~HI': b'ZTC ZT230-203dpi ZPL,V53.17.7Z,8,8192KB,XML',
+    {'zpl.system_status': _SGD_CLEAN, '~HS': _HS_OK, '~HM': b'1024,0780,0032',
      'memory.flash_size': b'"67108864 Bytes"',
-     'memory.flash_free': b'"66369536 Bytes Free"'}, _real_flash_log)
+     'memory.flash_free': b'"66369536 Bytes Free"'}, _mem_log)
 try:
-    _real_flash = zpl_status.query_printer_specs('h', 9100)
+    _mem_act = zpl_status.query_printer_activity('h', 9100)
 finally:
     zpl_printer_io.send = _status_real_send
-check("query_printer_specs(): a real printer's 'Bytes Free' reads once, not twice",
-      _real_flash.sections[1].readings[0].value
-      == '66,369,536 bytes free of 67,108,864 bytes',
-      _real_flash.sections[1].readings[0].value)
+_mem = [s for s in _mem_act.sections if s.title == 'Memory'][0]
+_mem_rows = {r.label: r for r in _mem.readings}
+check("memory section: RAM and Flash are reported together",
+      [r.label for r in _mem.readings] == ['RAM', 'Flash', 'RAM installed'],
+      [r.label for r in _mem.readings])
+check("memory section: a real printer's 'Bytes Free' reads once, not twice",
+      _mem_rows['Flash'].value == '66,369,536 bytes free of 67,108,864 bytes',
+      _mem_rows['Flash'].value)
+# The bar is what is USED, while the text says what is free - a disk gauge.
+check("memory section: RAM's bar is the fraction in use, not the fraction free",
+      round(_mem_rows['RAM'].fraction, 3) == round((780 - 32) / 780, 3),
+      _mem_rows['RAM'].fraction)
+check("memory section: and RAM is measured against what the user may have, "
+      "not against what is installed",
+      _mem_rows['RAM'].value == '32 KB free of 780 KB', _mem_rows['RAM'].value)
+check("memory section: Flash's bar comes off its own two attributes",
+      round(_mem_rows['Flash'].fraction, 4)
+      == round((67108864 - 66369536) / 67108864, 4),
+      _mem_rows['Flash'].fraction)
+check("memory section: a memory under a tenth free is marked, one with room is not",
+      (_mem_rows['RAM'].level, _mem_rows['Flash'].level)
+      == (zpl_status.WARN, zpl_status.PLAIN),
+      (_mem_rows['RAM'].level, _mem_rows['Flash'].level))
+check("memory section: the installed figure is context, so it carries no bar",
+      _mem_rows['RAM installed'].fraction is None)
+
+# _usage(): the fraction both bars are drawn from.
+check("_usage(): is unit-free, so the printer's own wording does not matter",
+      zpl_status._usage('66369536 Bytes Free', '67108864 Bytes')
+      == zpl_status._usage('66369536', '67108864'))
+# A free figure larger than its total would draw a bar past its own end.
+check("_usage(): a free figure larger than the total is clamped, not trusted",
+      zpl_status._usage('900', '780') == 0.0)
+check("_usage(): no total, or a zero one, means no bar rather than a divide",
+      (zpl_status._usage('700', None), zpl_status._usage('700', '0'),
+       zpl_status._usage(None, '780')) == (None, None, None))
+
+# ^HW's footer gives what is free but never the total it is free out of, so the
+# fallback reading must not carry a bar drawn against a guessed denominator.
+_hw_only_log = []
+zpl_printer_io.send = _status_fake(
+    {'zpl.system_status': _SGD_CLEAN, '~HS': _HS_OK, '~HM': b'1024,0780,0700',
+     '^HWE:': (b'\r\n- DIR E:*.*\r\n* E:ANI.TTF 120404\r\n'
+               b'\r\n-  66119680 bytes free E: ONBOARD FLASH\r\n')},
+    _hw_only_log)
+try:
+    _hw_only = zpl_status.query_printer_activity('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+_hw_rows = [s for s in _hw_only.sections
+            if s.title == 'Memory'][0].readings
+check("memory section: the ^HW fallback reports free space with no bar, "
+      "since that footer never gives the total",
+      any(r.fraction is None and 'bytes free' in r.value
+          and 'object(s)' in r.value for r in _hw_rows),
+      [(r.label, r.value, r.fraction) for r in _hw_rows])
 check("query_printer_specs(): storage is asked as attributes, so an unfitted "
       "drive costs no ^HW timeout",
       not any('^HW' in payload for payload in _spec_log), _spec_log)
@@ -5720,7 +5774,7 @@ check("printer_status: Cancelled propagates rather than reading as unreachable",
 # cannot word it differently.
 _text = zpl_status.report_text(_spec, _silent_act)
 check("report_text(): carries every section title of every report given",
-      all(t in _text for t in ('Printer', 'Storage', 'Faults', 'Work', 'Memory')),
+      all(t in _text for t in ('Printer', 'Wear', 'Faults', 'Work', 'Memory')),
       _text[:120])
 check("report_text(): marks a fault and names what went unanswered",
       '<-- error' in _text and 'Not answered: ~HS' in _text, _text[-200:])

@@ -1409,10 +1409,28 @@ them, since a printer left in it (`~JD`) prints a hex dump of everything it
 receives, which looks like a ruined label rather than like a mode.
 
 **The report is split into what moves and what does not.** The specs — model,
-firmware, resolution, uptime, Flash, wear — are asked once per refresh; only the
-activity is re-asked on an auto-refresh tick, because the manual states outright
-that *"the total amount of RAM and maximum amount of RAM does not change after
-the printer is turned on"* and a model number never does.
+firmware, resolution, uptime, wear — are asked once per refresh; the faults, the
+work state and both memories are re-asked on an auto-refresh tick, because a
+model number never changes and a head-wear figure does not move while anyone
+watches.
+
+**RAM and Flash are one section, and each is drawn as a bar.** They answer the
+same question — how much room is left — and both move for the same reason: the
+manual notes a downloaded graphic, font or saved bitmap comes out of RAM, and
+Flash is where a font uploaded from this app actually lands (§10.4.1), so it is
+the one that drops when someone uses Printer → Fonts. **The bar shows what is
+*used* while its text says what is free**, which is the pair a disk gauge shows
+and the pair someone deciding whether a font will fit needs. The fraction is
+computed in the core, like the fault marks, so the two frontends cannot draw
+disagreeing bars; a reading with no fraction has no bar. RAM is measured against
+what the manual calls the maximum available to the user rather than against what
+is installed, since firmware holds some of the latter back permanently and a bar
+drawn against it would never fill and would read as healthier than the printer
+is — what is installed is still shown as a plain row, being the figure on the
+printer's own configuration label. The `^HW` fallback below carries no bar at
+all: that footer gives what is free but never the total it is free out of, and a
+bar drawn against a guessed denominator would be an invented figure rather than
+a reported one.
 
 **Where a figure can be had two ways, the Set/Get/Do attribute is asked first**,
 and not because it is newer. `~HQ` is supported on the Xi4/RXi4, ZM/RZ, S4M and
@@ -1429,8 +1447,8 @@ keyed on the wrong printer would defeat the session-printer change this window
 deliberately follows. Free space is read the same way for the same reason —
 `^HW`'s `bytes free` footer is the only *per-drive* figure ZPL offers, but it
 must be sent per device and an unfitted drive answers nothing, so probing all
-five would spend three timeouts per open on a typical printer; `memory.flash_*`
-is asked instead, with a single `^HW E:` as the fallback.
+five would spend three timeouts per refresh on a typical printer;
+`memory.flash_*` is asked instead, with a single `^HW E:` as the fallback.
 
 **Three outcomes are kept distinct**, as everywhere else in this layer: a
 connection that fails outright is "could not be reached" and costs one attempt,
