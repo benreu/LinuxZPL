@@ -886,6 +886,7 @@ one the model holds:
 | `^GB300,0,4` | a 300 x 4 rule: `w` and `h` are also **clamped up** to the thickness, so neither can be thinner than the border drawing it |
 | `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
 | `^BY3,3.0,150` | and a `^BC` that gives no height of its own is 150 dots tall |
+| `^FO,20,20` | x 0, y 20: both coordinates default to 0 (the manual's own spelling, page 127) |
 
 `^A0N,40` came back as `^A0N,36,20`, losing the height it did give, while the
 preview - which required nothing - drew it at 40. `^GB300` and `^GB,,4` were
@@ -1034,6 +1035,26 @@ A `^FO` opens a field and `^FS` closes it; everything between is gathered, and
 the element type is decided once the whole field has been read rather than at
 the first command that looks decisive - otherwise a `^FB` sitting between the
 font and the data loses the element.
+
+**The field origin is printer state, not part of one field.** It survives
+`^FS` and goes back to 0,0 at `^XA`, so a field with no `^FO`/`^FT` of its own
+opens at the last one set, as soon as a command that belongs to a field
+arrives. The manual's `^IS` example (page 243) prints both cases: its border
+has no `^FO` before it, and `^FDARTICLE#^FS` lands at the `^FO15,180` an empty
+field before it set. Opening fields only at a well-formed `^FO` dropped every
+command up to the `^FS`, silently, and the next save or print made it
+permanent. Two refinements keep this from inventing fields:
+
+- A `^FO` that meets a field with only its font, symbology or flags so far
+  places that field rather than ending it, so `^BCN,80^FO10,10^FD123^FS` is
+  one barcode. A field that already has data, a box or a graphic has lost its
+  `^FS`, and ends there as before.
+- `^FN#^FD` with no origin of its own is a value for the fields of that
+  number - the whole of a recall call after `^XF` - and is not also built as
+  a field.
+
+A save writes every such field with its origin spelled out, which prints the
+same.
 
 Parsing is deliberately tolerant: an unrecognised command is skipped rather
 than treated as an error, and missing parameters fall back to the defaults in
@@ -1224,6 +1245,12 @@ that is what the renderer's font registry, the search for a local `.ttf` and
 the collision check above are keyed on. Uploading is unaffected: a font this
 app stores still goes to `E:` as a `.TTF` (§10.4), wherever a label says its
 fonts live.
+
+**An `^A@` with no path means the last one that gave one.** "Once a value for
+`^A@` is defined, it represents that font until a new font name is specified
+by `^A@`." So `^A@N,20,20` after `^A@N,30,30,E:FOO.TTF` is FOO too, and a save
+writes that path on it. It does not make FOO the default for fields with no
+`^A` at all - that is `^CF`'s job, and the manual gives `^A@` no such role.
 
 A saved `.zpl` records only the object name and its path, never the font file.
 On load, the name is mapped back to an installed `.ttf` by deriving each
@@ -2194,10 +2221,6 @@ rather than requirements:
   machine can still find, whatever drive they are wanted on. Reassigning such
   an element's font in the designer drops the carried path and the new font
   follows the setting like any other.
-- **`^A@`'s carry-over is not implemented.** The manual says an `^A@` naming no
-  font keeps the one the previous `^A@` named; here it names none, and the
-  field falls back to `^CF`'s font as any other unnamed field does. Such a
-  command round-trips unchanged, so a saved file still says what it said.
 - **`^CC`, `^CT` and `^CD` are honoured by rewriting, not by parsing
   (§8.3), and a save drops them.** What that cannot express: a literal `,`
   inside a *parameter* while the delimiter is moved (`^A@N;40;40;E:A,B.TTF`)

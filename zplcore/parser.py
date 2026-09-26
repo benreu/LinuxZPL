@@ -146,6 +146,43 @@ DESIGNER_BAR_HEIGHT = 100
 STRUCTURAL = {'^XA', '^XZ', '^FS', '^FX', '^CI', '^CF', '^LH', '^PR', '^MD',
               '^LT', '^LS', '^PO', '^MN', '^MM', '^MT', '^JM', '^FW'}
 
+# The commands that say something about a field, and so open one at the
+# running field origin when no ^FO/^FT has opened it yet. The ^A fonts and the
+# ^B symbologies are matched by prefix in _belongs_to_field; ^BY is not a
+# field command, and is read before anything reaches that test.
+FIELD_COMMANDS = frozenset({'^FB', '^FR', '^GS', '^GB', '^GF', '^IM', '^XG',
+                            '^FN', '^SN', '^SF', '^FC', '^FH', '^FD', '^FV'})
+
+
+def _belongs_to_field(cmd: str) -> bool:
+    return cmd in FIELD_COMMANDS or cmd[:2] in ('^A', '^B')
+
+
+def read_field_origin(params: str) -> tuple:
+    """^FOx,y,z (and ^FT's same three) - as (x, y, justification or None).
+
+    The field origin is printer state rather than part of one field: it
+    survives ^FS, so a field with no ^FO of its own prints at the last one
+    set, and at 0,0 when none has been since ^XA. The manual's ^IS example
+    (page 243) prints both: its border has no ^FO anywhere before it, and
+    ^FDARTICLE#^FS lands at the ^FO15,180 an earlier, empty field set.
+
+    x and y each default to 0 when omitted, as the manual gives them, so
+    ^FO,20,20 (page 127's own spelling) is 0,20. Demanding two numbers did not
+    degrade such a field - it dropped every command up to its ^FS, silently,
+    and the next save or print made that permanent.
+    """
+    parts = params.split(',')
+
+    def number(index):
+        if len(parts) > index:
+            match = re.match(r'\s*(-?\d+)', parts[index])
+            if match:
+                return int(match.group(1))
+        return None
+
+    return number(0) or 0, number(1) or 0, number(2)
+
 
 def tokenise(zpl_content: str):
     """Every command in the source, as (name, parameters) pairs.
@@ -470,7 +507,7 @@ def read_field_table(tokens):
         elif cmd in ('^FD', '^FV') and pending is not None:
             table.set_value(pending, params)
             pending = None
-        elif cmd in ('^FS', '^FO', '^FT', '^XZ'):
+        elif cmd in ('^FS', '^FO', '^FT', '^XA', '^XZ'):
             pending = None
     return table
 
@@ -519,6 +556,20 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     default_justify = None
     home = (0, 0)           # the ^LH in force, which is not always the first
     seen_home = False
+    # The last ^FO/^FT, as (x, y, typeset, justification): where a field that
+    # names no origin of its own is placed. Kept across ^FS, reset at ^XA -
+    # see read_field_origin.
+    placed = _HOME_ORIGIN
+    # The last font ^A@ named by path, as (name, spec): the one a later ^A@
+    # that gives no path means - see read_font.
+    named_font = None
+
+    def open_field(own_origin):
+        opened = _new_field(0, 0, default_font, default_barcode,
+                            default_orientation)
+        _place(opened, placed, origin, default_justify)
+        opened['own_origin'] = own_origin
+        return opened
 
     for index, (cmd, params) in enumerate(tokens):
         if cmd == '^FX':
@@ -690,27 +741,30 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 field['bar_height'] = default_barcode['height']
             continue
 
-        if cmd in ('^FO', '^FT'):
-            # A field that never saw ^FS still ends here, at the next one
+        if cmd == '^XA':
+            # A new format starts from the printer's own field origin.
             pending = _flush(field, doc, renderer, pending)
-            match = re.match(r'\s*(-?\d+),(-?\d+)(?:,\s*(\d+))?', params)
-            field = _new_field(int(match.group(1)) + origin[0],
-                               int(match.group(2)) + origin[1],
-                               default_font, default_barcode,
-                               default_orientation) if match else None
+            field = None
+            placed = _HOME_ORIGIN
+            continue
+
+        if cmd in ('^FO', '^FT'):
             # ^FT places a field exactly as ^FO does, but names its baseline
             # rather than its top. Opening no field on it did not degrade such
             # a label - it dropped every field in it, so a file from another
             # tool opened completely empty.
-            if field is not None:
-                field['typeset'] = (cmd == '^FT')
-                # ^FO's own z wins; with none, whatever ^FW last set applies.
-                # ^FW is folded into each field rather than written back, so
-                # the inherited value is folded in here too, the way ^FW's
-                # orientation already lands on the field's own ^A.
-                field['justify'] = (int(match.group(3))
-                                    if match.group(3) is not None
-                                    else default_justify)
+            x, y, justify = read_field_origin(params)
+            placed = (x, y, cmd == '^FT', justify)
+            if field is not None and not _has_content(field):
+                # Only its font, symbology or flags so far - ^BCN,80^FO10,10
+                # ^FD123^FS is one barcode. Ending it here kept the ^FD and
+                # lost the ^BC, which turned the barcode into nine-dot text.
+                _place(field, placed, origin, default_justify)
+                field['own_origin'] = True
+            else:
+                # A field that never saw ^FS still ends here, at the next one
+                pending = _flush(field, doc, renderer, pending)
+                field = open_field(True)
             continue
 
         if cmd == '^FS':
@@ -719,11 +773,17 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             continue
 
         if field is None:
-            continue
+            if not _belongs_to_field(cmd):
+                continue
+            # No ^FO/^FT since the last ^FS: the field is at the last origin
+            # set, which the printer keeps - see read_field_origin.
+            field = open_field(False)
 
         if cmd.startswith('^A'):
             field['font'] = read_font(cmd[2], params, field['default_font'],
-                                      default_orientation)
+                                      default_orientation, named_font)
+            if cmd == '^A@' and field['font']['spec']:
+                named_font = (field['font']['name'], field['font']['spec'])
         elif cmd == '^FB':
             field['block'] = FieldBlock.from_zpl(params)
         elif cmd == '^FR':
@@ -808,7 +868,38 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'justify': None,
             'symbology': None,
-            'reverse': False}
+            'reverse': False, 'own_origin': True}
+
+
+# Where a field is placed when no ^FO/^FT has been read since ^XA
+_HOME_ORIGIN = (0, 0, False, None)
+
+
+def _place(field, placed, origin, default_justify) -> None:
+    """Put a field at an origin read by read_field_origin, plus ^LH/^LS's."""
+    x, y, typeset, justify = placed
+    field['x'], field['y'] = x + origin[0], y + origin[1]
+    field['typeset'] = typeset
+    # ^FO's own z wins; with none, whatever ^FW last set applies. ^FW is
+    # folded into each field rather than written back, so the inherited value
+    # is folded in here too, the way ^FW's orientation already lands on the
+    # field's own ^A.
+    field['justify'] = justify if justify is not None else default_justify
+
+
+def _has_content(field) -> bool:
+    """Whether a field already holds something to draw, rather than only the
+    font, symbology or flags it is to be drawn with.
+
+    A field with content that meets another ^FO has lost its ^FS, and ends
+    there. One without is still being described, and the ^FO only places it.
+    """
+    return (field['data'] is not None or field['frame'] is not None
+            or field['graphic'] is not None
+            or field['stored_graphic'] is not None
+            or field['field_number'] is not None
+            or field['serial_increment'] is not None
+            or field['clock_format'])
 
 
 def _read_default_font(params: str, current: dict) -> dict:
@@ -941,7 +1032,7 @@ def _read_print_quantity(params: str) -> tuple:
 
 
 def read_font(code: str, params: str, default_font=None,
-              default_orientation=DEFAULT_ORIENTATION) -> dict:
+              default_orientation=DEFAULT_ORIENTATION, named=None) -> dict:
     """^A<code><orientation>,<h>,<w> - the font a field names for itself.
 
     The designator is the command's second character, so every built-in font
@@ -958,6 +1049,10 @@ def read_font(code: str, params: str, default_font=None,
     the one element that could not be turned: it loaded flat and saved flat.
     Reading an omitted one as N was the quieter half of the same fault: under
     ^FWR the manual's own ^A0,25,20 is turned, and came back upright.
+
+    `named` is the (name, spec) the last ^A@ with a path gave, which an ^A@
+    with none goes on meaning: "Once a value for ^A@ is defined, it represents
+    that font until a new font name is specified by ^A@."
     """
     current = dict(default_font or DEFAULT_FONT)
     # The font file is split off first: its device path carries commas of its
@@ -983,6 +1078,7 @@ def read_font(code: str, params: str, default_font=None,
 
     name, spec = None, None
     if code == '@':
+        name, spec = named or (None, None)
         # ^A@o,h,w,d:f.x - the path is the fourth parameter, taken whole and
         # kept as written, since that is what is written back (see
         # TextElement.to_zpl). Two of its three parts used to be thrown away
@@ -1182,6 +1278,13 @@ def _build_element(field, doc, renderer):
     data no longer loses the element.
     """
     x, y = field['x'], field['y']
+
+    if field['field_number'] is not None and not field['own_origin']:
+        # ^FN#^FD with no ^FO/^FT of its own is not a field but a value for
+        # the fields of that number - the whole of a recall call after ^XF -
+        # and read_field_table has already given it to them. Building it drew
+        # an extra copy of the value at the running origin.
+        return None
 
     # True for any field whose value the printer supplies rather than the
     # file - a recalled ^FN, an incrementing ^SN, or a clock-substituted ^FC.

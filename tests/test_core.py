@@ -3715,6 +3715,100 @@ check("rescaling carries the ^FT offset with the dots",
       "^FT75,450" in rescaled.elements[0].to_zpl(),
       rescaled.elements[0].to_zpl().replace('\n', ' '))
 
+# --- the field origin is printer state, not part of one field ---------------
+
+# The manual's own ^IS example (page 243), as printed there. Its border has no
+# ^FO before it, and ARTICLE# has none of its own: it prints at the ^FO15,180
+# an empty field before it set. Both used to be dropped without a word.
+_is_example = ("^XA\n^LH10,15^FWN^BY3,3,85^CFD,36\n^GB430,750,4^FS\n"
+               "^FO10,170^GB200,144,2^FS\n^FO10,318^GB410,174,2^FS\n"
+               "^FO212,170^GB206,144,2^FS\n^FO10,498^GB200,120,2^FSR\n"
+               "^FO212,498^GB209,120,2^FS\n^FO4,150^GB422,10,10^FS\n"
+               "^FO135,20^A0,70,60\n^FDZEBRA^FS\n"
+               "^FO80,100^A0,40,30\n^FDTECHNOLOGIES CORP^FS\n"
+               "^FO15,180^CFD,18,10^FS\n^FDARTICLE#^FS\n"
+               "^FO218,180\n^FDLOCATION^FS\n^FO15,328\n^FDDESCRIPTION^FS\n"
+               "^FO15,508\n^FDREQ.NO.^FS\n^FO220,508\n^FDWORK NUMBER^FS\n"
+               "^FO15,630^AD,36,20\n^FDCOMMENTS:^FS\n^XZ")
+_isd = zpl_parser.parse_zpl(_is_example)[0]
+check("the manual's ^IS example opens with all 15 of its fields",
+      len(_isd.elements) == 15, len(_isd.elements))
+_border = _isd.elements[0]
+check("the border with no ^FO is at 0,0, plus ^LH",
+      isinstance(_border, FrameElement)
+      and (_border.x, _border.y, _border.width) == (10, 15, 430),
+      (type(_border).__name__, _border.x, _border.y))
+_article = [e for e in _isd.elements
+            if getattr(e, 'text', None) == 'ARTICLE#']
+check("ARTICLE# prints at the origin an earlier, empty field set",
+      len(_article) == 1 and (_article[0].x, _article[0].y) == (25, 195)
+      and _article[0].font_code == 'D',
+      [(e.x, e.y, e.font_code) for e in _article])
+_is_saved = _isd.to_zpl()
+check("and saves every one with its origin spelled out, stably",
+      zpl_parser.parse_zpl(_is_saved)[0].to_zpl() == _is_saved
+      and len(zpl_parser.parse_zpl(_is_saved)[0].elements) == 15)
+check("the preview draws the border where the model has it",
+      _preview_ink("^XA^GB100,80,4^FS^XZ", 200, 200)
+      == _preview_ink("^XA^FO0,0^GB100,80,4^FS^XZ", 200, 200) == (0, 0, 100, 80),
+      _preview_ink("^XA^GB100,80,4^FS^XZ", 200, 200))
+
+# Page 127's spelling: an omitted coordinate is 0, not a reason to drop the field
+_qr = zpl_parser.parse_zpl("^XA^FO,20,20^BQ,2,10^FDMM,Atest^FS^XZ")[0]
+check("^FO,20,20 opens a field at 0,20",
+      len(_qr.elements) == 1 and isinstance(_qr.elements[0], BarcodeElement)
+      and (_qr.elements[0].x, _qr.elements[0].y) == (0, 20),
+      [(type(e).__name__, e.x, e.y) for e in _qr.elements])
+
+# A barcode command before its ^FO belongs to the field the ^FO places. Ending
+# the field at the ^FO kept the ^FD and lost the ^BC: nine-dot text.
+_early = zpl_parser.parse_zpl("^XA^BCN,80^FO10,10^FD123^FS^XZ")[0]
+check("a ^BC ahead of its ^FO is still a barcode, at the ^FO",
+      len(_early.elements) == 1
+      and isinstance(_early.elements[0], BarcodeElement)
+      and (_early.elements[0].x, _early.elements[0].y) == (10, 10),
+      [(type(e).__name__, e.x, e.y) for e in _early.elements])
+check("and the preview draws the same barcode",
+      _preview_ink("^XA^BCN,80^FO10,10^FD123^FS^XZ", 300, 200)
+      == _preview_ink("^XA^FO10,10^BCN,80^FD123^FS^XZ", 300, 200),
+      _preview_ink("^XA^BCN,80^FO10,10^FD123^FS^XZ", 300, 200))
+
+# A field that lost its ^FS still ends at the next ^FO
+_unended = zpl_parser.parse_zpl("^XA^FO10,10^FDA^FO20,20^FDB^FS^XZ")[0]
+check("a field with data ends at the next ^FO, as before",
+      [(e.x, e.y, e.text) for e in _unended.elements]
+      == [(10, 10, 'A'), (20, 20, 'B')],
+      [(e.x, e.y, e.text) for e in _unended.elements])
+
+_two = zpl_parser.parse_zpl(
+    "^XA^FO50,60^FDa^FS^XZ\n^XA^GB40,40,2^FS^XZ")[0]
+check("^XA puts the field origin back at 0,0",
+      (_two.elements[1].x, _two.elements[1].y) == (0, 0),
+      [(e.x, e.y) for e in _two.elements])
+
+_homed = zpl_parser.parse_zpl("^XA^FO10,10^FDa^FS^LH30,40^FDb^FS^XZ")[0]
+check("a field with no ^FO takes the ^LH in force when it opens",
+      (_homed.elements[1].x, _homed.elements[1].y) == (40, 50),
+      [(e.x, e.y) for e in _homed.elements])
+
+# ^FN#^FD with no origin is a value for the fields of that number - a recall
+# call is nothing else - so it must not also become a field of its own.
+_values = "^XA^XFR:SAMPLE.GRF^FN1^FDhello^FS^XZ"
+check("an origin-less ^FN value is not drawn as a field",
+      zpl_parser.parse_zpl(_values)[0].elements == []
+      and _preview_ink(_values, 200, 200) is None,
+      zpl_parser.parse_zpl(_values)[0].elements)
+
+# "Once a value for ^A@ is defined, it represents that font until a new font
+# name is specified by ^A@."
+_named_font = zpl_parser.parse_zpl(
+    "^XA^FO0,0^A@N,30,30,E:FOO.TTF^FDa^FS"
+    "^FO0,50^A@N,20,20^FDb^FS^FO0,90^A0N,20,20^FDc^FS^XZ")[0]
+check("an ^A@ with no path goes on meaning the last one named",
+      [e.printer_font_spec for e in _named_font.elements]
+      == ['E:FOO.TTF', 'E:FOO.TTF', None],
+      [e.printer_font_spec for e in _named_font.elements])
+
 # --- a symbology this designer cannot draw is not text ----------------------
 
 # ^GS draws a glyph from the symbol font. It is the same trap as an unsupported

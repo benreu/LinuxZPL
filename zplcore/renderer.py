@@ -5,8 +5,7 @@ Renders ZPL commands to PIL Image objects for display.
 """
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
-import re
-from typing import Tuple, List, Optional
+from typing import List, Optional
 from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphics, parser, textraster, transforms
 from .model import BarcodeElement, FieldBlock, FrameElement, TextElement
 
@@ -76,6 +75,17 @@ class ZPLRenderer:
         self.custom_font_path: Optional[str] = None
         self.current_field_font_path: Optional[str] = None
         self.font_registry: dict = {}
+        # The last ^FO/^FT as the file wrote it, before ^LH/^LS: printer state
+        # that outlives ^FS, and places every field that names no origin of its
+        # own - see parser.read_field_origin.
+        self.placed = (0, 0)
+        # Whether the field being read had a ^FO/^FT of its own, and whether
+        # it carries an ^FN - the two together decide whether it is a field
+        # or a value for one, as parser._build_element does.
+        self.own_origin = False
+        self.numbered = False
+        # The last (name, spec) an ^A@ gave a path for - see parser.read_font
+        self.named_font = None
 
     def set_font(self, font_path: str):
         self.custom_font_path = font_path
@@ -122,11 +132,6 @@ class ZPLRenderer:
             except (IOError, OSError):
                 self.font_cache[cache_key] = ImageFont.load_default()
         return self.font_cache[cache_key]
-    
-    def _parse_position(self, x: str, y: str) -> Tuple[int, int]:
-        """Convert ZPL position values to pixels."""
-        # ZPL coordinates are in dots (1/203 inch at 203 DPI)
-        return (int(x), int(y))
     
     def _render_barcode(self, barcode_value: str, x: int, y: int, height: int):
         """Draw a barcode through the same element the canvas draws.
@@ -447,6 +452,8 @@ class ZPLRenderer:
         # ^FO/^FT's third parameter, and the ^FW default behind it
         self.current_justify = None
         self.default_justify = None
+        self._start_format()
+        self.named_font = None
         self.transform = transforms.LabelTransform()
         
         # Parse and execute ZPL commands
@@ -504,6 +511,79 @@ class ZPLRenderer:
             commands.append(current_cmd)
         return commands
     
+    def _start_format(self):
+        """^XA: no field open, and the field origin back at 0,0."""
+        self.placed = (0, 0)
+        self._place()
+        self._reset_field()
+
+    def _place(self):
+        """Put the field at the last ^FO/^FT, plus ^LH/^LS's offset."""
+        self.current_x = self.placed[0] + self.origin[0]
+        self.current_y = self.placed[1] + self.origin[1]
+
+    def _has_content(self) -> bool:
+        """Whether the open field holds something to draw - see
+        parser._has_content, which this answers the same way."""
+        return self.field_data is not None or self.pending_frame is not None
+
+    def _reset_field(self):
+        """What one field set and the next must not inherit.
+
+        Cleared when a field ends rather than when the next ^FO arrives,
+        because a field's ^A or barcode command may come before its ^FO -
+        clearing at the ^FO turned such a barcode into text.
+        """
+        self.field_data = None
+        self.current_block = None
+        self.unsupported_field = False
+        self.current_reverse = False
+        self.hex_indicator = None
+        self.pending_frame = None
+        self.is_barcode_mode = False
+        self.barcode_params = {}
+        self.own_origin = False
+        self.numbered = False
+        # A field names its own font with ^A or inherits ^CF's, and a printer
+        # starts every field from the latter.
+        self._use_default_font()
+
+    def _end_field(self):
+        """^FS: draw the field that has been read, then clear it."""
+        if self.numbered and not self.own_origin:
+            # ^FN#^FD with no ^FO/^FT of its own is a value for the fields of
+            # that number, which read_field_table gave them - not a field.
+            self._reset_field()
+            return
+        if self.pending_frame is not None:
+            self._render_frame(self.pending_frame)
+            self.pending_frame = None
+        if self.unsupported_field:
+            # Drawing the ^FD would put the barcode's data on the label as
+            # text, which is exactly what the parser no longer does.
+            self.unsupported_field = False
+            self.field_data = None
+            self.current_block = None
+        elif self.field_data is not None:
+            if self.current_block is not None and not self.is_barcode_mode:
+                self._render_block(self.field_data)
+                self.current_block = None
+            elif self.is_barcode_mode:
+                # Render as barcode
+                self._render_barcode(self.field_data, self.current_x,
+                                     self.current_y, self.barcode_height)
+                self.is_barcode_mode = False
+                self.barcode_orientation = ''
+                self.barcode_options = ()
+                self.barcode_symbology = 'code128'
+                self.barcode_params = {}
+                self.barcode_magnification = None
+                self.current_block = None
+            else:
+                self._render_text(self.field_data)
+            self.field_data = None
+        self._reset_field()
+
     def _execute_command(self, cmd: str):
         """Execute a single ZPL command."""
         if not cmd or len(cmd) < 2:
@@ -513,8 +593,12 @@ class ZPLRenderer:
         params = cmd[3:] if len(cmd) > 3 else ""
         
         if command == 'XA':
-            # Start format
-            pass
+            # A new format starts from the printer's own field origin. A field
+            # the last one left without ^FS still ends, as it does in the
+            # parser.
+            if self._has_content():
+                self._end_field()
+            self._start_format()
         elif command == 'XZ':
             # End format
             pass
@@ -552,28 +636,28 @@ class ZPLRenderer:
                 self.transform.mirror = transforms.read_flag(params)
             else:
                 self.transform.reverse = transforms.read_flag(params)
-            # ^LH is a running origin - it affects only the fields after it.
+            # ^LH is a running origin - it affects only the fields after it,
+            # which includes one that will open at the last ^FO without one
+            # of its own.
             self.origin = self.transform.field_offset()
+            if not self._has_content():
+                self._place()
         elif command in ('FO', 'FT'):
             # Field origin: ^FOx,y names the top-left, ^FTx,y the baseline.
-            match = re.match(r'(-?\d+),(-?\d+)(?:,\s*(\d+))?', params)
-            if match:
-                self.current_x, self.current_y = self._parse_position(match.group(1), match.group(2))
-                self.current_x += self.origin[0]
-                self.current_justify = (int(match.group(3))
-                                        if match.group(3) is not None
-                                        else self.default_justify)
-                self.current_y += self.origin[1]
-                self.typeset = (command == 'FT')
-                self.unsupported_field = False
-                self.current_reverse = False
-                self.hex_indicator = None
-                self.pending_frame = None
-                self.is_barcode_mode = False
-                self.barcode_params = {}
-                # A field names its own font with ^A or inherits ^CF's, and a
-                # printer starts every field from the latter.
-                self._use_default_font()
+            # Read the parser's way, so an omitted coordinate is 0 in both.
+            x, y, justify = parser.read_field_origin(params)
+            if self._has_content():
+                # A field that never saw ^FS still ends here, at the next one.
+                # One with only its font, symbology or flags so far is still
+                # being described, and the ^FO only places it -
+                # ^BCN,80^FO10,10^FD123^FS is one barcode, as in the parser.
+                self._end_field()
+            self.placed = (x, y)
+            self._place()
+            self.current_justify = (justify if justify is not None
+                                    else self.default_justify)
+            self.typeset = (command == 'FT')
+            self.own_origin = True
         elif command == 'FH':
             # Field hex indicator: ^FHa marks a-XX escapes in the ^FD that
             # follows, decoded here since the preview never re-saves ZPL.
@@ -589,6 +673,7 @@ class ZPLRenderer:
             # placeholder because it answers "what am I editing".
             read = fields.read(params)
             if read is not None:
+                self.numbered = True
                 self.field_data = self.fields.value(read[0]) or ''
         elif command[0] == 'A':
             # ^A<font><orientation>,h,w - ^A0 is the scalable font most other
@@ -597,7 +682,9 @@ class ZPLRenderer:
             # patterns here, which is what let the preview and the model
             # disagree about how wide ^A0N,40 is.
             font = parser.read_font(command[1], params, self.default_font,
-                                    self.default_orientation)
+                                    self.default_orientation, self.named_font)
+            if command[1] == '@' and font['spec']:
+                self.named_font = (font['name'], font['spec'])
             self.current_font_orientation = font['orientation']
             self.current_font_size = font['height']
             self.current_font_width = font['width']
@@ -637,34 +724,7 @@ class ZPLRenderer:
             # Field block: the text that follows is wrapped into it
             self.current_block = FieldBlock.from_zpl(params)
         elif command == 'FS':
-            # End field: render current field data
-            if self.pending_frame is not None:
-                self._render_frame(self.pending_frame)
-                self.pending_frame = None
-            if self.unsupported_field:
-                # Drawing the ^FD would put the barcode's data on the label as
-                # text, which is exactly what the parser no longer does.
-                self.unsupported_field = False
-                self.field_data = None
-                self.current_block = None
-            elif self.field_data is not None:
-                if self.current_block is not None and not self.is_barcode_mode:
-                    self._render_block(self.field_data)
-                    self.current_block = None
-                elif self.is_barcode_mode:
-                    # Render as barcode
-                    self._render_barcode(self.field_data, self.current_x,
-                                         self.current_y, self.barcode_height)
-                    self.is_barcode_mode = False
-                    self.barcode_orientation = ''
-                    self.barcode_options = ()
-                    self.barcode_symbology = 'code128'
-                    self.barcode_params = {}
-                    self.barcode_magnification = None
-                    self.current_block = None
-                else:
-                    self._render_text(self.field_data)
-                self.field_data = None
+            self._end_field()
         elif command == 'GF':
             # Graphic field: ^GFa,total,total,bytes_per_row,<data>
             self._render_graphic(params)
