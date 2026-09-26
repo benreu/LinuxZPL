@@ -12,19 +12,20 @@ from typing import Optional
 
 from PIL import Image as PILImage
 
-from PySide2.QtCore import Qt
-from PySide2.QtGui import QFont, QFontMetrics, QPixmap
+from PySide2.QtCore import Qt, QTimer
+from PySide2.QtGui import (QFont, QFontMetrics, QGuiApplication,
+                          QPixmap)
 from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
-                               QFormLayout, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QListWidget, QMessageBox,
-                               QPlainTextEdit, QPushButton, QSpinBox,
-                               QDoubleSpinBox, QTreeWidget, QTreeWidgetItem,
-                               QVBoxLayout, QWidget)
+                               QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+                               QLabel, QLineEdit, QListWidget, QMessageBox,
+                               QPlainTextEdit, QPushButton, QScrollArea,
+                               QSpinBox, QDoubleSpinBox, QTreeWidget,
+                               QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
-                     graphic_store, printer_io, printer_objects, textraster,
-                     workflow)
+                     graphic_store, printer_io, printer_objects,
+                     printer_status, textraster, workflow)
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
                            BARCODE_MODES, BARCODE_ORIENTATIONS,
                            BARCODE_PARAMETERS,
@@ -2190,6 +2191,213 @@ class PrinterConsoleDialog(QDialog):
 
         self._busy.run(lambda cancel: printer_io.send_command(
             address, port, text, cancel=cancel), done)
+
+
+class PrinterStatusDialog(QDialog):
+    """What the printer says about its own state - faults, what it is working
+    on, memory, and how its head is wearing.
+
+    Non-modal and a singleton, like PrinterConsoleDialog and for the same
+    reason plus one more: auto-refresh is only useful if the user can keep
+    working while it polls. That means it outlives a printer change made
+    elsewhere, so address and port are never captured at construction - every
+    query reads them from `parent` afresh, the way the console's _on_send does.
+
+    Two queries, not one, matching the core's split (zplcore/printer_status.py):
+    the specs are asked once, since a model number and a head-wear figure do not
+    move while anyone watches, and only the activity is re-asked on a tick.
+
+    Layout is deliberately the same shape as the GTK window's - one group box
+    per section, label and value per row - so the two frontends read
+    identically. Neither decides what is bad: the core marks each reading and
+    this only colours it (see printer_status.PLAIN/OK/WARN/ERROR).
+    """
+
+    # How a reading's level is shown. Chosen to survive a dark theme, which a
+    # palette colour would not: these are set on the value label only, never on
+    # the whole row, so a marked figure is legible beside an unmarked one.
+    _COLOURS = {printer_status.ERROR: '#c0392b', printer_status.WARN: '#b9770e',
+                printer_status.OK: '#1e8449'}
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Printer Status")
+        self.resize(460, 620)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self._parent = parent
+        self._specs = None
+        self._activity = None
+
+        layout = QVBoxLayout(self)
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        # The sections go in a scroll area: how many rows a report has depends
+        # on how many faults the printer is reporting, so the height cannot be
+        # known here.
+        self._sections = QVBoxLayout()
+        self._sections.setContentsMargins(0, 0, 0, 0)
+        holder = QWidget()
+        holder.setLayout(self._sections)
+        scroll = QScrollArea()
+        scroll.setWidget(holder)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        layout.addWidget(scroll, 1)
+
+        row = QHBoxLayout()
+        self._refresh_btn = QPushButton("Refresh")
+        self._copy_btn = QPushButton("Copy")
+        self._copy_btn.setEnabled(False)
+        row.addWidget(self._refresh_btn)
+        row.addWidget(self._copy_btn)
+        self._auto = QCheckBox("Auto-refresh every")
+        row.addWidget(self._auto)
+        self._interval = QSpinBox()
+        self._interval.setRange(2, 300)
+        self._interval.setValue(5)
+        self._interval.setSuffix(" s")
+        row.addWidget(self._interval)
+        row.addStretch(1)
+        self._busy = BusyBar((self._refresh_btn,), self._status.setText, self)
+        row.addWidget(self._busy)
+        layout.addLayout(row)
+
+        close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        close.rejected.connect(self.reject)
+        layout.addWidget(close)
+
+        # Parented to the dialog, so it is destroyed with it - unlike GTK's
+        # GLib source, which the main loop owns and which has to be removed by
+        # hand (see on_printer_status_clicked in gtkui/window.py).
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+
+        self._refresh_btn.clicked.connect(self.refresh)
+        self._copy_btn.clicked.connect(self._on_copy)
+        self._auto.toggled.connect(self._on_auto_toggled)
+        self._interval.valueChanged.connect(self._on_interval_changed)
+        self.refresh()
+
+    def reject(self):
+        # stop() before abandon(): reject() runs before deletion, and a timeout
+        # already queued would otherwise start one more query into a dialog
+        # that is being torn down.
+        self._timer.stop()
+        self._busy.abandon()
+        super().reject()
+
+    # --- refreshing ---------------------------------------------------------
+
+    def _printer(self):
+        """The printer in effect now, not the one in effect when this opened."""
+        return self._parent.printer_address, self._parent.printer_port
+
+    def refresh(self):
+        """Ask everything - the specs as well as the activity."""
+        address, port = self._printer()
+        self._status.setText(f"Asking {address}...")
+
+        def work(cancel):
+            specs = printer_status.query_printer_specs(address, port,
+                                                       cancel=cancel)
+            self._busy.report(f"Asking {address} what it is doing...")
+            activity = printer_status.query_printer_activity(address, port,
+                                                             cancel=cancel)
+            return specs, activity
+
+        self._busy.run(work, lambda result, error:
+                       self._done(result, error, address, port))
+
+    def _tick(self):
+        """One auto-refresh. Only the activity, and only when nothing else is
+        already out - a tick is skipped rather than queued, so a printer slower
+        than the interval cannot build a backlog of requests."""
+        if self._busy.running:
+            return
+        address, port = self._printer()
+        self._busy.run(
+            lambda cancel: (self._specs,
+                            printer_status.query_printer_activity(
+                                address, port, cancel=cancel)),
+            lambda result, error: self._done(result, error, address, port))
+
+    def _done(self, result, error, address, port):
+        if isinstance(error, printer_io.Cancelled):
+            self._status.setText("Cancelled.")
+            return
+        if error is not None:
+            self._status.setText(f"Could not ask the printer: {error}")
+            return
+        specs, activity = result
+        if specs is None and activity is None:
+            # Nothing answered at all. The sections already on screen are from
+            # an earlier, better moment, so they are left alone rather than
+            # cleared - a panel that empties itself when a printer is unplugged
+            # loses the reading that would explain why.
+            self._status.setText(f"Could not reach the printer at "
+                                 f"{address}:{port}.")
+            return
+        self._specs, self._activity = specs, activity
+        self._show()
+        self._copy_btn.setEnabled(True)
+        unanswered = sorted({name for report in (specs, activity)
+                             if report is not None
+                             for name in report.unanswered})
+        note = (" \u2014 no answer to " + ", ".join(unanswered)) if unanswered else ""
+        self._status.setText(f"{address}:{port}{note}")
+
+    def _show(self):
+        """Rebuild the section list from the two reports held."""
+        while self._sections.count():
+            item = self._sections.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for report in (self._activity, self._specs):
+            if report is None:
+                continue
+            for section in report.sections:
+                self._sections.addWidget(self._section_box(section))
+        self._sections.addStretch(1)
+
+    def _section_box(self, section):
+        box = QGroupBox(section.title)
+        form = QFormLayout(box)
+        form.setLabelAlignment(Qt.AlignLeft)
+        for reading in section.readings:
+            value = QLabel(reading.value)
+            value.setWordWrap(True)
+            colour = self._COLOURS.get(reading.level)
+            if colour:
+                value.setStyleSheet(f"color: {colour}; font-weight: bold;")
+            form.addRow(QLabel(reading.label + ":"), value)
+        if section.note:
+            note = QLabel(section.note)
+            note.setWordWrap(True)
+            note.setStyleSheet("font-style: italic;")
+            form.addRow(note)
+        return box
+
+    # --- the other controls --------------------------------------------------
+
+    def _on_auto_toggled(self, on):
+        if on:
+            self._timer.start(self._interval.value() * 1000)
+        else:
+            self._timer.stop()
+
+    def _on_interval_changed(self, seconds):
+        if self._timer.isActive():
+            self._timer.start(seconds * 1000)
+
+    def _on_copy(self):
+        """The whole report as text, rendered by the core so this and the GTK
+        window put identical text on the clipboard."""
+        text = printer_status.report_text(self._specs, self._activity)
+        QGuiApplication.clipboard().setText(text)
+        self._status.setText("Report copied to the clipboard.")
 
 
 # --- prompts ----------------------------------------------------------------

@@ -1165,6 +1165,12 @@ with whichever printer will render it.
 | Upload font | `~DY<d>:<NAME>,A,TT,<size>,<size>,` followed by the raw font file bytes | none |
 | Delete font | `^XA^ID <d>:<NAME>.TTF^FS^XZ` (no space) | none |
 | Query resolution | `~HI` | model, firmware and head resolution in dots per mm |
+| Fault flags | `! U1 getvar "zpl.system_status"`, else `~HQES` | error and warning flag groups, as eight hex nibbles each |
+| Printer state | `~HS` | three `<STX>`-wrapped strings - see §10.7 |
+| RAM | `~HM` | total, maximum and available RAM in kilobytes |
+| Flash | `! U1 getvar "memory.flash_size"` / `"memory.flash_free"` | byte counts |
+| Uptime | `! U1 getvar "device.uptime"` | `00 days 02 hours 45 mins 30 secs` |
+| Wear | `! U1 getvar "odometer.total_print_length"` / `"odometer.headclean"` / `"odometer.headnew"`, else `~HQOD` and `~HQPH` | a distance in the printer's own units |
 
 Reads use a 5 s timeout to first data, then a short 0.5 s timeout between
 chunks, since a printer that has started answering sends the rest promptly.
@@ -1367,6 +1373,84 @@ same timeout the other managers use. A reply that is not valid UTF-8 (e.g.
 the bytes of a retrieved object) is shown with replacement characters
 rather than failing - this is a diagnostic view, not a retrieval path;
 Objects → Retrieve already exists for getting bytes back losslessly.
+
+### 10.7 Printer status
+
+**Printer → Status…** reports what the printer says about *itself* — the faults
+it is raising, what it is working on, how much memory is left, and how its head
+is wearing. It is the diagnostic counterpart to the three managers above: they
+answer "is my font there", this answers "why did that not print". The host
+machine is deliberately out of scope; nothing here reports the designer's own
+CPU or memory, because neither explains a label.
+
+**The fault flags are asked before `~HS`, and that order is the feature.** The
+ZPL manual states that the printer *"will not send a response to the host if the
+printer is in one of these conditions: MEDIA OUT • RIBBON OUT • HEAD OPEN •
+REWINDER FULL • HEAD OVER-TEMPERATURE"* — the five states most worth reporting.
+A panel built on `~HS` alone therefore goes blank exactly when something is
+wrong. `~HQES` and the Set/Get/Do attribute `zpl.system_status` carry no such
+restriction, so they are asked first and `~HS`'s silence is then presented as a
+finding in its own right, with a sentence naming the five states. That sentence
+claims the flags say *which* only when a flag was actually raised: **a full
+rewinder has no flag in either table**, so a printer silenced by one reports
+silence and all-zero flags together, and the note says so rather than sending
+the user hunting for a fault the printer never reported.
+
+**There is no printhead temperature anywhere in ZPL**, so none is shown. No
+`getvar` reports one; `~HD`'s reply is documented only as a picture of a
+terminal, with no field layout; `~HB` gives a head *voltage* and a battery
+temperature, and only on mobile printers. Temperature appears solely as the
+under/over **flags** of `~HS` and `~HQES`. Equally, a Zebra reports no processor
+activity of any kind, so "what it is doing" is its **work state**: paused,
+receive buffer full, formats queued, partial format in progress, labels
+remaining in the batch, label waiting at the peeler, images held in memory —
+each one field of `~HS`. Communications diagnostic mode is called out among
+them, since a printer left in it (`~JD`) prints a hex dump of everything it
+receives, which looks like a ruined label rather than like a mode.
+
+**The report is split into what moves and what does not.** The specs — model,
+firmware, resolution, uptime, Flash, wear — are asked once per refresh; only the
+activity is re-asked on an auto-refresh tick, because the manual states outright
+that *"the total amount of RAM and maximum amount of RAM does not change after
+the printer is turned on"* and a model number never does.
+
+**Where a figure can be had two ways, the Set/Get/Do attribute is asked first**,
+and not because it is newer. `~HQ` is supported on the Xi4/RXi4, ZM/RZ, S4M and
+G-Series; `zpl.system_status` and the odometer attributes on the ZT, ZD, ZQ, QLn
+and iMZ ranges — two nearly disjoint generations, so neither is the other's
+natural fallback. What breaks the tie is the cost of being wrong: an attribute a
+printer has not got is refused with `?` *at once*, whereas an unsupported `~HQ`
+sub-command is documented as *ignored*, which cannot be told from a slow printer
+until the read times out. So the cheap-to-refuse form is tried first and the
+`~HQ` form sent only if it gave nothing, and a printer of either generation
+fills the panel without spending a timeout to discover which it is. The choice
+is never cached: it would have to be keyed per address to be safe, and a cache
+keyed on the wrong printer would defeat the session-printer change this window
+deliberately follows. Free space is read the same way for the same reason —
+`^HW`'s `bytes free` footer is the only *per-drive* figure ZPL offers, but it
+must be sent per device and an unfitted drive answers nothing, so probing all
+five would spend three timeouts per open on a typical printer; `memory.flash_*`
+is asked instead, with a single `^HW E:` as the fallback.
+
+**Three outcomes are kept distinct**, as everywhere else in this layer: a
+connection that fails outright is "could not be reached" and costs one attempt,
+not one timeout per command; a command that answers nothing is named in the
+status line (*"— no answer to ~HS"*) while the rest of the report still stands;
+and a printer that answers "no faults" is reported as healthy, never as silent.
+A refresh that reaches nothing leaves the readings already on screen alone
+rather than clearing them — a panel that empties itself when a printer is
+unplugged loses the reading that would have explained why.
+
+**Auto-refresh** is a checkbox and an interval, 2–300 s, default 5 s, not
+persisted (§13): it is a property of a diagnostic session, not a setting. A tick
+that arrives while a call is still out is **skipped, not queued**, so a printer
+slower than the interval cannot build a backlog. Closing the window stops the
+timer before abandoning the call in flight. **Copy** puts the whole report on the
+clipboard as text rendered by the core, so both frontends copy identical text.
+
+**`~JD`, `~WC`, `~WQ` and `^WD` are never sent** from this window: the first
+puts the printer into communications diagnostics mode, and the other three print
+a label instead of replying. A test asserts no payload contains them.
 
 ---
 
@@ -1788,6 +1872,7 @@ message — never a swallowed exception or a placeholder.
 | Printer font object name | 8 characters, `[A-Z0-9_-]`, stored on `E:` |
 | Print timeout | 10 s |
 | Query timeout | 5 s, then 0.5 s between chunks |
+| Status auto-refresh | 2-300 s, default 5 s, not persisted |
 | Font upload timeout | 30 s |
 
 ---

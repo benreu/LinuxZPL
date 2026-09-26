@@ -5377,6 +5377,343 @@ check("and nothing in it is reported as unsupported",
       workflow.unsupported_commands(_just_raw) == [],
       workflow.unsupported_commands(_just_raw))
 
+# --- printer_status: what the printer reports about itself -------------------
+# Every fixture below is either the ZPL manual's own worked example or a reply
+# captured from real hardware, never one composed to match the parser.
+from zplcore import printer_status as zpl_status
+
+# ~HQES, from the manual: group 1's nibble 1 holds Media Out (1) | Head Open
+# (4) = 5, and the warnings' nibble 1 holds Clean Printhead (2).
+_ES_TEXT = ("PRINTER STATUS\r\n"
+            "    ERRORS:              1 00000000 00000005\r\n"
+            "    WARNINGS:            1 00000000 00000002\r\n")
+_es = zpl_status.parse_error_status(_ES_TEXT)
+check("parse_error_status(): ~HQES nibbles become the errors they stand for",
+      _es.errors == {'Media out', 'Head open'}, _es.errors)
+check("parse_error_status(): and the warning nibbles likewise",
+      _es.warnings == {'Clean printhead'}, _es.warnings)
+# The manual's zpl.system_status example: leading flag 1 = paused, error
+# group 1 = 4 = head open.
+_es_csv = zpl_status.parse_error_status('1,1,00000000,00000004,0,00000000,00000000')
+check("parse_error_status(): the zpl.system_status CSV parses to the same flags",
+      _es_csv == (True, {'Head open'}, set()), _es_csv)
+check("parse_error_status(): a clean printer is empty sets, not None",
+      zpl_status.parse_error_status('0,0,00000000,00000000,0,00000000,00000000')
+      == (False, set(), set()),
+      zpl_status.parse_error_status('0,0,00000000,00000000,0,00000000,00000000'))
+# '?' is how a printer refuses an attribute it does not have - the signal to
+# fall back to ~HQES, so it must not read as "no faults".
+check("parse_error_status(): '?' is None, not a clean bill of health",
+      zpl_status.parse_error_status('?') is None,
+      zpl_status.parse_error_status('?'))
+check("parse_error_status(): STX/ETX framing is stripped, not parsed",
+      zpl_status.parse_error_status('\x02' + _ES_TEXT + '\x03') == _es)
+# A nibble the manual leaves unassigned names nothing rather than a number.
+check("parse_error_status(): an unassigned bit is ignored, not invented",
+      zpl_status.parse_error_status('0,1,00000000,00000000,0,00000000,00000000')
+      == (False, set(), set()))
+
+# ~HS, in the three-string shape the manual documents. String 1 here says
+# paper out, not paused, a 1218-dot label, two formats queued, partial format
+# in progress; string 2 says ribbon out, thermal transfer, tear-off mode,
+# eighteen labels left in the batch, three images stored.
+_HS_REPLY = ('\x02030,1,0,1218,002,0,0,1,000,0,0,0\x03\r\n'
+             '\x02001,0,0,1,1,2,6,0,00000018,1,003\x03\r\n'
+             '\x020000,0\x03\r\n')
+_hs = zpl_status.parse_host_status(_HS_REPLY)
+check("parse_host_status(): string 1's flags and counts land in their fields",
+      (_hs.paper_out, _hs.paused, _hs.label_length, _hs.formats_in_buffer,
+       _hs.partial_format) == (True, False, 1218, 2, True), _hs)
+check("parse_host_status(): string 2's too",
+      (_hs.ribbon_out, _hs.thermal_transfer, _hs.print_mode,
+       _hs.labels_remaining, _hs.images_stored)
+      == (True, True, 'Tear-off', 18, 3), _hs)
+check("parse_host_status(): die-cut vs continuous comes out of packed mmm",
+      _hs.continuous_media is False, _hs.continuous_media)
+check("parse_host_status(): m7 set reads as continuous media",
+      zpl_status.parse_host_status(
+          _HS_REPLY.replace('\x02001,', '\x02129,')).continuous_media is True)
+# A reply cut short by a read timeout must not become a record of zeros
+# indistinguishable from a healthy printer.
+check("parse_host_status(): a truncated reply is None, not zeros",
+      zpl_status.parse_host_status(
+          '\x02030,1,0,1218,002,0,0,1,000,0,0,0\x03\r\n\x020000,0\x03') is None)
+check("parse_host_status(): nothing at all is None",
+      zpl_status.parse_host_status('') is None)
+
+# ~HI, the same reply fonts.query_printer_dpi reads for its own purpose.
+_hi = zpl_status.parse_host_identification('ZT230,V53.17.1Z,8,4096KB,X')
+check("parse_host_identification(): dots/mm maps through the fonts table",
+      _hi.dpi == zpl_fonts.DOTS_PER_MM_TO_DPI[8] == 203, _hi)
+check("parse_host_identification(): memory is reported in the KB ~HI sends",
+      _hi.memory_kb == 4096, _hi)
+check("parse_host_identification(): an unknown dots/mm leaves dpi None",
+      zpl_status.parse_host_identification('ZT230,V1,7,4096KB,X').dpi is None)
+
+# ~HM, the manual's own example.
+check("parse_ram_status(): total, maximum and free, in kilobytes",
+      zpl_status.parse_ram_status('1024,0780,0780') == (1024, 780, 780))
+check("parse_ram_status(): a reply that is not three numbers is None",
+      zpl_status.parse_ram_status('1024') is None)
+
+# The ^HW footer all three existing parsers throw away. _REAL_HW above is a
+# reply captured from hardware, so this is checked against the real shape as
+# well as the manual's formal one.
+check("parse_free_space(): the footer of a real captured ^HW reply",
+      zpl_status.parse_free_space(_REAL_HW.decode())
+      == (66119680, 'E: ONBOARD FLASH'),
+      zpl_status.parse_free_space(_REAL_HW.decode()))
+check("parse_free_space(): and the manual's bare formal shape",
+      zpl_status.parse_free_space('-794292 bytes free R:RAM')
+      == (794292, 'R:RAM'))
+check("parse_free_space(): a listing with no footer is None",
+      zpl_status.parse_free_space('- DIR R:*.*\r\n') is None)
+check("_object_count(): counts the listing's own entry lines",
+      zpl_status._object_count(_REAL_HW.decode()) == 3,
+      zpl_status._object_count(_REAL_HW.decode()))
+
+# ~HQOD, in both unit systems the manual shows. The unit is the printer's,
+# never converted.
+check("parse_meters(): the odometer's labelled lines, units as sent",
+      zpl_status.parse_meters(
+          'PRINT METERS\r\n    TOTAL NONRESETTABLE:    8560 "\r\n'
+          '    USER RESETTABLE CNTR1:     9 "\r\n')
+      == [('Total Nonresettable', '8560 "'), ('User Resettable Cntr1', '9 "')])
+check("parse_meters(): centimetres are left as centimetres",
+      zpl_status.parse_meters('PRINT METERS\r\n  TOTAL NONRESETTABLE: 21744 cm\r\n')
+      == [('Total Nonresettable', '21744 cm')])
+# parse_getvar: the manual shows every getvar reply quoted, and documents '?'
+# as the answer for a setting that does not exist or is not configured.
+check("parse_getvar(): the quotes the manual's own examples show are stripped",
+      zpl_status.parse_getvar('"00 days 02 hours 45 mins 30 secs"')
+      == '00 days 02 hours 45 mins 30 secs')
+check("parse_getvar(): a two-unit odometer value survives intact",
+      zpl_status.parse_getvar('"8560 INCHES, 21744 CENTIMETERS"')
+      == '8560 INCHES, 21744 CENTIMETERS')
+# This is what makes an attribute cheap to try: a printer without it refuses
+# at once, where an unsupported ~HQ sub-command is ignored and costs the whole
+# read timeout. A '?' read as a value would put nonsense on the panel.
+check("parse_getvar(): '?' is a refusal, not a value",
+      zpl_status.parse_getvar('?') is None)
+check("_bytes(): a byte count is grouped and named, a non-number left alone",
+      (zpl_status._bytes('66119680'), zpl_status._bytes('8 MB'))
+      == ('66,119,680 bytes', '8 MB'))
+
+# silence_note(): ~HS is silent in five states, but of those five a full
+# rewinder has no flag in either table - so the "which one" claim is only made
+# when a flag was actually raised.
+check("silence_note(): claims the flags say which only when one was raised",
+      'the faults above say which' in zpl_status.silence_note(True)
+      and 'the faults above say which' not in zpl_status.silence_note(False))
+check("silence_note(): with no flag raised it names the rewinder, the one "
+      "state with no flag of its own",
+      'rewinder' in zpl_status.silence_note(False).rsplit('.', 2)[-2])
+check("silence_note(): both wordings name all five silencing states",
+      all(state in zpl_status.silence_note(flag)
+          for flag in (True, False)
+          for state in zpl_status.HOST_STATUS_SILENT_STATES))
+
+# --- printer_status queries: what is asked, in what order, and when it gives up
+# Every fake below has printer_io.send's exact signature, positional timeout
+# included, and is restored in a finally - a fake left installed would corrupt
+# every check after it in this script.
+
+_HS_OK = (b'\x02030,0,0,1218,000,0,0,0,000,0,0,0\x03\r\n'
+          b'\x02001,0,0,0,1,2,6,0,00000000,1,000\x03\r\n'
+          b'\x020000,0\x03\r\n')
+_SGD_CLEAN = b'"0,0,00000000,00000000,0,00000000,00000000"'
+
+
+def _status_fake(replies, log):
+    """A printer that answers whatever `replies` maps its payload to."""
+    def send(address, port, payload, timeout, read_reply=False, cancel=None):
+        text = payload.decode('latin-1')
+        log.append(text)
+        for needle, reply in replies.items():
+            if needle in text:
+                return reply
+        return b''
+    return send
+
+
+# The order is the point: the fault flags are asked BEFORE ~HS, because ~HS is
+# documented as answering nothing at all in five states and those are the very
+# ones worth reporting. Asked the other way round, a printer with its head open
+# gives a blank panel and no explanation.
+_order_log = []
+_status_real_send = zpl_printer_io.send
+zpl_printer_io.send = _status_fake(
+    {'zpl.system_status': _SGD_CLEAN, '~HS': _HS_OK, '~HM': b'1024,0780,0780'},
+    _order_log)
+try:
+    _act = zpl_status.query_printer_activity('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("query_printer_activity(): asks the fault flags before ~HS",
+      _order_log.index('~HS') > 0 and 'zpl.system_status' in _order_log[0],
+      _order_log)
+check("query_printer_activity(): a healthy printer reports no faults and "
+      "nothing unanswered",
+      _act.unanswered == [] and _act.sections[0].readings[0].value
+      == 'none reported', _act)
+check("query_printer_activity(): every section came back",
+      [s.title for s in _act.sections] == ['Faults', 'Work', 'Memory'],
+      [s.title for s in _act.sections])
+
+# The headline case: the flags answer, ~HS does not. The report must still name
+# the fault, mark ~HS unanswered, and carry the explaining note - not read as a
+# dead printer.
+_silent_log = []
+zpl_printer_io.send = _status_fake(
+    {'zpl.system_status': b'"0,1,00000000,00000004,0,00000000,00000000"',
+     '~HM': b'1024,0780,0780'}, _silent_log)   # ~HS falls through to b''
+try:
+    _silent_act = zpl_status.query_printer_activity('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("query_printer_activity(): ~HS going silent is reported, not fatal",
+      _silent_act is not None and _silent_act.unanswered == ['~HS'],
+      _silent_act and _silent_act.unanswered)
+check("query_printer_activity(): and the fault it was silent about is named",
+      _silent_act.sections[0].readings[0].label == 'Head open'
+      and _silent_act.sections[0].readings[0].level == zpl_status.ERROR,
+      _silent_act.sections[0].readings)
+check("query_printer_activity(): with the note explaining why it said nothing",
+      'does not answer one when' in _silent_act.sections[0].note,
+      _silent_act.sections[0].note)
+
+# An old printer refuses the SGD attribute with '?' and answers ~HQES instead.
+# The fallback is not reported as a fault: what was asked for did arrive.
+_fallback_log = []
+zpl_printer_io.send = _status_fake(
+    {'zpl.system_status': b'?',
+     '~HQES': (b'\x02PRINTER STATUS\r\n    ERRORS:   1 00000000 00000002\r\n'
+               b'    WARNINGS: 0 00000000 00000000\r\n\x03'),
+     '~HS': _HS_OK, '~HM': b'1024,0780,0780'}, _fallback_log)
+try:
+    _fb = zpl_status.query_printer_activity('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("query_printer_activity(): a refused SGD attribute falls back to ~HQES",
+      '~HQES' in _fallback_log and _fb.sections[0].readings[0].label
+      == 'Ribbon out', (_fallback_log, _fb.sections[0].readings))
+check("query_printer_activity(): and the refused half is not called unanswered",
+      _fb.unanswered == [], _fb.unanswered)
+
+# Reachability, judged the way all three device queries judge it.
+_attempts = []
+def _dead_status_host(address, port, payload, timeout, read_reply=False, cancel=None):
+    _attempts.append(payload)
+    raise OSError('refused')
+zpl_printer_io.send = _dead_status_host
+try:
+    _dead_act = zpl_status.query_printer_activity('h', 9100)
+    _dead_spec = zpl_status.query_printer_specs('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("query_printer_activity(): a dead host is None, not a blank report",
+      _dead_act is None and _dead_spec is None, (_dead_act, _dead_spec))
+check("query_printer_status(): a dead host costs one attempt per query, not "
+      "one timeout per command",
+      len(_attempts) == 2, len(_attempts))
+
+# Connected but mute throughout: asked, answered nothing, so None - the same
+# distinction the font and object listings draw.
+_mute_log = []
+zpl_printer_io.send = _status_fake({}, _mute_log)
+try:
+    _mute = zpl_status.query_printer_activity('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("query_printer_activity(): a printer that answers nothing at all is None",
+      _mute is None, _mute)
+
+# The specs half, and the commands that must never be sent from this panel:
+# ~JD puts the printer into diagnostics mode, printing every byte it receives;
+# ~WC, ~WQ and ^WD print a label instead of replying. A rule that is only a
+# comment is a rule that gets broken, so it is checked.
+_spec_log = []
+zpl_printer_io.send = _status_fake(
+    {'~HI': b'ZTC ZT230-203dpi ZPL,V53.17.7Z,8,8192KB,XML',
+     'memory.flash_size': b'"68157440"', 'memory.flash_free': b'"66119680"',
+     'device.uptime': b'"00 days 02 hours 45 mins 30 secs"',
+     'odometer.total_print_length': b'"8560 INCHES, 21744 CENTIMETERS"'},
+    _spec_log)
+try:
+    _spec = zpl_status.query_printer_specs('h', 9100)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("query_printer_specs(): model, firmware and resolution come off ~HI",
+      [r.value for r in _spec.sections[0].readings[:3]]
+      == ['ZTC ZT230-203dpi ZPL', 'V53.17.7Z', '203 dpi'],
+      _spec.sections[0].readings)
+check("query_printer_specs(): flash free is grouped and named in bytes",
+      _spec.sections[1].readings[0].value
+      == '66,119,680 bytes free of 68,157,440 bytes',
+      _spec.sections[1].readings)
+check("query_printer_specs(): storage is asked as attributes, so an unfitted "
+      "drive costs no ^HW timeout",
+      not any('^HW' in payload for payload in _spec_log), _spec_log)
+_banned = [c for c in ('~JD', '~WC', '~WQ', '^WD')
+           if any(c in payload for payload in _spec_log + _order_log)]
+check("printer_status: never sends ~JD, ~WC, ~WQ or ^WD", _banned == [], _banned)
+
+# cancel= and Cancelled, in a block of their own rather than folded into the
+# exact-count assertion above.
+_status_tokens = []
+def _status_capture(address, port, payload, timeout, read_reply=False, cancel=None):
+    _status_tokens.append(cancel)
+    return _HS_OK
+_status_sentinel = object()
+zpl_printer_io.send = _status_capture
+try:
+    zpl_status.query_printer_activity('h', 9100, cancel=_status_sentinel)
+    zpl_status.query_printer_specs('h', 9100, cancel=_status_sentinel)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("printer_status: cancel= reaches send from both queries",
+      _status_tokens and set(_status_tokens) == {_status_sentinel},
+      len(_status_tokens))
+
+def _status_cancelling(address, port, payload, timeout, read_reply=False, cancel=None):
+    raise zpl_printer_io.Cancelled('stopped')
+zpl_printer_io.send = _status_cancelling
+try:
+    _propagated = []
+    for query in (zpl_status.query_printer_activity, zpl_status.query_printer_specs):
+        try:
+            query('h', 9100)
+        except zpl_printer_io.Cancelled:
+            _propagated.append(True)
+finally:
+    zpl_printer_io.send = _status_real_send
+check("printer_status: Cancelled propagates rather than reading as unreachable",
+      _propagated == [True, True], _propagated)
+
+# report_text(): the clipboard text both frontends copy, built here so the two
+# cannot word it differently.
+_text = zpl_status.report_text(_spec, _silent_act)
+check("report_text(): carries every section title of every report given",
+      all(t in _text for t in ('Printer', 'Storage', 'Faults', 'Work', 'Memory')),
+      _text[:120])
+check("report_text(): marks a fault and names what went unanswered",
+      '<-- error' in _text and 'Not answered: ~HS' in _text, _text[-200:])
+check("report_text(): is deterministic for one input",
+      zpl_status.report_text(_spec, _silent_act) == _text)
+check("report_text(): says so rather than returning nothing for an "
+      "unreachable printer",
+      zpl_status.report_text(None).strip() == '(the printer could not be asked)',
+      zpl_status.report_text(None))
+
+# CONTRIBUTING rule 4: no module in zplcore may import a GUI toolkit. Checked
+# by reading the source, since this suite imports PySide2 itself for other
+# reasons and so sys.modules proves nothing.
+_status_src = (Path(__file__).resolve().parent.parent
+               / 'zplcore' / 'printer_status.py').read_text()
+check("printer_status.py names no GUI toolkit",
+      not any(t in _status_src for t in
+              ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

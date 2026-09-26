@@ -17,6 +17,7 @@ from zplcore import fonts as zpl_fonts
 from zplcore import graphic_store
 from zplcore import printer_io
 from zplcore import printer_objects
+from zplcore import printer_status
 from zplcore import model
 from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
@@ -375,8 +376,11 @@ class ZPLViewerWindow(Gtk.Window):
         # uploaded to - see Document.font_device, which every document is
         # given a copy of.
         self.printer_font_device = zpl_fonts.DEFAULT_FONT_DEVICE
-        # The one non-modal printer window - see on_printer_console_clicked.
+        # The two non-modal printer windows - see on_printer_console_clicked
+        # and on_printer_status_clicked. Both stay open while the user keeps
+        # working, so both are singletons rather than stacking a copy per click.
         self.printer_console_window = None
+        self.printer_status_window = None
         # The size last chosen in Label Settings, also persisted. Held in
         # inches because the resolution it converts with is itself a setting
         # that can change between sessions.
@@ -629,6 +633,10 @@ class ZPLViewerWindow(Gtk.Window):
         printer_console_item = Gtk.MenuItem(label="Console…")
         printer_console_item.connect("activate", self.on_printer_console_clicked)
         printer_menu.append(printer_console_item)
+
+        printer_status_item = Gtk.MenuItem(label="Status…")
+        printer_status_item.connect("activate", self.on_printer_status_clicked)
+        printer_menu.append(printer_status_item)
 
         printer_menu.show_all()
 
@@ -2283,6 +2291,206 @@ class ZPLViewerWindow(Gtk.Window):
 
         self.printer_console_window = window
         window.show_all()
+
+    # How a reading's level is shown. The same three colours the Qt panel uses,
+    # so a fault looks like a fault in either frontend.
+    _STATUS_COLOURS = {printer_status.ERROR: '#c0392b',
+                       printer_status.WARN: '#b9770e',
+                       printer_status.OK: '#1e8449'}
+
+    def on_printer_status_clicked(self, widget):
+        """What the printer says about its own state - faults, what it is
+        working on, memory, and how its head is wearing.
+
+        A plain top-level Gtk.Window and a singleton, like the console and for
+        the same reason plus one of its own: this one can be left
+        auto-refreshing while the user works on the label, which is the whole
+        point of watching a printer. So address and port are read from self on
+        every query rather than captured here, and a printer changed via Printer
+        Settings takes effect on the next refresh.
+
+        Two queries, matching the core's split: the specs once, since a model
+        number and a head-wear figure do not move while anyone watches, and only
+        the activity on a tick.
+        """
+        if self.printer_status_window is not None:
+            self.printer_status_window.present()
+            return
+
+        window = Gtk.Window(title="Printer Status")
+        window.set_transient_for(self)
+        window.set_destroy_with_parent(True)
+        window.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        window.set_default_size(460, 620)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        for edge in ('start', 'end', 'top', 'bottom'):
+            getattr(content, f'set_margin_{edge}')(8)
+        window.add(content)
+
+        status = Gtk.Label(xalign=0)
+        status.set_line_wrap(True)
+        content.pack_start(status, False, False, 0)
+
+        # Scrolled, because how many rows a report has depends on how many
+        # faults the printer is reporting - the height cannot be known here.
+        sections_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_vexpand(True)
+        scroll.add(sections_box)
+        content.pack_start(scroll, True, True, 0)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        refresh_btn = Gtk.Button(label="Refresh")
+        copy_btn = Gtk.Button(label="Copy")
+        copy_btn.set_sensitive(False)
+        auto_check = Gtk.CheckButton(label="Auto-refresh every")
+        interval = Gtk.SpinButton.new_with_range(2, 300, 1)
+        interval.set_value(5)
+        seconds_label = Gtk.Label(label="s")
+        for widget_ in (refresh_btn, copy_btn, auto_check, interval, seconds_label):
+            buttons.pack_start(widget_, False, False, 0)
+        close_btn = Gtk.Button(label="Close")
+        busy = BusyBar((refresh_btn,), status.set_text)
+        buttons.pack_end(busy, False, False, 0)
+        buttons.pack_end(close_btn, False, False, 0)
+        content.pack_start(buttons, False, False, 0)
+
+        # Held in a dict so the nested functions can rebind them: the reports
+        # shown, and the GLib source id of the auto-refresh timer. That id is
+        # owned by the main loop, not by this window, so it has to be removed by
+        # hand on destroy - unlike Qt's QTimer, which is parented to its dialog
+        # and dies with it.
+        state = {'specs': None, 'activity': None, 'timer': None, 'dead': False}
+
+        def show_reports():
+            for child in sections_box.get_children():
+                sections_box.remove(child)
+            for report in (state['activity'], state['specs']):
+                if report is None:
+                    continue
+                for section in report.sections:
+                    frame = Gtk.Frame(label=section.title)
+                    grid = Gtk.Grid(row_spacing=2, column_spacing=12)
+                    for edge in ('start', 'end', 'top', 'bottom'):
+                        getattr(grid, f'set_margin_{edge}')(6)
+                    for row, reading in enumerate(section.readings):
+                        name = Gtk.Label(label=reading.label + ":", xalign=0)
+                        colour = self._STATUS_COLOURS.get(reading.level)
+                        value = Gtk.Label(xalign=0)
+                        value.set_line_wrap(True)
+                        if colour:
+                            value.set_markup(
+                                f'<span foreground="{colour}" weight="bold">'
+                                f'{GLib.markup_escape_text(reading.value)}</span>')
+                        else:
+                            value.set_text(reading.value)
+                        grid.attach(name, 0, row, 1, 1)
+                        grid.attach(value, 1, row, 1, 1)
+                    if section.note:
+                        note = Gtk.Label(xalign=0)
+                        note.set_line_wrap(True)
+                        note.set_markup(
+                            f'<i>{GLib.markup_escape_text(section.note)}</i>')
+                        grid.attach(note, 0, len(section.readings), 2, 1)
+                    frame.add(grid)
+                    sections_box.pack_start(frame, False, False, 0)
+            sections_box.show_all()
+
+        def done(result, error, address, port):
+            if state['dead']:
+                return
+            if isinstance(error, printer_io.Cancelled):
+                status.set_text("Cancelled.")
+                return
+            if error is not None:
+                status.set_text(f"Could not ask the printer: {error}")
+                return
+            specs, activity = result
+            if specs is None and activity is None:
+                # Nothing answered. What is already on screen came from a
+                # better moment, so it is left alone rather than cleared - a
+                # panel that empties itself when a printer is unplugged loses
+                # the reading that would explain why.
+                status.set_text(f"Could not reach the printer at "
+                                f"{address}:{port}.")
+                return
+            state['specs'], state['activity'] = specs, activity
+            show_reports()
+            copy_btn.set_sensitive(True)
+            unanswered = sorted({name for report in (specs, activity)
+                                 if report is not None
+                                 for name in report.unanswered})
+            note = (" \u2014 no answer to " + ", ".join(unanswered)) if unanswered else ""
+            status.set_text(f"{address}:{port}{note}")
+
+        def refresh(*_a):
+            address, port = self.printer_address, self.printer_port
+            status.set_text(f"Asking {address}...")
+
+            def work(cancel):
+                specs = printer_status.query_printer_specs(address, port,
+                                                           cancel=cancel)
+                busy.report(f"Asking {address} what it is doing...")
+                activity = printer_status.query_printer_activity(address, port,
+                                                                cancel=cancel)
+                return specs, activity
+
+            busy.run(work, lambda result, error: done(result, error, address, port))
+
+        def tick():
+            """One auto-refresh. Returns False - ending the timer - once the
+            window is gone, so a tick already queued when it closed cannot
+            touch destroyed widgets; and skips rather than queues while a call
+            is out, so a printer slower than the interval builds no backlog."""
+            if state['dead']:
+                return False
+            if busy.running:
+                return True
+            address, port = self.printer_address, self.printer_port
+            busy.run(
+                lambda cancel: (state['specs'],
+                                printer_status.query_printer_activity(
+                                    address, port, cancel=cancel)),
+                lambda result, error: done(result, error, address, port))
+            return True
+
+        def arm():
+            disarm()
+            if auto_check.get_active() and not state['dead']:
+                state['timer'] = GLib.timeout_add_seconds(
+                    int(interval.get_value()), tick)
+
+        def disarm():
+            if state['timer'] is not None:
+                GLib.source_remove(state['timer'])
+                state['timer'] = None
+
+        def on_copy(_b):
+            text = printer_status.report_text(state['specs'], state['activity'])
+            Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(text, -1)
+            status.set_text("Report copied to the clipboard.")
+
+        def on_destroy(_w):
+            # All three, in this order: stop the timer first so no further tick
+            # can start a call, then abandon whatever is already out, then let
+            # a later click open a fresh window.
+            state['dead'] = True
+            disarm()
+            busy.abandon()
+            self.printer_status_window = None
+
+        refresh_btn.connect("clicked", refresh)
+        copy_btn.connect("clicked", on_copy)
+        auto_check.connect("toggled", lambda _b: arm())
+        interval.connect("value-changed", lambda _b: arm())
+        close_btn.connect("clicked", lambda _b: window.destroy())
+        window.connect("destroy", on_destroy)
+
+        self.printer_status_window = window
+        window.show_all()
+        refresh()
 
     def _offer_dpi_rescale(self, loaded_dpi=workflow._FROM_DOCUMENT):
         """If the file was drawn for another resolution, offer to rescale it.

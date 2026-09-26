@@ -44,6 +44,13 @@ disagree.
   rather than one embedded in the file; **Printer -> Graphics...** talks to
   the real printer to view what it has stored, upload an image file to it,
   retrieve one back out to a file, or delete one
+- **Printer status**: **Printer -> Status...** asks the printer about itself -
+  the faults it is raising, whether it is paused or its buffer is full, how much
+  RAM and Flash is left, how far its head has printed - with an optional
+  auto-refresh and a Copy button for a support ticket. It asks the fault flags
+  before `~HS`, because a Zebra answers no status query at all while its head is
+  open or its media is out, so the panel explains that silence instead of going
+  blank
 - **Network Printing**: straight over TCP to a Zebra, no printing subsystem
   involved
 - **Select more than one**: shift-click, or drag a band across the canvas, and
@@ -146,8 +153,10 @@ zplcore/    no GUI toolkit, runs headless
   printer_objects.py  real printer I/O for Printer -> Objects... (view/
                     store/retrieve/delete of everything on the printer,
                     any device including Z:, any extension)
-  printer_io.py  the raw socket send/reply fonts.py, graphic_store.py and
-                    printer_objects.py share
+  printer_status.py  what the printer reports about itself, for Printer ->
+                    Status... (faults, work state, memory, head wear)
+  printer_io.py  the raw socket send/reply fonts.py, graphic_store.py,
+                    printer_objects.py and printer_status.py share
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   textraster.py  the text raster both canvases blit
@@ -238,6 +247,11 @@ Sent to the printer but not rendered:
 - `^HG` - Retrieve a stored graphic's own bytes back from the printer
 - `^ID` - Delete an object from the printer
 - `~HI` - Ask the printer its model and head resolution
+- `~HS`, `~HQES` / `zpl.system_status` - Ask what the printer is doing and what
+  is wrong with it
+- `~HM`, `memory.flash_size` / `memory.flash_free` - Ask how much memory is left
+- `device.uptime`, the `odometer.*` attributes / `~HQOD`, `~HQPH` - Ask how long
+  it has been up and how far its head has printed
 
 ## Known limits
 

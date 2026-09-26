@@ -79,8 +79,11 @@ class ZPLDesignerWindow(QMainWindow):
         # uploaded to - see Document.font_device, which every document is
         # given a copy of.
         self.printer_font_device = zpl_fonts.DEFAULT_FONT_DEVICE
-        # The one non-modal printer window - see on_printer_console.
+        # The two non-modal printer windows - see on_printer_console and
+        # on_printer_status. Both stay open while the user keeps working, so
+        # both are singletons rather than stacking a second copy per click.
         self.printer_console_dialog = None
+        self.printer_status_dialog = None
         self.label_inches = DEFAULT_LABEL_INCHES
         self.saved_geometry = None
         self._load_settings()
@@ -328,6 +331,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_graphics_action = self._action("Graphics…", self.on_printer_graphics)
         self.printer_objects_action = self._action("Objects…", self.on_printer_objects)
         self.printer_console_action = self._action("Console…", self.on_printer_console)
+        self.printer_status_action = self._action("Status…", self.on_printer_status)
 
         self.session_printer_action = self._action(
             "&Set Printer for This Session…", self.on_session_printer)
@@ -388,6 +392,7 @@ class ZPLDesignerWindow(QMainWindow):
         printer_menu.addAction(self.printer_fonts_action)
         printer_menu.addAction(self.printer_objects_action)
         printer_menu.addAction(self.printer_console_action)
+        printer_menu.addAction(self.printer_status_action)
 
         settings_menu = menubar.addMenu("&Settings")
         settings_menu.addAction(self.label_size_action)
@@ -839,6 +844,19 @@ class ZPLDesignerWindow(QMainWindow):
         dialog = qt_dialogs.PrinterConsoleDialog(self)
         dialog.destroyed.connect(lambda *_a: setattr(self, 'printer_console_dialog', None))
         self.printer_console_dialog = dialog
+        dialog.show()
+
+    def on_printer_status(self):
+        # Non-modal and a singleton for the same reasons as the console, plus
+        # one of its own: this one can be left auto-refreshing while the user
+        # works on the label, which is the whole point of watching a printer.
+        if self.printer_status_dialog is not None:
+            self.printer_status_dialog.raise_()
+            self.printer_status_dialog.activateWindow()
+            return
+        dialog = qt_dialogs.PrinterStatusDialog(self)
+        dialog.destroyed.connect(lambda *_a: setattr(self, 'printer_status_dialog', None))
+        self.printer_status_dialog = dialog
         dialog.show()
 
     # --- files ---------------------------------------------------------------
