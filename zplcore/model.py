@@ -56,7 +56,7 @@ class DesignElement:
     y: int
     width: int
     height: int
-    element_type: str  # 'text', 'frame', 'circle', 'barcode', 'image', 'stored_graphic'
+    element_type: str  # 'text', 'frame', 'circle', 'diagonal', 'barcode', 'image', 'stored_graphic'
 
     # Class attributes, so every element inherits the default without each
     # __init__ having to set it.
@@ -284,6 +284,17 @@ def _comment_lines(comments) -> str:
     return ''.join(f"^FX{text}\n" for text in comments)
 
 
+def _trimmed_options(given, defaults) -> str:
+    """Optional parameters as ",a,b", trimmed after the last one that is not
+    its position's default - so an element written with ZPL's defaults is
+    written without them."""
+    keep = 0
+    for index, value in enumerate(given):
+        if value != defaults[index]:
+            keep = index + 1
+    return ''.join(f",{value}" for value in given[:keep])
+
+
 def _copy_element(element):
     """A copy of one element that a later edit cannot reach back through.
 
@@ -504,12 +515,7 @@ class FrameElement(DesignElement):
 
     def _options_zpl(self) -> str:
         """The colour and rounding, trimmed after the last non-default one."""
-        given = [self.colour, self.rounding]
-        keep = 0
-        for index, value in enumerate(given):
-            if value != self.DEFAULTS[index]:
-                keep = index + 1
-        return ''.join(f",{value}" for value in given[:keep])
+        return _trimmed_options((self.colour, self.rounding), self.DEFAULTS)
 
     def to_zpl(self, offset=(0, 0)) -> str:
         """Convert to ZPL commands."""
@@ -582,6 +588,54 @@ class CircleElement(DesignElement):
         colour = '' if self.colour == 'B' else f",{self.colour}"
         return (self.origin_zpl(offset) + self.reverse_zpl() +
                 f"^GC{self.diameter},{self.thickness}{colour}\n^FS\n")
+
+
+class DiagonalLineElement(DesignElement):
+    """^GD - a straight line from one corner of its box to the opposite one.
+
+    The thickness is measured across the label, not square to the line: each
+    row of dots gets a run `thickness` long, so the ends are horizontal cuts
+    and the whole line stays inside the w x h box. A shallow line is therefore
+    thinner on paper than a steep one of the same thickness. At a thickness
+    of the full width the runs meet and the box fills solid.
+    """
+
+    # ^GD's own range for the box, "3 to 32000" on each side
+    MIN_SIDE = 3
+    MAX_SIDE = 32000
+    # ZPL's defaults for the colour and the direction, in order, so a line
+    # written with them is written without them - as a frame's are.
+    DEFAULTS = ('B', 'R')
+    COLOURS = FrameElement.COLOURS
+    # R leans right, bottom-left to top-right (ZPL also spells it '/'); L
+    # leans left, top-left to bottom-right ('\').
+    DIRECTIONS = ('R', 'L')
+
+    def __init__(self, x: int = 100, y: int = 100, width: int = 200,
+                 height: int = 150, thickness: int = 4,
+                 colour: str = 'B', direction: str = 'R'):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.thickness = thickness
+        self.colour = (colour or 'B').upper()
+        if self.colour not in self.COLOURS:
+            self.colour = 'B'
+        self.direction = (direction or 'R').upper()
+        if self.direction not in self.DIRECTIONS:
+            self.direction = 'R'
+        self.element_type = 'diagonal'
+
+    def max_thickness(self) -> int:
+        """Thickest useful line: at the full width the box fills solid."""
+        return max(1, self.width)
+
+    def to_zpl(self, offset=(0, 0)) -> str:
+        """Convert to ZPL commands."""
+        options = _trimmed_options((self.colour, self.direction), self.DEFAULTS)
+        return (self.origin_zpl(offset) + self.reverse_zpl() +
+                f"^GD{self.width},{self.height},{self.thickness}{options}\n^FS\n")
 
 
 # What a barcode falls back to when nothing has given it a height: ZPL's own
@@ -1154,6 +1208,10 @@ BARCODE_FEATURES = symbologies.BARCODE_FEATURES
 BARCODE_PARAMETERS = symbologies.BARCODE_PARAMETERS
 
 FRAME_COLOURS = (("Black", 'B'), ("White", 'W'))
+
+# ^GD's direction. Its colour is the same B/W parameter as ^GB's, so the
+# editors offer FRAME_COLOURS for it rather than a second copy.
+DIAGONAL_DIRECTIONS = (("Right-leaning ( / )", 'R'), ("Left-leaning ( \\ )", 'L'))
 
 # ^FB's justification, for the same reason: the wrap a user picks in one
 # frontend has to be a wrap the other can pick too.
@@ -1799,6 +1857,10 @@ class Document:
     def add_circle_element(self) -> CircleElement:
         offset = self._stagger(20)
         return self._append(CircleElement(100 + offset, 100 + offset))
+
+    def add_diagonal_element(self) -> DiagonalLineElement:
+        offset = self._stagger(20)
+        return self._append(DiagonalLineElement(100 + offset, 100 + offset))
 
     def add_barcode_element(self) -> BarcodeElement:
         offset = self._stagger(20)

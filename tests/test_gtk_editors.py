@@ -97,6 +97,7 @@ def _find_checkbutton(container, label):
 for build, describe in ((lambda: document.add_text_element('reversible'), 'text'),
                         (lambda: document.add_frame_element(), 'frame'),
                         (lambda: document.add_circle_element(), 'circle'),
+                        (lambda: document.add_diagonal_element(), 'diagonal line'),
                         (lambda: document.add_barcode_element(), 'barcode')):
     element = build()
     window.on_element_double_clicked(None, element)
@@ -136,6 +137,38 @@ _spin_buttons(circle_dialog)[0].set_value(120)
 circle_dialog.response(Gtk.ResponseType.CANCEL)
 check("and Cancel leaves the circle alone", circle.diameter == 80, circle.diameter)
 document.elements.remove(circle)
+
+# --- Edit Diagonal Line: a thickness held to the width, and a direction -----
+
+
+def _combos(dialog):
+    return [child for child in dialog.get_content_area().get_children()
+            if isinstance(child, Gtk.ComboBoxText)]
+
+
+line = document.add_diagonal_element()
+window.on_element_double_clicked(None, line)
+line_dialog = window._editors[id(line)]
+width_spin, height_spin, line_thickness_spin = _spin_buttons(line_dialog)
+width_spin.set_value(60)
+height_spin.set_value(90)
+line_thickness_spin.set_value(100)
+colour_combo, direction_combo = _combos(line_dialog)
+colour_combo.set_active(1)
+direction_combo.set_active(1)
+line_dialog.response(Gtk.ResponseType.OK)
+check("OK in Edit Diagonal Line writes the box, a thickness held to the width, "
+      "the colour and the direction",
+      (line.width, line.height, line.thickness, line.colour, line.direction)
+      == (60, 90, 60, 'W', 'L'),
+      (line.width, line.height, line.thickness, line.colour, line.direction))
+
+window.on_element_double_clicked(None, line)
+line_dialog = window._editors[id(line)]
+_combos(line_dialog)[1].set_active(0)
+line_dialog.response(Gtk.ResponseType.CANCEL)
+check("and Cancel leaves the line alone", line.direction == 'L', line.direction)
+document.elements.remove(line)
 
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen

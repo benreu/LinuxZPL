@@ -37,6 +37,10 @@ FIXTURE_RULES = ROOT / 'tests' / 'fixtures' / 'rules.zpl'
 # ^GC as a file gives it: every parameter, none, white inside black, a circle
 # thick enough to fill, one placed by ^FT and one reversed
 FIXTURE_CIRCLES = ROOT / 'tests' / 'fixtures' / 'circles.zpl'
+# ^GD as a file gives it: the manual's own box and diagonal, both slashes,
+# every parameter left to default, one white over black, one placed by ^FT
+# and one reversed
+FIXTURE_DIAGONALS = ROOT / 'tests' / 'fixtures' / 'diagonals.zpl'
 # ^A with its sizes left off, inherited from ^CF or from the font itself
 FIXTURE_PARTIAL = ROOT / 'tests' / 'fixtures' / 'partial_font.zpl'
 # The manual's own ^FW example, plus a ^CF field and a barcode that defer to
@@ -182,6 +186,9 @@ class GtkDriver:
 
     def add_circle(self):
         return self.canvas.add_circle_element()
+
+    def add_diagonal(self):
+        return self.canvas.add_diagonal_element()
 
     def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
         return self.canvas.add_stored_graphic_element(command, device_spec)
@@ -466,6 +473,9 @@ class QtDriver:
 
     def add_circle(self):
         return self.document.add_circle_element()
+
+    def add_diagonal(self):
+        return self.document.add_diagonal_element()
 
     def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
         return self.document.add_stored_graphic_element(command, device_spec)
@@ -1121,6 +1131,25 @@ def sequence(driver, record):
     circle.reverse_print = True
     record('a reversed circle')
 
+    # ^GD: a thickness that is a run along each row, so it is held to the
+    # width through every handle; then each of its own parameters and ^FR.
+    diagonal = driver.add_diagonal()
+    record('add diagonal line')
+    driver.select(diagonal)
+    for handle in ('br', 'tl', 'mr', 'bm', 'tr', 'bl', 'ml', 'tm'):
+        driver.resize(diagonal, handle, 17, 11)
+        record(f'resize diagonal line by {handle}')
+    diagonal.thickness = 5000
+    driver.resize(diagonal, 'mr', -60, 0)
+    record('diagonal line thickness clamped to its width')
+    diagonal.thickness = 6
+    diagonal.direction = 'L'
+    record('a left-leaning diagonal line')
+    diagonal.colour = 'W'
+    record('a white diagonal line')
+    diagonal.reverse_print = True
+    record('a reversed diagonal line')
+
     # ZPL as other tools leave it: a ^CF default font rather than an ^A on
     # every field, and a ^GB carrying its colour and rounding. Last, because
     # loading replaces the document every earlier step built up.
@@ -1137,6 +1166,8 @@ def sequence(driver, record):
     record('load a file of ^GB rules')
     driver.load(FIXTURE_CIRCLES)
     record('load a file of ^GC circles')
+    driver.load(FIXTURE_DIAGONALS)
+    record('load a file of ^GD diagonal lines')
     driver.load(FIXTURE_PARTIAL)
     record('load a file whose ^A leaves its sizes off')
     driver.load(FIXTURE_ORIENTED)

@@ -440,6 +440,10 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
         element.diameter = _scaled(element.diameter, factor)
         element.thickness = _scaled(element.thickness, factor)
         element.sync_box()
+    elif kind == 'diagonal':
+        # Its thickness is a run of dots along each row, so it scales with
+        # the width - which keeps the line the same shape at any factor.
+        element.thickness = _scaled(element.thickness, sx)
     elif kind == 'barcode':
         # A module is a whole number of dots, so 2 becomes 3 rather than
         # 2.96 going 203 -> 300 dpi. Positions and heights scale exactly; a
@@ -487,7 +491,7 @@ def _resize_group(document, handle: str, dx: int, dy: int, origin: dict) -> None
     for element, state in origin['members']:
         restore_state(element, state)
         scale_element(document, element, ax, ay, sx, sy)
-        if element.element_type in ('frame', 'circle'):
+        if element.element_type in ('frame', 'circle', 'diagonal'):
             element.thickness = max(1, min(element.thickness, element.max_thickness()))
 
     members = [el for el, _ in origin['members']]
@@ -556,7 +560,7 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
     element.width, element.height = width, height
     _clamp_resized(document, element)
 
-    if element.element_type == 'frame':
+    if element.element_type in ('frame', 'diagonal'):
         element.thickness = max(1, min(element.thickness, element.max_thickness()))
 
     if element.element_type == 'circle':
@@ -681,6 +685,28 @@ def turn(element) -> dict:
     if orientation == 'B':          # 270 degrees, reading upward
         return {'angle': 270, 'offset': (0, element.height)}
     return {'angle': 0, 'offset': (0, 0)}
+
+
+def diagonal_points(element) -> list:
+    """The four corners of a ^GD line, as (x, y) in dots, in the element's
+    own frame with the box's top-left at 0,0.
+
+    The line is a run of `thickness` dots on every row, so its ends are
+    horizontal cuts along the top and bottom of the box: a parallelogram that
+    fills the w x h box exactly, and fills it solid once the runs are as long
+    as the box is wide. Both canvases and the preview draw from this, so none
+    of them can hold a different opinion about which way it leans or how
+    thick it is - the same reason barcode_rects exists.
+
+    In order: the left and right ends of the run on one edge of the box, then
+    the right and left ends of the run on the other - so the second and third
+    are the two right ends.
+    """
+    w, h = element.width, element.height
+    t = max(1, min(element.thickness, w))
+    if element.direction == 'L':        # top-left to bottom-right
+        return [(0, 0), (t, 0), (w, h), (w - t, h)]
+    return [(0, h), (t, h), (w, 0), (w - t, 0)]
 
 
 def text_layout(element) -> dict:

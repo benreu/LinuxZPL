@@ -31,10 +31,11 @@ from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
                            BARCODE_MODES, BARCODE_ORIENTATIONS,
                            BARCODE_PARAMETERS,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
-                           FRAME_COLOURS, ORIENTATIONS,
+                           DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
-                           TEXT_JUSTIFICATIONS, CircleElement, Document,
-                           FieldBlock, FrameElement, TextElement)
+                           TEXT_JUSTIFICATIONS, CircleElement,
+                           DiagonalLineElement, Document, FieldBlock,
+                           FrameElement, TextElement)
 
 from .busy import BusyBar
 from .canvas import to_qimage
@@ -948,6 +949,79 @@ def edit_circle_dialog(parent, element, on_accept=None) -> QDialog:
         element.sync_box()
         element.thickness = thickness_spin.value()
         element.colour = colour_combo.currentData()
+        element.reverse_print = fr_check.isChecked()
+
+    return _show_editor(dialog, _apply, on_accept)
+
+
+def edit_diagonal_dialog(parent, element, on_accept=None) -> QDialog:
+    """Edit a ^GD diagonal line. `on_accept` runs once OK has changed it."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Edit Diagonal Line")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    # ^GD's own range, so a line from a file is not cut down, or a short one
+    # enlarged, by accepting the editor it was only looked at in
+    width_spin = QSpinBox()
+    width_spin.setObjectName("width")
+    width_spin.setRange(DiagonalLineElement.MIN_SIDE, DiagonalLineElement.MAX_SIDE)
+    width_spin.setValue(element.width)
+    form.addRow("Width:", width_spin)
+
+    height_spin = QSpinBox()
+    height_spin.setObjectName("height")
+    height_spin.setRange(DiagonalLineElement.MIN_SIDE, DiagonalLineElement.MAX_SIDE)
+    height_spin.setValue(element.height)
+    form.addRow("Height:", height_spin)
+
+    thickness_spin = QSpinBox()
+    thickness_spin.setObjectName("thickness")
+    form.addRow("Thickness:", thickness_spin)
+
+    def sync_thickness_range():
+        # Each row's run meets the far side at the full width, and the box
+        # fills solid; narrowing it must not leave a thicker one selectable.
+        thickness_spin.setRange(1, max(1, width_spin.value()))
+
+    sync_thickness_range()
+    thickness_spin.setValue(min(element.thickness, element.max_thickness()))
+    width_spin.valueChanged.connect(sync_thickness_range)
+
+    # ^GD's colour: the same black or white ^GB offers
+    colour_combo = QComboBox()
+    colour_combo.setObjectName("colour")
+    for label, code in FRAME_COLOURS:
+        colour_combo.addItem(label, code)
+    codes = [code for _label, code in FRAME_COLOURS]
+    colour_combo.setCurrentIndex(codes.index(element.colour)
+                                 if element.colour in codes else 0)
+    form.addRow("Colour:", colour_combo)
+
+    direction_combo = QComboBox()
+    direction_combo.setObjectName("direction")
+    for label, code in DIAGONAL_DIRECTIONS:
+        direction_combo.addItem(label, code)
+    directions = [code for _label, code in DIAGONAL_DIRECTIONS]
+    direction_combo.setCurrentIndex(directions.index(element.direction)
+                                    if element.direction in directions else 0)
+    form.addRow("Direction:", direction_combo)
+
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+    _reverse_hint(form)
+
+    layout.addWidget(_buttons(dialog))
+
+    def _apply():
+        element.width = width_spin.value()
+        element.height = height_spin.value()
+        element.thickness = thickness_spin.value()
+        element.colour = colour_combo.currentData()
+        element.direction = direction_combo.currentData()
         element.reverse_print = fr_check.isChecked()
 
     return _show_editor(dialog, _apply, on_accept)

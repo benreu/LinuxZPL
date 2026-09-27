@@ -35,8 +35,8 @@ disagree.
 
 ## Features
 
-- **Visual Designer**: drag-and-drop canvas with text, frame, circle, barcode
-  and image elements
+- **Visual Designer**: drag-and-drop canvas with text, frame, circle, diagonal
+  line, barcode and image elements
 - **Fonts**: pick any installed TrueType font per text element; upload, list and
   delete fonts on the printer, with a check before printing that the label's
   fonts are actually there
@@ -100,8 +100,8 @@ In VS Code, press **F5**; the default configuration is the flagless one.
 
 ### Quick Start
 
-1. Add elements with the **+ Text**, **+ Frame**, **+ Barcode** and **+ Image**
-   buttons
+1. Add elements with the **+ Text**, **+ Frame**, **+ Circle**, **+ Diagonal**,
+   **+ Barcode** and **+ Image** buttons
 2. Drag elements to position them, or drag the handles to resize
 3. Double-click an element to edit it - text, font, barcode value, image file
 4. Right-click an element for **Print This Element** and the z-order actions
@@ -202,7 +202,7 @@ Read when loading a file and written when saving:
 - `^FW` - Default field orientation, honoured when reading: an `^A`, a `^CF`
   field or a barcode that leaves its own orientation out turns with it, and
   is written back with its own letter instead
-- `^GB` - Draw box
+- `^GB` / `^GC` / `^GD` - Draw box, circle, diagonal line
 - `^BC` / `^B3` / `^BE` / `^B2` / `^BS` / `^BY` - Code 128, Code 39, EAN-13,
   Interleaved 2 of 5 and UPC/EAN Extension barcodes, and their module width
 - `^GF` - Graphic field (images, 1-bit, where a set bit is black)

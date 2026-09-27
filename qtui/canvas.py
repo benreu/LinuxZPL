@@ -18,7 +18,8 @@ import time
 from typing import Optional
 
 from PySide2.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide2.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen
+from PySide2.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter, QPen,
+                           QPolygonF)
 from PySide2.QtWidgets import QMenu, QWidget
 
 from zplcore import geometry, graphic_store, textraster, view
@@ -215,6 +216,8 @@ class DesignCanvas(QWidget):
         elif element.element_type in ('frame', 'circle'):
             # A ^GC circle is a ^GB square rounded by half its side
             self._draw_frame_element(painter, element, selected)
+        elif element.element_type == 'diagonal':
+            self._draw_diagonal_element(painter, element, selected)
         elif element.element_type == 'barcode':
             self._draw_barcode_element(painter, element, selected)
         elif element.element_type == 'image':
@@ -497,6 +500,39 @@ class DesignCanvas(QWidget):
                 painter.drawRoundedRect(box, inner, inner)
             else:
                 painter.drawRect(box)
+
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
+
+    # --- diagonal line -------------------------------------------------------
+
+    def _draw_diagonal_element(self, painter, element, selected: bool):
+        """A ^GD line, from the corners zplcore.geometry gives it, so this and
+        the GTK canvas cannot lean it differently."""
+        # Selection outline first, on the box the handles are on, as a frame's
+        # is - most of that box is empty, and the line alone would not say
+        # where the handles belong.
+        if selected:
+            painter.setPen(QPen(QColor(0, 0, 255), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
+
+        reverse = element.reverse_print
+        if reverse:
+            # ^FR inverts under the line's own ink, ignoring its colour, as
+            # it does under a frame's border.
+            painter.setCompositionMode(QPainter.CompositionMode_Difference)
+            ink = QColor(255, 255, 255)
+        else:
+            # ^GD's colour: white shows only over something already black.
+            ink = QColor(255, 255, 255) if element.colour == 'W' else QColor(0, 0, 0)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(ink)
+        painter.drawPolygon(QPolygonF([QPointF(element.x + x, element.y + y)
+                                       for x, y in geometry.diagonal_points(element)]))
+        painter.setBrush(Qt.NoBrush)
 
         if reverse:
             painter.setCompositionMode(QPainter.CompositionMode_SourceOver)

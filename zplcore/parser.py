@@ -19,9 +19,9 @@ from . import graphic_store
 from . import graphics
 from . import symbology as symbologies
 from . import transforms as zpl_transforms
-from .model import (ORIENTATIONS, BarcodeElement, CircleElement, Document,
-                    FieldBlock, FrameElement, ImageElement,
-                    StoredGraphicElement, TextElement)
+from .model import (ORIENTATIONS, BarcodeElement, CircleElement,
+                    DiagonalLineElement, Document, FieldBlock, FrameElement,
+                    ImageElement, StoredGraphicElement, TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
@@ -154,9 +154,9 @@ STRUCTURAL = {'^XA', '^XZ', '^FS', '^FX', '^CI', '^CF', '^LH', '^PR', '^MD',
 # running field origin when no ^FO/^FT has opened it yet. The ^A fonts and the
 # ^B symbologies are matched by prefix in _belongs_to_field; ^BY is not a
 # field command, and is read before anything reaches that test.
-FIELD_COMMANDS = frozenset({'^FB', '^FR', '^GS', '^GB', '^GC', '^GF', '^IM',
-                            '^XG', '^FN', '^SN', '^SF', '^FC', '^FH', '^FD',
-                            '^FV'})
+FIELD_COMMANDS = frozenset({'^FB', '^FR', '^GS', '^GB', '^GC', '^GD', '^GF',
+                            '^IM', '^XG', '^FN', '^SN', '^SF', '^FC', '^FH',
+                            '^FD', '^FV'})
 
 
 def _belongs_to_field(cmd: str) -> bool:
@@ -826,6 +826,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['frame'] = params
         elif cmd == '^GC':
             field['circle'] = params
+        elif cmd == '^GD':
+            field['diagonal'] = params
         elif cmd == '^GF':
             field['graphic'] = params
         elif cmd in ('^IM', '^XG'):
@@ -890,7 +892,8 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'bar_height': inherited['height'],
             'default_font': dict(default_font or DEFAULT_FONT),
             'default_orientation': default_orientation,
-            'barcode': None, 'frame': None, 'circle': None, 'graphic': None,
+            'barcode': None, 'frame': None, 'circle': None, 'diagonal': None,
+            'graphic': None,
             'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'justify': None,
             'symbology': None,
@@ -922,6 +925,7 @@ def _has_content(field) -> bool:
     """
     return (field['data'] is not None or field['frame'] is not None
             or field['circle'] is not None
+            or field['diagonal'] is not None
             or field['graphic'] is not None
             or field['stored_graphic'] is not None
             or field['field_number'] is not None
@@ -1185,6 +1189,35 @@ def _read_circle(params: str):
     return diameter, max(1, number(1, 1)), colour
 
 
+def _read_diagonal(params: str):
+    """^GDw,h,t,c,o - as (width, height, thickness, colour, direction).
+
+    Every parameter optional, as ^GB's are: the thickness defaults to 1, and
+    the width and the height each default to it and are held to ^GD's own
+    3-32000. The colour is a letter, and so is the direction - which ZPL also
+    lets a file spell as the slash it draws, '/' for R and '\\' for L.
+    """
+    parts = [p.strip() for p in params.split(',')]
+
+    def number(index, fallback):
+        if len(parts) > index and parts[index]:
+            try:
+                return int(parts[index])
+            except ValueError:
+                pass
+        return fallback
+
+    def side(index):
+        return max(DiagonalLineElement.MIN_SIDE,
+                   min(number(index, thickness), DiagonalLineElement.MAX_SIDE))
+
+    thickness = max(1, number(2, 1))
+    colour = parts[3][:1].upper() if len(parts) > 3 and parts[3] else 'B'
+    lean = parts[4][:1].upper() if len(parts) > 4 and parts[4] else 'R'
+    direction = {'/': 'R', '\\': 'L'}.get(lean, lean)
+    return side(0), side(1), thickness, colour, direction
+
+
 BARCODE_COMMANDS = symbologies.COMMAND_PARAMS
 
 
@@ -1391,6 +1424,9 @@ def _build_element(field, doc, renderer):
 
     if field['circle'] is not None:
         return CircleElement(x, y, *_read_circle(field['circle']))
+
+    if field['diagonal'] is not None:
+        return DiagonalLineElement(x, y, *_read_diagonal(field['diagonal']))
 
     if field['barcode'] is not None:
         bc = field['barcode']

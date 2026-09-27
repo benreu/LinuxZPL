@@ -10,7 +10,8 @@ observable behaviour depends on it.
 ## 1. Purpose
 
 A visual designer for Zebra thermal labels. The user places text, frames,
-circles, barcodes and images on a label-sized canvas, saves the result as a `.zpl` file,
+circles, diagonal lines, barcodes and images on a label-sized canvas, saves the
+result as a `.zpl` file,
 and prints it over the network to a Zebra printer. The canvas is meant to be a
 proof of what the printer will produce, not an approximation of it.
 
@@ -194,6 +195,31 @@ to fill it and with `^FR` a circle does too. Thickness is a border drawn inward
 from the circumference, and its useful maximum is the radius, `diameter / 2`,
 where the circle is a solid disc. Clamp to that maximum, minimum 1.
 
+#### Diagonal line
+
+| Property | Default |
+|---|---|
+| `width`, `height` | 200 × 150 dots - `^GD`'s first two parameters, 3 to 32000 each |
+| `thickness` | 4 dots |
+| `colour` | `B` - `^GD`'s fourth parameter, `B` or `W` |
+| `direction` | `R` - `^GD`'s fifth: `R` leans right, bottom-left to top-right; `L` leans left, top-left to bottom-right |
+
+**The thickness is a run along each row, not a width square to the line.**
+Every row of dots from the top of the box to the bottom gets a run `thickness`
+dots long, moving steadily from one side of the box to the other, so the line's
+ends are horizontal cuts along the top and bottom edges and the whole line
+fills its `width × height` box exactly. The four corners, for `R`, are
+`(0, h) (t, h) (w, 0) (w − t, 0)` from the box's top-left, and `L` mirrors
+them; both canvases and the preview draw from one function that gives them.
+A consequence worth knowing: a shallow line looks thinner on paper than a steep
+one of the same thickness, since the run is measured across rather than
+square to it. This shape is inferred (§18).
+
+Its useful maximum is the width, at which point the runs meet the far side and
+the box fills solid. Clamp to that maximum, minimum 1. A white line prints
+nothing on bare stock, as a white frame does, and `^FR` inverts under the
+line's own run and ignores its colour, as it does under a frame's border.
+
 #### Barcode
 
 One element, seventeen symbologies: Code 128 (`^BC`, subsets B and C), Code
@@ -329,7 +355,7 @@ source at the new size — never from the previous bitmap.
 ┌─────────────────────────────────────────────────────────┐
 │ File Edit View Settings           Title        ↶  ↷   ✕ │  header bar
 ├─────────────────────────────────────────────────────────┤
-│ [+ Text] [+ Frame] [+ Circle] [+ Barcode] [+ Image] ... │  toolbar
+│ [+ Text] [+ Frame] [+ Circle] [+ Diagonal] [+ Barcode] …│  toolbar
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │                    design canvas                        │  scrollable
@@ -482,6 +508,7 @@ pinned.
     one magnification does. Held to the label's shorter side, then the box
     snaps to the circle and grows from the edge the drag left alone; the
     thickness is clamped to the radius
+  - diagonal line: thickness clamped to the width
   - text: `font_height` is set to the new height, `font_width` is solved so the
     text prints at the new width, and the box is then snapped to that printed
     width — the outline the user drags is the outline that prints. At a quarter
@@ -503,7 +530,8 @@ pinned.
   line count kept — a scale is a scale, not a re-wrap; a frame's thickness by
   the smaller factor, then held under half its shorter side; a circle's
   diameter and thickness both by the smaller factor, since one size cannot take
-  two; an image's box,
+  two; a diagonal line's thickness by the factor across, since it is a run
+  along each row, then held under its width; an image's box,
   its bitmap re-dithering at the new size on the next paint. Members have no
   minimum of their own — a group holding a 12-dot text still shrinks — only a
   floor of one dot on every size. Because the members snap to what will print,
@@ -679,8 +707,8 @@ those two groups. §5 describes what each does to the scale.
 
 ### 6.5 Toolbar
 
-`+ Text`, `+ Frame`, `+ Circle`, `+ Barcode` add an element with the defaults
-from §3.3.
+`+ Text`, `+ Frame`, `+ Circle`, `+ Diagonal`, `+ Barcode` add an element with
+the defaults from §3.3.
 `+ Image` opens a file chooser (JPEG/PNG) first. Each new element is placed at a
 staggered offset so successive additions do not stack exactly, and becomes the
 selection. `Delete` removes the selected elements.
@@ -720,7 +748,8 @@ effect of building elements while parsing.
 ## 7. Dialogs
 
 The element editors that are forms of fields — Edit Text, Edit Frame, Edit
-Circle and Edit Barcode — are **non-modal child windows** of the designer. Each is
+Circle, Edit Diagonal Line and Edit Barcode — are **non-modal child windows** of
+the designer. Each is
 transient for the designer, so it floats above it, follows it and closes with
 it rather than taking a window of its own, but it never blocks it: the canvas,
 the menus and the toolbar stay live while one is open. Edit Image is a file
@@ -758,6 +787,7 @@ file choosers and the prompts — are modal.
 | **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across every element editor that has one. |
 | **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) inverts whatever is already on the label, ignoring Colour (§18). |
 | **Edit Circle** | Diameter; Thickness; Colour; Reverse | Diameter 3–4095, `^GC`'s own range, so a small circle from a file is not enlarged by accepting an editor it was only looked at in. Thickness 1 to `diameter / 2`, the maximum updating live as the diameter changes. Colour and Reverse as Edit Frame's. |
+| **Edit Diagonal Line** | Width; Height; Thickness; Colour; Direction; Reverse | Width and height 3–32000, `^GD`'s own range, so a line from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to the width, the maximum updating live as the width changes. Direction is right-leaning ( / ) or left-leaning ( \ ) (§3.3). Colour and Reverse as Edit Frame's. |
 | **Edit Barcode** | Symbology; Value; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
@@ -789,6 +819,7 @@ file choosers and the prompts — are modal.
 | Text, downloaded font | `^FO<x>,<y>` / `^A@<orientation>,<font_height>,<font_width>,<path>` / `^FD<text>^FS` — `<path>` is `E:<NAME>.TTF` for a font this designer assigned, since that is where it uploads one; a font a loaded file named is written back at the path that file gave, verbatim (§10.2) |
 | Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>[,<colour>[,<rounding>]]` / `^FS` — the colour and rounding are written only when they are not `B` and `0` |
 | Circle | `^FO<x>,<y>` / `^GC<diameter>,<thickness>[,<colour>]` / `^FS` — the colour is written only when it is not `B` |
+| Diagonal line | `^FO<x>,<y>` / `^GD<width>,<height>,<thickness>[,<colour>[,<direction>]]` / `^FS` — the colour and direction are written only when they are not `B` and `R`, and the direction always as the letter |
 | Barcode | `^FO<x>,<y>` / `^BY<module_width>[,<ratio>]` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` — or `^B3`, `^BE`, `^B2`, `^BS`, `^BQ` for the other symbologies, each in its own parameter order (§3.3). Every parameter is trimmed after the last one that is not that position's default, except the height and the magnification, which are always written: they are the two a printer would otherwise resolve from its own settings, so a file that left them out would come back a different size on a different head. A matrix symbology writes no `^BY`, whose module width it is not drawn at |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
 
@@ -912,7 +943,7 @@ does not know is not taken for a comment.
 ### 8.3 What is read
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
-`^A@`), `^CF`, `^FW`, `^FB`, `^GB`, `^GC`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
+`^A@`), `^CF`, `^FW`, `^FB`, `^GB`, `^GC`, `^GD`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
 `^PO`, `^PM`, `^LR`), `^FO`/`^FT`'s justification and `^FW`'s, `^PQ`, `^CV`,
@@ -932,6 +963,9 @@ one the model holds:
 | `^GB300,0,4` | a 300 x 4 rule: `w` and `h` are also **clamped up** to the thickness, so neither can be thinner than the border drawing it |
 | `^GC` | a circle 3 dots across with a 1 dot border, the manual's two defaults |
 | `^GC5000,10` | 4095 dots across: *"larger values are replaced with 4095"*, and a diameter under 3 is raised to 3 |
+| `^GD` | a 3 x 3 line, 1 dot thick, leaning right: the thickness defaults to 1 and each side to it, raised to `^GD`'s minimum of 3 |
+| `^GD,,5` | a 5 x 5 line, 5 dots thick - so solid |
+| `^GD200,100,6,,/` and `^GD200,100,6,,\` | leaning right and left: the manual lets the direction be spelled as the slash it draws, and a save writes `R` and `L` for them, which print the same |
 | `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
 | `^BY3,3.0,150` | and a `^BC` that gives no height of its own is 150 dots tall |
 | `^FO,20,20` | x 0, y 20: both coordinates default to 0 (the manual's own spelling, page 127) |
@@ -1980,6 +2014,8 @@ message — never a swallowed exception or a placeholder.
 | Frame dialog limits | width 10–800, height 10–1200, thickness 1 to `min(w,h)/2` |
 | Circle | 150 dot diameter, 2 dot thickness, black |
 | Circle dialog limits | diameter 3–4095, thickness 1 to `diameter/2` |
+| Diagonal line | 200 × 150 dots, 4 dot thickness, black, leaning right |
+| Diagonal line dialog limits | width and height 3–32000, thickness 1 to the width |
 | Barcode | Code 128, `"123456789"`, 100 dot bar height, module width 2, value printed below |
 | Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200, ratio 2.0–3.0 |
 | Image | 200 × 200 dots, JPEG/PNG source |
@@ -2213,7 +2249,7 @@ rather than requirements:
   something a designer emits.
 - **`^FR` inverts whatever is already on the label under the field's own ink
   shape — glyph outlines, bar rectangles, the frame's or circle's own border or
-  fill —
+  fill, a diagonal line's run —
   and touches nothing outside it, confirmed against a real printer.**
   Inverting blank (white) label gives black, so a reversed field with
   nothing already printed under it prints its own ink normally, the same as
@@ -2222,12 +2258,20 @@ rather than requirements:
   canvases do this live, with `QPainter.CompositionMode_Difference` /
   `cairo.OPERATOR_DIFFERENCE`; the offline preview does the equivalent by
   cropping, inverting and pasting back under a mask of the field's own ink.
-  Two residual approximations: `^GB`'s and `^GC`'s `Colour` is ignored
+  Two residual approximations: `^GB`'s, `^GC`'s and `^GD`'s `Colour` is ignored
   whenever `Reverse` is ticked — inferred from the same hardware description rather than itself
   hardware-tested, since `^FR` replaces the field's normal print outright and
   leaves nothing for `Colour` to modulate — and the font-less `^FB` fallback
   (no TrueType file at all) inverts per line's bounding box rather than per
   glyph.
+- **`^GD`'s shape is inferred, not confirmed against a printer.** The manual
+  gives the box, the thickness and the direction but never says which way the
+  thickness is measured. It is drawn here as a run of `thickness` dots on every
+  row (§3.3), which is how a row-by-row raster would lay it down and how the
+  reference renderers draw it, so a line fills its box exactly with horizontal
+  ends. If a printer measures it square to the line instead, a shallow line
+  prints thicker than the canvas shows; only the one function that gives the
+  corners would change.
 - **A label made smaller can squash a group.** Shrinking the label (§7) clamps
   every element into the new bounds one by one, so two members that both hit
   the edge end up closer together than they were — the label changed, not the

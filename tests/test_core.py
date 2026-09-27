@@ -3852,6 +3852,215 @@ _cancel_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Cancel).click
 check("and Cancel leaves the circle alone", _cancelled.diameter == 150,
       _cancelled.diameter)
 
+# --- ^GD, the diagonal line --------------------------------------------------
+# Every parameter optional, as ^GB's are: the thickness defaults to 1, the
+# sides to the thickness and are held to 3-32000, and the colour and the
+# direction are letters - the direction also spelled as the slash it draws.
+from zplcore.model import DiagonalLineElement
+
+for source, want in (("^GD330,183,10,,R", (330, 183, 10, 'B', 'R')),
+                     ("^GD100,50,4,W,L", (100, 50, 4, 'W', 'L')),
+                     ("^GD100,50,4,,/", (100, 50, 4, 'B', 'R')),
+                     ("^GD100,50,4,,\\", (100, 50, 4, 'B', 'L')),
+                     ("^GD", (3, 3, 1, 'B', 'R')), ("^GD,,5", (5, 5, 5, 'B', 'R')),
+                     ("^GD300", (300, 3, 1, 'B', 'R')),
+                     ("^GD40000,1,2", (32000, 3, 2, 'B', 'R'))):
+    built = zpl_parser.parse_zpl(f"^XA^PW812^LL1218^FO50,50{source}^FS^XZ")[0].elements
+    check(f"{source} is a diagonal line {want}",
+          len(built) == 1 and isinstance(built[0], DiagonalLineElement)
+          and (built[0].width, built[0].height, built[0].thickness,
+               built[0].colour, built[0].direction) == want,
+          [(type(e).__name__, box_of(e), getattr(e, 'thickness', None),
+            getattr(e, 'colour', None), getattr(e, 'direction', None)) for e in built])
+check("^GD is not reported as dropped, now that it is modelled",
+      workflow.unsupported_commands("^XA^FO50,50^GD100,50,4^FS^XZ") == [],
+      workflow.unsupported_commands("^XA^FO50,50^GD100,50,4^FS^XZ"))
+
+def _diagonal_written(source):
+    return zpl_parser.parse_zpl(
+        f"^XA^PW812^LL1218^FO50,50{source}^FS^XZ")[0].elements[0].to_zpl()
+
+check("the manual's own ^GD comes back without the defaults it spelled",
+      "^GD330,183,10\n" in _diagonal_written("^GD330,183,10,,R"),
+      _diagonal_written("^GD330,183,10,,R").replace('\n', ' '))
+check("a white, left-leaning line is written back as it was read",
+      "^GD100,50,4,W,L\n" in _diagonal_written("^GD100,50,4,W,L"))
+check("a backslash is written back as the L it means",
+      "^GD100,50,4,B,L\n" in _diagonal_written("^GD100,50,4,,\\"),
+      _diagonal_written("^GD100,50,4,,\\").replace('\n', ' '))
+_made_diagonal = Document().add_diagonal_element()
+check("a line the designer created writes ^GD with no colour or direction",
+      _made_diagonal.to_zpl()
+      == f"^FO{_made_diagonal.x},{_made_diagonal.y}\n^GD200,150,4\n^FS\n",
+      _made_diagonal.to_zpl().replace('\n', ' '))
+_fr_diagonal = zpl_parser.parse_zpl("^XA^FO50,50^GD100,50,4^FR^FS^XZ")[0].elements[0]
+check("a ^FR after the ^GD reverses the line, and is written before it",
+      _fr_diagonal.reverse_print and "^FR\n^GD100,50,4\n" in _fr_diagonal.to_zpl(),
+      _fr_diagonal.to_zpl().replace('\n', ' '))
+_typed_diagonal = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FT50,250^GD100,50,4^FS^XZ")[0].elements[0]
+check("^FT gives a diagonal its bottom-left corner, as it does a frame",
+      (_typed_diagonal.y, _typed_diagonal.y + _typed_diagonal.height) == (200, 250)
+      and "^FT50,250\n" in _typed_diagonal.to_zpl(),
+      (_typed_diagonal.y, _typed_diagonal.to_zpl().replace('\n', ' ')))
+_unplaced = zpl_parser.parse_zpl("^XA^FO10,20^FS^GD100,50,4^FS^XZ")[0].elements
+check("a ^GD with no ^FO of its own opens at the last origin",
+      len(_unplaced) == 1 and box_of(_unplaced[0]) == (10, 20, 100, 50),
+      [box_of(e) for e in _unplaced])
+_kept_doc = Document(400, 400)
+_hidden_diagonal = _kept_doc.add_diagonal_element()
+_hidden_diagonal.print_enabled = False
+_kept_doc.add_frame_element()
+_kept_doc.select_many(_kept_doc.elements); _kept_doc.group_selected()
+_kept_back = zpl_parser.parse_zpl(_kept_doc.to_zpl())[0].elements
+check("a hidden, grouped diagonal survives a round trip, still hidden and grouped",
+      isinstance(_kept_back[0], DiagonalLineElement)
+      and not _kept_back[0].print_enabled and _kept_back[0].group == (1,)
+      and _kept_back[1].group == (1,),
+      [(type(e).__name__, e.print_enabled, e.group) for e in _kept_back])
+
+# the preview: a run of `thickness` dots on every row, corner to corner
+def _runs(image, x0, x1, rows):
+    """For each row, the (first, last) dark column between x0 and x1."""
+    runs = []
+    for y in rows:
+        dark = [x for x in range(x0, x1) if image.getpixel((x, y)) < 128]
+        runs.append((dark[0], dark[-1]) if dark else None)
+    return runs
+
+_leaning_zpl = "^XA^PW400^LL300^FO50,50^GD200,100,10^FS^XZ"
+_leaning = ZPLRenderer(400, 300).render(_leaning_zpl).convert('L')
+check("the preview leans ^GD right: its runs run from the bottom-left up to the top-right",
+      _runs(_leaning, 0, 400, (149, 50)) == [(50, 59), (240, 249)],
+      _runs(_leaning, 0, 400, (149, 50)))
+check("with every row exactly as thick as the line",
+      all(run is not None and run[1] - run[0] + 1 == 10
+          for run in _runs(_leaning, 0, 400, range(50, 150))),
+      [run for run in _runs(_leaning, 0, 400, range(50, 150))
+       if run is None or run[1] - run[0] + 1 != 10])
+check("and its ink fills exactly the box the model claims",
+      _preview_ink(_leaning_zpl, 400, 300) == (50, 50, 200, 100),
+      _preview_ink(_leaning_zpl, 400, 300))
+_backslash = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO50,50^GD200,100,10,,L^FS^XZ").convert('L')
+check("and leans an L the other way, top-left down to bottom-right",
+      _runs(_backslash, 0, 400, (50, 149)) == [(50, 59), (240, 249)],
+      _runs(_backslash, 0, 400, (50, 149)))
+_solid = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO50,50^GD200,100,500^FS^XZ").convert('L')
+check("a line as thick as its box is wide fills the box",
+      _runs(_solid, 0, 400, (50, 100, 149)) == [(50, 249)] * 3,
+      _runs(_solid, 0, 400, (50, 100, 149)))
+_slashed = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO50,50^GB200,100,100^FS"
+    "^FO50,50^GD200,100,10,W^FS^XZ").convert('L')
+check("a white line shows only over black, cutting through a solid box",
+      _slashed.getpixel((54, 149)) > 200 and _slashed.getpixel((54, 50)) < 100,
+      (_slashed.getpixel((54, 149)), _slashed.getpixel((54, 50))))
+_fr_line = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO50,50^GB100,100,100^FS"
+    "^FO50,50^FR^GD200,100,10,W^FS^XZ").convert('L')
+check("^FR inverts under the line's own run, ignoring its colour",
+      _fr_line.getpixel((54, 149)) > 200 and _fr_line.getpixel((245, 50)) < 100
+      and _fr_line.getpixel((100, 50)) < 100,
+      (_fr_line.getpixel((54, 149)), _fr_line.getpixel((245, 50)),
+       _fr_line.getpixel((100, 50))))
+
+dw = qt_main.ZPLDesignerWindow()
+dw.unsaved_changes = False
+dw.on_new()
+dw.document.set_label_size(400, 300)
+dw.document.elements.append(DiagonalLineElement(50, 50, 200, 100, 10))
+dw.canvas.set_zoom(1.0)
+slashed = QImage(400, 300, QImage.Format_ARGB32); slashed.fill(Qt.white)
+dw.canvas.render(slashed)
+
+def _slash_dark(x, y):
+    return (slashed.pixel(x, y) & 0xFFFFFF) < 0x646464
+
+check("and the canvas draws the same line, the other two corners empty",
+      _slash_dark(64, 145) and _slash_dark(241, 52)
+      and not _slash_dark(55, 55) and not _slash_dark(245, 145),
+      (_slash_dark(64, 145), _slash_dark(241, 52),
+       _slash_dark(55, 55), _slash_dark(245, 145)))
+
+# the thickness is a run along each row, so it is held to the width and
+# scales with it
+_narrowed = DiagonalLineElement(100, 100, 200, 150, 150)
+geometry.resize_by_handle(Document(400, 400), _narrowed, 'mr', -120, 0)
+check("narrowing a diagonal by its handle holds the thickness to the new width",
+      (_narrowed.width, _narrowed.thickness) == (80, 80),
+      (_narrowed.width, _narrowed.thickness))
+d = Document(400, 400)
+_gd, _gf = DiagonalLineElement(40, 40, 60, 60, 10), FrameElement(140, 120, 80, 60)
+d.elements.extend([_gd, _gf])
+d.select_many([_gd, _gf]); d.group_selected(); d.select(_gd)
+geometry.resize_by_handle(d, d.resize_target(), 'mr', 180, 0)      # x2 across
+check("a group stretched across scales a diagonal's thickness with its width",
+      (box_of(_gd), _gd.thickness) == ((40, 40, 120, 60), 20),
+      (box_of(_gd), _gd.thickness))
+_rescaled_line = Document()
+_rl = _rescaled_line.add_diagonal_element()
+_rescaled_line.rescale(300 / 203)
+check("a change of resolution scales the box and the thickness",
+      (_rl.width, _rl.height, _rl.thickness) == (296, 222, 6),
+      (_rl.width, _rl.height, _rl.thickness))
+
+# the editor: a thickness held to the width, the colour, the direction, ^FR
+_edited_line = DiagonalLineElement(50, 50, 200, 150, 4)
+_line_accepted = []
+_line_dialog = qt_dialogs.edit_diagonal_dialog(
+    None, _edited_line, on_accept=lambda: _line_accepted.append(True))
+_line_dialog.findChild(QSpinBox, 'width').setValue(60)
+_line_dialog.findChild(QSpinBox, 'height').setValue(90)
+_line_dialog.findChild(QSpinBox, 'thickness').setValue(100)
+_line_dialog.findChild(QComboBox, 'colour').setCurrentIndex(1)
+_line_dialog.findChild(QComboBox, 'direction').setCurrentIndex(1)
+_line_dialog.findChild(QCheckBox, 'reverse_print').setChecked(True)
+_line_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("Edit Diagonal Line writes the box, a thickness held to the width, "
+      "the colour, the direction and ^FR",
+      _line_accepted
+      and (box_of(_edited_line), _edited_line.thickness, _edited_line.colour,
+           _edited_line.direction, _edited_line.reverse_print)
+      == ((50, 50, 60, 90), 60, 'W', 'L', True),
+      (box_of(_edited_line), _edited_line.thickness, _edited_line.colour,
+       _edited_line.direction, _edited_line.reverse_print))
+check("and the line it leaves is written that way",
+      "^FR\n^GD60,90,60,W,L\n" in _edited_line.to_zpl(),
+      _edited_line.to_zpl().replace('\n', ' '))
+_tiny_line = DiagonalLineElement(50, 50, 3, 3, 1)
+_tiny_dialog = qt_dialogs.edit_diagonal_dialog(None, _tiny_line)
+_tiny_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+_wide_line = DiagonalLineElement(50, 50, 1500, 40, 20)
+_wide_dialog = qt_dialogs.edit_diagonal_dialog(None, _wide_line)
+_wide_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("a line from a file keeps its size through an editor accepted unchanged",
+      box_of(_tiny_line)[2:] == (3, 3) and box_of(_wide_line)[2:] == (1500, 40),
+      (box_of(_tiny_line), box_of(_wide_line)))
+_kept_line = DiagonalLineElement(50, 50, 200, 150, 4)
+_kept_dialog = qt_dialogs.edit_diagonal_dialog(None, _kept_line)
+_kept_dialog.findChild(QComboBox, 'direction').setCurrentIndex(1)
+_kept_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Cancel).click()
+check("and Cancel leaves the line alone", _kept_line.direction == 'R',
+      _kept_line.direction)
+
+# + Diagonal, and a double-click onto its editor
+dw.on_new()
+_before = len(dw._undo_stack)
+dw.on_add_diagonal()
+_added_line = dw.document.selected_element
+check("+ Diagonal adds a selected line and one undo entry",
+      isinstance(_added_line, DiagonalLineElement)
+      and len(dw._undo_stack) == _before + 1,
+      (type(_added_line).__name__, len(dw._undo_stack) - _before))
+dw.on_element_double_clicked(_added_line)
+check("and a double-click opens Edit Diagonal Line on it",
+      id(_added_line) in dw._editors
+      and dw._editors[id(_added_line)].windowTitle() == "Edit Diagonal Line",
+      list(dw._editors))
+dw._close_element_editors()
+
 # --- ^FT names a baseline where ^FO names a top -----------------------------
 
 typeset = zpl_parser.parse_zpl(

@@ -10,12 +10,13 @@ never has to depend on the other's.
 FUNCTIONAL_SPEC.md is the contract this implements; both frontends answer to it.
 """
 
-from .model import (BarcodeElement, CircleElement, DesignElement, Document,
-                    FieldBlock, FrameElement, ImageElement, TextElement)
+from .model import (BarcodeElement, CircleElement, DesignElement,
+                    DiagonalLineElement, Document, FieldBlock, FrameElement,
+                    ImageElement, TextElement)
 from .parser import parse_label_size, parse_zpl
 
 __all__ = [
     'DesignElement', 'TextElement', 'FrameElement', 'CircleElement',
-    'BarcodeElement', 'ImageElement', 'FieldBlock', 'Document', 'parse_zpl',
-    'parse_label_size',
+    'DiagonalLineElement', 'BarcodeElement', 'ImageElement', 'FieldBlock',
+    'Document', 'parse_zpl', 'parse_label_size',
 ]

@@ -232,6 +232,9 @@ class DesignCanvas(Gtk.DrawingArea):
     def add_circle_element(self):
         return self._added(self.document.add_circle_element())
 
+    def add_diagonal_element(self):
+        return self._added(self.document.add_diagonal_element())
+
     def add_barcode_element(self):
         return self._added(self.document.add_barcode_element())
 
@@ -477,6 +480,8 @@ class DesignCanvas(Gtk.DrawingArea):
         elif element.element_type in ('frame', 'circle'):
             # A ^GC circle is a ^GB square rounded by half its side
             self._draw_frame_element(context, element, selected)
+        elif element.element_type == 'diagonal':
+            self._draw_diagonal_element(context, element, selected)
         elif element.element_type == 'barcode':
             self._draw_barcode_element(context, element, selected)
         elif element.element_type == 'image':
@@ -683,6 +688,40 @@ class DesignCanvas(Gtk.DrawingArea):
                           element.width - t, element.height - t,
                           max(0.0, radius - t / 2))
             context.stroke()
+
+        if reverse:
+            context.set_operator(cairo.OPERATOR_OVER)
+
+    def _draw_diagonal_element(self, context, element, selected: bool):
+        """A ^GD line, from the corners zplcore.geometry gives it, so this and
+        the Qt canvas cannot lean it differently."""
+        # Selection outline first, on the box the handles are on, as a frame's
+        # is - most of that box is empty, and the line alone would not say
+        # where the handles belong.
+        if selected:
+            context.set_source_rgb(0, 0, 1)
+            context.set_line_width(2)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.stroke()
+
+        reverse = element.reverse_print
+        if reverse:
+            # ^FR inverts under the line's own ink, ignoring its colour, as
+            # it does under a frame's border.
+            context.set_operator(cairo.OPERATOR_DIFFERENCE)
+            context.set_source_rgb(1, 1, 1)
+        elif element.colour == 'W':
+            # ^GD's colour: white shows only over something already black.
+            context.set_source_rgb(1, 1, 1)
+        else:
+            context.set_source_rgb(0, 0, 0)
+
+        corners = geometry.diagonal_points(element)
+        context.move_to(element.x + corners[0][0], element.y + corners[0][1])
+        for x, y in corners[1:]:
+            context.line_to(element.x + x, element.y + y)
+        context.close_path()
+        context.fill()
 
         if reverse:
             context.set_operator(cairo.OPERATOR_OVER)

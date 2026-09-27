@@ -23,11 +23,12 @@ from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import textraster
-from zplcore.model import (FRAME_COLOURS, ORIENTATIONS,
+from zplcore.model import (DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
                            TEXT_JUSTIFICATIONS, BarcodeElement,
-                           CircleElement, Document, FieldBlock, FrameElement,
-                           ImageElement, StoredGraphicElement, TextElement)
+                           CircleElement, DiagonalLineElement, Document,
+                           FieldBlock, FrameElement, ImageElement,
+                           StoredGraphicElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from .busy import BusyBar
@@ -728,6 +729,11 @@ class ZPLViewerWindow(Gtk.Window):
         add_circle_btn = Gtk.Button(label="+ Circle")
         add_circle_btn.connect("clicked", self.on_add_circle_clicked)
         toolbar_box.pack_start(add_circle_btn, False, False, 0)
+
+        # Add diagonal line button
+        add_diagonal_btn = Gtk.Button(label="+ Diagonal")
+        add_diagonal_btn.connect("clicked", self.on_add_diagonal_clicked)
+        toolbar_box.pack_start(add_diagonal_btn, False, False, 0)
         
         # Add barcode button
         add_barcode_btn = Gtk.Button(label="+ Barcode")
@@ -3134,6 +3140,10 @@ class ZPLViewerWindow(Gtk.Window):
     def on_add_circle_clicked(self, widget):
         """Handle add circle element button click."""
         self.design_canvas.add_circle_element()
+
+    def on_add_diagonal_clicked(self, widget):
+        """Handle add diagonal line element button click."""
+        self.design_canvas.add_diagonal_element()
     
     def on_add_barcode_clicked(self, widget):
         """Handle add barcode element button click."""
@@ -4101,6 +4111,77 @@ class ZPLViewerWindow(Gtk.Window):
                     element.thickness = min(int(thickness_spin.get_value()),
                                             max_thickness())
                     element.colour = colour_codes[colour_combo.get_active()]
+                    element.reverse_print = fr_check.get_active()
+                    self.design_canvas.queue_draw()
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
+
+        elif isinstance(element, DiagonalLineElement):
+            dialog = Gtk.Dialog(title="Edit Diagonal Line", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                               Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+
+            # ^GD's own range, so a line from a file is not cut down, or a
+            # short one enlarged, by accepting the editor it was only looked
+            # at in
+            content.pack_start(Gtk.Label(label="Width:"), False, False, 0)
+            width_spin = _make_spin(element.width, DiagonalLineElement.MIN_SIDE,
+                                    DiagonalLineElement.MAX_SIDE)
+            content.pack_start(width_spin, False, False, 0)
+
+            content.pack_start(Gtk.Label(label="Height:"), False, False, 0)
+            height_spin = _make_spin(element.height, DiagonalLineElement.MIN_SIDE,
+                                     DiagonalLineElement.MAX_SIDE)
+            content.pack_start(height_spin, False, False, 0)
+
+            # Each row's run meets the far side at the full width, and the
+            # box fills solid.
+            def max_thickness():
+                return max(1, int(width_spin.get_value()))
+
+            content.pack_start(Gtk.Label(label="Thickness:"), False, False, 0)
+            thickness_spin = _make_spin(min(element.thickness, max_thickness()),
+                                        1, max_thickness())
+            content.pack_start(thickness_spin, False, False, 0)
+
+            def on_width_changed(_spin):
+                # Narrowing the line must not leave a thicker one selectable
+                thickness_spin.get_adjustment().set_upper(max_thickness())
+
+            width_spin.connect("value-changed", on_width_changed)
+
+            # ^GD's colour: the same black or white ^GB offers
+            content.pack_start(Gtk.Label(label="Colour:"), False, False, 0)
+            colour_combo, colour_codes = _make_combo(FRAME_COLOURS, element.colour)
+            content.pack_start(colour_combo, False, False, 0)
+
+            content.pack_start(Gtk.Label(label="Direction:"), False, False, 0)
+            direction_combo, direction_codes = _make_combo(DIAGONAL_DIRECTIONS,
+                                                           element.direction)
+            content.pack_start(direction_combo, False, False, 0)
+
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            content.pack_start(fr_check, False, False, 0)
+            content.pack_start(_reverse_hint(), False, False, 0)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.width = int(width_spin.get_value())
+                    element.height = int(height_spin.get_value())
+                    # An adjustment whose upper bound drops does not pull its
+                    # value down with it, as Qt's setRange does.
+                    element.thickness = min(int(thickness_spin.get_value()),
+                                            max_thickness())
+                    element.colour = colour_codes[colour_combo.get_active()]
+                    element.direction = direction_codes[direction_combo.get_active()]
                     element.reverse_print = fr_check.get_active()
                     self.design_canvas.queue_draw()
                     self.on_canvas_changed()

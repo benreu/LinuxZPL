@@ -7,8 +7,8 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 from typing import List, Optional
 from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphics, parser, textraster, transforms
-from .model import (BarcodeElement, CircleElement, FieldBlock, FrameElement,
-                    TextElement)
+from .model import (BarcodeElement, CircleElement, DiagonalLineElement,
+                    FieldBlock, FrameElement, TextElement)
 
 
 class ZPLRenderer:
@@ -60,9 +60,9 @@ class ZPLRenderer:
         self.unsupported_field = False
         # ^FR: the current field prints in reverse
         self.current_reverse = False
-        # A ^GB's or ^GC's (command, params), held until ^FS so a ^FR that
-        # comes after it in the same field is already known by the time it is
-        # drawn.
+        # A ^GB's, ^GC's or ^GD's (command, params), held until ^FS so a ^FR
+        # that comes after it in the same field is already known by the time
+        # it is drawn.
         self.pending_frame = None
         self.barcode_orientation = ''
         self.barcode_options = ()
@@ -385,6 +385,31 @@ class ZPLRenderer:
         if self.current_reverse:
             self._invert_under(mask, (element.x, element.y))
 
+    def _render_diagonal(self, params: str):
+        """Draw a ^GD line through the same element and corners the canvas
+        draws, for the reason _render_frame gives."""
+        element = DiagonalLineElement(self.current_x, self.current_y,
+                                      *parser._read_diagonal(params))
+        element.x = self._left(element.width)
+        element.y = self._top(element.height)
+        # PIL fills a polygon's edges as well as its inside, so the right end
+        # of each run and the bottom row come in a dot - as _render_frame's
+        # box does - or every ^GD would draw a dot wider and taller here than
+        # on the canvas.
+        corners = [(x - (1 if end in (1, 2) else 0), min(y, element.height - 1))
+                   for end, (x, y) in enumerate(geometry.diagonal_points(element))]
+
+        if self.current_reverse:
+            # The colour has nothing to choose between under ^FR, as for a
+            # ^GB: the line is a mask, and what is under it is inverted.
+            mask = Image.new('L', (element.width, element.height), 0)
+            ImageDraw.Draw(mask).polygon(corners, fill=255)
+            self._invert_under(mask, (element.x, element.y))
+            return
+        ink = (255, 255, 255) if element.colour == 'W' else (0, 0, 0)
+        self.draw.polygon([(element.x + x, element.y + y) for x, y in corners],
+                          fill=ink)
+
     def _render_graphic(self, params: str):
         """Render a ^GF graphic field, in whichever encoding it arrived in.
 
@@ -566,7 +591,11 @@ class ZPLRenderer:
             self._reset_field()
             return
         if self.pending_frame is not None:
-            self._render_frame(*self.pending_frame)
+            command, params = self.pending_frame
+            if command == 'GD':
+                self._render_diagonal(params)
+            else:
+                self._render_frame(command, params)
             self.pending_frame = None
         if self.unsupported_field:
             # Drawing the ^FD would put the barcode's data on the label as
@@ -706,7 +735,7 @@ class ZPLRenderer:
             # to be known before ^GB (drawn eagerly, below) or ^FS (which
             # draws everything else) is reached.
             self.current_reverse = True
-        elif command in ('GB', 'GC'):
+        elif command in ('GB', 'GC', 'GD'):
             # Held until ^FS rather than drawn here, so a ^FR that comes
             # after ^GB in the same field is still seen before it is drawn.
             self.pending_frame = (command, params)
