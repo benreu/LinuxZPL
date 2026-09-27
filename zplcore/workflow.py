@@ -298,6 +298,10 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # assigned to a downloaded font and a font linked to another for the glyphs
 # it lacks: carried verbatim, nothing to draw; see FUNCTIONAL_SPEC.md
 # section 18.
+# ^PR, ^MD, ^MM, ^MN and ^MT are the printer's speed, darkness, print mode,
+# media tracking and media type - the settings a generator's header sets
+# before the first field. Carried verbatim, the last of each, with nothing to
+# draw and nothing validated; see FUNCTIONAL_SPEC.md section 18.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY',
             '^GB', '^GC', '^GD', '^GE', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF', '^FW',
@@ -305,7 +309,8 @@ MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY',
             '^SN', '^SF', '^FC', '^FH',
             '^LH', '^LS', '^LT', '^PO', '^PM', '^LR',
             '^IM', '^XG', '^IL', '^IS', '^PQ', '^CV',
-            '^CI', '^CW', '^FL'}
+            '^CI', '^CW', '^FL',
+            '^PR', '^MD', '^MM', '^MN', '^MT'}
 
 # Every barcode command this designer draws, from the one catalogue the
 # model, the parser and the preview read - so a symbology cannot be added

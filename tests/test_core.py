@@ -6017,6 +6017,82 @@ check("the notice names the code page and what a save will do",
       'cp850' in workflow.decoded_notice('cp850')[0]
       and '^CI28' in workflow.decoded_notice('cp850')[1])
 
+# --- ^PR, ^MD, ^MM, ^MN, ^MT: print and media settings ---------------------
+# The printer's speed, darkness, print mode, media tracking and media type -
+# what a generator's header sets ahead of the first field. None draws
+# anything, and all five were met with the "does not understand" dialog and
+# lost on save, after which the printer ran the label on whatever it had last
+# been told.
+
+_media = zpl_parser.parse_zpl(
+    "^XA^PR6,6,2^MD-9^MMC,Y^MNM,20^MTD^FO1,1^A0N,9,9^FDx^FS^XZ")[0]
+check("each of the five is carried verbatim, in the order it came",
+      list(_media.media_settings.items())
+      == [('^PR', '6,6,2'), ('^MD', '-9'), ('^MM', 'C,Y'), ('^MN', 'M,20'),
+          ('^MT', 'D')], _media.media_settings)
+check("a second ^MD keeps the first one's place and takes its value - two "
+      "^MDs do not add up",
+      list(zpl_parser.parse_zpl(
+          "^XA^MD-6^PR4^FO1,1^A0N,9,9^FDx^FS^MD2^XZ"
+      )[0].media_settings.items()) == [('^MD', '2'), ('^PR', '4')])
+check("one with no value is ignored, as the printer ignores it, and does not "
+      "wipe out an earlier one",
+      zpl_parser.parse_zpl("^XA^MD10^MD^MM^XZ")[0].media_settings
+      == {'^MD': '10'})
+
+_media_header = _header(
+    "^XA^PR6,6,2^MD-9^MMC,Y^MNM,20^MTD^PW812^LL1218"
+    "^FO1,1^A0N,9,9^FDx^FS^XZ")
+check("a save writes them back ahead of ^PW, one line each, as spelled",
+      _media_header[_media_header.index('^PR6,6,2'):
+                    _media_header.index('^PW812')]
+      == ['^PR6,6,2', '^MD-9', '^MMC,Y', '^MNM,20', '^MTD'], _media_header)
+check("a format that carried none writes none - existing files unchanged",
+      not any(l[:3] in zpl_parser.MEDIA_SETTINGS
+              for l in _cv_plain.to_zpl().split('\n')))
+_media_lines = [l for l in _media.to_zpl(explicit_flips=True).split('\n')
+                if l[:3] in zpl_parser.MEDIA_SETTINGS]
+check("printing sends the same lines - none of the five has an off to state",
+      _media_lines == ['^PR6,6,2', '^MD-9', '^MMC,Y', '^MNM,20', '^MTD'],
+      _media_lines)
+check("and adds none for a label that carried none",
+      not any(l[:3] in zpl_parser.MEDIA_SETTINGS
+              for l in _cv_plain.to_zpl(explicit_flips=True).split('\n')))
+check("a label with them saves the same twice",
+      zpl_parser.parse_zpl(_media.to_zpl())[0].to_zpl() == _media.to_zpl())
+
+# ZebraDesigner's own shape: a set-up format of its own ahead of the label,
+# then ^MMT at the top of it. What is still left behind is still named.
+_designer_header = (
+    "^XA~TA000~JSN^LT0^MNW^MTT^PON^PMN^LH0,0^JMA^PR6,6~SD15^JUS^LRN^CI0^XZ"
+    "^XA^MMT^PW812^LL1218^LS0^FT10,40^A0N,30,30^FDx^FS^PQ1,0,1,Y^XZ")
+check("a generator's set-up header keeps all four of its settings",
+      [l for l in _header(_designer_header) if l[:3] in zpl_parser.MEDIA_SETTINGS]
+      == ['^MNW', '^MTT', '^PR6,6', '^MMT'], _header(_designer_header))
+check("and is warned about only for what a save still drops",
+      workflow.unsupported_commands(_designer_header)
+      == ['~TA', '~JS', '^JM', '~SD', '^JU'],
+      workflow.unsupported_commands(_designer_header))
+
+_media_raw = (FIXTURES / 'media_settings.zpl').read_text()
+_media_doc = zpl_parser.parse_zpl(_media_raw)[0]
+_media_fixture_lines = _media_doc.to_zpl().split('\n')
+check("the fixture reads as one text element and reports nothing",
+      len(_media_doc.elements) == 1
+      and _media_doc.elements[0].text == 'SHIP TO'
+      and workflow.unsupported_commands(_media_raw) == [])
+check("and writes all five back ahead of ^PW and the first field",
+      _media_fixture_lines[_media_fixture_lines.index('^MMT'):
+                           _media_fixture_lines.index('^PW812')]
+      == ['^MMT', '^MNW', '^MTT', '^PR6,6', '^MD10'], _media_fixture_lines)
+check("a format that is only a print rate is not empty",
+      not zpl_parser.parse_zpl("^XA^PR6,6^XZ")[0].is_empty())
+
+check("^PR, ^MD, ^MM, ^MN and ^MT draw nothing in the preview",
+      _preview_ink("^XA^PW300^LL200^PR2^MD30^MMC^MNN^MTD"
+                   "^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
+      == _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
+
 # --- printer_io.send_command(): the console's text-in/text-out wrapper -----
 # It should encode the command as UTF-8, pass it straight through to send()
 # unmodified (read_reply always on, since a console has no other way to know

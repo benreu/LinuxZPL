@@ -833,6 +833,7 @@ file choosers and the prompts — are modal.
 ^CI<encoding>                      only when the file gave one, or the label holds non-ASCII (see below)
 ^CW<letter>,<device>:<name>.<ext>  one per ^CW the file gave, verbatim
 ^FL<ext>,<base>,<link>^FS          one per ^FL the file gave, verbatim, in order
+^PR… ^MD… ^MM… ^MN… ^MT…           one per command the file gave, the last of each, verbatim
 ^PW<label_width>
 ^LL<label_height>
 ^FXDESIGNER_DPI:<dpi>
@@ -889,6 +890,11 @@ script"* — and which one is decided in this order:
 `^CW` in first-seen order of letter, each letter with its last assignment,
 and every `^FL` in order, since a link and an unlink are both actions. `^FL`
 is written with the `^FS` the manual's own example gives it.
+
+`^PR`, `^MD`, `^MM`, `^MN` and `^MT` come after the label transforms and before
+`^PW`, one line each, exactly as the file spelled them: in the order each
+command was first seen, each with the last value the file gave it. A label
+that carried none writes none.
 
 **Graphic encoding** (`^GFA`): one bit per dot, rows padded to whole bytes,
 `bytes_per_row = ceil(width / 8)`, data as uppercase hex. **A set bit is
@@ -976,7 +982,8 @@ does not know is not taken for a comment.
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
 `^PO`, `^PM`, `^LR`), `^FO`/`^FT`'s justification and `^FW`'s, `^PQ`, `^CV`,
-`^CI`, `^CW`, `^FL`, and the five metadata keys.
+`^CI`, `^CW`, `^FL`, the printer's settings (`^PR`, `^MD`, `^MM`, `^MN`,
+`^MT`), and the five metadata keys.
 
 **Every parameter of a command is optional, and an omitted one is not an
 absent one.** A pattern that requires all of them either replaces what was
@@ -1123,6 +1130,24 @@ nothing while costing the letter itself — a later `^CW` reassigning that lette
 or a printer whose own `^CW` set it, would no longer line up. (An `^A@` can
 spell `R:MYFONT.FNT` since §10.2, so the spelling is no longer what stands in
 the way; it was the original reason and is recorded here as no longer one.)
+
+**`^PR`, `^MD`, `^MM`, `^MN` and `^MT` are the printer's own settings, read
+wherever they appear and carried verbatim.** `^PRp,s,b` is the print, slew and
+backfeed speed; `^MDa` the darkness, relative to the configured value;
+`^MMa,b` what happens to a label once printed (tear-off, peel-off, cutter…);
+`^MNa,b` how the media is tracked (continuous, web, black mark…); `^MTa`
+thermal transfer or direct thermal. They are what a generator's header sets
+ahead of the first field — ZebraDesigner writes `^MNW^MTT^PR6,6` in a set-up
+format of its own and `^MMT` at the top of the label — and each was met with
+the "does not understand" dialog and dropped on save, after which the printer
+ran the label on whatever it had last been told: a label for continuous media
+back on web sensing, or a cutter job torn off.
+
+Each command is kept once, in the place it was first seen, with the last value
+the file gave it — the printer's end state, since each stays in force until the
+next and two `^MD`s do not add up (each is measured from the configured
+darkness). One with no value is ignored, as the printer ignores it, rather than
+wiping out an earlier one that had a value.
 
 **`^FT` places a field from its baseline, and `^FO` from its top.** `^FT`
 opens a field exactly as `^FO` does; ignoring it does not misplace such a field
@@ -1286,6 +1311,12 @@ a label that carries no `^CI` sends `^CI28` — the bytes sent are UTF-8, and
 under it ASCII is ASCII — while one that carries a `^CI` sends that one, and
 one holding non-ASCII sends `^CI28` either way (§8.1). Save writes `^CI28`
 only in that last case, so an ASCII-only file stays as it was.
+
+**`^PR`, `^MD`, `^MM`, `^MN` and `^MT` are sent as the label carries them, and
+not otherwise.** They are sticky at the printer too, but none has an "off" to
+state: the speed, darkness, print mode and media a label does not set are the
+printer's configured ones, which belong to whoever set the printer up. So Print
+sends exactly what Save writes.
 
 If the label carries a `^PQ`, it is sent as part of that ZPL like any other
 command, and the printer prints that many copies itself — this step does not
@@ -2257,6 +2288,13 @@ rather than requirements:
   like `^CV`, but there is no "off" to state: a link left behind by an earlier
   job only adds glyphs, so the print path sends the label's own `^FL`s and
   nothing more.
+- **`^PR`, `^MD`, `^MM`, `^MN` and `^MT` are carried, not simulated or
+  checked, and have no editor.** The preview draws at no particular speed or
+  darkness and does not stretch for `^MNV`; a value the printer would reject,
+  or one this model of printer does not support, is written back as it came.
+  A setting changed part-way through a format — which a printer would honour
+  from that point on — is written back as its last value, at the top. Print
+  resets none of them for a label that does not carry them (§9).
 - **The canvas shows a `^FN` placeholder; the preview does not.** The canvas
   answers "what am I editing", so an unfilled variable field draws its prompt or
   its number rather than becoming invisible. The preview answers "what will

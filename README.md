@@ -219,6 +219,9 @@ Read when loading a file and written when saving:
   Windows code pages, Shift-JIS) and converted on save
 - `^CW` / `^FL` - Font identifier and font linking, kept through a save
   verbatim; the printer's font table, with nothing to draw
+- `^PR` / `^MD` / `^MM` / `^MN` / `^MT` - Print rate, darkness, print mode,
+  media tracking and media type, kept through a save verbatim; the printer's
+  own settings, with nothing to draw
 - `^FX` - Comment; the author's own are kept through a save, and the
   designer keeps its metadata in keys of its own
 - `^CC` / `^CT` / `^CD` - Redefined `^`, `~` and `,` characters are honoured

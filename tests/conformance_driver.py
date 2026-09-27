@@ -74,6 +74,9 @@ FIXTURE_VALIDATED = ROOT / 'tests' / 'fixtures' / 'code_validation.zpl'
 # The encoding and the printer's font table - ^CI28 over UTF-8 text, a ^CW
 # and an ^FL - carried verbatim, and nothing here draws for them either
 FIXTURE_FONT_IDENTITY = ROOT / 'tests' / 'fixtures' / 'font_identity.zpl'
+# The printer's own settings - ^PR, ^MD, ^MM, ^MN, ^MT - where a generator
+# puts them, carried verbatim with nothing drawn
+FIXTURE_MEDIA = ROOT / 'tests' / 'fixtures' / 'media_settings.zpl'
 
 # ^A@'s own d:f.x path, in the shapes the manual allows and this app does
 # not write: another drive, a .FNT or .TTE, no drive at all, lower case.
@@ -1264,6 +1267,11 @@ def sequence(driver, record):
     # and the ^CI28 is what both have to agree on over the non-ASCII text.
     driver.load(FIXTURE_FONT_IDENTITY)
     record('load a format that names its encoding and font table')
+
+    # So are the printer's speed, darkness, print mode and media: written
+    # back ahead of ^PW, in the order the file gave them.
+    driver.load(FIXTURE_MEDIA)
+    record("load a format that sets the printer's speed, darkness and media")
 
     # Each ^A@ here names a path this designer would never write itself, so
     # both frontends have to carry one rather than resolve it to E:NAME.TTF.

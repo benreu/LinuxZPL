@@ -1522,6 +1522,13 @@ class Document:
         # silently drop it. No editor, so it is not in the undo snapshot.
         self.code_validation = False
 
+        # ^PR, ^MD, ^MM, ^MN and ^MT - the printer's speed, darkness, print
+        # mode, media tracking and media type. Nothing to draw, and carried
+        # verbatim so a save does not silently drop them: command -> its
+        # parameters, in the order first seen, a repeated command taking the
+        # last value. No editor, so not in the undo snapshot.
+        self.media_settings: Dict[str, str] = {}
+
         # ^CI, ^CW and ^FL - the encoding the field data is in, and the
         # printer's font table: which letter names which downloaded font, and
         # which font supplies the glyphs another lacks. Nothing to draw, and
@@ -2300,6 +2307,9 @@ class Document:
                                   unicode=not body.isascii())
         zpl += self._font_identity_zpl()
         zpl += placed.to_zpl(explicit_flips=explicit_flips)
+        # The printer's own settings, with the label transforms: both are
+        # set-up for the media rather than anything on it.
+        zpl += self._media_settings_zpl()
         zpl += f"^PW{self.label_width}\n"
         zpl += f"^LL{self.label_height}\n"
         # ZPL carries no resolution, so record what the dots were drawn for.
@@ -2419,6 +2429,12 @@ class Document:
         manual's own example gives it."""
         return (''.join(f'^CW{p}\n' for p in self.font_identifiers.values())
                 + ''.join(f'^FL{p}^FS\n' for p in self.font_links))
+
+    def _media_settings_zpl(self) -> str:
+        """^PR, ^MD, ^MM, ^MN and ^MT, verbatim, one line each. Sticky at the
+        printer like ^CV, but the same on the print path: none has an "off",
+        and the settings a label does not carry are the operator's."""
+        return ''.join(f'{cmd}{p}\n' for cmd, p in self.media_settings.items())
 
     def _lowest_element(self):
         """The smallest (x, y) any element occupies, or None if there are none."""

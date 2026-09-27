@@ -151,6 +151,13 @@ DESIGNER_BAR_HEIGHT = 100
 STRUCTURAL = {'^XA', '^XZ', '^FS', '^FX', '^CI', '^CF', '^LH', '^PR', '^MD',
               '^LT', '^LS', '^PO', '^MN', '^MM', '^MT', '^JM', '^FW'}
 
+# The printer's own settings a format can change: print speed (^PR), darkness
+# relative to the configured value (^MD), what happens to a label once printed
+# (^MM), how the media is tracked (^MN) and whether it takes a ribbon (^MT).
+# Each stays in force after the job that set it, and none says anything about
+# where a field sits.
+MEDIA_SETTINGS = ('^PR', '^MD', '^MM', '^MN', '^MT')
+
 # The commands that say something about a field, and so open one at the
 # running field origin when no ^FO/^FT has opened it yet. The ^A fonts and the
 # ^B symbologies are matched by prefix in _belongs_to_field; ^BY is not a
@@ -736,6 +743,17 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             # same as neither.
             if params.strip():
                 doc.font_links.append(params.strip())
+            continue
+
+        if cmd in MEDIA_SETTINGS:
+            # Verbatim, read wherever it appears, like ^CV. A second one of
+            # the same command keeps the first one's place and takes its value:
+            # two ^MDs do not add up, each is measured from the configured
+            # darkness, so the last is the printer's end state. One with no
+            # value is ignored, as the printer ignores it, rather than
+            # wiping out one that had a value.
+            if params.strip():
+                doc.media_settings[cmd] = params.strip()
             continue
 
         if cmd == '^CF':
