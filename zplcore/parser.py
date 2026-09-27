@@ -29,6 +29,9 @@ DPI_KEY = '^FXDESIGNER_DPI:'
 PREVIEW_KEY = '^FXDESIGNER_PREVIEW:'
 PATH_KEY = '^FXDESIGNER_PATH:'
 GROUP_KEY = '^FXDESIGNER_GROUP:'
+# Every key the designer writes starts with this; an ^FX that does not is the
+# author's own comment.
+DESIGNER_KEY = '^FXDESIGNER_'
 
 # The same keys as the tokeniser sees them: ^FX is the command, the rest is
 # its parameters.
@@ -37,6 +40,7 @@ DPI_PARAM = DPI_KEY[len('^FX'):]
 PREVIEW_PARAM = PREVIEW_KEY[len('^FX'):]
 PATH_PARAM = PATH_KEY[len('^FX'):]
 GROUP_PARAM = GROUP_KEY[len('^FX'):]
+DESIGNER_PARAM = DESIGNER_KEY[len('^FX'):]
 
 # (no-print flag, group id) - what the designer markers ahead of a field ask
 # of it, and the value of having asked nothing.
@@ -540,6 +544,10 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     loaded_dpi = None
     # Designer markers written in front of a field, held until it is built.
     pending = _NO_PENDING
+    # The author's own ^FX comments since the last element was built, held
+    # for the next one. Unlike the markers, a field that builds nothing does
+    # not use them up: they are prose, and dropping them loses what was said.
+    comments = []
     field = None            # commands gathered since the last ^FO
     # ^CF sets the font for every field that does not name one of its own, so
     # it has to be carried between fields rather than gathered into one. ^BY is
@@ -594,6 +602,14 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 field['preview'] = key[len(PREVIEW_PARAM):]
             elif field is not None and key.startswith(PATH_PARAM):
                 field['path'] = key[len(PATH_PARAM):]
+            elif key and not key.startswith(DESIGNER_PARAM):
+                # A comment the author wrote. One ahead of every field is
+                # about the label as a whole; any other travels with the
+                # element it sits in or in front of.
+                if field is None and not doc.elements:
+                    doc.comments.append(params.rstrip())
+                else:
+                    comments.append(params.rstrip())
             continue
 
         if cmd in ('^LH', '^LS', '^LT', '^PO', '^PM', '^LR'):
@@ -744,7 +760,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
 
         if cmd == '^XA':
             # A new format starts from the printer's own field origin.
-            pending = _flush(field, doc, renderer, pending)
+            pending = _flush(field, doc, renderer, pending, comments)
             field = None
             placed = _HOME_ORIGIN
             continue
@@ -764,12 +780,12 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 field['own_origin'] = True
             else:
                 # A field that never saw ^FS still ends here, at the next one
-                pending = _flush(field, doc, renderer, pending)
+                pending = _flush(field, doc, renderer, pending, comments)
                 field = open_field(True)
             continue
 
         if cmd == '^FS':
-            pending = _flush(field, doc, renderer, pending)
+            pending = _flush(field, doc, renderer, pending, comments)
             field = None
             continue
 
@@ -838,7 +854,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['data'] = params
             field['variable_data'] = True
 
-    _flush(field, doc, renderer, pending)
+    _flush(field, doc, renderer, pending, comments)
+    doc.trailing_comments = comments
 
     doc.selected_element = None
     return doc, loaded_dpi
@@ -1219,7 +1236,7 @@ def _read_barcode(cmd: str, params: str, default_height=None,
                        if name not in symbologies.SHARED_PARAMS}}
 
 
-def _flush(field, doc, renderer, pending) -> tuple:
+def _flush(field, doc, renderer, pending, comments) -> tuple:
     """Turn a gathered field into an element. Returns the markers still pending.
 
     The markers are for the next field, whatever it builds: a field that turns
@@ -1240,6 +1257,9 @@ def _flush(field, doc, renderer, pending) -> tuple:
         _apply_justification(element, field['justify'])
         element.reverse_print = field['reverse']
         doc.elements.append(element)
+    if len(doc.elements) > before:
+        doc.elements[before].comments = tuple(comments)
+        comments.clear()
     for el in doc.elements[before:]:
         if no_print:
             el.print_enabled = False

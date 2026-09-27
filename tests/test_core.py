@@ -5093,6 +5093,45 @@ check("prose naming ^LH in a comment does not become the origin",
       and (_prose.elements[0].x, _prose.elements[0].y) == (20, 100),
       (_prose.transform.home, (_prose.elements[0].x, _prose.elements[0].y)))
 
+# An ^FX the author wrote is content: a save keeps it, near where it was.
+_noted = zpl_parser.parse_zpl(
+    "^XA^FXSHIPPING LABEL^PW400^LL400^FO10,10^GB20,20,1^FS"
+    "^FXsender\n^FO50,50^FXinside^A0N,30,30^FDx^FS"
+    "^FO90,90^ZZ1^FS^FXorphan^FO70,70^GB5,5,1^FS^FXthe end^XZ")[0]
+_noted_out = _noted.to_zpl()
+check("a comment ahead of every field is the label's, written after ^XA",
+      _noted.comments == ['SHIPPING LABEL']
+      and _noted_out.startswith("^XA\n^FXSHIPPING LABEL\n"), _noted_out)
+check("a comment ahead of or inside a field travels with that element",
+      _noted.elements[1].comments == ('sender', 'inside')
+      and "^FXsender\n^FXinside\n^FO50,50" in _noted_out,
+      [e.comments for e in _noted.elements])
+check("a field that builds nothing does not swallow the comment after it",
+      _noted.elements[2].comments == ('orphan',),
+      [e.comments for e in _noted.elements])
+check("a comment after the last field is written before ^XZ",
+      _noted.trailing_comments == ['the end']
+      and _noted_out.endswith("^FXthe end\n^XZ"), _noted_out)
+check("designer keys are not taken for comments",
+      not any('DESIGNER' in c for c in _noted.comments + _noted.trailing_comments)
+      and _noted_out.count('^FXDESIGNER_DPI') == 1, _noted_out)
+check("a label with comments saves the same twice",
+      zpl_parser.parse_zpl(_noted_out)[0].to_zpl() == _noted_out)
+_hidden_note = zpl_parser.parse_zpl(
+    "^XA^PW400^LL400^FO1,1^GB5,5,1^FS"
+    "^FXhidden one\n^FXDESIGNER_GROUP:1\n^FXDESIGNER_NOPRINT:"
+    + base64.b64encode(b"^FO10,10^GB20,20,1^FS\n").decode()
+    + "\n^FXDESIGNER_GROUP:1\n^FO30,30^GB9,9,1^FS^XZ")[0]
+_hidden_out = _hidden_note.to_zpl()
+check("a hidden grouped element keeps its comment ahead of its markers",
+      "^FXhidden one\n^FXDESIGNER_GROUP:1\n^FXDESIGNER_NOPRINT:" in _hidden_out
+      and [(e.comments, e.group, e.print_enabled)
+           for e in zpl_parser.parse_zpl(_hidden_out)[0].elements]
+      == [((), None, True), (('hidden one',), (1,), False),
+          ((), (1,), True)], _hidden_out)
+check("a label that is only a note is still empty",
+      zpl_parser.parse_zpl("^XA^FX only a note^XZ")[0].is_empty())
+
 # The fixtures, as whole files
 _home_raw = (FIXTURES / 'label_home.zpl').read_text()
 _home_doc = zpl_parser.parse_zpl(_home_raw)[0]

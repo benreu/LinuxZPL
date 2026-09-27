@@ -219,7 +219,8 @@ Read when loading a file and written when saving:
   Windows code pages, Shift-JIS) and converted on save
 - `^CW` / `^FL` - Font identifier and font linking, kept through a save
   verbatim; the printer's font table, with nothing to draw
-- `^FX` - Comment, used for the designer's own metadata
+- `^FX` - Comment; the author's own are kept through a save, and the
+  designer keeps its metadata in keys of its own
 - `^CC` / `^CT` / `^CD` - Redefined `^`, `~` and `,` characters are honoured
   when reading; the file is written back with the standard ones, and a literal
   `^` or `~` the data was hiding behind them becomes a `^FH` escape
@@ -238,6 +239,11 @@ them:
 A `^FX` comment ends at the next caret rather than at the end of the line, so
 any payload that could contain one is base64 encoded - otherwise a hidden
 element's own `^FO` and `^FD` would resume executing and print anyway.
+
+Any other `^FX` is the author's own comment, and a save keeps it: one ahead of
+every field right after `^XA`, one after the last field just before `^XZ`, and
+any other on its own line ahead of the field it sat in or in front of, so it
+moves and is deleted with that element.
 
 Sent to the printer but not rendered:
 

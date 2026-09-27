@@ -864,6 +864,18 @@ a "hidden" element's own `^FO` / `^FD` would resume executing and print anyway.
 This applies to the preview and no-print payloads. The DPI value and the image
 path are caret-free and are stored as-is.
 
+**Any other `^FX` is the author's comment, and is kept.** Printers ignore it,
+but it is what someone wrote, so a save does not drop it. A comment ahead of
+every field is about the label as a whole and is written straight after `^XA`
+(after `^DF` and `^IL`, which have to come first). A comment inside a field or
+ahead of it belongs to that element, and is written on its own line in front
+of the element's block and its group marker, so it moves, hides and is deleted
+with the element. A field that builds nothing does not use it up; it goes to
+the next element built. Comments after the last field are written just before
+`^XZ`. The text is kept as written, except that a caret in it has already
+become a space (§8.3), so it needs no encoding. An `^FXDESIGNER_` key this build
+does not know is not taken for a comment.
+
 ### 8.3 What is read
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,

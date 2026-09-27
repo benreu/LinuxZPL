@@ -82,6 +82,11 @@ class DesignElement:
     # replaced. A group itself is derived: every element whose path holds
     # its id.
     group = None
+    # The author's own ^FX comments that sat in or ahead of this field, in
+    # file order and without the ^FX. A tuple for the reason `group` is one;
+    # written on their own lines ahead of the element, so they move, hide
+    # and are deleted with it.
+    comments = ()
 
     def origin_zpl(self, offset=(0, 0)) -> str:
         """The ^FO or ^FT that places this element.
@@ -271,6 +276,12 @@ class FieldBlock:
 
     def __repr__(self):
         return f"FieldBlock({self.to_zpl()[3:]})"
+
+
+def _comment_lines(comments) -> str:
+    """The author's ^FX comments, one to a line. The text holds no caret -
+    parser.canonicalise turned any into a space - so it needs no encoding."""
+    return ''.join(f"^FX{text}\n" for text in comments)
 
 
 def _copy_element(element):
@@ -1356,6 +1367,13 @@ class Document:
         # letter replacing its entry; ^FL is every command in order, since
         # a link and an unlink are both actions. No editors, so none of the
         # three is in the undo snapshot.
+        # The author's own ^FX comments that belong to no element: those
+        # ahead of every field, about the label as a whole, and those after
+        # the last one. Printers ignore them, but they are what someone wrote,
+        # so a save keeps them. No editor, so not in the undo snapshot.
+        self.comments: List[str] = []
+        self.trailing_comments: List[str] = []
+
         self.encoding: Optional[str] = None
         self.font_identifiers: Dict[str, str] = {}
         self.font_links: List[str] = []
@@ -2089,6 +2107,8 @@ class Document:
         # load at ^FO0,0, underneath the fields that follow it.
         if self.image_load:
             zpl += f"^IL{self.image_load}\n"
+        # The author's own heading, as near the top as ^DF and ^IL allow.
+        zpl += _comment_lines(self.comments)
         # The encoding and the font table next: the manual wants ^CI "at the
         # beginning of each ZPL script", and a ^CW has to precede any ^A that
         # calls the letter it assigns.
@@ -2113,6 +2133,9 @@ class Document:
         with no elements, the field table."""
         zpl = ""
         groups = self._group_numbers()
+        # Comments whose element wrote nothing, handed on to the next one
+        # that does rather than lost with it.
+        orphaned = []
         for element in self.elements:
             if element.element_type == 'text':
                 # By keyword throughout: a text element's first parameter is
@@ -2129,7 +2152,13 @@ class Document:
             # only in front of a field that will be there - an element with
             # nothing to write would hand its group to whatever came next.
             if body:
+                # Ahead of the group marker, which has to sit directly in
+                # front of the field it flags.
+                zpl += _comment_lines(orphaned + list(element.comments))
+                orphaned = []
                 zpl += self._group_marker(element, groups)
+            else:
+                orphaned += element.comments
             if element.print_enabled:
                 zpl += body
             elif body:
@@ -2151,6 +2180,7 @@ class Document:
         zpl += self._print_quantity_zpl()
         if not self.elements:
             zpl += self.fields.to_zpl()
+        zpl += _comment_lines(orphaned + self.trailing_comments)
         return zpl
 
     def _print_quantity_zpl(self) -> str:
@@ -2237,4 +2267,10 @@ class Document:
         for header in ('^XA', '^XZ', f'^PW{self.label_width}',
                        f'^LL{self.label_height}', f'^FXDESIGNER_DPI:{self.dpi}'):
             body = body.replace(header, '')
+        # The author's comments print nothing either: a label that is only a
+        # note is still an empty label.
+        comments = self.comments + self.trailing_comments + [
+            text for element in self.elements for text in element.comments]
+        for line in _comment_lines(comments).splitlines(keepends=True):
+            body = body.replace(line, '', 1)
         return not body.strip()
