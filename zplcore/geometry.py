@@ -431,7 +431,7 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
             element.block.indent = int(round(element.block.indent * run))
         # text width is derived from font metrics, not scaled directly
         document.sync_text_width(element)
-    elif kind == 'frame':
+    elif kind in ('frame', 'ellipse'):
         element.thickness = _scaled(element.thickness, min(sx, sy))
     elif kind == 'circle':
         # One size, so one factor: the smaller, which keeps the circle inside
@@ -491,7 +491,7 @@ def _resize_group(document, handle: str, dx: int, dy: int, origin: dict) -> None
     for element, state in origin['members']:
         restore_state(element, state)
         scale_element(document, element, ax, ay, sx, sy)
-        if element.element_type in ('frame', 'circle', 'diagonal'):
+        if element.element_type in ('frame', 'circle', 'ellipse', 'diagonal'):
             element.thickness = max(1, min(element.thickness, element.max_thickness()))
 
     members = [el for el, _ in origin['members']]
@@ -560,7 +560,7 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
     element.width, element.height = width, height
     _clamp_resized(document, element)
 
-    if element.element_type in ('frame', 'diagonal'):
+    if element.element_type in ('frame', 'ellipse', 'diagonal'):
         element.thickness = max(1, min(element.thickness, element.max_thickness()))
 
     if element.element_type == 'circle':
@@ -707,6 +707,25 @@ def diagonal_points(element) -> list:
     if element.direction == 'L':        # top-left to bottom-right
         return [(0, 0), (t, 0), (w, h), (w - t, h)]
     return [(0, h), (t, h), (w, 0), (w - t, 0)]
+
+
+def ellipse_hole(element):
+    """The box of a ^GE's inner ellipse, as (x, y, width, height) in the
+    element's own frame with the box's top-left at 0,0 - or None when the
+    border meets in the middle and the ellipse is solid.
+
+    The ring is the outer ellipse less this one: the outer box inset by the
+    thickness on every side, so the border is `thickness` dots deep at the
+    ends of both axes. Both canvases and the preview cut the ring with this,
+    so none of them can draw a different border - the same reason
+    diagonal_points exists. That it is an inset ellipse rather than a true
+    constant-width offset curve is inferred (FUNCTIONAL_SPEC.md section 18).
+    """
+    w, h = element.width, element.height
+    t = max(1, element.thickness)
+    if 2 * t >= min(w, h):
+        return None
+    return (t, t, w - 2 * t, h - 2 * t)
 
 
 def text_layout(element) -> dict:

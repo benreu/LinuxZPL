@@ -56,7 +56,7 @@ class DesignElement:
     y: int
     width: int
     height: int
-    element_type: str  # 'text', 'frame', 'circle', 'diagonal', 'barcode', 'image', 'stored_graphic'
+    element_type: str  # 'text', 'frame', 'circle', 'ellipse', 'diagonal', 'barcode', 'image', 'stored_graphic'
 
     # Class attributes, so every element inherits the default without each
     # __init__ having to set it.
@@ -588,6 +588,48 @@ class CircleElement(DesignElement):
         colour = '' if self.colour == 'B' else f",{self.colour}"
         return (self.origin_zpl(offset) + self.reverse_zpl() +
                 f"^GC{self.diameter},{self.thickness}{colour}\n^FS\n")
+
+
+class EllipseElement(DesignElement):
+    """^GE - an ellipse filling its w x h box.
+
+    A ^GC circle given two sizes, and a ^GB frame's border rule: the thickness
+    is drawn inward from the outline, and once it reaches half the shorter side
+    the ellipse is solid. Its own class rather than a kind of frame, since it
+    has no rounding, and rather than a kind of circle, since nothing may stop
+    it being an oval.
+    """
+
+    # ^GE's own range for each side: "3 to 4095 (larger values are replaced
+    # with 4095)"
+    MIN_SIDE = 3
+    MAX_SIDE = 4095
+    # ZPL's default for the colour, so an ellipse written with it is written
+    # without it - as a frame's is.
+    DEFAULTS = ('B',)
+    COLOURS = FrameElement.COLOURS
+
+    def __init__(self, x: int = 100, y: int = 100, width: int = 200,
+                 height: int = 150, thickness: int = 2, colour: str = 'B'):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.thickness = thickness
+        self.colour = (colour or 'B').upper()
+        if self.colour not in self.COLOURS:
+            self.colour = 'B'
+        self.element_type = 'ellipse'
+
+    def max_thickness(self) -> int:
+        """Thickest useful border: at half the shorter side it fills solid."""
+        return max(1, min(self.width, self.height) // 2)
+
+    def to_zpl(self, offset=(0, 0)) -> str:
+        """Convert to ZPL commands."""
+        options = _trimmed_options((self.colour,), self.DEFAULTS)
+        return (self.origin_zpl(offset) + self.reverse_zpl() +
+                f"^GE{self.width},{self.height},{self.thickness}{options}\n^FS\n")
 
 
 class DiagonalLineElement(DesignElement):
@@ -1857,6 +1899,10 @@ class Document:
     def add_circle_element(self) -> CircleElement:
         offset = self._stagger(20)
         return self._append(CircleElement(100 + offset, 100 + offset))
+
+    def add_ellipse_element(self) -> EllipseElement:
+        offset = self._stagger(20)
+        return self._append(EllipseElement(100 + offset, 100 + offset))
 
     def add_diagonal_element(self) -> DiagonalLineElement:
         offset = self._stagger(20)

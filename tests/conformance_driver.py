@@ -37,6 +37,9 @@ FIXTURE_RULES = ROOT / 'tests' / 'fixtures' / 'rules.zpl'
 # ^GC as a file gives it: every parameter, none, white inside black, a circle
 # thick enough to fill, one placed by ^FT and one reversed
 FIXTURE_CIRCLES = ROOT / 'tests' / 'fixtures' / 'circles.zpl'
+# ^GE as a file gives it: the manual's own example, every parameter left to
+# default, one white inside a solid one, one placed by ^FT and one reversed
+FIXTURE_ELLIPSES = ROOT / 'tests' / 'fixtures' / 'ellipses.zpl'
 # ^GD as a file gives it: the manual's own box and diagonal, both slashes,
 # every parameter left to default, one white over black, one placed by ^FT
 # and one reversed
@@ -186,6 +189,9 @@ class GtkDriver:
 
     def add_circle(self):
         return self.canvas.add_circle_element()
+
+    def add_ellipse(self):
+        return self.canvas.add_ellipse_element()
 
     def add_diagonal(self):
         return self.canvas.add_diagonal_element()
@@ -473,6 +479,9 @@ class QtDriver:
 
     def add_circle(self):
         return self.document.add_circle_element()
+
+    def add_ellipse(self):
+        return self.document.add_ellipse_element()
 
     def add_diagonal(self):
         return self.document.add_diagonal_element()
@@ -1131,6 +1140,23 @@ def sequence(driver, record):
     circle.reverse_print = True
     record('a reversed circle')
 
+    # ^GE: two sides free, where a circle has one, and a border held under
+    # half the shorter of them through every handle; then its colour and ^FR.
+    ellipse = driver.add_ellipse()
+    record('add ellipse')
+    driver.select(ellipse)
+    for handle in ('br', 'tl', 'mr', 'bm', 'tr', 'bl', 'ml', 'tm'):
+        driver.resize(ellipse, handle, 17, 11)
+        record(f'resize ellipse by {handle}')
+    ellipse.thickness = 500
+    driver.resize(ellipse, 'bm', 0, -60)
+    record('ellipse thickness clamped to half its shorter side')
+    ellipse.thickness = 6
+    ellipse.colour = 'W'
+    record('a white ellipse')
+    ellipse.reverse_print = True
+    record('a reversed ellipse')
+
     # ^GD: a thickness that is a run along each row, so it is held to the
     # width through every handle; then each of its own parameters and ^FR.
     diagonal = driver.add_diagonal()
@@ -1166,6 +1192,8 @@ def sequence(driver, record):
     record('load a file of ^GB rules')
     driver.load(FIXTURE_CIRCLES)
     record('load a file of ^GC circles')
+    driver.load(FIXTURE_ELLIPSES)
+    record('load a file of ^GE ellipses')
     driver.load(FIXTURE_DIAGONALS)
     record('load a file of ^GD diagonal lines')
     driver.load(FIXTURE_PARTIAL)

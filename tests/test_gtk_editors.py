@@ -97,6 +97,7 @@ def _find_checkbutton(container, label):
 for build, describe in ((lambda: document.add_text_element('reversible'), 'text'),
                         (lambda: document.add_frame_element(), 'frame'),
                         (lambda: document.add_circle_element(), 'circle'),
+                        (lambda: document.add_ellipse_element(), 'ellipse'),
                         (lambda: document.add_diagonal_element(), 'diagonal line'),
                         (lambda: document.add_barcode_element(), 'barcode')):
     element = build()
@@ -169,6 +170,71 @@ _combos(line_dialog)[1].set_active(0)
 line_dialog.response(Gtk.ResponseType.CANCEL)
 check("and Cancel leaves the line alone", line.direction == 'L', line.direction)
 document.elements.remove(line)
+
+# --- Edit Ellipse: two sides, and a thickness under half the shorter --------
+
+oval = document.add_ellipse_element()
+window.on_element_double_clicked(None, oval)
+oval_dialog = window._editors[id(oval)]
+check("a double-click on an ellipse opens Edit Ellipse",
+      oval_dialog.get_title() == "Edit Ellipse", oval_dialog.get_title())
+width_spin, height_spin, oval_thickness_spin = _spin_buttons(oval_dialog)
+width_spin.set_value(60)
+height_spin.set_value(90)
+oval_thickness_spin.set_value(100)
+_combos(oval_dialog)[0].set_active(1)
+oval_dialog.response(Gtk.ResponseType.OK)
+check("OK in Edit Ellipse writes the box, a thickness under half the shorter "
+      "side, and the colour",
+      (oval.width, oval.height, oval.thickness, oval.colour) == (60, 90, 30, 'W'),
+      (oval.width, oval.height, oval.thickness, oval.colour))
+
+window.on_element_double_clicked(None, oval)
+oval_dialog = window._editors[id(oval)]
+_spin_buttons(oval_dialog)[0].set_value(120)
+oval_dialog.response(Gtk.ResponseType.CANCEL)
+check("and Cancel leaves the ellipse alone", oval.width == 60, oval.width)
+document.elements.remove(oval)
+
+# --- the canvas cuts the ellipse's ring where the preview does -------------
+# The conformance suite compares ZPL, which says nothing about how the ring
+# is painted, so this is the GTK canvas's only cover for it.
+
+import cairo
+from zplcore.model import EllipseElement
+
+
+def _painted(element, under=None):
+    """The element drawn on its own, over white or a black box, as a dark(x, y)."""
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 300, 200)
+    ctx = cairo.Context(surface)
+    ctx.set_source_rgb(1, 1, 1); ctx.paint()
+    if under is not None:
+        ctx.set_source_rgb(0, 0, 0); ctx.rectangle(*under); ctx.fill()
+    window.design_canvas._draw_ellipse_element(ctx, element, False)
+    surface.flush()
+    data, stride = surface.get_data(), surface.get_stride()
+
+    def dark(x, y):
+        at = y * stride + 4 * x
+        return all(channel < 100 for channel in data[at:at + 3])
+    return dark
+
+
+dark = _painted(EllipseElement(50, 50, 200, 100, 10))
+check("the GTK canvas paints ^GE as a ring, the corners and the middle empty",
+      dark(150, 54) and dark(54, 100) and dark(245, 100)
+      and not dark(52, 52) and not dark(150, 100),
+      (dark(150, 54), dark(54, 100), dark(245, 100), dark(52, 52), dark(150, 100)))
+dark = _painted(EllipseElement(50, 50, 200, 100, 50))
+check("and fills it once the border reaches half the shorter side",
+      dark(150, 100) and not dark(52, 52), (dark(150, 100), dark(52, 52)))
+reversed_oval = EllipseElement(50, 50, 200, 100, 10, 'W')
+reversed_oval.reverse_print = True
+dark = _painted(reversed_oval, under=(50, 50, 100, 100))
+check("and inverts under the ring for ^FR, ignoring its colour",
+      not dark(54, 100) and dark(245, 100) and dark(100, 100),
+      (dark(54, 100), dark(245, 100), dark(100, 100)))
 
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen

@@ -8,7 +8,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 from typing import List, Optional
 from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphics, parser, textraster, transforms
 from .model import (BarcodeElement, CircleElement, DiagonalLineElement,
-                    FieldBlock, FrameElement, TextElement)
+                    EllipseElement, FieldBlock, FrameElement, TextElement)
 
 
 class ZPLRenderer:
@@ -60,9 +60,9 @@ class ZPLRenderer:
         self.unsupported_field = False
         # ^FR: the current field prints in reverse
         self.current_reverse = False
-        # A ^GB's, ^GC's or ^GD's (command, params), held until ^FS so a ^FR
-        # that comes after it in the same field is already known by the time
-        # it is drawn.
+        # A ^GB's, ^GC's, ^GD's or ^GE's (command, params), held until ^FS so
+        # a ^FR that comes after it in the same field is already known by the
+        # time it is drawn.
         self.pending_frame = None
         self.barcode_orientation = ''
         self.barcode_options = ()
@@ -410,6 +410,34 @@ class ZPLRenderer:
         self.draw.polygon([(element.x + x, element.y + y) for x, y in corners],
                           fill=ink)
 
+    def _render_ellipse(self, params: str):
+        """Draw a ^GE ellipse through the same element and ring the canvas
+        draws, for the reason _render_frame gives."""
+        element = EllipseElement(self.current_x, self.current_y,
+                                 *parser._read_ellipse(params))
+        element.x = self._left(element.width)
+        element.y = self._top(element.height)
+        # The ring as a mask, local to its own top-left: the outer ellipse
+        # less the hole geometry.ellipse_hole gives, which is what both
+        # canvases cut too. PIL's ellipse includes both corners of the box it
+        # is given, so the far edge comes in a dot, as _render_frame's box
+        # does.
+        mask = Image.new('L', (element.width, element.height), 0)
+        draw = ImageDraw.Draw(mask)
+        draw.ellipse([(0, 0), (element.width - 1, element.height - 1)], fill=255)
+        hole = geometry.ellipse_hole(element)
+        if hole is not None:
+            hx, hy, hw, hh = hole
+            draw.ellipse([(hx, hy), (hx + hw - 1, hy + hh - 1)], fill=0)
+
+        if self.current_reverse:
+            # The colour has nothing to choose between under ^FR, as for a
+            # ^GB: what is under the ring is inverted.
+            self._invert_under(mask, (element.x, element.y))
+            return
+        ink = (255, 255, 255) if element.colour == 'W' else (0, 0, 0)
+        self.image.paste(ink, (element.x, element.y), mask)
+
     def _render_graphic(self, params: str):
         """Render a ^GF graphic field, in whichever encoding it arrived in.
 
@@ -594,6 +622,8 @@ class ZPLRenderer:
             command, params = self.pending_frame
             if command == 'GD':
                 self._render_diagonal(params)
+            elif command == 'GE':
+                self._render_ellipse(params)
             else:
                 self._render_frame(command, params)
             self.pending_frame = None
@@ -735,7 +765,7 @@ class ZPLRenderer:
             # to be known before ^GB (drawn eagerly, below) or ^FS (which
             # draws everything else) is reached.
             self.current_reverse = True
-        elif command in ('GB', 'GC', 'GD'):
+        elif command in ('GB', 'GC', 'GD', 'GE'):
             # Held until ^FS rather than drawn here, so a ^FR that comes
             # after ^GB in the same field is still seen before it is drawn.
             self.pending_frame = (command, params)

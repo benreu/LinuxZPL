@@ -62,6 +62,18 @@ def _rounded_path(context, x, y, width, height, radius):
     context.close_path()
 
 
+def _ellipse_path(context, x, y, width, height):
+    """An ellipse path filling the box, as a sub-path of its own so a second
+    one can cut a hole in it."""
+    context.save()
+    context.translate(x + width / 2, y + height / 2)
+    context.scale(width / 2, height / 2)
+    context.new_sub_path()
+    context.arc(0, 0, 1, 0, 2 * math.pi)
+    context.close_path()
+    context.restore()
+
+
 class DesignCanvas(Gtk.DrawingArea):
     """Canvas widget for designing ZPL layouts with drag and drop.
 
@@ -231,6 +243,9 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def add_circle_element(self):
         return self._added(self.document.add_circle_element())
+
+    def add_ellipse_element(self):
+        return self._added(self.document.add_ellipse_element())
 
     def add_diagonal_element(self):
         return self._added(self.document.add_diagonal_element())
@@ -480,6 +495,8 @@ class DesignCanvas(Gtk.DrawingArea):
         elif element.element_type in ('frame', 'circle'):
             # A ^GC circle is a ^GB square rounded by half its side
             self._draw_frame_element(context, element, selected)
+        elif element.element_type == 'ellipse':
+            self._draw_ellipse_element(context, element, selected)
         elif element.element_type == 'diagonal':
             self._draw_diagonal_element(context, element, selected)
         elif element.element_type == 'barcode':
@@ -691,6 +708,41 @@ class DesignCanvas(Gtk.DrawingArea):
 
         if reverse:
             context.set_operator(cairo.OPERATOR_OVER)
+
+    def _draw_ellipse_element(self, context, element, selected: bool):
+        """A ^GE ellipse, its ring cut by the hole zplcore.geometry gives it,
+        so this and the Qt canvas cannot draw a different border."""
+        # Selection outline first, on the box the handles are on, as a frame's
+        # is - the corners of that box are empty, and the ellipse alone would
+        # not say where the handles belong.
+        if selected:
+            context.set_source_rgb(0, 0, 1)
+            context.set_line_width(2)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.stroke()
+
+        context.save()
+        if element.reverse_print:
+            # ^FR inverts under the ring's own ink, ignoring its colour, as
+            # it does under a frame's border.
+            context.set_operator(cairo.OPERATOR_DIFFERENCE)
+            context.set_source_rgb(1, 1, 1)
+        elif element.colour == 'W':
+            # ^GE's colour: white shows only over something already black.
+            context.set_source_rgb(1, 1, 1)
+        else:
+            context.set_source_rgb(0, 0, 0)
+
+        _ellipse_path(context, element.x, element.y, element.width, element.height)
+        hole = geometry.ellipse_hole(element)
+        if hole is not None:
+            hx, hy, hw, hh = hole
+            _ellipse_path(context, element.x + hx, element.y + hy, hw, hh)
+            # The hole is a second sub-path inside the first, so even-odd
+            # leaves it unfilled whichever way either one winds.
+            context.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
+        context.fill()
+        context.restore()
 
     def _draw_diagonal_element(self, context, element, selected: bool):
         """A ^GD line, from the corners zplcore.geometry gives it, so this and

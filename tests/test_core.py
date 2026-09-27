@@ -12,7 +12,8 @@ from PySide2.QtGui import QMouseEvent
 from zplcore import (fonts as zpl_fonts, geometry, parser as zpl_parser,
                      textraster, transforms as zpl_transforms, workflow)
 from zplcore import model as zpl_model
-from zplcore.model import Document, TextElement, BarcodeElement, FrameElement, ImageElement
+from zplcore.model import (Document, TextElement, BarcodeElement, FrameElement,
+                           EllipseElement, ImageElement)
 from zplcore.renderer import ZPLRenderer
 
 app = QApplication([])
@@ -2574,6 +2575,7 @@ check("an interpretation line above the bars moves the rects down, not the box",
 for make, describe in (
         (lambda: TextElement(0, 0, 'Reversed'), 'text'),
         (lambda: FrameElement(0, 0, 100, 50), 'frame'),
+        (lambda: EllipseElement(0, 0, 100, 50), 'ellipse'),
         (lambda: BarcodeElement(0, 0, 80, '12345'), 'barcode')):
     plain = make()
     check(f"an untouched {describe} element writes no ^FR",
@@ -4060,6 +4062,221 @@ check("and a double-click opens Edit Diagonal Line on it",
       and dw._editors[id(_added_line)].windowTitle() == "Edit Diagonal Line",
       list(dw._editors))
 dw._close_element_editors()
+
+# --- ^GE, the ellipse -------------------------------------------------------
+# Every parameter optional, as ^GD's are: the thickness defaults to 1, the
+# sides to the thickness and are held to 3-4095, and the colour is a letter.
+for source, want in (("^GE300,100,10,B", (300, 100, 10, 'B')),
+                     ("^GE", (3, 3, 1, 'B')), ("^GE,,4", (4, 4, 4, 'B')),
+                     ("^GE300", (300, 3, 1, 'B')),
+                     ("^GE5000,1,2,W", (4095, 3, 2, 'W'))):
+    built = zpl_parser.parse_zpl(f"^XA^PW812^LL1218^FO50,50{source}^FS^XZ")[0].elements
+    check(f"{source} is an ellipse {want}",
+          len(built) == 1 and isinstance(built[0], EllipseElement)
+          and (built[0].width, built[0].height, built[0].thickness,
+               built[0].colour) == want,
+          [(type(e).__name__, box_of(e), getattr(e, 'thickness', None),
+            getattr(e, 'colour', None)) for e in built])
+check("^GE is not reported as dropped, now that it is modelled",
+      workflow.unsupported_commands("^XA^FO50,50^GE300,100,10^FS^XZ") == [],
+      workflow.unsupported_commands("^XA^FO50,50^GE300,100,10^FS^XZ"))
+
+def _ellipse_written(source):
+    return zpl_parser.parse_zpl(
+        f"^XA^PW812^LL1218^FO50,50{source}^FS^XZ")[0].elements[0].to_zpl()
+
+check("the manual's own ^GE comes back without the colour it spelled",
+      "^GE300,100,10\n" in _ellipse_written("^GE300,100,10,B"),
+      _ellipse_written("^GE300,100,10,B").replace('\n', ' '))
+check("a white ellipse is written back white",
+      "^GE100,50,4,W\n" in _ellipse_written("^GE100,50,4,W"))
+_made_ellipse = Document().add_ellipse_element()
+check("an ellipse the designer created writes ^GE with no colour",
+      _made_ellipse.to_zpl()
+      == f"^FO{_made_ellipse.x},{_made_ellipse.y}\n^GE200,150,2\n^FS\n",
+      _made_ellipse.to_zpl().replace('\n', ' '))
+_fr_ellipse = zpl_parser.parse_zpl("^XA^FO50,50^GE100,50,4^FR^FS^XZ")[0].elements[0]
+check("a ^FR after the ^GE reverses the ellipse, and is written before it",
+      _fr_ellipse.reverse_print and "^FR\n^GE100,50,4\n" in _fr_ellipse.to_zpl(),
+      _fr_ellipse.to_zpl().replace('\n', ' '))
+_typed_ellipse = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FT50,250^GE100,50,4^FS^XZ")[0].elements[0]
+check("^FT gives an ellipse its bottom-left corner, as it does a frame",
+      (_typed_ellipse.y, _typed_ellipse.y + _typed_ellipse.height) == (200, 250)
+      and "^FT50,250\n" in _typed_ellipse.to_zpl(),
+      (_typed_ellipse.y, _typed_ellipse.to_zpl().replace('\n', ' ')))
+_unplaced = zpl_parser.parse_zpl("^XA^FO10,20^FS^GE100,50,4^FS^XZ")[0].elements
+check("a ^GE with no ^FO of its own opens at the last origin",
+      len(_unplaced) == 1 and box_of(_unplaced[0]) == (10, 20, 100, 50),
+      [box_of(e) for e in _unplaced])
+_unended = zpl_parser.parse_zpl(
+    "^XA^FO10,10^GE100,50,2^FO200,200^FDnext^FS^XZ")[0].elements
+check("a ^GE that never saw ^FS ends at the next ^FO",
+      [type(e).__name__ for e in _unended] == ['EllipseElement', 'TextElement']
+      and box_of(_unended[0]) == (10, 10, 100, 50),
+      [(type(e).__name__, box_of(e)) for e in _unended])
+_kept_doc = Document(400, 400)
+_hidden_ellipse = _kept_doc.add_ellipse_element()
+_hidden_ellipse.print_enabled = False
+_kept_doc.add_frame_element()
+_kept_doc.select_many(_kept_doc.elements); _kept_doc.group_selected()
+_kept_back = zpl_parser.parse_zpl(_kept_doc.to_zpl())[0].elements
+check("a hidden, grouped ellipse survives a round trip, still hidden and grouped",
+      isinstance(_kept_back[0], EllipseElement)
+      and not _kept_back[0].print_enabled and _kept_back[0].group == (1,)
+      and _kept_back[1].group == (1,),
+      [(type(e).__name__, e.print_enabled, e.group) for e in _kept_back])
+
+# the ring: the outer box inset by the thickness, until it meets in the middle
+check("an ellipse's hole is its box inset by the thickness on every side",
+      geometry.ellipse_hole(EllipseElement(0, 0, 200, 100, 10)) == (10, 10, 180, 80),
+      geometry.ellipse_hole(EllipseElement(0, 0, 200, 100, 10)))
+check("and there is none once the border reaches half the shorter side",
+      geometry.ellipse_hole(EllipseElement(0, 0, 200, 100, 50)) is None,
+      geometry.ellipse_hole(EllipseElement(0, 0, 200, 100, 50)))
+
+# the preview cuts the same ring
+_oval_zpl = "^XA^PW400^LL300^FO50,50^GE200,100,10^FS^XZ"
+_oval = ZPLRenderer(400, 300).render(_oval_zpl).convert('L')
+check("the preview draws ^GE as a ring, the thickness deep at the ends of both axes",
+      _runs(_oval, 0, 400, (100,)) == [(50, 249)]
+      and [_oval.getpixel((150, y)) < 128 for y in (50, 59, 60)] == [True, True, False]
+      and [_oval.getpixel((x, 100)) < 128 for x in (59, 60, 239, 240)]
+      == [True, False, False, True],
+      (_runs(_oval, 0, 400, (100,)),
+       [_oval.getpixel((150, y)) for y in (50, 59, 60)],
+       [_oval.getpixel((x, 100)) for x in (59, 60, 239, 240)]))
+check("with nothing in the corners of its box or the middle",
+      _oval.getpixel((52, 52)) > 200 and _oval.getpixel((150, 100)) > 200,
+      (_oval.getpixel((52, 52)), _oval.getpixel((150, 100))))
+check("and its ink fills exactly the box the model claims",
+      _preview_ink(_oval_zpl, 400, 300) == (50, 50, 200, 100),
+      _preview_ink(_oval_zpl, 400, 300))
+_solid_oval = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO50,50^GE200,100,50^FS^XZ").convert('L')
+check("a border as thick as half the shorter side fills the ellipse",
+      _solid_oval.getpixel((150, 100)) < 100 and _solid_oval.getpixel((52, 52)) > 200,
+      (_solid_oval.getpixel((150, 100)), _solid_oval.getpixel((52, 52))))
+_white_oval = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO50,50^GE200,100,50^FS"
+    "^FO75,75^GE150,50,4,W^FS^XZ").convert('L')
+check("a white ellipse shows only over black, as a white frame does",
+      _white_oval.getpixel((150, 76)) > 200 and _white_oval.getpixel((150, 90)) < 100,
+      (_white_oval.getpixel((150, 76)), _white_oval.getpixel((150, 90))))
+_fr_oval = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO50,50^GB100,100,100^FS"
+    "^FO50,50^FR^GE200,100,10,W^FS^XZ").convert('L')
+check("^FR inverts under the ellipse's own ring, ignoring its colour",
+      _fr_oval.getpixel((54, 100)) > 200 and _fr_oval.getpixel((245, 100)) < 100
+      and _fr_oval.getpixel((100, 100)) < 100,
+      (_fr_oval.getpixel((54, 100)), _fr_oval.getpixel((245, 100)),
+       _fr_oval.getpixel((100, 100))))
+
+ew = qt_main.ZPLDesignerWindow()
+ew.unsaved_changes = False
+ew.on_new()
+ew.document.set_label_size(400, 300)
+ew.document.elements.append(EllipseElement(50, 50, 200, 100, 10))
+ew.canvas.set_zoom(1.0)
+ovalled = QImage(400, 300, QImage.Format_ARGB32); ovalled.fill(Qt.white)
+ew.canvas.render(ovalled)
+
+def _oval_dark(x, y):
+    return (ovalled.pixel(x, y) & 0xFFFFFF) < 0x646464
+
+check("and the canvas draws the same ring, the corners and the middle empty",
+      _oval_dark(150, 54) and _oval_dark(54, 100) and _oval_dark(245, 100)
+      and not _oval_dark(52, 52) and not _oval_dark(150, 100),
+      (_oval_dark(150, 54), _oval_dark(54, 100), _oval_dark(245, 100),
+       _oval_dark(52, 52), _oval_dark(150, 100)))
+
+# two sides, each free, and a border held under half the shorter of them
+_squashed = EllipseElement(100, 100, 200, 150, 70)
+geometry.resize_by_handle(Document(400, 400), _squashed, 'bm', 0, -100)
+check("squashing an ellipse by its handle holds the thickness under half its height",
+      (box_of(_squashed), _squashed.thickness) == ((100, 100, 200, 50), 25),
+      (box_of(_squashed), _squashed.thickness))
+
+def _ellipse_pair():
+    """An ellipse and a frame, joint box (40, 40, 180, 140), grouped and selected."""
+    d = Document(400, 400)
+    e, f = EllipseElement(40, 40, 60, 40, 4), FrameElement(140, 120, 80, 60)
+    d.elements.extend([e, f])
+    d.select_many([e, f]); d.group_selected(); d.select(e)
+    return d, e, f
+
+d, _e, _f = _ellipse_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'br', 180, 140)   # exactly x2
+check("a group scaled x2 doubles its ellipse and the border",
+      (box_of(_e), _e.thickness) == ((40, 40, 120, 80), 8),
+      (box_of(_e), _e.thickness))
+d, _e, _f = _ellipse_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'mr', 180, 0)
+check("a group stretched along one axis stretches the ellipse into a longer oval, "
+      "its border by the smaller factor",
+      (box_of(_e), _e.thickness) == ((40, 40, 120, 40), 4),
+      (box_of(_e), _e.thickness))
+_rescaled_oval = Document()
+_ro = _rescaled_oval.add_ellipse_element()
+_rescaled_oval.rescale(300 / 203)
+check("a change of resolution scales the box and the thickness",
+      (_ro.width, _ro.height, _ro.thickness) == (296, 222, 3),
+      (_ro.width, _ro.height, _ro.thickness))
+
+# the editor: two sides, a thickness held under half the shorter, colour, ^FR
+_edited_oval = EllipseElement(50, 50, 200, 150, 2)
+_oval_accepted = []
+_oval_dialog = qt_dialogs.edit_ellipse_dialog(
+    None, _edited_oval, on_accept=lambda: _oval_accepted.append(True))
+_oval_dialog.findChild(QSpinBox, 'width').setValue(60)
+_oval_dialog.findChild(QSpinBox, 'height').setValue(90)
+_oval_dialog.findChild(QSpinBox, 'thickness').setValue(100)
+_oval_dialog.findChild(QComboBox, 'colour').setCurrentIndex(1)
+_oval_dialog.findChild(QCheckBox, 'reverse_print').setChecked(True)
+_oval_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("Edit Ellipse writes the box, a thickness under half the shorter side, "
+      "the colour and ^FR",
+      _oval_accepted
+      and (box_of(_edited_oval), _edited_oval.thickness, _edited_oval.colour,
+           _edited_oval.reverse_print) == ((50, 50, 60, 90), 30, 'W', True),
+      (box_of(_edited_oval), _edited_oval.thickness, _edited_oval.colour,
+       _edited_oval.reverse_print))
+check("and the ellipse it leaves is written that way",
+      "^FR\n^GE60,90,30,W\n" in _edited_oval.to_zpl(),
+      _edited_oval.to_zpl().replace('\n', ' '))
+_tiny_oval = EllipseElement(50, 50, 3, 3, 1)
+_tiny_dialog = qt_dialogs.edit_ellipse_dialog(None, _tiny_oval)
+_tiny_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+_wide_oval = EllipseElement(50, 50, 1500, 40, 20)
+_wide_dialog = qt_dialogs.edit_ellipse_dialog(None, _wide_oval)
+_wide_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("an ellipse from a file keeps its size through an editor accepted unchanged",
+      (box_of(_tiny_oval)[2:], _tiny_oval.thickness) == ((3, 3), 1)
+      and (box_of(_wide_oval)[2:], _wide_oval.thickness) == ((1500, 40), 20),
+      (box_of(_tiny_oval), _tiny_oval.thickness,
+       box_of(_wide_oval), _wide_oval.thickness))
+_kept_oval = EllipseElement(50, 50, 200, 150, 2)
+_kept_dialog = qt_dialogs.edit_ellipse_dialog(None, _kept_oval)
+_kept_dialog.findChild(QSpinBox, 'width').setValue(90)
+_kept_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Cancel).click()
+check("and Cancel leaves the ellipse alone", _kept_oval.width == 200,
+      _kept_oval.width)
+
+# + Ellipse, and a double-click onto its editor
+ew.on_new()
+_before = len(ew._undo_stack)
+ew.on_add_ellipse()
+_added_oval = ew.document.selected_element
+check("+ Ellipse adds a selected ellipse and one undo entry",
+      isinstance(_added_oval, EllipseElement)
+      and len(ew._undo_stack) == _before + 1,
+      (type(_added_oval).__name__, len(ew._undo_stack) - _before))
+ew.on_element_double_clicked(_added_oval)
+check("and a double-click opens Edit Ellipse on it",
+      id(_added_oval) in ew._editors
+      and ew._editors[id(_added_oval)].windowTitle() == "Edit Ellipse",
+      list(ew._editors))
+ew._close_element_editors()
 
 # --- ^FT names a baseline where ^FO names a top -----------------------------
 

@@ -20,8 +20,9 @@ from . import graphics
 from . import symbology as symbologies
 from . import transforms as zpl_transforms
 from .model import (ORIENTATIONS, BarcodeElement, CircleElement,
-                    DiagonalLineElement, Document, FieldBlock, FrameElement,
-                    ImageElement, StoredGraphicElement, TextElement)
+                    DiagonalLineElement, Document, EllipseElement, FieldBlock,
+                    FrameElement, ImageElement, StoredGraphicElement,
+                    TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
@@ -154,9 +155,9 @@ STRUCTURAL = {'^XA', '^XZ', '^FS', '^FX', '^CI', '^CF', '^LH', '^PR', '^MD',
 # running field origin when no ^FO/^FT has opened it yet. The ^A fonts and the
 # ^B symbologies are matched by prefix in _belongs_to_field; ^BY is not a
 # field command, and is read before anything reaches that test.
-FIELD_COMMANDS = frozenset({'^FB', '^FR', '^GS', '^GB', '^GC', '^GD', '^GF',
-                            '^IM', '^XG', '^FN', '^SN', '^SF', '^FC', '^FH',
-                            '^FD', '^FV'})
+FIELD_COMMANDS = frozenset({'^FB', '^FR', '^GS', '^GB', '^GC', '^GD', '^GE',
+                            '^GF', '^IM', '^XG', '^FN', '^SN', '^SF', '^FC',
+                            '^FH', '^FD', '^FV'})
 
 
 def _belongs_to_field(cmd: str) -> bool:
@@ -828,6 +829,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['circle'] = params
         elif cmd == '^GD':
             field['diagonal'] = params
+        elif cmd == '^GE':
+            field['ellipse'] = params
         elif cmd == '^GF':
             field['graphic'] = params
         elif cmd in ('^IM', '^XG'):
@@ -893,7 +896,7 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'default_font': dict(default_font or DEFAULT_FONT),
             'default_orientation': default_orientation,
             'barcode': None, 'frame': None, 'circle': None, 'diagonal': None,
-            'graphic': None,
+            'ellipse': None, 'graphic': None,
             'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'justify': None,
             'symbology': None,
@@ -926,6 +929,7 @@ def _has_content(field) -> bool:
     return (field['data'] is not None or field['frame'] is not None
             or field['circle'] is not None
             or field['diagonal'] is not None
+            or field['ellipse'] is not None
             or field['graphic'] is not None
             or field['stored_graphic'] is not None
             or field['field_number'] is not None
@@ -1218,6 +1222,32 @@ def _read_diagonal(params: str):
     return side(0), side(1), thickness, colour, direction
 
 
+def _read_ellipse(params: str):
+    """^GEw,h,t,c - as (width, height, thickness, colour).
+
+    Every parameter optional, as ^GD's are: the thickness defaults to 1, and
+    the width and the height each default to it and are held to ^GE's own
+    3-4095 ("larger values are replaced with 4095"). The colour is a letter.
+    """
+    parts = [p.strip() for p in params.split(',')]
+
+    def number(index, fallback):
+        if len(parts) > index and parts[index]:
+            try:
+                return int(parts[index])
+            except ValueError:
+                pass
+        return fallback
+
+    def side(index):
+        return max(EllipseElement.MIN_SIDE,
+                   min(number(index, thickness), EllipseElement.MAX_SIDE))
+
+    thickness = max(1, number(2, 1))
+    colour = parts[3][:1].upper() if len(parts) > 3 and parts[3] else 'B'
+    return side(0), side(1), thickness, colour
+
+
 BARCODE_COMMANDS = symbologies.COMMAND_PARAMS
 
 
@@ -1427,6 +1457,9 @@ def _build_element(field, doc, renderer):
 
     if field['diagonal'] is not None:
         return DiagonalLineElement(x, y, *_read_diagonal(field['diagonal']))
+
+    if field['ellipse'] is not None:
+        return EllipseElement(x, y, *_read_ellipse(field['ellipse']))
 
     if field['barcode'] is not None:
         bc = field['barcode']

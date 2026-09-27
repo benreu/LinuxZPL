@@ -24,8 +24,8 @@ from zplcore import printer_io
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore.model import (BarcodeElement, CircleElement, DiagonalLineElement,
-                           Document, FrameElement, ImageElement,
-                           StoredGraphicElement, TextElement)
+                           Document, EllipseElement, FrameElement,
+                           ImageElement, StoredGraphicElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from . import dialogs as qt_dialogs
@@ -412,6 +412,7 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar.addAction(self._action("+ Numbered", self.on_add_numbered))
         toolbar.addAction(self._action("+ Frame", self.on_add_frame))
         toolbar.addAction(self._action("+ Circle", self.on_add_circle))
+        toolbar.addAction(self._action("+ Ellipse", self.on_add_ellipse))
         toolbar.addAction(self._action("+ Diagonal", self.on_add_diagonal))
         toolbar.addAction(self._action("+ Barcode", self.on_add_barcode))
         toolbar.addAction(self._action("+ Image", self.on_add_image))
@@ -548,6 +549,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.document.add_circle_element()
         self.canvas.commit()
 
+    def on_add_ellipse(self):
+        self.document.add_ellipse_element()
+        self.canvas.commit()
+
     def on_add_diagonal(self):
         self.document.add_diagonal_element()
         self.canvas.commit()
@@ -660,6 +665,9 @@ class ZPLDesignerWindow(QMainWindow):
         elif isinstance(element, CircleElement):
             editor = qt_dialogs.edit_circle_dialog(self, element,
                                                    on_accept=committed)
+        elif isinstance(element, EllipseElement):
+            editor = qt_dialogs.edit_ellipse_dialog(self, element,
+                                                    on_accept=committed)
         elif isinstance(element, DiagonalLineElement):
             editor = qt_dialogs.edit_diagonal_dialog(self, element,
                                                      on_accept=committed)

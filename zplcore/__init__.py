@@ -11,12 +11,12 @@ FUNCTIONAL_SPEC.md is the contract this implements; both frontends answer to it.
 """
 
 from .model import (BarcodeElement, CircleElement, DesignElement,
-                    DiagonalLineElement, Document, FieldBlock, FrameElement,
-                    ImageElement, TextElement)
+                    DiagonalLineElement, Document, EllipseElement, FieldBlock,
+                    FrameElement, ImageElement, TextElement)
 from .parser import parse_label_size, parse_zpl
 
 __all__ = [
     'DesignElement', 'TextElement', 'FrameElement', 'CircleElement',
-    'DiagonalLineElement', 'BarcodeElement', 'ImageElement', 'FieldBlock',
-    'Document', 'parse_zpl', 'parse_label_size',
+    'EllipseElement', 'DiagonalLineElement', 'BarcodeElement', 'ImageElement',
+    'FieldBlock', 'Document', 'parse_zpl', 'parse_label_size',
 ]

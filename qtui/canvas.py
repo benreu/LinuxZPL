@@ -18,8 +18,8 @@ import time
 from typing import Optional
 
 from PySide2.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide2.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter, QPen,
-                           QPolygonF)
+from PySide2.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter,
+                           QPainterPath, QPen, QPolygonF)
 from PySide2.QtWidgets import QMenu, QWidget
 
 from zplcore import geometry, graphic_store, textraster, view
@@ -216,6 +216,8 @@ class DesignCanvas(QWidget):
         elif element.element_type in ('frame', 'circle'):
             # A ^GC circle is a ^GB square rounded by half its side
             self._draw_frame_element(painter, element, selected)
+        elif element.element_type == 'ellipse':
+            self._draw_ellipse_element(painter, element, selected)
         elif element.element_type == 'diagonal':
             self._draw_diagonal_element(painter, element, selected)
         elif element.element_type == 'barcode':
@@ -500,6 +502,43 @@ class DesignCanvas(QWidget):
                 painter.drawRoundedRect(box, inner, inner)
             else:
                 painter.drawRect(box)
+
+        if reverse:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
+
+    # --- ellipse -------------------------------------------------------------
+
+    def _draw_ellipse_element(self, painter, element, selected: bool):
+        """A ^GE ellipse, its ring cut by the hole zplcore.geometry gives it,
+        so this and the GTK canvas cannot draw a different border."""
+        # Selection outline first, on the box the handles are on, as a frame's
+        # is - the corners of that box are empty, and the ellipse alone would
+        # not say where the handles belong.
+        if selected:
+            painter.setPen(QPen(QColor(0, 0, 255), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
+
+        reverse = element.reverse_print
+        if reverse:
+            # ^FR inverts under the ring's own ink, ignoring its colour, as
+            # it does under a frame's border.
+            painter.setCompositionMode(QPainter.CompositionMode_Difference)
+            ink = QColor(255, 255, 255)
+        else:
+            # ^GE's colour: white shows only over something already black.
+            ink = QColor(255, 255, 255) if element.colour == 'W' else QColor(0, 0, 0)
+
+        # A path's default fill rule is odd-even, so the hole added inside
+        # the outer ellipse is left unfilled.
+        ring = QPainterPath()
+        ring.addEllipse(QRectF(element.x, element.y, element.width, element.height))
+        hole = geometry.ellipse_hole(element)
+        if hole is not None:
+            hx, hy, hw, hh = hole
+            ring.addEllipse(QRectF(element.x + hx, element.y + hy, hw, hh))
+        painter.fillPath(ring, ink)
 
         if reverse:
             painter.setCompositionMode(QPainter.CompositionMode_SourceOver)

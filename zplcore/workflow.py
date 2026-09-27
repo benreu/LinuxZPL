@@ -299,7 +299,7 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # it lacks: carried verbatim, nothing to draw; see FUNCTIONAL_SPEC.md
 # section 18.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY',
-            '^GB', '^GC', '^GD', '^FB', '^FR',
+            '^GB', '^GC', '^GD', '^GE', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF', '^FW',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC', '^FH',
