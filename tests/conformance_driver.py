@@ -44,6 +44,10 @@ FIXTURE_ELLIPSES = ROOT / 'tests' / 'fixtures' / 'ellipses.zpl'
 # every parameter left to default, one white over black, one placed by ^FT
 # and one reversed
 FIXTURE_DIAGONALS = ROOT / 'tests' / 'fixtures' / 'diagonals.zpl'
+# ^GS as a file gives it: the manual's own ^CF example, all five symbols, the
+# three other turns, two symbols in one field, one placed by ^FT, one
+# reversed over black and one turned by ^FW
+FIXTURE_SYMBOLS = ROOT / 'tests' / 'fixtures' / 'graphic_symbols.zpl'
 # ^A with its sizes left off, inherited from ^CF or from the font itself
 FIXTURE_PARTIAL = ROOT / 'tests' / 'fixtures' / 'partial_font.zpl'
 # The manual's own ^FW example, plus a ^CF field and a barcode that defer to
@@ -198,6 +202,9 @@ class GtkDriver:
 
     def add_diagonal(self):
         return self.canvas.add_diagonal_element()
+
+    def add_graphic_symbol(self, code):
+        return self.canvas.add_graphic_symbol_element(code)
 
     def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
         return self.canvas.add_stored_graphic_element(command, device_spec)
@@ -488,6 +495,9 @@ class QtDriver:
 
     def add_diagonal(self):
         return self.document.add_diagonal_element()
+
+    def add_graphic_symbol(self, code):
+        return self.document.add_graphic_symbol_element(code)
 
     def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
         return self.document.add_stored_graphic_element(command, device_spec)
@@ -1179,6 +1189,29 @@ def sequence(driver, record):
     diagonal.reverse_print = True
     record('a reversed diagonal line')
 
+    # ^GS: each of the five from + Symbol, then a drag through every handle,
+    # upright and turned - the run and the stack swap sides at a quarter turn,
+    # and the box snaps to whole cells - then another letter, two in one
+    # field, and ^FR.
+    for code in 'ABCDE':
+        mark = driver.add_graphic_symbol(code)
+        record(f'add graphic symbol {code}')
+    driver.select(mark)
+    for handle in ('br', 'tl', 'mr', 'bm', 'tr', 'bl', 'ml', 'tm'):
+        driver.resize(mark, handle, 17, 11)
+        record(f'resize graphic symbol by {handle}')
+    mark.orientation = 'R'
+    mark.sync_box()
+    record('a turned graphic symbol')
+    for handle in ('br', 'mr', 'bm', 'tl'):
+        driver.resize(mark, handle, 13, 21)
+        record(f'resize turned graphic symbol by {handle}')
+    mark.text = 'AB'
+    mark.sync_box()
+    record('two graphic symbols in one field')
+    mark.reverse_print = True
+    record('a reversed graphic symbol')
+
     # ZPL as other tools leave it: a ^CF default font rather than an ^A on
     # every field, and a ^GB carrying its colour and rounding. Last, because
     # loading replaces the document every earlier step built up.
@@ -1199,6 +1232,8 @@ def sequence(driver, record):
     record('load a file of ^GE ellipses')
     driver.load(FIXTURE_DIAGONALS)
     record('load a file of ^GD diagonal lines')
+    driver.load(FIXTURE_SYMBOLS)
+    record('load a file of ^GS graphic symbols')
     driver.load(FIXTURE_PARTIAL)
     record('load a file whose ^A leaves its sizes off')
     driver.load(FIXTURE_ORIENTED)

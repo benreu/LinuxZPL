@@ -36,7 +36,7 @@ disagree.
 ## Features
 
 - **Visual Designer**: drag-and-drop canvas with text, frame, circle, ellipse,
-  diagonal line, barcode and image elements
+  diagonal line, graphic symbol (® © ™ UL CSA), barcode and image elements
 - **Fonts**: pick any installed TrueType font per text element; upload, list and
   delete fonts on the printer, with a check before printing that the label's
   fonts are actually there
@@ -101,7 +101,8 @@ In VS Code, press **F5**; the default configuration is the flagless one.
 ### Quick Start
 
 1. Add elements with the **+ Text**, **+ Frame**, **+ Circle**, **+ Ellipse**,
-   **+ Diagonal**, **+ Barcode** and **+ Image** buttons
+   **+ Diagonal**, **+ Barcode** and **+ Image** buttons, and a ®, ©, ™, UL or
+   CSA mark from **+ Symbol ▾**
 2. Drag elements to position them, or drag the handles to resize
 3. Double-click an element to edit it - text, font, barcode value, image file
 4. Right-click an element for **Print This Element** and the z-order actions
@@ -160,6 +161,8 @@ zplcore/    no GUI toolkit, runs headless
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   textraster.py  the text raster both canvases blit
+  graphic_symbols.py  the ^GS symbols, drawn, since there is no file for
+                 the printer's GS font
   workflow.py    the decisions that decide whether a label prints correctly
   symbology.py   the barcode catalogue: which command spells each symbology,
                  what its parameters mean, what the editors offer for it
@@ -203,6 +206,8 @@ Read when loading a file and written when saving:
   field or a barcode that leaves its own orientation out turns with it, and
   is written back with its own letter instead
 - `^GB` / `^GC` / `^GD` / `^GE` - Draw box, circle, diagonal line, ellipse
+- `^GS` - Graphic symbol: ®, ©, ™ and the UL and CSA marks, chosen by the
+  field data (`A` to `E`)
 - `^BC` / `^B3` / `^BE` / `^B2` / `^BS` / `^BY` - Code 128, Code 39, EAN-13,
   Interleaved 2 of 5 and UPC/EAN Extension barcodes, and their module width
 - `^GF` - Graphic field (images, 1-bit, where a set bit is black)

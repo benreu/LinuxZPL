@@ -99,6 +99,7 @@ for build, describe in ((lambda: document.add_text_element('reversible'), 'text'
                         (lambda: document.add_circle_element(), 'circle'),
                         (lambda: document.add_ellipse_element(), 'ellipse'),
                         (lambda: document.add_diagonal_element(), 'diagonal line'),
+                        (lambda: document.add_graphic_symbol_element('A'), 'symbol'),
                         (lambda: document.add_barcode_element(), 'barcode')):
     element = build()
     window.on_element_double_clicked(None, element)
@@ -235,6 +236,118 @@ dark = _painted(reversed_oval, under=(50, 50, 100, 100))
 check("and inverts under the ring for ^FR, ignoring its colour",
       not dark(54, 100) and dark(245, 100) and dark(100, 100),
       (dark(54, 100), dark(245, 100), dark(100, 100)))
+
+# --- + Symbol and Edit Symbol: the five ^GS symbols ------------------------
+
+from zplcore import graphic_symbols
+from zplcore.model import GraphicSymbolElement
+
+
+def _find_all(container, kind):
+    """Every widget of `kind` under `container`, in order - the symbol
+    editor's rows are boxes, so its widgets are not the content area's own
+    children."""
+    found = []
+    for child in container.get_children():
+        if isinstance(child, kind):
+            found.append(child)
+        elif isinstance(child, Gtk.Container):
+            found += _find_all(child, kind)
+    return found
+
+
+symbol_items = window.add_symbol_button.get_popup().get_children()
+check("+ Symbol opens the five, each with its picture beside its name",
+      [_find_all(item, Gtk.Label)[0].get_text() for item in symbol_items]
+      == [name for _code, _shown, name in graphic_symbols.SYMBOLS]
+      and all(_find_all(item, Gtk.Image) for item in symbol_items),
+      [_find_all(item, Gtk.Label)[0].get_text() for item in symbol_items])
+_before = len(window._undo_stack)
+symbol_items[3].activate()
+mark = document.selected_element
+check("choosing UL adds a selected ^GS^FDD and one undo entry",
+      isinstance(mark, GraphicSymbolElement) and mark.text == 'D'
+      and len(window._undo_stack) == _before + 1,
+      (type(mark).__name__, getattr(mark, 'text', None),
+       len(window._undo_stack) - _before))
+
+window.on_element_double_clicked(None, mark)
+mark_dialog = window._editors[id(mark)]
+check("a double-click on a symbol opens Edit Symbol",
+      mark_dialog.get_title() == "Edit Symbol", mark_dialog.get_title())
+symbol_combo, turn_combo = _find_all(mark_dialog.get_content_area(), Gtk.ComboBoxText)
+mark_height, mark_width = _find_all(mark_dialog.get_content_area(), Gtk.SpinButton)
+symbol_combo.set_active(1)
+mark_height.set_value(60)
+mark_width.set_value(30)
+turn_combo.set_active(3)
+_before = len(window._undo_stack)
+mark_dialog.response(Gtk.ResponseType.OK)
+check("OK in Edit Symbol writes the symbol, both sizes and the turn, as one "
+      "undo entry",
+      (mark.text, mark.font_height, mark.font_width, mark.orientation,
+       mark.width, mark.height) == ('B', 60, 30, 'B', 60, 30)
+      and len(window._undo_stack) == _before + 1,
+      (mark.text, mark.font_height, mark.font_width, mark.orientation,
+       mark.width, mark.height, len(window._undo_stack) - _before))
+
+window.on_element_double_clicked(None, mark)
+mark_dialog = window._editors[id(mark)]
+_find_all(mark_dialog.get_content_area(), Gtk.ComboBoxText)[0].set_active(4)
+_before = len(window._undo_stack)
+mark_dialog.response(Gtk.ResponseType.CANCEL)
+check("and Cancel leaves the symbol alone, recording nothing",
+      mark.text == 'B' and len(window._undo_stack) == _before,
+      (mark.text, len(window._undo_stack) - _before))
+document.elements.remove(mark)
+
+pair = GraphicSymbolElement(50, 50, 'AB', 5, 7000)
+document.elements.append(pair)
+window.on_element_double_clicked(None, pair)
+pair_dialog = window._editors[id(pair)]
+check("data that is not one of the five is offered first, as written",
+      _find_all(pair_dialog.get_content_area(),
+                Gtk.ComboBoxText)[0].get_active_text() == "As written: AB")
+pair_dialog.response(Gtk.ResponseType.OK)
+check("so accepting it unchanged keeps the data and both sizes",
+      (pair.text, pair.font_height, pair.font_width) == ('AB', 5, 7000),
+      (pair.text, pair.font_height, pair.font_width))
+document.elements.remove(pair)
+
+
+def _painted_symbol(element, under=None):
+    """The symbol drawn on its own, over white or a black box, as a dark(x, y)."""
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 300, 200)
+    ctx = cairo.Context(surface)
+    ctx.set_source_rgb(1, 1, 1); ctx.paint()
+    if under is not None:
+        ctx.set_source_rgb(0, 0, 0); ctx.rectangle(*under); ctx.fill()
+    window.design_canvas._draw_graphic_symbol_element(ctx, element, False)
+    surface.flush()
+    data, stride = surface.get_data(), surface.get_stride()
+
+    def dark(x, y):
+        at = y * stride + 4 * x
+        return all(channel < 100 for channel in data[at:at + 3])
+    return dark
+
+
+dark = _painted_symbol(GraphicSymbolElement(50, 50, 'A', 96, 96))
+alpha = graphic_symbols.raster('A', 96, 96).getchannel('A')
+agree = sum(dark(50 + x, 50 + y) == (alpha.getpixel((x, y)) >= 128)
+            for y in range(96) for x in range(96))
+check("the GTK canvas paints the symbol the raster holds",
+      agree / (96 * 96) > 0.97, agree / (96 * 96))
+turned = GraphicSymbolElement(50, 50, 'C', 96, 48, orientation='R')
+dark = _painted_symbol(turned)
+check("turned a quarter, the TM runs down its box, along the right-hand edge",
+      any(dark(x, y) for x in range(130, 146) for y in range(50, 98))
+      and not any(dark(x, y) for x in range(50, 80) for y in range(50, 98)))
+reversed_mark = GraphicSymbolElement(50, 50, 'B', 100, 100)
+reversed_mark.reverse_print = True
+dark = _painted_symbol(reversed_mark, under=(50, 50, 100, 100))
+check("and inverts under its own ink for ^FR",
+      not dark(56, 100) and dark(70, 100), (dark(56, 100), dark(70, 100)))
 
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen

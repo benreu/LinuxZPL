@@ -35,7 +35,8 @@ from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
                            TEXT_JUSTIFICATIONS, CircleElement,
                            DiagonalLineElement, Document, EllipseElement,
-                           FieldBlock, FrameElement, TextElement)
+                           FieldBlock, FrameElement, GraphicSymbolElement,
+                           TextElement, graphic_symbol_choices)
 
 from .busy import BusyBar
 from .canvas import to_qimage
@@ -1091,6 +1092,68 @@ def edit_diagonal_dialog(parent, element, on_accept=None) -> QDialog:
         element.colour = colour_combo.currentData()
         element.direction = direction_combo.currentData()
         element.reverse_print = fr_check.isChecked()
+
+    return _show_editor(dialog, _apply, on_accept)
+
+
+def edit_graphic_symbol_dialog(parent, element, on_accept=None) -> QDialog:
+    """Edit a ^GS symbol. `on_accept` runs once OK has changed it."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Edit Symbol")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    # The five, and whatever else the field already holds - see
+    # graphic_symbol_choices - so OK on ^GS^FDAB leaves it AB.
+    choices = graphic_symbol_choices(element.text)
+    symbol_combo = QComboBox()
+    symbol_combo.setObjectName("symbol")
+    for label, code in choices:
+        symbol_combo.addItem(label, code)
+    codes = [code for _label, code in choices]
+    symbol_combo.setCurrentIndex(codes.index(element.text)
+                                 if element.text in codes else 0)
+    form.addRow("Symbol:", symbol_combo)
+
+    # ^GS's own range, so a symbol from a file is neither cut down nor
+    # enlarged by accepting the editor it was only looked at in
+    height_spin = QSpinBox()
+    height_spin.setObjectName("font_height")
+    height_spin.setRange(GraphicSymbolElement.MIN_SIZE, GraphicSymbolElement.MAX_SIZE)
+    height_spin.setValue(element.font_height)
+    form.addRow("Height:", height_spin)
+
+    width_spin = QSpinBox()
+    width_spin.setObjectName("font_width")
+    width_spin.setRange(GraphicSymbolElement.MIN_SIZE, GraphicSymbolElement.MAX_SIZE)
+    width_spin.setValue(element.font_width)
+    form.addRow("Width:", width_spin)
+
+    orientation_combo = QComboBox()
+    orientation_combo.setObjectName("orientation")
+    for label, code in ORIENTATIONS:
+        orientation_combo.addItem(label, code)
+    turns = [code for _label, code in ORIENTATIONS]
+    orientation_combo.setCurrentIndex(turns.index(element.orientation)
+                                      if element.orientation in turns else 0)
+    form.addRow("Orientation:", orientation_combo)
+
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+    _reverse_hint(form)
+
+    layout.addWidget(_buttons(dialog))
+
+    def _apply():
+        element.text = symbol_combo.currentData()
+        element.font_height = height_spin.value()
+        element.font_width = width_spin.value()
+        element.orientation = orientation_combo.currentData()
+        element.reverse_print = fr_check.isChecked()
+        element.sync_box()
 
     return _show_editor(dialog, _apply, on_accept)
 

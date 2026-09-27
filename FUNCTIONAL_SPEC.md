@@ -10,8 +10,8 @@ observable behaviour depends on it.
 ## 1. Purpose
 
 A visual designer for Zebra thermal labels. The user places text, frames,
-circles, ellipses, diagonal lines, barcodes and images on a label-sized canvas,
-saves the result as a `.zpl` file,
+circles, ellipses, diagonal lines, graphic symbols, barcodes and images on a
+label-sized canvas, saves the result as a `.zpl` file,
 and prints it over the network to a Zebra printer. The canvas is meant to be a
 proof of what the printer will produce, not an approximation of it.
 
@@ -243,6 +243,39 @@ Its useful maximum is the width, at which point the runs meet the far side and
 the box fills solid. Clamp to that maximum, minimum 1. A white line prints
 nothing on bare stock, as a white frame does, and `^FR` inverts under the
 line's own run and ignores its colour, as it does under a frame's border.
+
+#### Graphic symbol
+
+| Property | Default |
+|---|---|
+| `text` | `A` - the field data, which picks the symbol: `A` ®, `B` ©, `C` ™, `D` the UL mark, `E` the CSA mark |
+| `font_height`, `font_width` | 36 × 36 dots - `^GS`'s `h` and `w`, 1 to 32000 each |
+| `orientation` | `N` - `^GS`'s `o`, the same four letters as `^A`'s. A letter the file leaves out is `^FW`'s (§8.3) |
+
+`^GS` prints from the printer's resident GS font, and it is its own element
+rather than text in a font called GS: it has no `^A`, no font file and no
+`^FB`. Each character of the data is one **cell** `font_width` dots wide and
+`font_height` tall, so the run is `cells × font_width` - one cell for empty
+data, so the element always has a box - and the stack is `font_height`. A
+quarter turn transposes the footprint, as it does for text, and the drawing
+turns about the element's origin.
+
+**The five symbols are drawn by the designer.** There is no file for the GS
+font, so each symbol is a set of strokes on the font's own 24 × 24 grid,
+scaled to `w` across and `h` down. Both canvases and the preview blit one
+raster made from them, so none of them can draw a different symbol. A
+character that is not `A` to `E` is a blank cell: *"Unidentified characters
+should default to a space"*. Both points are recorded in §18.
+
+The baseline an `^FT` names is three quarters of the way down a cell, Table
+33's figure for GS. `^FR` inverts under the symbols' own ink, as it does under
+text's glyphs.
+
+**The resize handles ask for an `h` and a `w`.** The stack becomes the height
+and the run, shared among the cells, the width, at a quarter turn the other way
+round; the box then snaps to the whole cells they make. A label shrunk under a
+symbol, and a group scaled with one, go through the same rule, so the box is
+always the one the symbols print in.
 
 #### Barcode
 
@@ -534,6 +567,9 @@ pinned.
     thickness is clamped to the radius
   - ellipse: thickness clamped to `min(width, height) / 2`, as a frame's is
   - diagonal line: thickness clamped to the width
+  - graphic symbol: the stack becomes `font_height` and the run, divided among
+    the cells, `font_width` - transposed at a quarter turn - and the box snaps
+    to the whole cells they make (§3.3)
   - text: `font_height` is set to the new height, `font_width` is solved so the
     text prints at the new width, and the box is then snapped to that printed
     width — the outline the user drags is the outline that prints. At a quarter
@@ -549,7 +585,8 @@ pinned.
   from there, about the anchor, by the same rule a change of print resolution
   applies (§11) with one factor per axis: positions and boxes outright; a text
   element's font height by the factor across its lines and its font width by
-  the one along them, a barcode's bar height and module width likewise, the two
+  the one along them, a barcode's bar height and module width likewise, and a
+  graphic symbol's `h` and `w` likewise, the three
   swapping axes at a quarter turn, and their boxes then coming back from the
   metrics; a block's wrap width and indent along, its line spacing across, its
   line count kept — a scale is a scale, not a re-wrap; a frame's thickness by
@@ -745,6 +782,15 @@ rules, re-evaluated as the popup opens — the popup can be reached without the
 Edit menu ever having been shown. One button rather than six: the toolbar is
 text-labelled, and the icon theme has no object-align icons to label six with.
 
+`+ Symbol ▾` opens the five `^GS` symbols of §3.3 - Registered trademark,
+Copyright, Trademark, UL approval and CSA approval - and adds the one chosen,
+with the other defaults of §3.3, like any other `+` button. One button rather
+than five, for the same reason as `Align ▾`. Each item shows the symbol it adds
+beside its name, drawn by the raster the canvas uses, since the UL and CSA
+marks have no character of their own to name them with. Both frontends build
+the list from the one table in the core, so neither can offer a symbol the
+other does not.
+
 ### 6.6 Element context menu (right click)
 
 - **Print This Element** — a checkbox, default on. Unticking keeps the element
@@ -775,8 +821,8 @@ effect of building elements while parsing.
 ## 7. Dialogs
 
 The element editors that are forms of fields — Edit Text, Edit Frame, Edit
-Circle, Edit Ellipse, Edit Diagonal Line and Edit Barcode — are **non-modal
-child windows** of the designer. Each is
+Circle, Edit Ellipse, Edit Diagonal Line, Edit Symbol and Edit Barcode — are
+**non-modal child windows** of the designer. Each is
 transient for the designer, so it floats above it, follows it and closes with
 it rather than taking a window of its own, but it never blocks it: the canvas,
 the menus and the toolbar stay live while one is open. Edit Image is a file
@@ -816,6 +862,7 @@ file choosers and the prompts — are modal.
 | **Edit Circle** | Diameter; Thickness; Colour; Reverse | Diameter 3–4095, `^GC`'s own range, so a small circle from a file is not enlarged by accepting an editor it was only looked at in. Thickness 1 to `diameter / 2`, the maximum updating live as the diameter changes. Colour and Reverse as Edit Frame's. |
 | **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
 | **Edit Diagonal Line** | Width; Height; Thickness; Colour; Direction; Reverse | Width and height 3–32000, `^GD`'s own range, so a line from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to the width, the maximum updating live as the width changes. Direction is right-leaning ( / ) or left-leaning ( \ ) (§3.3). Colour and Reverse as Edit Frame's. |
+| **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
 | **Edit Barcode** | Symbology; Value; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
@@ -850,6 +897,7 @@ file choosers and the prompts — are modal.
 | Circle | `^FO<x>,<y>` / `^GC<diameter>,<thickness>[,<colour>]` / `^FS` — the colour is written only when it is not `B` |
 | Ellipse | `^FO<x>,<y>` / `^GE<width>,<height>,<thickness>[,<colour>]` / `^FS` — the colour is written only when it is not `B` |
 | Diagonal line | `^FO<x>,<y>` / `^GD<width>,<height>,<thickness>[,<colour>[,<direction>]]` / `^FS` — the colour and direction are written only when they are not `B` and `R`, and the direction always as the letter |
+| Graphic symbol | `^FO<x>,<y>` / `^GS<orientation>,<font_height>,<font_width>` / `^FD<letters>^FS` — all three of `^GS`'s parameters always, since an omitted size is whatever `^CF` last set and a save writes no `^CF` of its own; `^FR`, `^FV`, `^FH` and `^FN` as a text field writes them |
 | Barcode | `^FO<x>,<y>` / `^BY<module_width>[,<ratio>]` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` — or `^B3`, `^BE`, `^B2`, `^BS`, `^BQ` for the other symbologies, each in its own parameter order (§3.3). Every parameter is trimmed after the last one that is not that position's default, except the height and the magnification, which are always written: they are the two a printer would otherwise resolve from its own settings, so a file that left them out would come back a different size on a different head. A matrix symbology writes no `^BY`, whose module width it is not drawn at |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
 
@@ -978,7 +1026,7 @@ does not know is not taken for a comment.
 ### 8.3 What is read
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
-`^A@`), `^CF`, `^FW`, `^FB`, `^GB`, `^GC`, `^GD`, `^GE`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
+`^A@`), `^CF`, `^FW`, `^FB`, `^GB`, `^GC`, `^GD`, `^GE`, `^GS`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
 `^PO`, `^PM`, `^LR`), `^FO`/`^FT`'s justification and `^FW`'s, `^PQ`, `^CV`,
@@ -1005,6 +1053,10 @@ one the model holds:
 | `^GE` | a 3 x 3 ellipse, 1 dot thick: the thickness defaults to 1 and each side to it, raised to `^GE`'s minimum of 3 |
 | `^GE,,4` | a 4 x 4 ellipse, 4 dots thick - so solid |
 | `^GE5000,100,10` | 4095 wide: *"larger values are replaced with 4095"* |
+| `^CFD,18,10` … `^GS^FDC` | a ™ 18 dots high and 10 wide: with neither size given, `^GS` takes both of `^CF`'s - the manual's own example |
+| `^GSN,40^FDA` | a ® 40 × 40: a height with no width, while `^CF` names a bitmap font, keeps the symbol square, as `^A0` does (§18) |
+| `^GS,40,30^FDA` | turned the way `^FW` says, like any field that leaves its orientation out; a letter that is not `N`, `R`, `I` or `B` is `^FW`'s too |
+| `^GSN,40,40` with no `^FD` | no field, as a text field with no data is none |
 | `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
 | `^BY3,3.0,150` | and a `^BC` that gives no height of its own is 150 dots tall |
 | `^FO,20,20` | x 0, y 20: both coordinates default to 0 (the manual's own spelling, page 127) |
@@ -1170,7 +1222,10 @@ losing the barcode, which the load warning names either way. `^B3`, `^BE`,
 symbologies now (§3.3) and reach the barcode branch instead. Which commands
 those are is `zplcore/symbology.py`'s catalogue, which is also what the load
 warning's own list of modelled commands is built from - so a symbology cannot
-be added without the warning learning about it at the same time.
+be added without the warning learning about it at the same time. `^GS` fell
+into the same trap without being a `^B` command at all - `^GSN,50,50^FDA`
+arrived as nine-dot text reading "A" - and was dropped with them until it
+became an element of its own (§3.3).
 
 **Read the source as commands, not as lines.** A ZPL command is a caret (or
 tilde) plus exactly two characters, and its parameters run to the next caret -
@@ -2081,6 +2136,8 @@ message — never a swallowed exception or a placeholder.
 | Ellipse dialog limits | width and height 3–4095, thickness 1 to `min(w,h)/2` |
 | Diagonal line | 200 × 150 dots, 4 dot thickness, black, leaning right |
 | Diagonal line dialog limits | width and height 3–32000, thickness 1 to the width |
+| Graphic symbol | `A` (®), 36 × 36 dots, upright |
+| Graphic symbol dialog limits | height and width 1–32000 |
 | Barcode | Code 128, `"123456789"`, 100 dot bar height, module width 2, value printed below |
 | Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200, ratio 2.0–3.0 |
 | Image | 200 × 200 dots, JPEG/PNG source |
@@ -2321,7 +2378,7 @@ rather than requirements:
   something a designer emits.
 - **`^FR` inverts whatever is already on the label under the field's own ink
   shape — glyph outlines, bar rectangles, the frame's, circle's or ellipse's own
-  border or fill, a diagonal line's run —
+  border or fill, a diagonal line's run, a graphic symbol's strokes —
   and touches nothing outside it, confirmed against a real printer.**
   Inverting blank (white) label gives black, so a reversed field with
   nothing already printed under it prints its own ink normally, the same as
@@ -2354,6 +2411,24 @@ rather than requirements:
   elongated it is - an 8-dot border round a 300 x 40 one is under 5 dots deep
   at its thinnest. If a printer draws the constant-width border, only the one
   function that gives the hole would change.
+- **`^GS`'s five symbols are the designer's own drawings, not the printer's.**
+  There is no file for the resident GS font, so ®, ©, ™ and the UL and CSA
+  marks are strokes on its 24 × 24 grid, drawn to read as the manual's picture
+  of them (`zplcore/graphic_symbols.py`). Their weight and proportions are an
+  approximation; where each one sits and how big it is are not, since both come
+  from `^GS`'s own parameters.
+- **`^GS` gives every character a cell `w` dots wide.** Table 33 calls the GS
+  font proportional without saying what any symbol's advance is, so two
+  symbols in one field sit `w` apart here, and may sit closer or further apart
+  on a printer. A single symbol - the usual case - is unaffected. A character
+  that is not `A` to `E` keeps its cell and draws nothing, the manual's
+  "default to a space".
+- **A `^GS` height given with no width, under a bitmap `^CF`, stays square.**
+  The manual says both sizes default to `^CF`'s; with neither given, both are
+  taken from it. With only the height given, the width follows it, the rule
+  `^A0` gets for the same reason - Table 33 groups GS with font 0, and a
+  50-dot symbol five dots wide is not what anyone asked for. If a printer takes
+  `^CF`'s width regardless, such a symbol prints narrower than the canvas shows.
 - **A label made smaller can squash a group.** Shrinking the label (§7) clamps
   every element into the new bounds one by one, so two members that both hit
   the edge end up closer together than they were — the label changed, not the

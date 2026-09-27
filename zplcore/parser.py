@@ -21,8 +21,8 @@ from . import symbology as symbologies
 from . import transforms as zpl_transforms
 from .model import (ORIENTATIONS, BarcodeElement, CircleElement,
                     DiagonalLineElement, Document, EllipseElement, FieldBlock,
-                    FrameElement, ImageElement, StoredGraphicElement,
-                    TextElement)
+                    FrameElement, GraphicSymbolElement, ImageElement,
+                    StoredGraphicElement, TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
@@ -829,18 +829,19 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['barcode'] = _read_barcode(cmd, params, field['bar_height'],
                                              default_orientation,
                                              loaded_dpi or doc.dpi)
-        elif cmd.startswith('^B') or cmd == '^GS':
-            # QR, Data Matrix, PDF417 and the rest - a symbology this designer
+        elif cmd.startswith('^B'):
+            # MaxiCode, Code 49 and the rest - a symbology this designer
             # cannot draw. Recorded so the field is dropped, because falling
             # through to the text branch did not merely lose the barcode: it
             # put a text element holding the barcode's data on the label in
             # its place.
-            #
-            # ^GS draws a glyph from the symbol font and is the same trap for
-            # the same reason. It is not a ^B command, so it went on falling
-            # through: ^GSN,50,50^FDA arrived as a nine-dot text element
-            # reading "A".
             field['symbology'] = cmd
+        elif cmd == '^GS':
+            # A symbol from the GS font, chosen by the field data. Its own
+            # element: falling through to the text branch, as it once did,
+            # made ^GSN,50,50^FDA a nine-dot text element reading "A".
+            field['glyph'] = read_graphic_symbol(params, field['default_font'],
+                                                 default_orientation)
         elif cmd == '^GB':
             field['frame'] = params
         elif cmd == '^GC':
@@ -914,7 +915,7 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'default_font': dict(default_font or DEFAULT_FONT),
             'default_orientation': default_orientation,
             'barcode': None, 'frame': None, 'circle': None, 'diagonal': None,
-            'ellipse': None, 'graphic': None,
+            'ellipse': None, 'graphic': None, 'glyph': None,
             'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'justify': None,
             'symbology': None,
@@ -1160,6 +1161,30 @@ def read_font(code: str, params: str, default_font=None,
                             else default_orientation)}
 
 
+def read_graphic_symbol(params: str, default_font=None,
+                        default_orientation=DEFAULT_ORIENTATION) -> dict:
+    """^GSo,h,w - as {'orientation', 'height', 'width'}.
+
+    The same three parameters as an ^A, with the same defaults: the
+    orientation ^FW's, and each size ^CF's - which is what the manual's own
+    example relies on, a bare ^GS after ^CFD. The one exception is read as
+    font 0 is, because Table 33 lists GS beside it: a height given with no
+    width while ^CF names a bitmap font keeps the symbol square rather than
+    giving it that font's five dots, read_font's rule for the scalable font.
+    A letter that is not a quarter turn is ^FW's.
+    """
+    current = dict(default_font or DEFAULT_FONT)
+    font = read_font('0', params, current, default_orientation)
+    given = [p.strip() for p in params.split(',')]
+    height, width = font['height'], font['width']
+    if not any(len(given) > index and given[index] for index in (1, 2)):
+        height, width = current['height'], current['width']
+    orientation = font['orientation']
+    if orientation not in _ORIENTATION_LETTERS:
+        orientation = default_orientation
+    return {'orientation': orientation, 'height': height, 'width': width}
+
+
 def _read_frame(params: str):
     """^GBw,h,t,c,r - as (width, height, thickness, colour, rounding).
 
@@ -1395,6 +1420,9 @@ def _apply_typeset(element, doc) -> None:
         from . import textraster
         offset = textraster.baseline_offset(
             element.font_path or doc.font_path, element.font_height)
+    elif element.element_type == 'graphic_symbol':
+        # GS has a baseline of its own, three quarters of the way down
+        offset = element.baseline_offset()
     else:
         # ^FT names the bottom-left corner of everything that is not text.
         offset = element.height
@@ -1519,6 +1547,26 @@ def _build_element(field, doc, renderer):
                               variable_data=field['variable_data'],
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
+
+    if field['glyph'] is not None:
+        # Nothing to print without data, as for text - unless the printer
+        # supplies it.
+        if field['data'] is None and not printer_generated:
+            return None
+        glyph = field['glyph']
+        return GraphicSymbolElement(x, y, field['data'] or '',
+                                    glyph['height'], glyph['width'],
+                                    orientation=glyph['orientation'],
+                                    field_number=field['field_number'],
+                                    field_prompt=field['field_prompt'],
+                                    serial_start=field['serial_start'],
+                                    serial_increment=field['serial_increment'],
+                                    serial_leading_zero=field['serial_leading_zero'],
+                                    clock_format=field['clock_format'],
+                                    clock_chars=field['clock_chars'],
+                                    serial_field_raw=field['serial_field_raw'],
+                                    hex_indicator=field['hex_indicator'],
+                                    variable_data=field['variable_data'])
 
     if field['symbology'] is not None:
         # Already named in the load warning. Dropping it here is what stops a

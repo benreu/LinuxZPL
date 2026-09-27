@@ -13,7 +13,8 @@ from zplcore import (fonts as zpl_fonts, geometry, parser as zpl_parser,
                      textraster, transforms as zpl_transforms, workflow)
 from zplcore import model as zpl_model
 from zplcore.model import (Document, TextElement, BarcodeElement, FrameElement,
-                           EllipseElement, ImageElement)
+                           EllipseElement, GraphicSymbolElement, ImageElement)
+from zplcore import graphic_symbols
 from zplcore.renderer import ZPLRenderer
 
 app = QApplication([])
@@ -4278,6 +4279,246 @@ check("and a double-click opens Edit Ellipse on it",
       list(ew._editors))
 ew._close_element_editors()
 
+# --- ^GS, the graphic symbol ------------------------------------------------
+# A symbol from the printer's GS font, chosen by the field data: A (R), B (C),
+# C TM, D UL, E CSA. It used to be dropped by the parser - and drawn by the
+# preview as nine-dot text reading "A", the opposite mistake.
+
+def _symbol(source, header="^PW812^LL1218"):
+    built = zpl_parser.parse_zpl(f"^XA{header}^FO50,50{source}^FS^XZ")[0].elements
+    return built[0] if len(built) == 1 else built
+
+_gs = _symbol("^GSN,50,50^FDA")
+check("^GSN,50,50^FDA is a graphic symbol 50 dots square",
+      isinstance(_gs, GraphicSymbolElement)
+      and (_gs.text, _gs.font_height, _gs.font_width, box_of(_gs))
+      == ('A', 50, 50, (50, 50, 50, 50)),
+      _gs if isinstance(_gs, list) else (_gs.text, box_of(_gs)))
+check("and is written back as it came",
+      _gs.to_zpl() == "^FO50,50\n^GSN,50,50\n^FDA^FS\n",
+      _gs.to_zpl().replace('\n', ' '))
+check("^GS is not reported as dropped, now that it is modelled",
+      workflow.unsupported_commands("^XA^FO50,50^GSN,50,50^FDA^FS^XZ") == [],
+      workflow.unsupported_commands("^XA^FO50,50^GSN,50,50^FDA^FS^XZ"))
+
+# The manual's own example: a bare ^GS after ^CF takes ^CF's two sizes, and a
+# save writes them, since ^CF is folded in on the way in.
+_manual_gs = zpl_parser.parse_zpl(
+    "^XA^CFD,18,10^FO50,50^FDZEBRA PROGRAMMING^FS"
+    "^FO50,75^FDLANGUAGE II (ZPL II )^FS^FO280,75^GS^FDC^FS^XZ")[0].elements
+check("the manual's bare ^GS^FDC takes ^CF's height and width",
+      isinstance(_manual_gs[2], GraphicSymbolElement)
+      and (_manual_gs[2].text, _manual_gs[2].font_height,
+           _manual_gs[2].font_width) == ('C', 18, 10)
+      and "^GSN,18,10\n^FDC^FS" in _manual_gs[2].to_zpl(),
+      [(type(e).__name__, getattr(e, 'font_height', None),
+        getattr(e, 'font_width', None)) for e in _manual_gs])
+for source, want in (("^GSN,40", (40, 40)), ("^GSN,,30", (9, 30)),
+                     ("^GS,20,10", (20, 10))):
+    _sized = _symbol(source + "^FDA")
+    check(f"{source} is sized {want} under the default font",
+          (_sized.font_height, _sized.font_width) == want,
+          (_sized.font_height, _sized.font_width))
+_turned_gs = _symbol("^GS,40,30^FDAB", header="^PW812^LL1218^FWR")
+check("a ^GS that leaves its orientation out turns the way ^FW says, its box "
+      "transposed",
+      (_turned_gs.orientation, box_of(_turned_gs)) == ('R', (50, 50, 40, 60))
+      and "^GSR,40,30\n" in _turned_gs.to_zpl(),
+      (_turned_gs.orientation, box_of(_turned_gs)))
+check("and a letter that is not a quarter turn is ^FW's too",
+      _symbol("^GSX,40,40^FDA", header="^FWI").orientation == 'I',
+      _symbol("^GSX,40,40^FDA", header="^FWI").orientation)
+check("one cell per character, so ^FDAB is twice as wide as ^FDA",
+      _symbol("^GSN,40,30^FDAB").width == 60, _symbol("^GSN,40,30^FDAB").width)
+check("a ^GS with no data is no field, as a text field with none is not",
+      _symbol("^GSN,40,40") == [], _symbol("^GSN,40,40"))
+_typed_gs = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FT50,250^GSN,40,40^FDA^FS^XZ")[0].elements[0]
+check("^FT names the symbol's baseline, three quarters of the way down",
+      (_typed_gs.y, _typed_gs.typeset) == (220, 30)
+      and _typed_gs.to_zpl().startswith("^FT50,250\n"),
+      (_typed_gs.y, _typed_gs.typeset, _typed_gs.to_zpl().replace('\n', ' ')))
+_fr_gs = _symbol("^GSN,40,40^FR^FDA")
+check("^FR reverses the symbol, and is written just before its data",
+      _fr_gs.reverse_print and "^GSN,40,40\n^FR\n^FDA^FS" in _fr_gs.to_zpl(),
+      _fr_gs.to_zpl().replace('\n', ' '))
+check("^FV stays ^FV",
+      "^FVB^FS" in _symbol("^GSN,40,40^FVB").to_zpl(),
+      _symbol("^GSN,40,40^FVB").to_zpl().replace('\n', ' '))
+_hex_gs = _symbol("^FH^GSN,40,40^FD_43")
+check("^FH escapes are decoded to the letter drawn, and written back raw",
+      _hex_gs.glyphs() == 'C' and "^FH_^FD_43^FS" in _hex_gs.to_zpl(),
+      (_hex_gs.glyphs(), _hex_gs.to_zpl().replace('\n', ' ')))
+_kept_doc = Document(400, 400)
+_hidden_gs = _kept_doc.add_graphic_symbol_element('B')
+_hidden_gs.print_enabled = False
+_kept_doc.add_frame_element()
+_kept_doc.select_many(_kept_doc.elements); _kept_doc.group_selected()
+_kept_back = zpl_parser.parse_zpl(_kept_doc.to_zpl())[0].elements
+check("a hidden, grouped symbol survives a round trip, still hidden and grouped",
+      isinstance(_kept_back[0], GraphicSymbolElement)
+      and _kept_back[0].text == 'B'
+      and not _kept_back[0].print_enabled and _kept_back[0].group == (1,),
+      [(type(e).__name__, e.print_enabled, e.group) for e in _kept_back])
+
+# the raster every drawing path blits
+for code, _shown, _name in graphic_symbols.SYMBOLS:
+    drawn = graphic_symbols.raster(code, 48, 48)
+    check(f"{code} draws a symbol that fills its cell",
+          drawn.size == (48, 48) and drawn.getchannel('A').getbbox() is not None
+          and drawn.getchannel('A').getbbox()[2] > 40,
+          (drawn.size, drawn.getchannel('A').getbbox()))
+check("a character that is not A to E is a blank cell",
+      graphic_symbols.raster('Z', 48, 48).getchannel('A').getbbox() is None
+      and graphic_symbols.raster('AZ', 48, 48).getchannel('A').crop(
+          (48, 0, 96, 48)).getbbox() is None,
+      graphic_symbols.raster('Z', 48, 48).getchannel('A').getbbox())
+check("an independent h and w stretch the symbol, as ^GS's do",
+      graphic_symbols.raster('A', 40, 80).size == (80, 40))
+
+# the preview draws the symbol - not the letter as text - in every direction
+check("the preview draws ^GSN,50,50^FDA as a 50-dot symbol, not a nine-dot 'A'",
+      _preview_ink("^XA^PW400^LL300^FO50,50^GSN,50,50^FDA^FS^XZ", 400, 300)[2:]
+      >= (46, 46),
+      _preview_ink("^XA^PW400^LL300^FO50,50^GSN,50,50^FDA^FS^XZ", 400, 300))
+for turn in 'NRIB':
+    for code, _shown, _name in graphic_symbols.SYMBOLS:
+        zpl = f"^XA^PW400^LL300^FO50,50^GS{turn},60,30^FD{code}C^FS^XZ"
+        placed = zpl_parser.parse_zpl(zpl)[0].elements[0]
+        ink = _preview_ink(zpl, 400, 300)
+        check(f"the preview's ^GS{turn} {code} lies inside the box the canvas shows",
+              _inside(ink, placed, slack=1), (ink, box_of(placed)))
+_inverted_gs = ZPLRenderer(400, 300).render(
+    "^XA^PW400^LL300^FO50,50^GB100,100,100^FS"
+    "^FO50,50^GSN,100,100^FR^FDB^FS^XZ").convert('L')
+check("^FR inverts under the symbol's own ink: its ring is white over black, "
+      "and the gap inside it stays black",
+      _inverted_gs.getpixel((56, 100)) > 200 and _inverted_gs.getpixel((70, 100)) < 100,
+      (_inverted_gs.getpixel((56, 100)), _inverted_gs.getpixel((70, 100))))
+
+# the canvas blits the same raster
+gw = qt_main.ZPLDesignerWindow()
+gw.unsaved_changes = False
+gw.on_new()
+gw.document.set_label_size(400, 300)
+_drawn_gs = GraphicSymbolElement(50, 50, 'A', 96, 96)
+gw.document.elements.append(_drawn_gs)
+gw.canvas.set_zoom(1.0)
+_gs_image = QImage(400, 300, QImage.Format_ARGB32); _gs_image.fill(Qt.white)
+gw.canvas.render(_gs_image)
+_gs_alpha = graphic_symbols.raster('A', 96, 96).getchannel('A')
+_agree = sum(((_gs_image.pixel(50 + x, 50 + y) & 0xFF) < 128)
+             == (_gs_alpha.getpixel((x, y)) >= 128)
+             for y in range(96) for x in range(96))
+check("the Qt canvas draws the symbol the raster holds",
+      _agree / (96 * 96) > 0.97, _agree / (96 * 96))
+
+# a new one, and the sizes a drag or a scale asks for
+_made_gs = Document().add_graphic_symbol_element('D')
+check("+ Symbol's UL adds a ^GS 36 dots square",
+      _made_gs.to_zpl() == f"^FO{_made_gs.x},{_made_gs.y}\n^GSN,36,36\n^FDD^FS\n",
+      _made_gs.to_zpl().replace('\n', ' '))
+_dragged_gs = GraphicSymbolElement(100, 100, 'AB', 36, 36)
+geometry.resize_by_handle(Document(400, 400), _dragged_gs, 'br', 24, 14)
+check("dragging a corner asks for a height and a width per cell, then snaps",
+      (_dragged_gs.font_height, _dragged_gs.font_width, box_of(_dragged_gs))
+      == (50, 48, (100, 100, 96, 50)),
+      (_dragged_gs.font_height, _dragged_gs.font_width, box_of(_dragged_gs)))
+_dragged_up = GraphicSymbolElement(100, 100, 'A', 40, 30, orientation='R')
+geometry.resize_by_handle(Document(400, 400), _dragged_up, 'bm', 0, 20)
+check("a turned symbol's height is its run, so the bottom handle widens it",
+      (_dragged_up.font_height, _dragged_up.font_width, box_of(_dragged_up))
+      == (40, 50, (100, 100, 40, 50)),
+      (_dragged_up.font_height, _dragged_up.font_width, box_of(_dragged_up)))
+_dragged_top = GraphicSymbolElement(100, 100, 'A', 40, 40)
+geometry.resize_by_handle(Document(400, 400), _dragged_top, 'tl', -20, -20)
+check("and a top-left drag grows it up and left, the far corner held",
+      box_of(_dragged_top) == (80, 80, 60, 60), box_of(_dragged_top))
+_rescaled_gs = Document()
+_rg = _rescaled_gs.add_graphic_symbol_element()
+_rescaled_gs.rescale(300 / 203)
+check("a change of resolution scales h and w",
+      (_rg.font_height, _rg.font_width, _rg.width, _rg.height) == (53, 53, 53, 53),
+      (_rg.font_height, _rg.font_width, _rg.width, _rg.height))
+_clamped = Document(400, 400)
+_cg = _clamped.add_graphic_symbol_element('A')
+_cg.font_height = _cg.font_width = 200; _cg.sync_box()
+_clamped.set_label_size(150, 400)
+check("a label shrunk under a symbol leaves smaller symbols, not a box that "
+      "only claims to be smaller",
+      _cg.x + _cg.width <= 150 and _cg.width == _cg.font_width,
+      (box_of(_cg), _cg.font_width))
+_snap_doc = Document()
+_sg = _snap_doc.add_graphic_symbol_element('A')
+_saved = _snap_doc.snapshot()
+_sg.text = 'E'
+_snap_doc.restore(_saved)
+check("undo puts a symbol's letter back",
+      _snap_doc.elements[0].text == 'A', _snap_doc.elements[0].text)
+
+# the editor: which symbol, h, w, orientation and ^FR
+_edited_gs = GraphicSymbolElement(50, 50, 'A', 36, 36)
+_gs_accepted = []
+_gs_dialog = qt_dialogs.edit_graphic_symbol_dialog(
+    None, _edited_gs, on_accept=lambda: _gs_accepted.append(True))
+_gs_combo = _gs_dialog.findChild(QComboBox, 'symbol')
+check("Edit Symbol offers the five", _gs_combo.count() == 5, _gs_combo.count())
+_gs_combo.setCurrentIndex(2)
+_gs_dialog.findChild(QSpinBox, 'font_height').setValue(60)
+_gs_dialog.findChild(QSpinBox, 'font_width').setValue(30)
+_gs_dialog.findChild(QComboBox, 'orientation').setCurrentIndex(1)
+_gs_dialog.findChild(QCheckBox, 'reverse_print').setChecked(True)
+_gs_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("Edit Symbol writes the symbol, both sizes, the turn and ^FR",
+      _gs_accepted
+      and (_edited_gs.text, _edited_gs.font_height, _edited_gs.font_width,
+           _edited_gs.orientation, _edited_gs.reverse_print, box_of(_edited_gs))
+      == ('C', 60, 30, 'R', True, (50, 50, 60, 30)),
+      (_edited_gs.text, _edited_gs.font_height, _edited_gs.font_width,
+       _edited_gs.orientation, _edited_gs.reverse_print, box_of(_edited_gs)))
+check("and the symbol it leaves is written that way",
+      "^GSR,60,30\n^FR\n^FDC^FS" in _edited_gs.to_zpl(),
+      _edited_gs.to_zpl().replace('\n', ' '))
+_pair_gs = GraphicSymbolElement(50, 50, 'AB', 5, 7000)
+_pair_dialog = qt_dialogs.edit_graphic_symbol_dialog(None, _pair_gs)
+check("data that is not one of the five is offered first, as written",
+      _pair_dialog.findChild(QComboBox, 'symbol').count() == 6
+      and _pair_dialog.findChild(QComboBox, 'symbol').currentText()
+      == "As written: AB",
+      _pair_dialog.findChild(QComboBox, 'symbol').currentText())
+_pair_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("so a symbol from a file keeps its data and sizes through an editor "
+      "accepted unchanged",
+      (_pair_gs.text, _pair_gs.font_height, _pair_gs.font_width) == ('AB', 5, 7000),
+      (_pair_gs.text, _pair_gs.font_height, _pair_gs.font_width))
+_kept_gs = GraphicSymbolElement(50, 50, 'A', 36, 36)
+_kept_gs_dialog = qt_dialogs.edit_graphic_symbol_dialog(None, _kept_gs)
+_kept_gs_dialog.findChild(QComboBox, 'symbol').setCurrentIndex(4)
+_kept_gs_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Cancel).click()
+check("and Cancel leaves the symbol alone", _kept_gs.text == 'A', _kept_gs.text)
+
+# + Symbol, its five actions, and a double-click onto its editor
+gw.on_new()
+check("+ Symbol offers the five, each with its picture beside its name",
+      [a.text() for a in gw.symbol_actions]
+      == [name for _code, _shown, name in graphic_symbols.SYMBOLS]
+      and all(not a.icon().isNull() for a in gw.symbol_actions),
+      [a.text() for a in gw.symbol_actions])
+_before = len(gw._undo_stack)
+gw.symbol_actions[4].trigger()
+_added_gs = gw.document.selected_element
+check("choosing CSA adds a selected ^GS^FDE and one undo entry",
+      isinstance(_added_gs, GraphicSymbolElement) and _added_gs.text == 'E'
+      and len(gw._undo_stack) == _before + 1,
+      (type(_added_gs).__name__, getattr(_added_gs, 'text', None),
+       len(gw._undo_stack) - _before))
+gw.on_element_double_clicked(_added_gs)
+check("and a double-click opens Edit Symbol on it",
+      id(_added_gs) in gw._editors
+      and gw._editors[id(_added_gs)].windowTitle() == "Edit Symbol",
+      list(gw._editors))
+gw._close_element_editors()
+
 # --- ^FT names a baseline where ^FO names a top -----------------------------
 
 typeset = zpl_parser.parse_zpl(
@@ -4407,14 +4648,12 @@ check("an ^A@ with no path goes on meaning the last one named",
 
 # --- a symbology this designer cannot draw is not text ----------------------
 
-# ^GS draws a glyph from the symbol font. It is the same trap as an unsupported
-# symbology and was missed by the fix for those because it is not a ^B command:
-# ^GSN,50,50^FDA saved as ^AAN,9,5^FDA, a 50-dot symbol arriving as 9-dot text.
 # ^B3, ^BE and ^BQ are no longer in this list - they draw for real now, checked
-# below. ^BD MaxiCode and ^B4 Code 49 are the ones that still do not.
+# below - and nor is ^GS, the symbol font, which is an element of its own now
+# (see "^GS, the graphic symbol"). ^BD MaxiCode and ^B4 Code 49 are the ones
+# that still do not.
 for symbology, source in (("^BD", "^BDN,2,5^FDMM,AHELLO^FS"),
-                          ("^B4", "^B4N,6,200^FDdata^FS"),
-                          ("^GS", "^GSN,50,50^FDA^FS")):
+                          ("^B4", "^B4N,6,200^FDdata^FS")):
     page = f"^XA^PW812^LL1218^FO50,50{source}^XZ"
     read = zpl_parser.parse_zpl(page)[0]
     check(f"{symbology} is dropped, not turned into text",

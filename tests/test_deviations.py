@@ -148,6 +148,29 @@ check("18.x a ^FR field over a filled box inverts the box at its own ink",
 check("18.x ...and leaves the rest of the box untouched",
       over_box.getpixel((18, 30)) < 100, over_box.getpixel((18, 30)))
 
+# --- 18.x  ^GS's symbols are drawn here, one w-wide cell each ---------------
+# There is no file for the printer's GS font, so the five symbols are this
+# designer's own strokes; each character is a cell `w` dots wide, which is an
+# estimate of GS's proportional advance; and a character that is not A-E is a
+# blank cell rather than refused.
+from zplcore import graphic_symbols, parser as zpl_parser
+
+check("18.x every one of ^GS's five symbols is drawn, with no font file",
+      all(graphic_symbols.raster(code, 24, 24).getchannel('A').getbbox()
+          for code, _shown, _name in graphic_symbols.SYMBOLS))
+_cells = zpl_parser.parse_zpl("^XA^FO10,10^GSN,40,25^FDACE^FS^XZ")[0].elements[0]
+check("18.x ^GS's run is one w-wide cell per character",
+      _cells.width == 3 * 25, _cells.width)
+_blank = zpl_parser.parse_zpl("^XA^FO10,10^GSN,40,40^FDZ^FS^XZ")[0].elements
+check("18.x a character that is not A-E keeps its cell and draws nothing",
+      len(_blank) == 1 and _blank[0].width == 40
+      and graphic_symbols.raster('Z', 40, 40).getchannel('A').getbbox() is None,
+      [(e.text, e.width) for e in _blank])
+_bare = zpl_parser.parse_zpl("^XA^FO10,10^GSN,40^FDA^FS^XZ")[0].elements[0]
+check("18.x a ^GS height with no width, under a bitmap ^CF, stays square",
+      (_bare.font_height, _bare.font_width) == (40, 40),
+      (_bare.font_height, _bare.font_width))
+
 print()
 print("ALL DEVIATION CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

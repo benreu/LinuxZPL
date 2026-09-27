@@ -38,6 +38,7 @@ from . import upcext
 from . import fields as zpl_fields
 from . import fonts as zpl_fonts
 from . import graphic_store
+from . import graphic_symbols
 from . import graphics
 from . import transforms as zpl_transforms
 from . import geometry
@@ -56,7 +57,7 @@ class DesignElement:
     y: int
     width: int
     height: int
-    element_type: str  # 'text', 'frame', 'circle', 'ellipse', 'diagonal', 'barcode', 'image', 'stored_graphic'
+    element_type: str  # 'text', 'frame', 'circle', 'ellipse', 'diagonal', 'graphic_symbol', 'barcode', 'image', 'stored_graphic'
 
     # Class attributes, so every element inherits the default without each
     # __init__ having to set it.
@@ -680,6 +681,113 @@ class DiagonalLineElement(DesignElement):
                 f"^GD{self.width},{self.height},{self.thickness}{options}\n^FS\n")
 
 
+class GraphicSymbolElement(DesignElement):
+    """^GS - the registered trademark, copyright, trademark, UL and CSA marks.
+
+    The symbol is chosen by the field data, A to E, so the data goes through
+    the same ^FD/^FV/^FH/^FN writing every other field's does. `font_height`
+    and `font_width` are ^GS's h and w: each character is one cell that size,
+    drawn by zplcore.graphic_symbols. Its own element rather than text in a
+    font called GS, because ^GS is not an ^A - it has no font file, no ^FB,
+    and nothing the font chooser could offer.
+
+    `width` and `height` are the footprint, transposed at a quarter turn, as a
+    text element's are - so the shared geometry only ever sees an upright box.
+    """
+
+    data_attribute = 'text'
+
+    # ^GS's own range for h and w, "0 to 32000"; a symbol 0 dots high prints
+    # nothing, so 1 is the least kept.
+    MIN_SIZE = 1
+    MAX_SIZE = 32000
+
+    def __init__(self, x: int = 50, y: int = 50, text: str = 'A',
+                 font_height: int = 36, font_width: int = 36,
+                 orientation: str = 'N',
+                 field_number=None, field_prompt=None,
+                 serial_start=None, serial_increment=None,
+                 serial_leading_zero=False,
+                 clock_format=False, clock_chars=None,
+                 serial_field_raw=None, hex_indicator=None,
+                 variable_data=False):
+        self.x = x
+        self.y = y
+        self.text = text
+        self.font_height = self._size(font_height)
+        self.font_width = self._size(font_width)
+        self.orientation = (orientation or 'N').upper()
+        # The ways a printer supplies a field's value rather than the design,
+        # carried so they round-trip - see DesignElement for each.
+        self.field_number = field_number
+        self.field_prompt = field_prompt
+        self.serial_start = serial_start
+        self.serial_increment = serial_increment
+        self.serial_leading_zero = serial_leading_zero
+        self.clock_format = clock_format
+        self.clock_chars = clock_chars
+        self.serial_field_raw = serial_field_raw
+        self.hex_indicator = hex_indicator
+        self.variable_data = variable_data
+        self.element_type = 'graphic_symbol'
+        self.width = self.height = 0
+        self.sync_box()
+
+    @classmethod
+    def _size(cls, value) -> int:
+        return max(cls.MIN_SIZE, min(int(value or 0), cls.MAX_SIZE))
+
+    def rotated(self) -> bool:
+        """Whether the symbols run down or up the label rather than across."""
+        return self.orientation in ('R', 'B')
+
+    def glyphs(self) -> str:
+        """The letters the symbols are drawn from: the literal, with any ^FH
+        escapes decoded, as the printer reads it."""
+        return zpl_fields.decode_hex(self.data_literal(), self.hex_indicator)
+
+    def run(self) -> int:
+        """Dots along the symbols: one cell of `font_width` per character."""
+        return graphic_symbols.cells(self.glyphs()) * self.font_width
+
+    def baseline_offset(self) -> int:
+        """Dots from the top down to the baseline an ^FT names."""
+        return graphic_symbols.baseline_offset(self.font_height)
+
+    def sync_box(self) -> None:
+        """Resize the footprint to the symbols it holds, turned as they are."""
+        was = self.width
+        run, stack = self.run(), self.font_height
+        self.width, self.height = (stack, run) if self.rotated() else (run, stack)
+        # A right justified field is pinned by its right edge, as text is in
+        # Document.sync_text_width, so a symbol added to the data grows
+        # leftward rather than moving the ^FO the file named.
+        if self.justify == geometry.JUSTIFY_RIGHT and was:
+            self.x = max(0, self.x - (self.width - was))
+
+    def fit(self, width: int, height: int) -> None:
+        """Take a box as the size the symbols are to be drawn at.
+
+        The stack becomes h and the run, shared among the cells, w - the two
+        swapping at a quarter turn, as they do for text. What a resize and
+        every clamp that treats the two sides separately come back through,
+        so the box is always the one the symbols print in.
+        """
+        run, stack = (height, width) if self.rotated() else (width, height)
+        count = graphic_symbols.cells(self.glyphs())
+        self.font_height = self._size(stack)
+        self.font_width = self._size(round(run / count))
+        self.sync_box()
+
+    def to_zpl(self, offset=(0, 0)) -> str:
+        """Convert to ZPL commands. All three of ^GS's parameters are always
+        written: an omitted h or w is whatever ^CF last set, which the parser
+        has already folded in and a save does not write."""
+        return (self.origin_zpl(offset) +
+                f"^GS{self.orientation or 'N'},{self.font_height},{self.font_width}\n" +
+                self.reverse_zpl() + self.data_zpl())
+
+
 # What a barcode falls back to when nothing has given it a height: ZPL's own
 # power-up default is 10 dots, which would make such a symbol a hairline.
 # Recorded as a deviation in FUNCTIONAL_SPEC.md section 18.
@@ -1254,6 +1362,27 @@ FRAME_COLOURS = (("Black", 'B'), ("White", 'W'))
 # ^GD's direction. Its colour is the same B/W parameter as ^GB's, so the
 # editors offer FRAME_COLOURS for it rather than a second copy.
 DIAGONAL_DIRECTIONS = (("Right-leaning ( / )", 'R'), ("Left-leaning ( \\ )", 'L'))
+
+# ^GS's five symbols, as (label, the letter the field data holds), for the
+# editors' lists, which have no pictures - the label leads with the character
+# the symbol prints, or the initials of the mark. From the graphic_symbols
+# table rather than spelled here, so the "+ Symbol" menus, which show the
+# picture beside the name, and the editors list the same symbols the raster
+# draws.
+GRAPHIC_SYMBOLS = tuple((f"{shown}  {name}", code)
+                        for code, shown, name in graphic_symbols.SYMBOLS)
+
+
+def graphic_symbol_choices(current: str) -> tuple:
+    """What an editor offers for a ^GS field holding `current`.
+
+    The five, plus the data itself first when it is not one of them - ^GS^FDAB
+    prints two symbols, and a file may hold that - so accepting an editor it
+    was only looked at in does not rewrite it.
+    """
+    if current in {code for _label, code in GRAPHIC_SYMBOLS}:
+        return GRAPHIC_SYMBOLS
+    return ((f"As written: {current or '(nothing)'}", current),) + GRAPHIC_SYMBOLS
 
 # ^FB's justification, for the same reason: the wrap a user picks in one
 # frontend has to be a wrap the other can pick too.
@@ -1911,6 +2040,11 @@ class Document:
         offset = self._stagger(20)
         return self._append(EllipseElement(100 + offset, 100 + offset))
 
+    def add_graphic_symbol_element(self, code: str = 'A') -> GraphicSymbolElement:
+        """A ^GS symbol - `code` is its letter, A to E (graphic_symbols.SYMBOLS)."""
+        offset = self._stagger(10)
+        return self._append(GraphicSymbolElement(50 + offset, 50 + offset, code))
+
     def add_diagonal_element(self) -> DiagonalLineElement:
         offset = self._stagger(20)
         return self._append(DiagonalLineElement(100 + offset, 100 + offset))
@@ -1946,7 +2080,7 @@ class Document:
         """
         element.width = min(element.width, self.label_width)
         element.height = min(element.height, self.label_height)
-        if element.element_type == 'circle':
+        if element.element_type in ('circle', 'graphic_symbol'):
             element.fit(element.width, element.height)
         element.x = max(0, min(element.x, self.label_width - element.width))
         element.y = max(0, min(element.y, self.label_height - element.height))
@@ -2117,9 +2251,11 @@ class Document:
         element.y = max(0, min(element.y, self.label_height - 1))
         element.width = min(element.width, self.label_width - element.x)
         element.height = min(element.height, self.label_height - element.y)
-        if element.element_type == 'circle':
+        if element.element_type in ('circle', 'graphic_symbol'):
             # Each side clamped on its own is an oval's box; a circle is the
-            # largest that still fits it.
+            # largest that still fits it. A symbol's box is its h and w, so
+            # a clamped box is smaller symbols rather than a box that merely
+            # claims to be smaller.
             element.fit(element.width, element.height)
         block = getattr(element, 'block', None)
         if block is not None:

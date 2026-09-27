@@ -417,7 +417,7 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
         element.typeset = int(round(element.typeset * sy))
 
     kind = element.element_type
-    if kind in ('text', 'barcode'):
+    if kind in ('text', 'barcode', 'graphic_symbol'):
         run, stack = (sy, sx) if element.rotated() else (sx, sy)
     if kind == 'text':
         element.font_height = _scaled(element.font_height, stack)
@@ -431,6 +431,11 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
             element.block.indent = int(round(element.block.indent * run))
         # text width is derived from font metrics, not scaled directly
         document.sync_text_width(element)
+    elif kind == 'graphic_symbol':
+        # ^GS's h and w, which are independent as ^A's are
+        element.font_height = _scaled(element.font_height, stack)
+        element.font_width = _scaled(element.font_width, run)
+        element.sync_box()
     elif kind in ('frame', 'ellipse'):
         element.thickness = _scaled(element.thickness, min(sx, sy))
     elif kind == 'circle':
@@ -565,6 +570,11 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
 
     if element.element_type == 'circle':
         _resize_circle(document, element, handle)
+
+    if element.element_type == 'graphic_symbol':
+        # The dragged box asks for an h and a w; the box then snaps to the
+        # whole cells they make, turned as the symbols are.
+        element.fit(element.width, element.height)
 
     if element.element_type == 'text':
         block = getattr(element, 'block', None)

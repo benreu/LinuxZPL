@@ -23,12 +23,15 @@ from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import textraster
+from zplcore import graphic_symbols
 from zplcore.model import (DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
                            TEXT_JUSTIFICATIONS, BarcodeElement,
                            CircleElement, DiagonalLineElement, Document,
                            EllipseElement, FieldBlock, FrameElement,
-                           ImageElement, StoredGraphicElement, TextElement)
+                           GraphicSymbolElement, ImageElement,
+                           StoredGraphicElement, TextElement,
+                           graphic_symbol_choices)
 from zplcore.renderer import ZPLRenderer
 
 from .busy import BusyBar
@@ -754,6 +757,16 @@ class ZPLViewerWindow(Gtk.Window):
         add_stored_graphic_btn = Gtk.Button(label="+ Graphic")
         add_stored_graphic_btn.connect("clicked", self.on_add_stored_graphic_clicked)
         toolbar_box.pack_start(add_stored_graphic_btn, False, False, 0)
+
+        # One button opening the five ^GS symbols, rather than five buttons
+        # on a toolbar that is already text-labelled end to end. Each item
+        # shows the symbol it adds, drawn by the same raster the canvas uses,
+        # since UL and CSA have no character of their own to label them with.
+        add_symbol_btn = Gtk.MenuButton(label="+ Symbol ▾")
+        add_symbol_btn.set_tooltip_text("Add a graphic symbol (^GS)")
+        add_symbol_btn.set_popup(self._build_symbol_menu())
+        self.add_symbol_button = add_symbol_btn
+        toolbar_box.pack_start(add_symbol_btn, False, False, 0)
 
         # Zoom controls
         zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -3191,6 +3204,27 @@ class ZPLViewerWindow(Gtk.Window):
         """Handle add stored graphic element button click."""
         self.design_canvas.add_stored_graphic_element()
 
+    def _build_symbol_menu(self) -> Gtk.Menu:
+        """The "+ Symbol" popup: one item per ^GS symbol, each with its
+        picture beside its name."""
+        menu = Gtk.Menu()
+        for code, _shown, name in graphic_symbols.SYMBOLS:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            icon = to_pixbuf(graphic_symbols.raster(code, 20, 20))
+            if icon is not None:
+                row.pack_start(Gtk.Image.new_from_pixbuf(icon), False, False, 0)
+            row.pack_start(Gtk.Label(label=name, xalign=0), True, True, 0)
+            item = Gtk.MenuItem()
+            item.add(row)
+            item.connect("activate", self.on_add_graphic_symbol_clicked, code)
+            menu.append(item)
+        menu.show_all()
+        return menu
+
+    def on_add_graphic_symbol_clicked(self, _widget, code: str):
+        """Handle one of the "+ Symbol" popup's items."""
+        self.design_canvas.add_graphic_symbol_element(code)
+
     # Selection commands change the selection and never the document, so
     # they repaint and record nothing - the same as a click or a band.
 
@@ -4121,6 +4155,66 @@ class ZPLViewerWindow(Gtk.Window):
                                             max_thickness())
                     element.colour = colour_codes[colour_combo.get_active()]
                     element.reverse_print = fr_check.get_active()
+                    self.design_canvas.queue_draw()
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
+
+        elif isinstance(element, GraphicSymbolElement):
+            dialog = Gtk.Dialog(title="Edit Symbol", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                               Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+            content.set_spacing(4)
+            content.set_margin_start(8)
+            content.set_margin_end(8)
+            content.set_margin_top(8)
+            content.set_margin_bottom(8)
+
+            def make_row(label_text, widget):
+                _make_row(content, label_text, widget)
+
+            # The five, and whatever else the field already holds - see
+            # graphic_symbol_choices - so OK on ^GS^FDAB leaves it AB.
+            symbol_combo, symbol_codes = _make_combo(
+                graphic_symbol_choices(element.text), element.text)
+            make_row("Symbol:", symbol_combo)
+
+            # ^GS's own range, so a symbol from a file is neither cut down nor
+            # enlarged by accepting the editor it was only looked at in
+            height_spin = _make_spin(element.font_height,
+                                     GraphicSymbolElement.MIN_SIZE,
+                                     GraphicSymbolElement.MAX_SIZE)
+            make_row("Height:", height_spin)
+
+            width_spin = _make_spin(element.font_width,
+                                    GraphicSymbolElement.MIN_SIZE,
+                                    GraphicSymbolElement.MAX_SIZE)
+            make_row("Width:", width_spin)
+
+            orientation_combo, orientation_codes = _make_combo(
+                ORIENTATIONS, element.orientation)
+            make_row("Orientation:", orientation_combo)
+
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            make_row("Reverse:", fr_check)
+            make_row("", _reverse_hint())
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.text = symbol_codes[symbol_combo.get_active()]
+                    element.font_height = int(height_spin.get_value())
+                    element.font_width = int(width_spin.get_value())
+                    element.orientation = orientation_codes[
+                        orientation_combo.get_active()]
+                    element.reverse_print = fr_check.get_active()
+                    element.sync_box()
                     self.design_canvas.queue_draw()
                     self.on_canvas_changed()
 

@@ -22,7 +22,7 @@ from PySide2.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter,
                            QPainterPath, QPen, QPolygonF)
 from PySide2.QtWidgets import QMenu, QWidget
 
-from zplcore import geometry, graphic_store, textraster, view
+from zplcore import geometry, graphic_store, graphic_symbols, textraster, view
 from zplcore.model import DesignElement, Document
 
 
@@ -220,6 +220,8 @@ class DesignCanvas(QWidget):
             self._draw_ellipse_element(painter, element, selected)
         elif element.element_type == 'diagonal':
             self._draw_diagonal_element(painter, element, selected)
+        elif element.element_type == 'graphic_symbol':
+            self._draw_graphic_symbol_element(painter, element, selected)
         elif element.element_type == 'barcode':
             self._draw_barcode_element(painter, element, selected)
         elif element.element_type == 'image':
@@ -575,6 +577,50 @@ class DesignCanvas(QWidget):
 
         if reverse:
             painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
+
+    # --- graphic symbol ------------------------------------------------------
+
+    def _draw_graphic_symbol_element(self, painter, element, selected: bool):
+        """A ^GS field: the raster zplcore.graphic_symbols draws, which the
+        GTK canvas and the preview blit too, turned the way the field faces."""
+        reverse = element.reverse_print
+
+        def draw_affordance():
+            # The same translucent box a text field has, and for the same
+            # reason: an empty cell - a letter that is not A to E - would
+            # otherwise leave nothing on the canvas to select. Drawn after the
+            # ink when reversed, so it tints rather than being inverted.
+            painter.fillRect(QRectF(element.x, element.y, element.width, element.height),
+                             QColor(242, 242, 255, 89))
+            painter.setPen(QPen(QColor(0, 0, 255), 2) if selected
+                           else QPen(QColor(128, 128, 255), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(element.x, element.y, element.width, element.height))
+
+        if not reverse:
+            draw_affordance()
+
+        # ^FR: white ink under a Difference composition inverts what is
+        # already under the symbols, as it does under text.
+        ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
+        image = to_qimage(graphic_symbols.raster(
+            element.glyphs(), element.font_height, element.font_width, ink))
+        if image is not None:
+            facing = geometry.turn(element)
+            painter.save()
+            painter.translate(element.x + facing['offset'][0],
+                              element.y + facing['offset'][1])
+            if facing['angle']:
+                painter.rotate(facing['angle'])
+            if reverse:
+                painter.setCompositionMode(QPainter.CompositionMode_Difference)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            painter.drawImage(QPointF(0, 0), image)
+            painter.restore()
+
+        if reverse:
+            draw_affordance()
 
 
     # --- barcode -------------------------------------------------------------

@@ -6,9 +6,10 @@ Renders ZPL commands to PIL Image objects for display.
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 from typing import List, Optional
-from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphics, parser, textraster, transforms
+from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphic_symbols, graphics, parser, textraster, transforms
 from .model import (BarcodeElement, CircleElement, DiagonalLineElement,
-                    EllipseElement, FieldBlock, FrameElement, TextElement)
+                    EllipseElement, FieldBlock, FrameElement,
+                    GraphicSymbolElement, TextElement)
 
 
 class ZPLRenderer:
@@ -64,6 +65,9 @@ class ZPLRenderer:
         # a ^FR that comes after it in the same field is already known by the
         # time it is drawn.
         self.pending_frame = None
+        # A ^GS's orientation and sizes, as parser.read_graphic_symbol gives
+        # them: the field's data is then symbols rather than text.
+        self.pending_symbol = None
         self.barcode_orientation = ''
         self.barcode_options = ()
         self.barcode_symbology = 'code128'
@@ -438,6 +442,30 @@ class ZPLRenderer:
         ink = (255, 255, 255) if element.colour == 'W' else (0, 0, 0)
         self.image.paste(ink, (element.x, element.y), mask)
 
+    def _render_graphic_symbol(self, data: str):
+        """Draw a ^GS field through the same element and raster both
+        canvases use, turned the way the field faces.
+
+        `data` is already decoded from any ^FH escapes, so the element is
+        given none of its own.
+        """
+        glyph = self.pending_symbol
+        element = GraphicSymbolElement(self.current_x, self.current_y, data,
+                                       glyph['height'], glyph['width'],
+                                       orientation=glyph['orientation'])
+        # The raster's alpha is the ink, which doubles as _invert_under()'s
+        # mask for ^FR and as the paste mask otherwise.
+        mask = graphic_symbols.raster(element.glyphs(), element.font_height,
+                                      element.font_width).getchannel('A')
+        angle = geometry.turn(element)['angle']
+        if angle:
+            mask = mask.rotate(-angle, expand=True)
+        pos = (self._left(element.width), self._top(element.baseline_offset()))
+        if self.current_reverse:
+            self._invert_under(mask, pos)
+        else:
+            self.image.paste((0, 0, 0), pos, mask)
+
     def _render_graphic(self, params: str):
         """Render a ^GF graphic field, in whichever encoding it arrived in.
 
@@ -496,6 +524,7 @@ class ZPLRenderer:
         self.current_reverse = False
         self.hex_indicator = None
         self.pending_frame = None
+        self.pending_symbol = None
         # ^BY is a running default, and this renderer is a long-lived object
         # the window reuses for every preview - so one label's ^BY3 used to
         # widen the next label's barcodes, which carried no ^BY at all.
@@ -603,6 +632,7 @@ class ZPLRenderer:
         self.current_reverse = False
         self.hex_indicator = None
         self.pending_frame = None
+        self.pending_symbol = None
         self.is_barcode_mode = False
         self.barcode_params = {}
         self.own_origin = False
@@ -634,7 +664,11 @@ class ZPLRenderer:
             self.field_data = None
             self.current_block = None
         elif self.field_data is not None:
-            if self.current_block is not None and not self.is_barcode_mode:
+            if self.pending_symbol is not None:
+                # Symbols, not text: drawing the data as text is what made
+                # ^GSN,50,50^FDA a nine-dot "A" here.
+                self._render_graphic_symbol(self.field_data)
+            elif self.current_block is not None and not self.is_barcode_mode:
                 self._render_block(self.field_data)
                 self.current_block = None
             elif self.is_barcode_mode:
@@ -769,6 +803,11 @@ class ZPLRenderer:
             # Held until ^FS rather than drawn here, so a ^FR that comes
             # after ^GB in the same field is still seen before it is drawn.
             self.pending_frame = (command, params)
+        elif command == 'GS':
+            # Read through the parser, against the ^CF and ^FW in force, so
+            # the preview and the canvas size and turn the symbol alike.
+            self.pending_symbol = parser.read_graphic_symbol(
+                params, self.default_font, self.default_orientation)
         elif command == 'BY':
             # Module width, and the wide-to-narrow ratio Code 39 and
             # Interleaved 2 of 5 draw their wide elements at - every other

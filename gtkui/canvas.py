@@ -24,7 +24,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gdk, GdkPixbuf, GObject, Gtk
 
-from zplcore import geometry, graphic_store, textraster, view
+from zplcore import geometry, graphic_store, graphic_symbols, textraster, view
 from zplcore.model import (BarcodeElement, DesignElement, Document,
                            FrameElement, ImageElement, StoredGraphicElement,
                            TextElement)
@@ -249,6 +249,9 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def add_diagonal_element(self):
         return self._added(self.document.add_diagonal_element())
+
+    def add_graphic_symbol_element(self, code: str = 'A'):
+        return self._added(self.document.add_graphic_symbol_element(code))
 
     def add_barcode_element(self):
         return self._added(self.document.add_barcode_element())
@@ -499,6 +502,8 @@ class DesignCanvas(Gtk.DrawingArea):
             self._draw_ellipse_element(context, element, selected)
         elif element.element_type == 'diagonal':
             self._draw_diagonal_element(context, element, selected)
+        elif element.element_type == 'graphic_symbol':
+            self._draw_graphic_symbol_element(context, element, selected)
         elif element.element_type == 'barcode':
             self._draw_barcode_element(context, element, selected)
         elif element.element_type == 'image':
@@ -777,6 +782,52 @@ class DesignCanvas(Gtk.DrawingArea):
 
         if reverse:
             context.set_operator(cairo.OPERATOR_OVER)
+
+    def _draw_graphic_symbol_element(self, context, element, selected: bool):
+        """A ^GS field: the raster zplcore.graphic_symbols draws, which the
+        Qt canvas and the preview blit too, turned the way the field faces."""
+        reverse = element.reverse_print
+
+        def draw_affordance():
+            # The same translucent box a text field has, and for the same
+            # reason: an empty cell - a letter that is not A to E - would
+            # otherwise leave nothing on the canvas to select. Drawn after the
+            # ink when reversed, so it tints rather than being inverted.
+            context.set_source_rgba(0.95, 0.95, 1, 0.35)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.fill()
+            if selected:
+                context.set_source_rgb(0, 0, 1)
+                context.set_line_width(2)
+            else:
+                context.set_source_rgb(0.5, 0.5, 1)
+                context.set_line_width(1)
+            context.rectangle(element.x, element.y, element.width, element.height)
+            context.stroke()
+
+        if not reverse:
+            draw_affordance()
+
+        # ^FR: white ink under OPERATOR_DIFFERENCE inverts what is already
+        # under the symbols, as it does under text.
+        ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
+        pixbuf = to_pixbuf(graphic_symbols.raster(
+            element.glyphs(), element.font_height, element.font_width, ink))
+        if pixbuf is not None:
+            facing = geometry.turn(element)
+            context.save()
+            context.translate(element.x + facing['offset'][0],
+                              element.y + facing['offset'][1])
+            if facing['angle']:
+                context.rotate(math.radians(facing['angle']))
+            if reverse:
+                context.set_operator(cairo.OPERATOR_DIFFERENCE)
+            Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+            context.paint()
+            context.restore()
+
+        if reverse:
+            draw_affordance()
 
     
     def _draw_band(self, context, scale: float):

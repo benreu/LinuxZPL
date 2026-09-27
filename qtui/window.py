@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from PySide2.QtCore import QSize, Qt
-from PySide2.QtGui import QCursor, QImage, QKeySequence, QPixmap
+from PySide2.QtGui import QCursor, QIcon, QImage, QKeySequence, QPixmap
 from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QLabel,
                                QMainWindow, QMenu, QScrollArea, QSizePolicy,
                                QToolBar, QToolButton, QWidget)
@@ -23,14 +23,16 @@ from zplcore import parser as zpl_parser
 from zplcore import printer_io
 from zplcore import view as zpl_view
 from zplcore import workflow
-from zplcore.model import (BarcodeElement, CircleElement, DiagonalLineElement,
-                           Document, EllipseElement, FrameElement,
-                           ImageElement, StoredGraphicElement, TextElement)
+from zplcore import graphic_symbols
+from zplcore.model import (BarcodeElement, CircleElement,
+                           DiagonalLineElement, Document, EllipseElement,
+                           FrameElement, GraphicSymbolElement, ImageElement,
+                           StoredGraphicElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from . import dialogs as qt_dialogs
 from .busy import BusyBar
-from .canvas import DesignCanvas
+from .canvas import DesignCanvas, to_qimage
 
 # The align commands, in menu order: the three horizontal, then the three
 # vertical. The GTK frontend spells the same six the same way, and the
@@ -417,6 +419,28 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar.addAction(self._action("+ Barcode", self.on_add_barcode))
         toolbar.addAction(self._action("+ Image", self.on_add_image))
         toolbar.addAction(self._action("+ Graphic", self.on_add_stored_graphic))
+
+        # One button opening the five ^GS symbols, rather than five buttons
+        # on a toolbar that is already text-labelled end to end. Each action
+        # shows the symbol it adds, drawn by the same raster the canvas uses,
+        # since UL and CSA have no character of their own to label them with.
+        symbol_button = QToolButton(self)
+        symbol_button.setText("+ Symbol ▾")
+        symbol_button.setToolTip("Add a graphic symbol (^GS)")
+        symbol_button.setPopupMode(QToolButton.InstantPopup)
+        symbol_popup = QMenu(symbol_button)
+        self.symbol_actions = []
+        for code, _shown, name in graphic_symbols.SYMBOLS:
+            icon = QIcon(QPixmap.fromImage(
+                to_qimage(graphic_symbols.raster(code, 20, 20))))
+            action = symbol_popup.addAction(icon, name)
+            action.triggered.connect(
+                lambda _checked=False, code=code: self.on_add_graphic_symbol(code))
+            self.symbol_actions.append(action)
+        symbol_button.setMenu(symbol_popup)
+        self.add_symbol_button = symbol_button
+        toolbar.addWidget(symbol_button)
+
         toolbar.addSeparator()
         toolbar.addAction(self.delete_action)
 
@@ -572,6 +596,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.document.add_stored_graphic_element()
         self.canvas.commit()
 
+    def on_add_graphic_symbol(self, code: str):
+        self.document.add_graphic_symbol_element(code)
+        self.canvas.commit()
+
     def on_delete(self):
         # Every selected element goes, so every editor open on one has to be
         # closed - an editor must never outlive the element it is editing.
@@ -671,6 +699,9 @@ class ZPLDesignerWindow(QMainWindow):
         elif isinstance(element, DiagonalLineElement):
             editor = qt_dialogs.edit_diagonal_dialog(self, element,
                                                      on_accept=committed)
+        elif isinstance(element, GraphicSymbolElement):
+            editor = qt_dialogs.edit_graphic_symbol_dialog(self, element,
+                                                           on_accept=committed)
         elif isinstance(element, BarcodeElement):
             editor = qt_dialogs.edit_barcode_dialog(self, element,
                                                     on_accept=committed)

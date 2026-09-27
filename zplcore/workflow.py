@@ -302,8 +302,10 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # media tracking and media type - the settings a generator's header sets
 # before the first field. Carried verbatim, the last of each, with nothing to
 # draw and nothing validated; see FUNCTIONAL_SPEC.md section 18.
+# ^GS is a symbol from the printer's GS font, drawn here by
+# zplcore.graphic_symbols since there is no file for that font.
 MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY',
-            '^GB', '^GC', '^GD', '^GE', '^FB', '^FR',
+            '^GB', '^GC', '^GD', '^GE', '^GS', '^FB', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF', '^FW',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC', '^FH',
