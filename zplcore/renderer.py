@@ -7,7 +7,8 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 from typing import List, Optional
 from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphics, parser, textraster, transforms
-from .model import BarcodeElement, FieldBlock, FrameElement, TextElement
+from .model import (BarcodeElement, CircleElement, FieldBlock, FrameElement,
+                    TextElement)
 
 
 class ZPLRenderer:
@@ -59,8 +60,9 @@ class ZPLRenderer:
         self.unsupported_field = False
         # ^FR: the current field prints in reverse
         self.current_reverse = False
-        # A ^GB's params, held until ^FS so a ^FR that comes after it in the
-        # same field is already known by the time it is drawn.
+        # A ^GB's or ^GC's (command, params), held until ^FS so a ^FR that
+        # comes after it in the same field is already known by the time it is
+        # drawn.
         self.pending_frame = None
         self.barcode_orientation = ''
         self.barcode_options = ()
@@ -323,8 +325,9 @@ class ZPLRenderer:
                 self.draw.text((self._left(block.width) + block.indent, y),
                                line, fill='black', font=font)
 
-    def _render_frame(self, params: str):
-        """Draw a ^GB box through the same element the canvas draws.
+    def _render_frame(self, command: str, params: str):
+        """Draw a ^GB box, or a ^GC circle, through the same element the
+        canvas draws.
 
         Through zplcore's parser and FrameElement rather than a second reading
         of ^GB: the preview is what a user checks a label against before
@@ -332,9 +335,16 @@ class ZPLRenderer:
         with it by coincidence. The old reading here matched digits where the
         colour is a letter, so it lost the colour and the rounding, and it drew
         an outline where a thick border fills solid.
+
+        A circle is the box rounded by half its side, which PIL draws exactly
+        as it draws an ellipse, so it needs nothing below of its own.
         """
-        element = FrameElement(self.current_x, self.current_y,
-                               *parser._read_frame(params))
+        if command == 'GC':
+            element = CircleElement(self.current_x, self.current_y,
+                                    *parser._read_circle(params))
+        else:
+            element = FrameElement(self.current_x, self.current_y,
+                                   *parser._read_frame(params))
         element.x = self._left(element.width)
         element.y = self._top(element.height)
         thickness = max(1, element.thickness)
@@ -556,7 +566,7 @@ class ZPLRenderer:
             self._reset_field()
             return
         if self.pending_frame is not None:
-            self._render_frame(self.pending_frame)
+            self._render_frame(*self.pending_frame)
             self.pending_frame = None
         if self.unsupported_field:
             # Drawing the ^FD would put the barcode's data on the label as
@@ -696,10 +706,10 @@ class ZPLRenderer:
             # to be known before ^GB (drawn eagerly, below) or ^FS (which
             # draws everything else) is reached.
             self.current_reverse = True
-        elif command == 'GB':
+        elif command in ('GB', 'GC'):
             # Held until ^FS rather than drawn here, so a ^FR that comes
             # after ^GB in the same field is still seen before it is drawn.
-            self.pending_frame = params
+            self.pending_frame = (command, params)
         elif command == 'BY':
             # Module width, and the wide-to-narrow ratio Code 39 and
             # Interleaved 2 of 5 draw their wide elements at - every other

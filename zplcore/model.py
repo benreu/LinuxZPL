@@ -56,7 +56,7 @@ class DesignElement:
     y: int
     width: int
     height: int
-    element_type: str  # 'text', 'frame', 'barcode', 'image'
+    element_type: str  # 'text', 'frame', 'circle', 'barcode', 'image', 'stored_graphic'
 
     # Class attributes, so every element inherits the default without each
     # __init__ having to set it.
@@ -516,6 +516,72 @@ class FrameElement(DesignElement):
         return (self.origin_zpl(offset) + self.reverse_zpl() +
                 f"^GB{self.width},{self.height},{self.thickness}"
                 f"{self._options_zpl()}\n^FS\n")
+
+
+class CircleElement(DesignElement):
+    """A ^GC circle.
+
+    The same shape as a ^GB square rounded by half its side, which is how both
+    canvases and the preview draw it - through the frame's own drawing, so the
+    colour, the fill once the border meets in the middle, and ^FR cannot be
+    handled differently for the two. Its own class all the same, because a
+    circle has one size where a box has two, and nothing may stretch it into
+    an oval: ^GE is the command for that.
+
+    `diameter` is what the element is; `width` and `height` are its box and
+    are kept equal to it by sync_box(), the arrangement a barcode's box has
+    with its metrics.
+    """
+
+    # ^GC's own range: "larger values are replaced with 4095"
+    MIN_DIAMETER = 3
+    MAX_DIAMETER = 4095
+    COLOURS = FrameElement.COLOURS
+
+    def __init__(self, x: int = 100, y: int = 100, diameter: int = 150,
+                 thickness: int = 2, colour: str = 'B'):
+        self.x = x
+        self.y = y
+        self.diameter = max(self.MIN_DIAMETER,
+                            min(int(diameter), self.MAX_DIAMETER))
+        self.thickness = max(1, int(thickness))
+        self.colour = (colour or 'B').upper()
+        if self.colour not in self.COLOURS:
+            self.colour = 'B'
+        self.element_type = 'circle'
+        self.sync_box()
+
+    def sync_box(self) -> None:
+        """Make the box the circle's, after the diameter has changed."""
+        self.width = self.height = self.diameter
+
+    def fit(self, width: int, height: int) -> None:
+        """Become the largest circle that fits a box of this size.
+
+        What every clamp that treats the two sides separately comes back
+        through, so a label shrunk narrower than a circle leaves a smaller
+        circle rather than a box that claims to be an oval.
+        """
+        self.diameter = max(1, min(width, height))
+        self.sync_box()
+        self.thickness = max(1, min(self.thickness, self.max_thickness()))
+
+    def max_thickness(self) -> int:
+        """Thickest useful border: at the radius it fills solid."""
+        return max(1, self.diameter // 2)
+
+    def corner_radius(self) -> float:
+        """Half the side, which is what makes the frame's drawing a circle."""
+        return self.diameter / 2
+
+    def to_zpl(self, offset=(0, 0)) -> str:
+        """Convert to ZPL commands.
+
+        The colour is written only when it is not black, as ^GB's is.
+        """
+        colour = '' if self.colour == 'B' else f",{self.colour}"
+        return (self.origin_zpl(offset) + self.reverse_zpl() +
+                f"^GC{self.diameter},{self.thickness}{colour}\n^FS\n")
 
 
 # What a barcode falls back to when nothing has given it a height: ZPL's own
@@ -1730,6 +1796,10 @@ class Document:
         offset = self._stagger(20)
         return self._append(FrameElement(100 + offset, 100 + offset))
 
+    def add_circle_element(self) -> CircleElement:
+        offset = self._stagger(20)
+        return self._append(CircleElement(100 + offset, 100 + offset))
+
     def add_barcode_element(self) -> BarcodeElement:
         offset = self._stagger(20)
         return self._append(BarcodeElement(50 + offset, 250 + offset))
@@ -1761,6 +1831,8 @@ class Document:
         """
         element.width = min(element.width, self.label_width)
         element.height = min(element.height, self.label_height)
+        if element.element_type == 'circle':
+            element.fit(element.width, element.height)
         element.x = max(0, min(element.x, self.label_width - element.width))
         element.y = max(0, min(element.y, self.label_height - element.height))
         block = getattr(element, 'block', None)
@@ -1930,6 +2002,10 @@ class Document:
         element.y = max(0, min(element.y, self.label_height - 1))
         element.width = min(element.width, self.label_width - element.x)
         element.height = min(element.height, self.label_height - element.y)
+        if element.element_type == 'circle':
+            # Each side clamped on its own is an oval's box; a circle is the
+            # largest that still fits it.
+            element.fit(element.width, element.height)
         block = getattr(element, 'block', None)
         if block is not None:
             # A wrapped element's box is its block, so a box clamped to the

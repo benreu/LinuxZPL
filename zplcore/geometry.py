@@ -365,8 +365,8 @@ def resize_origin(element) -> dict:
 
 # The attributes a scale touches, on whichever element types have them.
 SCALED_ATTRIBUTES = ('x', 'y', 'width', 'height', 'typeset', 'font_height',
-                     'font_width', 'thickness', 'module_width', 'bar_height',
-                     'font')
+                     'font_width', 'thickness', 'diameter', 'module_width',
+                     'bar_height', 'font')
 
 
 def scale_state(element) -> dict:
@@ -433,6 +433,13 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
         document.sync_text_width(element)
     elif kind == 'frame':
         element.thickness = _scaled(element.thickness, min(sx, sy))
+    elif kind == 'circle':
+        # One size, so one factor: the smaller, which keeps the circle inside
+        # the box it was scaled with. Two would make an oval, and that is ^GE.
+        factor = min(sx, sy)
+        element.diameter = _scaled(element.diameter, factor)
+        element.thickness = _scaled(element.thickness, factor)
+        element.sync_box()
     elif kind == 'barcode':
         # A module is a whole number of dots, so 2 becomes 3 rather than
         # 2.96 going 203 -> 300 dpi. Positions and heights scale exactly; a
@@ -480,7 +487,7 @@ def _resize_group(document, handle: str, dx: int, dy: int, origin: dict) -> None
     for element, state in origin['members']:
         restore_state(element, state)
         scale_element(document, element, ax, ay, sx, sy)
-        if element.element_type == 'frame':
+        if element.element_type in ('frame', 'circle'):
             element.thickness = max(1, min(element.thickness, element.max_thickness()))
 
     members = [el for el, _ in origin['members']]
@@ -552,6 +559,9 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
     if element.element_type == 'frame':
         element.thickness = max(1, min(element.thickness, element.max_thickness()))
 
+    if element.element_type == 'circle':
+        _resize_circle(document, element, handle)
+
     if element.element_type == 'text':
         block = getattr(element, 'block', None)
         if block is not None:
@@ -601,6 +611,25 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
         element.x = box['x'] + box['width'] - element.width
     element.x = max(0, min(element.x, document.label_width - element.width))
     element.y = max(0, min(element.y, document.label_height - element.height))
+
+
+def _resize_circle(document, element, handle: str) -> None:
+    """Take a dragged box as a request for the one size a circle has.
+
+    A side handle means its own axis, the only one the pointer moved. A corner
+    means the smaller of the two, which keeps the circle inside the box the
+    pointer drew - as a matrix symbology's one magnification does. The box
+    then snaps to the circle, and grows from the edge the drag left alone like
+    any other box that snaps back.
+    """
+    if handle in ('ml', 'mr'):
+        diameter = element.width
+    elif handle in ('tm', 'bm'):
+        diameter = element.height
+    else:
+        diameter = min(element.width, element.height)
+    diameter = min(diameter, document.label_width, document.label_height)
+    element.fit(diameter, diameter)
 
 
 def _resize_barcode(element, run: int, stack: int) -> None:

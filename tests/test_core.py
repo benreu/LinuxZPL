@@ -3682,6 +3682,176 @@ ruled_rows = [y for y in range(300)
 check("and the canvas draws it too, four dots thick",
       len(ruled_rows) == 4 and ruled_rows[0] == 50, ruled_rows)
 
+# --- ^GC, the circle ---------------------------------------------------------
+# Every parameter optional, as ^GB's are: the diameter defaults to 3 and is
+# held to 3-4095, the thickness defaults to 1, and the colour is a letter.
+from zplcore.model import CircleElement
+
+for source, want in (("^GC250,10,B", (250, 10, 'B')), ("^GC", (3, 1, 'B')),
+                     ("^GC5000", (4095, 1, 'B')), ("^GC1,3", (3, 3, 'B')),
+                     ("^GC100,4,W", (100, 4, 'W'))):
+    built = zpl_parser.parse_zpl(f"^XA^PW812^LL1218^FO50,50{source}^FS^XZ")[0].elements
+    check(f"{source} is a circle of diameter {want[0]}, thickness {want[1]}, colour {want[2]}",
+          len(built) == 1 and isinstance(built[0], CircleElement)
+          and (built[0].diameter, built[0].thickness, built[0].colour) == want
+          and built[0].width == built[0].height == want[0],
+          [(type(e).__name__, getattr(e, 'diameter', None),
+            getattr(e, 'thickness', None), getattr(e, 'colour', None)) for e in built])
+check("^GC is not reported as dropped, now that it is modelled",
+      workflow.unsupported_commands("^XA^FO50,50^GC250,10,B^FS^XZ") == [],
+      workflow.unsupported_commands("^XA^FO50,50^GC250,10,B^FS^XZ"))
+
+_made_circle = Document().add_circle_element()
+check("a circle the designer created writes ^GC with no colour",
+      _made_circle.to_zpl()
+      == f"^FO{_made_circle.x},{_made_circle.y}\n^GC150,2\n^FS\n",
+      _made_circle.to_zpl().replace('\n', ' '))
+check("its box is its diameter",
+      (_made_circle.width, _made_circle.height) == (150, 150),
+      (_made_circle.width, _made_circle.height))
+check("a white circle is written back white",
+      "^GC100,4,W\n" in zpl_parser.parse_zpl(
+          "^XA^FO50,50^GC100,4,W^FS^XZ")[0].elements[0].to_zpl())
+_fr_circle = zpl_parser.parse_zpl("^XA^FO50,50^GC100,4^FR^FS^XZ")[0].elements[0]
+check("a ^FR after the ^GC reverses the circle, and is written before it",
+      _fr_circle.reverse_print and "^FR\n^GC100,4\n" in _fr_circle.to_zpl(),
+      _fr_circle.to_zpl().replace('\n', ' '))
+_typed_circle = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FT50,250^GC100,4^FS^XZ")[0].elements[0]
+check("^FT gives a circle its bottom-left corner, as it does a frame",
+      (_typed_circle.y, _typed_circle.y + _typed_circle.height) == (150, 250)
+      and "^FT50,250\n" in _typed_circle.to_zpl(),
+      (_typed_circle.y, _typed_circle.to_zpl().replace('\n', ' ')))
+_hidden_doc = Document(400, 400)
+_hidden_circle = _hidden_doc.add_circle_element()
+_hidden_circle.print_enabled = False
+_hidden_back = zpl_parser.parse_zpl(_hidden_doc.to_zpl())[0].elements
+check("a hidden circle survives a round trip, still hidden",
+      len(_hidden_back) == 1 and isinstance(_hidden_back[0], CircleElement)
+      and not _hidden_back[0].print_enabled and _hidden_back[0].diameter == 150,
+      [(type(e).__name__, e.print_enabled) for e in _hidden_back])
+
+# the preview draws the circle through the frame's own drawing
+_ring_zpl = "^XA^PW400^LL400^FO50,50^GC250,10,B^FS^XZ"
+_ring = ZPLRenderer(400, 400).render(_ring_zpl).convert('L')
+check("the preview draws ^GC as a ring: ink at the top, none in the corner or the middle",
+      _ring.getpixel((175, 52)) < 100 and _ring.getpixel((52, 52)) > 200
+      and _ring.getpixel((175, 175)) > 200,
+      (_ring.getpixel((175, 52)), _ring.getpixel((52, 52)), _ring.getpixel((175, 175))))
+check("and its ink fills exactly the box the model claims",
+      _preview_ink(_ring_zpl, 400, 400) == (50, 50, 250, 250),
+      _preview_ink(_ring_zpl, 400, 400))
+_disc = ZPLRenderer(400, 400).render(
+    "^XA^PW400^LL400^FO50,50^GC120,60^FS^XZ").convert('L')
+check("a border as thick as the radius fills the circle",
+      _disc.getpixel((110, 110)) < 100, _disc.getpixel((110, 110)))
+_cutout = ZPLRenderer(400, 400).render(
+    "^XA^PW400^LL400^FO50,50^GC250,125^FS^FO100,100^GC150,6,W^FS^XZ").convert('L')
+check("a white circle shows only over black, as a white frame does",
+      _cutout.getpixel((175, 102)) > 200 and _cutout.getpixel((175, 90)) < 100,
+      (_cutout.getpixel((175, 102)), _cutout.getpixel((175, 90))))
+_fr_ring = ZPLRenderer(400, 400).render(
+    "^XA^PW400^LL400^FO50,50^GC250,125^FS^FO100,100^FR^GC150,6,W^FS^XZ").convert('L')
+check("^FR inverts under the circle's own ring, ignoring its colour",
+      _fr_ring.getpixel((175, 102)) > 200 and _fr_ring.getpixel((175, 175)) < 100,
+      (_fr_ring.getpixel((175, 102)), _fr_ring.getpixel((175, 175))))
+
+cw = qt_main.ZPLDesignerWindow()
+cw.unsaved_changes = False
+cw.on_new()
+cw.document.set_label_size(400, 400)
+cw.document.elements.append(CircleElement(50, 50, 250, 10))
+cw.canvas.set_zoom(1.0)
+ringed = QImage(400, 400, QImage.Format_ARGB32); ringed.fill(Qt.white)
+cw.canvas.render(ringed)
+
+def _dark(x, y):
+    return (ringed.pixel(x, y) & 0xFFFFFF) < 0x646464
+
+check("and the canvas draws the same ring",
+      _dark(175, 52) and not _dark(52, 52) and not _dark(175, 175),
+      (_dark(175, 52), _dark(52, 52), _dark(175, 175)))
+
+# a circle has one size, so every drag and scale has to leave it one
+for handle, dx, dy, want in (('mr', 40, 10, (100, 100, 190)),
+                             ('bm', 10, 40, (100, 100, 190)),
+                             ('br', 40, 10, (100, 100, 160)),
+                             ('tl', 40, 10, (140, 140, 110)),
+                             ('ml', 40, 10, (140, 100, 110)),
+                             ('tm', 10, 40, (100, 140, 110))):
+    _c = CircleElement(100, 100, 150, 70)
+    geometry.resize_by_handle(Document(400, 400), _c, handle, dx, dy)
+    check(f"resizing a circle by {handle} keeps it round, from the edge left alone",
+          (_c.x, _c.y, _c.diameter) == want and _c.width == _c.height == _c.diameter
+          and _c.thickness <= _c.diameter // 2,
+          (_c.x, _c.y, _c.width, _c.height, _c.diameter, _c.thickness))
+_c = CircleElement(300, 300, 90)
+geometry.resize_by_handle(Document(400, 400), _c, 'mr', 500, 0)
+check("and a drag past the label edge stops at the label",
+      _c.width == _c.height == _c.diameter and _c.x + _c.width <= 400
+      and _c.y + _c.height <= 400,
+      (_c.x, _c.y, _c.diameter))
+
+def _circle_pair():
+    """A circle and a frame, joint box (40, 40, 180, 140), grouped and selected."""
+    d = Document(400, 400)
+    c, f = CircleElement(40, 40, 60), FrameElement(140, 120, 80, 60)
+    d.elements.extend([c, f])
+    d.select_many([c, f]); d.group_selected(); d.select(c)
+    return d, c, f
+
+d, _c, _f = _circle_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'br', 180, 140)   # exactly x2
+check("a group scaled x2 doubles its circle",
+      (_c.x, _c.y, _c.diameter, _c.width, _c.height) == (40, 40, 120, 120, 120),
+      box_of(_c))
+d, _c, _f = _circle_pair()
+geometry.resize_by_handle(d, d.resize_target(), 'mr', 180, 0)
+check("a group stretched along one axis keeps its circle round, at the smaller factor",
+      _c.width == _c.height == _c.diameter == 60 and _f.width == 160,
+      (box_of(_c), box_of(_f)))
+
+_rescaled = Document()
+_rc = _rescaled.add_circle_element()
+_rescaled.rescale(300 / 203)
+check("a change of resolution scales the diameter and the thickness",
+      (_rc.diameter, _rc.width, _rc.height, _rc.thickness) == (222, 222, 222, 3),
+      (_rc.diameter, _rc.width, _rc.height, _rc.thickness))
+_shrunk = Document(400, 400)
+_sc = _shrunk.add_circle_element()
+_shrunk.set_label_size(200, 400)
+check("a label shrunk under a circle leaves a smaller circle, not an oval",
+      (_sc.x, _sc.width, _sc.height, _sc.diameter) == (100, 100, 100, 100),
+      (_sc.x, _sc.width, _sc.height, _sc.diameter))
+
+# the editor: one diameter, a thickness held under its radius
+_edited = CircleElement(50, 50, 150, 2)
+_circle_accepted = []
+_circle_dialog = qt_dialogs.edit_circle_dialog(
+    None, _edited, on_accept=lambda: _circle_accepted.append(True))
+_circle_dialog.findChild(QSpinBox, 'diameter').setValue(80)
+_circle_dialog.findChild(QSpinBox, 'thickness').setValue(60)
+_circle_dialog.findChild(QComboBox, 'colour').setCurrentIndex(1)
+_circle_dialog.findChild(QCheckBox, 'reverse_print').setChecked(True)
+_circle_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("Edit Circle writes a round box, a thickness under the radius, the colour and ^FR",
+      _circle_accepted
+      and (_edited.diameter, _edited.width, _edited.height, _edited.thickness,
+           _edited.colour, _edited.reverse_print) == (80, 80, 80, 40, 'W', True),
+      (_edited.diameter, _edited.width, _edited.height, _edited.thickness,
+       _edited.colour, _edited.reverse_print))
+_small = CircleElement(50, 50, 3, 1)
+_small_dialog = qt_dialogs.edit_circle_dialog(None, _small)
+_small_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("a 3-dot circle from a file is still 3 dots after its editor is accepted",
+      _small.diameter == 3, _small.diameter)
+_cancelled = CircleElement(50, 50, 150, 2)
+_cancel_dialog = qt_dialogs.edit_circle_dialog(None, _cancelled)
+_cancel_dialog.findChild(QSpinBox, 'diameter').setValue(90)
+_cancel_dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Cancel).click()
+check("and Cancel leaves the circle alone", _cancelled.diameter == 150,
+      _cancelled.diameter)
+
 # --- ^FT names a baseline where ^FO names a top -----------------------------
 
 typeset = zpl_parser.parse_zpl(

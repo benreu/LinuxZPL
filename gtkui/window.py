@@ -25,9 +25,9 @@ from zplcore import workflow
 from zplcore import textraster
 from zplcore.model import (FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
-                           TEXT_JUSTIFICATIONS, BarcodeElement, Document,
-                           FieldBlock, FrameElement, ImageElement,
-                           StoredGraphicElement, TextElement)
+                           TEXT_JUSTIFICATIONS, BarcodeElement,
+                           CircleElement, Document, FieldBlock, FrameElement,
+                           ImageElement, StoredGraphicElement, TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from .busy import BusyBar
@@ -723,6 +723,11 @@ class ZPLViewerWindow(Gtk.Window):
         add_frame_btn = Gtk.Button(label="+ Frame")
         add_frame_btn.connect("clicked", self.on_add_frame_clicked)
         toolbar_box.pack_start(add_frame_btn, False, False, 0)
+
+        # Add circle button
+        add_circle_btn = Gtk.Button(label="+ Circle")
+        add_circle_btn.connect("clicked", self.on_add_circle_clicked)
+        toolbar_box.pack_start(add_circle_btn, False, False, 0)
         
         # Add barcode button
         add_barcode_btn = Gtk.Button(label="+ Barcode")
@@ -3125,6 +3130,10 @@ class ZPLViewerWindow(Gtk.Window):
     def on_add_frame_clicked(self, widget):
         """Handle add frame element button click."""
         self.design_canvas.add_frame_element()
+
+    def on_add_circle_clicked(self, widget):
+        """Handle add circle element button click."""
+        self.design_canvas.add_circle_element()
     
     def on_add_barcode_clicked(self, widget):
         """Handle add barcode element button click."""
@@ -4032,6 +4041,66 @@ class ZPLViewerWindow(Gtk.Window):
                     element.thickness = int(thickness_spin.get_value())
                     element.colour = colour_codes[colour_combo.get_active()]
                     element.rounding = int(rounding_spin.get_value())
+                    element.reverse_print = fr_check.get_active()
+                    self.design_canvas.queue_draw()
+                    self.on_canvas_changed()
+
+                _dialog.destroy()
+
+            self._open_editor(element, dialog, on_response)
+
+        elif isinstance(element, CircleElement):
+            dialog = Gtk.Dialog(title="Edit Circle", parent=self, flags=0)
+            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                               Gtk.STOCK_OK, Gtk.ResponseType.OK)
+
+            content = dialog.get_content_area()
+
+            # ^GC's own range, so a small circle from a file is not enlarged
+            # by accepting the editor it was only looked at in
+            content.pack_start(Gtk.Label(label="Diameter:"), False, False, 0)
+            diameter_spin = _make_spin(element.diameter,
+                                       CircleElement.MIN_DIAMETER,
+                                       CircleElement.MAX_DIAMETER)
+            content.pack_start(diameter_spin, False, False, 0)
+
+            # The border meets in the middle at the radius, and fills solid.
+            def max_thickness():
+                return max(1, int(diameter_spin.get_value()) // 2)
+
+            content.pack_start(Gtk.Label(label="Thickness:"), False, False, 0)
+            thickness_spin = _make_spin(min(element.thickness, max_thickness()),
+                                        1, max_thickness())
+            content.pack_start(thickness_spin, False, False, 0)
+
+            def on_diameter_changed(_spin):
+                # Shrinking the circle must not leave an illegal thickness
+                # selectable
+                thickness_spin.get_adjustment().set_upper(max_thickness())
+
+            diameter_spin.connect("value-changed", on_diameter_changed)
+
+            # ^GC's colour: the same black or white ^GB offers
+            content.pack_start(Gtk.Label(label="Colour:"), False, False, 0)
+            colour_combo, colour_codes = _make_combo(FRAME_COLOURS, element.colour)
+            content.pack_start(colour_combo, False, False, 0)
+
+            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+            fr_check.set_active(element.reverse_print)
+            content.pack_start(fr_check, False, False, 0)
+            content.pack_start(_reverse_hint(), False, False, 0)
+
+            content.show_all()
+
+            def on_response(_dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    element.diameter = int(diameter_spin.get_value())
+                    element.sync_box()
+                    # An adjustment whose upper bound drops does not pull its
+                    # value down with it, as Qt's setRange does.
+                    element.thickness = min(int(thickness_spin.get_value()),
+                                            max_thickness())
+                    element.colour = colour_codes[colour_combo.get_active()]
                     element.reverse_print = fr_check.get_active()
                     self.design_canvas.queue_draw()
                     self.on_canvas_changed()

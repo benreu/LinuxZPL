@@ -19,9 +19,9 @@ from . import graphic_store
 from . import graphics
 from . import symbology as symbologies
 from . import transforms as zpl_transforms
-from .model import (ORIENTATIONS, BarcodeElement, Document, FieldBlock,
-                    FrameElement, ImageElement, StoredGraphicElement,
-                    TextElement)
+from .model import (ORIENTATIONS, BarcodeElement, CircleElement, Document,
+                    FieldBlock, FrameElement, ImageElement,
+                    StoredGraphicElement, TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
@@ -154,8 +154,9 @@ STRUCTURAL = {'^XA', '^XZ', '^FS', '^FX', '^CI', '^CF', '^LH', '^PR', '^MD',
 # running field origin when no ^FO/^FT has opened it yet. The ^A fonts and the
 # ^B symbologies are matched by prefix in _belongs_to_field; ^BY is not a
 # field command, and is read before anything reaches that test.
-FIELD_COMMANDS = frozenset({'^FB', '^FR', '^GS', '^GB', '^GF', '^IM', '^XG',
-                            '^FN', '^SN', '^SF', '^FC', '^FH', '^FD', '^FV'})
+FIELD_COMMANDS = frozenset({'^FB', '^FR', '^GS', '^GB', '^GC', '^GF', '^IM',
+                            '^XG', '^FN', '^SN', '^SF', '^FC', '^FH', '^FD',
+                            '^FV'})
 
 
 def _belongs_to_field(cmd: str) -> bool:
@@ -823,6 +824,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['symbology'] = cmd
         elif cmd == '^GB':
             field['frame'] = params
+        elif cmd == '^GC':
+            field['circle'] = params
         elif cmd == '^GF':
             field['graphic'] = params
         elif cmd in ('^IM', '^XG'):
@@ -887,7 +890,7 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'bar_height': inherited['height'],
             'default_font': dict(default_font or DEFAULT_FONT),
             'default_orientation': default_orientation,
-            'barcode': None, 'frame': None, 'graphic': None,
+            'barcode': None, 'frame': None, 'circle': None, 'graphic': None,
             'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'justify': None,
             'symbology': None,
@@ -918,6 +921,7 @@ def _has_content(field) -> bool:
     there. One without is still being described, and the ^FO only places it.
     """
     return (field['data'] is not None or field['frame'] is not None
+            or field['circle'] is not None
             or field['graphic'] is not None
             or field['stored_graphic'] is not None
             or field['field_number'] is not None
@@ -1157,6 +1161,30 @@ def _read_frame(params: str):
             thickness, colour, number(4, 0))
 
 
+def _read_circle(params: str):
+    """^GCd,t,c - as (diameter, thickness, colour).
+
+    Every parameter optional, as ^GB's are: the diameter defaults to 3 and is
+    held to 3-4095 ("larger values are replaced with 4095"), the thickness
+    defaults to 1, and the colour is a letter.
+    """
+    parts = [p.strip() for p in params.split(',')]
+
+    def number(index, fallback):
+        if len(parts) > index and parts[index]:
+            try:
+                return int(parts[index])
+            except ValueError:
+                pass
+        return fallback
+
+    diameter = max(CircleElement.MIN_DIAMETER,
+                   min(number(0, CircleElement.MIN_DIAMETER),
+                       CircleElement.MAX_DIAMETER))
+    colour = parts[2][:1].upper() if len(parts) > 2 and parts[2] else 'B'
+    return diameter, max(1, number(1, 1)), colour
+
+
 BARCODE_COMMANDS = symbologies.COMMAND_PARAMS
 
 
@@ -1360,6 +1388,9 @@ def _build_element(field, doc, renderer):
 
     if field['frame'] is not None:
         return FrameElement(x, y, *_read_frame(field['frame']))
+
+    if field['circle'] is not None:
+        return CircleElement(x, y, *_read_circle(field['circle']))
 
     if field['barcode'] is not None:
         bc = field['barcode']

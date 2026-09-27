@@ -212,7 +212,8 @@ class DesignCanvas(QWidget):
     def _draw_element(self, painter, element: DesignElement, selected: bool):
         if element.element_type == 'text':
             self._draw_text_element(painter, element, selected)
-        elif element.element_type == 'frame':
+        elif element.element_type in ('frame', 'circle'):
+            # A ^GC circle is a ^GB square rounded by half its side
             self._draw_frame_element(painter, element, selected)
         elif element.element_type == 'barcode':
             self._draw_barcode_element(painter, element, selected)

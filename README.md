@@ -35,8 +35,8 @@ disagree.
 
 ## Features
 
-- **Visual Designer**: drag-and-drop canvas with text, frame, barcode and image
-  elements
+- **Visual Designer**: drag-and-drop canvas with text, frame, circle, barcode
+  and image elements
 - **Fonts**: pick any installed TrueType font per text element; upload, list and
   delete fonts on the printer, with a check before printing that the label's
   fonts are actually there

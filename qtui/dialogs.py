@@ -33,8 +33,8 @@ from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
                            FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
-                           TEXT_JUSTIFICATIONS, Document, FieldBlock,
-                           FrameElement, TextElement)
+                           TEXT_JUSTIFICATIONS, CircleElement, Document,
+                           FieldBlock, FrameElement, TextElement)
 
 from .busy import BusyBar
 from .canvas import to_qimage
@@ -888,6 +888,66 @@ def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
         element.thickness = thickness_spin.value()
         element.colour = colour_combo.currentData()
         element.rounding = rounding_spin.value()
+        element.reverse_print = fr_check.isChecked()
+
+    return _show_editor(dialog, _apply, on_accept)
+
+
+def edit_circle_dialog(parent, element, on_accept=None) -> QDialog:
+    """Edit a ^GC circle. `on_accept` runs once OK has changed it."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Edit Circle")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    # ^GC's own range, so a small circle from a file is not enlarged by
+    # accepting the editor it was only looked at in
+    diameter_spin = QSpinBox()
+    diameter_spin.setObjectName("diameter")
+    diameter_spin.setRange(CircleElement.MIN_DIAMETER, CircleElement.MAX_DIAMETER)
+    diameter_spin.setValue(element.diameter)
+    form.addRow("Diameter:", diameter_spin)
+
+    thickness_spin = QSpinBox()
+    thickness_spin.setObjectName("thickness")
+    form.addRow("Thickness:", thickness_spin)
+
+    def max_thickness():
+        # The border meets in the middle at the radius, and fills solid.
+        return max(1, diameter_spin.value() // 2)
+
+    def sync_thickness_range():
+        # Shrinking the circle must not leave an illegal thickness selectable.
+        thickness_spin.setRange(1, max_thickness())
+
+    sync_thickness_range()
+    thickness_spin.setValue(min(element.thickness, max_thickness()))
+    diameter_spin.valueChanged.connect(sync_thickness_range)
+
+    # ^GC's colour: the same black or white ^GB offers
+    colour_combo = QComboBox()
+    colour_combo.setObjectName("colour")
+    for label, code in FRAME_COLOURS:
+        colour_combo.addItem(label, code)
+    codes = [code for _label, code in FRAME_COLOURS]
+    colour_combo.setCurrentIndex(codes.index(element.colour)
+                                 if element.colour in codes else 0)
+    form.addRow("Colour:", colour_combo)
+
+    fr_check = QCheckBox("Reverse print (^FR)")
+    fr_check.setObjectName("reverse_print")
+    fr_check.setChecked(element.reverse_print)
+    form.addRow("Reverse:", fr_check)
+    _reverse_hint(form)
+
+    layout.addWidget(_buttons(dialog))
+
+    def _apply():
+        element.diameter = diameter_spin.value()
+        element.sync_box()
+        element.thickness = thickness_spin.value()
+        element.colour = colour_combo.currentData()
         element.reverse_print = fr_check.isChecked()
 
     return _show_editor(dialog, _apply, on_accept)

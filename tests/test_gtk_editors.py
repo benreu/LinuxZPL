@@ -96,6 +96,7 @@ def _find_checkbutton(container, label):
 
 for build, describe in ((lambda: document.add_text_element('reversible'), 'text'),
                         (lambda: document.add_frame_element(), 'frame'),
+                        (lambda: document.add_circle_element(), 'circle'),
                         (lambda: document.add_barcode_element(), 'barcode')):
     element = build()
     window.on_element_double_clicked(None, element)
@@ -108,6 +109,33 @@ for build, describe in ((lambda: document.add_text_element('reversible'), 'text'
     check(f"ticking it in the {describe} dialog reaches the element",
           element.reverse_print is True)
     document.elements.remove(element)
+
+# --- Edit Circle: one diameter, and a thickness held under its radius -------
+
+
+def _spin_buttons(dialog):
+    return [child for child in dialog.get_content_area().get_children()
+            if isinstance(child, Gtk.SpinButton)]
+
+
+circle = document.add_circle_element()
+window.on_element_double_clicked(None, circle)
+circle_dialog = window._editors[id(circle)]
+diameter_spin, thickness_spin = _spin_buttons(circle_dialog)
+diameter_spin.set_value(80)
+thickness_spin.set_value(60)
+circle_dialog.response(Gtk.ResponseType.OK)
+check("OK in Edit Circle writes a round box and a thickness under the radius",
+      (circle.diameter, circle.width, circle.height, circle.thickness)
+      == (80, 80, 80, 40),
+      (circle.diameter, circle.width, circle.height, circle.thickness))
+
+window.on_element_double_clicked(None, circle)
+circle_dialog = window._editors[id(circle)]
+_spin_buttons(circle_dialog)[0].set_value(120)
+circle_dialog.response(Gtk.ResponseType.CANCEL)
+check("and Cancel leaves the circle alone", circle.diameter == 80, circle.diameter)
+document.elements.remove(circle)
 
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen

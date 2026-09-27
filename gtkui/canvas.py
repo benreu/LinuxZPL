@@ -229,6 +229,9 @@ class DesignCanvas(Gtk.DrawingArea):
     def add_frame_element(self):
         return self._added(self.document.add_frame_element())
 
+    def add_circle_element(self):
+        return self._added(self.document.add_circle_element())
+
     def add_barcode_element(self):
         return self._added(self.document.add_barcode_element())
 
@@ -471,7 +474,8 @@ class DesignCanvas(Gtk.DrawingArea):
         """Draw a single element."""
         if element.element_type == 'text':
             self._draw_text_element(context, element, selected)
-        elif element.element_type == 'frame':
+        elif element.element_type in ('frame', 'circle'):
+            # A ^GC circle is a ^GB square rounded by half its side
             self._draw_frame_element(context, element, selected)
         elif element.element_type == 'barcode':
             self._draw_barcode_element(context, element, selected)

@@ -34,6 +34,9 @@ FIXTURE_DEFAULTS = ROOT / 'tests' / 'fixtures' / 'default_font.zpl'
 FIXTURE_TYPESET = ROOT / 'tests' / 'fixtures' / 'typeset.zpl'
 # ^GB rules, where the width or the height is left to default to the thickness
 FIXTURE_RULES = ROOT / 'tests' / 'fixtures' / 'rules.zpl'
+# ^GC as a file gives it: every parameter, none, white inside black, a circle
+# thick enough to fill, one placed by ^FT and one reversed
+FIXTURE_CIRCLES = ROOT / 'tests' / 'fixtures' / 'circles.zpl'
 # ^A with its sizes left off, inherited from ^CF or from the font itself
 FIXTURE_PARTIAL = ROOT / 'tests' / 'fixtures' / 'partial_font.zpl'
 # The manual's own ^FW example, plus a ^CF field and a barcode that defer to
@@ -176,6 +179,9 @@ class GtkDriver:
 
     def add_frame(self):
         return self.canvas.add_frame_element()
+
+    def add_circle(self):
+        return self.canvas.add_circle_element()
 
     def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
         return self.canvas.add_stored_graphic_element(command, device_spec)
@@ -457,6 +463,9 @@ class QtDriver:
 
     def add_frame(self):
         return self.document.add_frame_element()
+
+    def add_circle(self):
+        return self.document.add_circle_element()
 
     def add_stored_graphic(self, command='XG', device_spec='R:UNKNOWN.GRF'):
         return self.document.add_stored_graphic_element(command, device_spec)
@@ -1096,6 +1105,22 @@ def sequence(driver, record):
         block.reverse_print = True
         record('a reversed text field')
 
+    # ^GC: one size through every handle, so neither frontend can let a drag
+    # leave it an oval, and the frame's colour and ^FR on its own shape.
+    circle = driver.add_circle()
+    record('add circle')
+    driver.select(circle)
+    for handle in ('br', 'tl', 'mr', 'bm', 'tr', 'bl', 'ml', 'tm'):
+        driver.resize(circle, handle, 17, 11)
+        record(f'resize circle by {handle}')
+    circle.thickness = 500
+    driver.resize(circle, 'br', 0, 0)
+    record('circle thickness clamped')
+    circle.colour = 'W'
+    record('a white circle')
+    circle.reverse_print = True
+    record('a reversed circle')
+
     # ZPL as other tools leave it: a ^CF default font rather than an ^A on
     # every field, and a ^GB carrying its colour and rounding. Last, because
     # loading replaces the document every earlier step built up.
@@ -1110,6 +1135,8 @@ def sequence(driver, record):
     record('load a file placed by ^FT')
     driver.load(FIXTURE_RULES)
     record('load a file of ^GB rules')
+    driver.load(FIXTURE_CIRCLES)
+    record('load a file of ^GC circles')
     driver.load(FIXTURE_PARTIAL)
     record('load a file whose ^A leaves its sizes off')
     driver.load(FIXTURE_ORIENTED)

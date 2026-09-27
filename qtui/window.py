@@ -23,8 +23,9 @@ from zplcore import parser as zpl_parser
 from zplcore import printer_io
 from zplcore import view as zpl_view
 from zplcore import workflow
-from zplcore.model import (BarcodeElement, Document, FrameElement, ImageElement,
-                           StoredGraphicElement, TextElement)
+from zplcore.model import (BarcodeElement, CircleElement, Document,
+                           FrameElement, ImageElement, StoredGraphicElement,
+                           TextElement)
 from zplcore.renderer import ZPLRenderer
 
 from . import dialogs as qt_dialogs
@@ -410,6 +411,7 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar.addAction(self._action("+ Serial", self.on_add_serial))
         toolbar.addAction(self._action("+ Numbered", self.on_add_numbered))
         toolbar.addAction(self._action("+ Frame", self.on_add_frame))
+        toolbar.addAction(self._action("+ Circle", self.on_add_circle))
         toolbar.addAction(self._action("+ Barcode", self.on_add_barcode))
         toolbar.addAction(self._action("+ Image", self.on_add_image))
         toolbar.addAction(self._action("+ Graphic", self.on_add_stored_graphic))
@@ -541,6 +543,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.document.add_frame_element()
         self.canvas.commit()
 
+    def on_add_circle(self):
+        self.document.add_circle_element()
+        self.canvas.commit()
+
     def on_add_barcode(self):
         self.document.add_barcode_element()
         self.canvas.commit()
@@ -646,6 +652,9 @@ class ZPLDesignerWindow(QMainWindow):
         elif isinstance(element, FrameElement):
             editor = qt_dialogs.edit_frame_dialog(self, element,
                                                   on_accept=committed)
+        elif isinstance(element, CircleElement):
+            editor = qt_dialogs.edit_circle_dialog(self, element,
+                                                   on_accept=committed)
         elif isinstance(element, BarcodeElement):
             editor = qt_dialogs.edit_barcode_dialog(self, element,
                                                     on_accept=committed)
