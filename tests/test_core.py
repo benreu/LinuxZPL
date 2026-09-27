@@ -5243,6 +5243,22 @@ check("the fixture reads as one barcode and reports nothing",
       and zpl_parser.parse_zpl(_cv_raw)[0].code_validation
       and workflow.unsupported_commands(_cv_raw) == [])
 
+# The manual's second label is a QR code spelled ^BQN2,3, with the comma after
+# the orientation missing (page 161). The orientation is one letter, so the 2
+# is the model and the 3 the magnification. Reading "N2" as the orientation
+# opened the symbol at the default magnification, and a save wrote that back.
+_cv_qr = zpl_parser.parse_zpl(
+    "^XA^CVY^FO50,50^BQN2,3^FDHM,BQRCODE-22^FS^XZ")[0].elements[0]
+check("the manual's ^BQN2,3 reads as orientation N, model 2, magnification 3",
+      (_cv_qr.orientation, _cv_qr.qr_model, _cv_qr.module_width)
+      == ('N', 2, 3),
+      (_cv_qr.orientation, _cv_qr.qr_model, _cv_qr.module_width))
+check("and a save writes the comma it was missing",
+      '^BQN,2,3' in _cv_qr.to_zpl().split('\n'), _cv_qr.to_zpl())
+check("the same holds for any barcode command: ^BCN100 is 100 dots tall",
+      zpl_parser.parse_zpl(
+          "^XA^FO0,0^BCN100^FD123^FS^XZ")[0].elements[0].bar_height == 100)
+
 check("^CV draws nothing in the preview",
       _preview_ink("^XA^PW300^LL200^CVY^FO20,20^A0N,30,30^FDHg^FS", 300, 200)
       == _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200))

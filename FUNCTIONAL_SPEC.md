@@ -906,6 +906,16 @@ preview - which required nothing - drew it at 40. `^GB300` and `^GB,,4` were
 dropped outright, and a rule survived only as a box with a zero side, which
 the canvas then drew as nothing at all.
 
+**A barcode's orientation is one letter, so a character glued to it is the
+next parameter with its comma missing.** The manual's own `^CV` example
+(page 161) spells its QR code `^BQN2,3`. Reading `N2` as the orientation put
+the `3` in the model, where it is not a valid value, and left the
+magnification at the default for the head: the symbol opened at 2 rather than
+3, and a save wrote `^BQN,2,2`. It now reads as `^BQN,2,3`, and every barcode
+command follows the same rule, since each one's first parameter is the
+orientation. A save writes the comma, so the saved file no longer depends on
+what a printer would make of the typo.
+
 **`^CF` is the default font, and a field without an `^A` is not a field without
 a font.** `^CF<f>,<h>,<w>` sets the font every later field prints in unless it
 names its own, and each of its three parameters keeps its previous value when
