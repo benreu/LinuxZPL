@@ -329,7 +329,7 @@ class DesignCanvas(QWidget):
         if not reverse:
             draw_affordance()
 
-        font_path = element.font_path or self.document.font_path
+        font_path = element.face(self.document.font_path)
         block = getattr(element, 'block', None)
         # ^FR: white glyphs drawn under a Difference composition invert
         # whatever is already on the canvas under them, rather than being
@@ -478,7 +478,9 @@ class DesignCanvas(QWidget):
             painter.restore()
 
     def _draw_text_fallback(self, painter, element, font_path, reverse=False):
-        """Draw with a Qt face when the font file cannot be rasterised."""
+        """Draw with a Qt face when the font file cannot be rasterised, or
+        there is none: font 0 where its stand-in is not installed, or a font
+        this app has no cell for."""
         family = element.font_family or self.document.font_family or "monospace"
         font = QFont(family)
         font.setPixelSize(max(1, element.font_height))
@@ -490,10 +492,12 @@ class DesignCanvas(QWidget):
         if font_path:
             h_scale = element.font_width / max(1, element.font_height)
         else:
-            # No downloaded font means ^AF, i.e. Zebra's built-in font A, which
-            # is fixed width: every character occupies font_width dots so the
-            # text spans the whole box. Stretch the proportional screen face to
-            # match rather than leaving a gap.
+            # No face means the fixed-width estimate - font 0 where its
+            # stand-in is not installed: every character occupies font_width
+            # dots, so the text spans the whole box. Stretch the proportional
+            # screen face to match rather than leaving a gap. (A bitmap font
+            # never reaches here: it is laid out in its cells by
+            # _draw_text_directed.)
             #
             # printed_width(), not element.width: a 90/270-degree ^A
             # orientation has element.width/height already transposed to the

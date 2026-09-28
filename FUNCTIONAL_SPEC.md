@@ -101,7 +101,10 @@ dimension changes:
 - **With a TrueType font selected**: measure the advance width of the whole
   string with that font at em size = `font_height`, then multiply by
   `font_width / font_height` (the printer scales the em square to
-  `font_width × font_height`). Round to an integer, minimum 1.
+  `font_width × font_height`). Round to an integer, minimum 1. A line break
+  in the field data is not a character - a file that puts `^FD` and `^FS` on
+  separate lines leaves one at the end of it - and measures nothing: the
+  printer discards it.
 - **Without one, in a resident bitmap font** (`A` to `H`, `F` being the
   default): a row of the font's magnified cells. A bitmap font is magnified
   by whole numbers only - each of `font_height` and `font_width` is rounded
@@ -113,7 +116,19 @@ dimension changes:
   26 tall, not the 200 × 36 the two numbers suggest. Confirmed against a 203
   dpi printer, which printed it 312 dots wide, 32 dots a character. The file
   keeps the sizes it gave; only the box and the drawing snap.
-- **Without one, in the scalable font `0`**: `len(text) × font_width`.
+- **Without one, in the scalable font `0`**: measured as a TrueType font is,
+  in a stand-in for the printer's resident face (§18): Nimbus Sans Narrow
+  Bold, the OpenType file `fonts-urw-base35` installs, for CG Triumvirate
+  Bold Condensed. It is opened at `font_height × 0.745 / 0.718`, the size
+  that gives it the cap height font 0 printed (0.745 of `font_height`, where
+  the stand-in's own is 0.718 em), and its advances scale by
+  `font_width / font_height` as above. `^FT` names Table 33's baseline for
+  font 0, `3 × font_height / 4` rounded down, not the stand-in's ascent.
+  Where the stand-in is not installed: `len(text) × font_width`, two to four
+  times what font 0 prints, and a baseline 4/5 of the way down. The stand-in
+  is never the field's own font: the field is still written `^A0`, and the
+  stand-in is neither uploaded nor reported missing. With a label font set,
+  the field is written `^A@` in that font and measured in it instead.
 
 Getting this wrong is the single most visible defect a port can have: assuming
 fixed width for a proportional font makes `IIII` print far narrower and `WWWW`
@@ -2396,7 +2411,16 @@ rather than requirements:
   34 × 22) but one gap and baseline per font, which match the 203 dpi cells.
   Fonts `P` to `V`, listed in the manual's size tables with no gap, are not
   modelled as bitmap fonts: with no font file they are estimated as font `0`
-  is, `len(text) × font_width`.
+  is without its stand-in, `len(text) × font_width`.
+- **Font `0` is measured and drawn in a stand-in, Nimbus Sans Narrow Bold**
+  (§3.3). The printer's face, CG Triumvirate Bold Condensed, is not one a
+  Linux system carries. Printed on a 203 dpi printer at `^A0N,40,40` and
+  scanned, rows of `I`, `W`, digits, lower case and `H` came within 4% of
+  the stand-in's widths on average and 13% at worst - the `I` row, which
+  Triumvirate draws a little wider - where DejaVu Sans Condensed Bold was
+  29% out on average. `^A0N,89,89` `HHHH` printed 203.7 × 65.0 dots, and is
+  drawn 208 × 66. The letters' shapes differ from the print. Without the
+  stand-in installed, font `0` keeps the `len(text) × font_width` estimate.
 - **Twenty-four symbologies** (§3.3). Code 49, Codablock, MicroPDF417, TLC39
   and the GS1 DataBar family proper are still not offered, and no
   symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are

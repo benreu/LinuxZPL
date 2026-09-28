@@ -31,6 +31,10 @@ def check(name, cond, extra=""):
     if not cond: fails.append(name)
 
 FONT = zpl_fonts.file_for_family('DejaVu Sans') or '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+# Font 0's stand-in, Nimbus Sans Narrow Bold, or None where it is not
+# installed. Setting fonts._resident_cache['0'] to None is how a check sees
+# font 0 as such a machine does.
+STANDIN = zpl_fonts.resident_face('0')
 
 # --- derived text width -----------------------------------------------------
 narrow = TextElement(0, 0, 'IIII'); narrow.font_path = FONT
@@ -43,9 +47,19 @@ builtin = TextElement(0, 0, 'IIII')   # no font -> ^AF, a bitmap font
 check("built-in font F is a row of its cells with its gap between them",
       builtin.printed_width() == 4 * 26 + 3 * 6, builtin.printed_width())
 scalable = TextElement(0, 0, 'IIII', font_code='0')   # ^A0, no font file
-check("the scalable font 0 with no font file is len*font_width",
+if STANDIN:
+    check("the scalable font 0 with no font file is measured in its stand-in",
+          scalable.printed_width() == round(textraster.measurer(
+              STANDIN, 26, 26)[0]('IIII')) < 4 * scalable.font_width,
+          scalable.printed_width())
+else:
+    print("SKIPPED: font 0's stand-in is not installed "
+          "(apt install fonts-urw-base35) - its widths are not checked")
+zpl_fonts._resident_cache['0'] = None
+check("and without the stand-in, len*font_width, as it always was",
       scalable.printed_width() == 4 * scalable.font_width,
       scalable.printed_width())
+zpl_fonts._resident_cache['0'] = STANDIN
 
 # font_width_for is the inverse of printed_width
 t = TextElement(0, 0, 'Hello World'); t.font_path = FONT
@@ -4921,7 +4935,7 @@ check("^FT gives everything but text its bottom-left corner",
 baseline_page = "^XA^PW400^LL300^FT50,150^A0N,40,40^FDHxy^FS^XZ"
 baseline_ink = _preview_ink(baseline_page, 400, 300)
 sat_on = baseline_ink[1] + textraster.baseline_offset(
-    ZPLRenderer.DEFAULT_FONT_PATH, 40)
+    TextElement(font_code='0').face() or ZPLRenderer.DEFAULT_FONT_PATH, 40)
 check("the preview puts the baseline on the y ^FT named",
       abs(sat_on - 150) <= 1, (sat_on, baseline_ink))
 
@@ -6864,9 +6878,12 @@ check("and nothing in it is reported as unsupported",
 # ^FPd,g belongs to one font field: H runs its characters left to right, V
 # top to bottom, R right to left, and g puts that many extra dots between
 # them. The manual's Field Interactions charts (Tables 45-48) are the picture
-# of where each lands. ^A0 with no font file is laid out with the fixed-width
-# estimate - every character font_width dots wide - which keeps the arithmetic
-# plain; a bitmap font's own cells are the next section's.
+# of where each lands. ^A0 with no font file is laid out here with the
+# fixed-width estimate - every character font_width dots wide - which keeps
+# the arithmetic plain: so for this section font 0 is measured as it is where
+# its stand-in is not installed. A bitmap font's own cells are the next
+# section's, and the stand-in's advances are checked with the rest of font 0.
+zpl_fonts._resident_cache['0'] = None
 
 def _fp(fields):
     return zpl_parser.parse_zpl("^XA^PW812^LL1218" + fields + "^XZ")[0]
@@ -7115,6 +7132,8 @@ for _path in (FONT, None):
           _box is not None and _box[3] - _box[1] > 3 * (30 + 10), _box)
     _fw.document.elements.remove(_fe)
 
+zpl_fonts._resident_cache['0'] = STANDIN
+
 # --- the resident bitmap fonts print in whole-number magnifications -------
 # A bitmap font can only be magnified by whole numbers, 1 to 10 on each axis,
 # with its own fixed gap after each character. The designer drew ^AFN,36,20
@@ -7155,8 +7174,10 @@ check("right to left is the same row, its first cell starting at the ^FO",
 check("top to bottom the rows are the cell's height apart, with no gap",
       (_col.x, _col.y, _col.width, _col.height) == (40, 220, 26, 5 * 26),
       (_col.x, _col.y, _col.width, _col.height))
-check("and the scalable font 0 is laid out as it always was",
-      (_col0.width, _col0.height) == (20, 5 * 36), (_col0.width, _col0.height))
+check("and the scalable font 0 is a column as wide as its H, not a cell",
+      (_col0.width, _col0.height)
+      == (round(textraster.measurer(STANDIN, 36, 20)[0]('H')), 5 * 36),
+      (_col0.width, _col0.height))
 check("the sizes the file gave are written back, not the ones that print",
       _scanned.to_zpl().count('^AFN,36,20') == 3, _font_written(_scanned))
 _ft_bitmap = zpl_parser.parse_zpl("^XA^FT40,80^AFN,36,20^FDH^FS^XZ")[0].elements[0]
@@ -7223,6 +7244,148 @@ _bbox = _ink_box(_surface, _brow)
 check("the Qt canvas draws a row of font F across the whole of its box",
       _bbox is not None and _bbox[2] - _bbox[0] >= _brow.width - 12,
       (_bbox, _brow.width))
+
+# --- font 0 is measured and drawn in its stand-in ---------------------------
+# Font 0 is CG Triumvirate Bold Condensed, and len x font_width drew it two to
+# four times too wide. Printed on a 203 dpi printer at ^A0N,40,40 and scanned,
+# these rows' ink measured as below, in dots; Nimbus Sans Narrow Bold, opened
+# at font 0's cap height, stands in for it.
+
+_printed_rows = {'IIIIIIIIII': 104.2, 'WWWWWWWWWW': 328.9,
+                 '0123456789': 185.4, 'abcdefghij': 163.1, 'HHHH': 90.0}
+
+def _font0(fields, width=900, height=300):
+    page = f"^XA^PW{width}^LL{height}{fields}^XZ"
+    return (zpl_parser.parse_zpl(page)[0].elements[0],
+            _preview_ink(page, width, height))
+
+if not STANDIN:
+    print("SKIPPED: font 0's stand-in is not installed "
+          "(apt install fonts-urw-base35) - nothing to check it against")
+else:
+    check("the stand-in is Nimbus Sans Narrow Bold's OpenType file",
+          STANDIN.endswith('.otf')
+          and zpl_fonts._name_and_style(STANDIN) == ('Nimbus Sans Narrow',
+                                                     'Bold'), STANDIN)
+    check("and it stands in for font 0 alone: not a bitmap font, not P-V, "
+          "not a font ^A@ names",
+          [zpl_fonts.resident_face(c) for c in 'FAP@'] == [None] * 4)
+
+    for _row, _printed in _printed_rows.items():
+        _el, _ink = _font0(f"^FO50,50^A0N,40,40^FD{_row}^FS")
+        _off = abs(_ink[2] - _printed) / _printed
+        check(f"the preview draws {_row} within "
+              f"{15 if _row[0] == 'I' else 5}% of the printed width",
+              _off <= (0.15 if _row[0] == 'I' else 0.05),
+              (_ink[2], _printed, f"{_off:.1%}"))
+        check(f"  inside the box the canvas draws for it",
+              _inside(_ink, _el, slack=0), (_ink, (_el.x, _el.y, _el.width)))
+    _el, _ink = _font0("^FO50,50^A0N,89,89^FDHHHH^FS")
+    check("^A0N,89,89 HHHH is drawn the 203.7 x 65.0 it printed, within 3%",
+          abs(_ink[2] - 203.7) <= 0.03 * 203.7 and abs(_ink[3] - 65) <= 2,
+          _ink)
+    _el, _ink = _font0("^FO50,50^A0N,40,40^FDHHHH^FS")
+    check("and at 40 its H is the 29.8 dots tall it printed",
+          abs(_ink[3] - 29.8) <= 1, _ink)
+    _el, _ink = _font0("^FO50,20^A0N,200,200^FDH^FS")
+    check("which is 0.745 of the height at any size, not the stand-in's 0.718",
+          abs(_ink[3] - 0.745 * 200) <= 1, _ink)
+
+    # ^FT names the baseline, which for font 0 Table 33 puts 3/4 of the way
+    # down the cell - not at the stand-in's own ascent, 0.718 of it
+    _el, _ink = _font0("^FT50,200^A0N,60,60^FDHH^FS", 600, 400)
+    check("^FT puts a font 0 field's baseline 3/4 of its height down",
+          (_el.typeset, _el.y) == (45, 155), (_el.typeset, _el.y))
+    check("and the preview stands its H on the y ^FT named",
+          _ink[1] + _ink[3] == 200, _ink)
+
+    # One face for every path: each of these reads it from TextElement.face
+    _gapped, _ = _font0("^FO50,50^FPH,5^A0N,30,20^FDABCD^FS")
+    _each = textraster.measurer(STANDIN, 30, 20)[0]
+    check("a gapped font 0 row is its characters' advances and the gaps",
+          _gapped.width == round(sum(_each(c) for c in 'ABCD') + 3 * 5),
+          _gapped.width)
+    _column, _ = _font0("^FO50,50^FPV^A0N,30,20^FDAWI^FS")
+    check("a font 0 column is as wide as its widest character",
+          _column.width == round(_each('W')), _column.width)
+    _wrapped, _ink = _font0(
+        "^FO50,160^FB300,3,0,L^A0N,40,40^FDwrap this text across three "
+        "lines^FS", 600, 400)
+    check("a font 0 block wraps where the stand-in's widths put the breaks",
+          _wrapped.height == 2 * 40, _wrapped.height)
+    check("and the preview wraps it into the same two lines",
+          _inside(_ink, _wrapped, slack=0) and _ink[3] > 40,
+          (_ink, (_wrapped.y, _wrapped.height)))
+    _fitted = TextElement(0, 0, 'Fit me', 40, 40, font_code='0')
+    _fitted.font_width = _fitted.font_width_for(300)
+    check("font_width_for inverts a font 0 field's width",
+          abs(_fitted.printed_width() - 300) <= 2, _fitted.printed_width())
+    _unwrapped = TextElement(0, 0, 'Fit me', 40, 40, font_code='0')
+    check("and switching wrapping on keeps it on one line",
+          abs(_unwrapped.default_block().width
+              - _unwrapped.printed_width()) <= 1,
+          (_unwrapped.default_block().width, _unwrapped.printed_width()))
+    check("the preview draws font 0 in the stand-in, not DejaVu Sans",
+          ZPLRenderer(10, 10)._text_face(TextElement(font_code='0'))
+          == STANDIN)
+
+    # The canvas's H stands where the preview's does, within the canvas's
+    # own two-dot margin: the toy-font fallback it used to take instead puts
+    # its baseline just above the foot of the cell, 8 dots lower.
+    _fw = qt_main.ZPLDesignerWindow()
+    _fw.unsaved_changes = False
+    _fw.on_new()
+    _fw.document.set_label_size(600, 300)
+    _fw.canvas.set_zoom(1.0)
+    _f0 = _fw.document.add_text_element('HHHH')
+    _f0.x, _f0.y, _f0.font_height, _f0.font_width = 50, 50, 40, 40
+    _f0.font_code = '0'
+    _fw.document.sync_text_width(_f0)
+    _fw.document.clear_selection()
+    _surface = QImage(600, 300, QImage.Format_ARGB32); _surface.fill(Qt.white)
+    _fw.canvas.render(_surface)
+    _qbox = _ink_box(_surface, _f0)
+    _pink = _preview_ink("^XA^PW600^LL300^FO50,50^A0N,40,40^FDHHHH^FS^XZ",
+                         600, 300)
+    check("the Qt canvas draws font 0 in the stand-in, standing where the "
+          "preview's does",
+          _qbox is not None
+          and abs(_qbox[3] + 1 - (_pink[1] + _pink[3])) <= 2, (_qbox, _pink))
+
+    # Font 0 is in the printer: its stand-in is never uploaded, never
+    # reported missing, and never written as a font of the field's own
+    _resident = zpl_parser.parse_zpl(
+        "^XA^FO50,50^A0N,40,40^FDresident^FS^XZ")[0]
+    check("a font 0 field has no font of its own, and the label none to send",
+          _resident.elements[0].font_path is None
+          and _resident.font_sources() == {}
+          and '^A0N,40,40' in _resident.to_zpl(),
+          (_resident.elements[0].font_path, _resident.font_sources()))
+    _resident.set_font(FONT, 'DejaVu Sans', 'DEJAVUSA')
+    check("with a label font, the field is written ^A@ and measured in that",
+          _resident.elements[0].face(_resident.font_path) == FONT
+          and '^A@N,40,40,E:DEJAVUSA.TTF' in _resident.to_zpl(),
+          _resident.to_zpl())
+
+# A line break in ^FD is not a character: the printer discards it, and a face
+# will not measure it
+_broken = zpl_parser.parse_zpl(
+    (FIXTURES / 'default_font.zpl').read_text())[0].elements[0]
+check("a field whose ^FD ends at a line break loads, measured without it",
+      _broken.text.endswith('\n') and _broken.width
+      == TextElement(0, 0, _broken.text.rstrip('\n'), 36, 36,
+                     font_code='0').printed_width()
+      if STANDIN else _broken.width == len(_broken.text) * 36,
+      (repr(_broken.text), _broken.width))
+
+# Where the stand-in is not installed, nothing about font 0 changes
+zpl_fonts._resident_cache['0'] = None
+_without = zpl_parser.parse_zpl(
+    "^XA^FT50,200^A0N,40,40^FDHHHH^FS^XZ")[0].elements[0]
+check("without the stand-in, font 0 is len x w with a baseline 4/5 down",
+      (_without.width, _without.typeset) == (4 * 40, 32),
+      (_without.width, _without.typeset))
+zpl_fonts._resident_cache['0'] = STANDIN
 
 # --- printer_status: what the printer reports about itself -------------------
 # Every fixture below is either the ZPL manual's own worked example or a reply

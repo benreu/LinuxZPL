@@ -131,10 +131,15 @@ check("a file with no recorded dpi is assumed 203, and says so",
 # something already filled in does it show as a genuine white cutout.
 from zplcore.renderer import ZPLRenderer
 
+# A dot the same field inks unreversed, on the H's first stem - wherever the
+# face it is drawn in puts that
+plain = ZPLRenderer(200, 150).render(
+    "^XA^PW200^LL150^FO20,20^A0N,40,40^FDHi^FS^XZ").convert('L')
+stem = (next(x for x in range(200) if plain.getpixel((x, 30)) < 100) + 1, 30)
 blank = ZPLRenderer(200, 150).render(
     "^XA^PW200^LL150^FO20,20^FR^A0N,40,40^FDHi^FS^XZ").convert('L')
 check("18.x a ^FR field over blank label prints its own ink, not a box",
-      blank.getpixel((30, 30)) < 100, blank.getpixel((30, 30)))
+      blank.getpixel(stem) < 100, (stem, blank.getpixel(stem)))
 check("18.x ...and nothing outside its own ink shape",
       blank.getpixel((18, 30)) > 200, blank.getpixel((18, 30)))
 
@@ -144,7 +149,7 @@ over_box = ZPLRenderer(200, 150).render(
     "^FO20,20^FR^A0N,40,40^FDHi^FS"
     "^XZ").convert('L')
 check("18.x a ^FR field over a filled box inverts the box at its own ink",
-      over_box.getpixel((30, 30)) > 200, over_box.getpixel((30, 30)))
+      over_box.getpixel(stem) > 200, (stem, over_box.getpixel(stem)))
 check("18.x ...and leaves the rest of the box untouched",
       over_box.getpixel((18, 30)) < 100, over_box.getpixel((18, 30)))
 

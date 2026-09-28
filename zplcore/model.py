@@ -12,8 +12,7 @@ import copy
 import io as _io
 from typing import Dict, List, NamedTuple, Optional
 
-from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
-                 ImageFont as PILImageFont)
+from PIL import Image as PILImage, ImageDraw as PILImageDraw
 
 from . import code128
 from . import code39
@@ -425,13 +424,27 @@ class TextElement(DesignElement):
         gave a one-dot box under a visible placeholder, which could not be
         clicked on the element it belonged to.
         """
+        from . import textraster
         shown = self.text if text is None else text
         try:
-            font = PILImageFont.truetype(font_path, max(1, self.font_height))
+            font = textraster.open_face(font_path, self.font_height)
             draw = PILImageDraw.Draw(PILImage.new('RGBA', (1, 1)))
-            return draw.textlength(shown or " ", font=font)
+            return textraster.advance(draw, shown or " ", font)
         except Exception:
             return 0.0
+
+    def face(self, default_font_path: Optional[str] = None) -> Optional[str]:
+        """The font file this field is measured and drawn in, or None for
+        none: its own, else the document's - with either it is written ^A@ -
+        else, sent as ^A0, font 0's stand-in (fonts.resident_face).
+
+        The one spelling of that rule, which every measure and every drawing
+        path asks rather than choosing a face for itself. The stand-in is
+        never put in font_path: that is a font this app uploads and reports
+        missing, and font 0 is already in the printer.
+        """
+        return (self.font_path or default_font_path
+                or zpl_fonts.resident_face(self.font_code))
 
     def cell(self, default_font_path: Optional[str] = None,
              dpi: int = zpl_fonts.DEFAULT_DPI) -> TextCell:
@@ -442,7 +455,7 @@ class TextElement(DesignElement):
         fixed-width estimate, which drew ^AFN,36,20 as 20 dots a character at
         36 tall where the printer prints 26 x 26 cells 32 dots apart.
         """
-        bitmap = (None if (self.font_path or default_font_path)
+        bitmap = (None if self.face(default_font_path)
                   else zpl_fonts.bitmap_cell(self.font_code, self.font_height,
                                              self.font_width, dpi))
         if bitmap is None:
@@ -471,7 +484,7 @@ class TextElement(DesignElement):
         cell = self.cell(default_font_path, dpi)
         gap = cell.spacing(self.direction)
         measure, _font = textraster.measurer(
-            self.font_path or default_font_path, cell.height, cell.width, gap)
+            self.face(default_font_path), cell.height, cell.width, gap)
         places, size, ends = textraster.layout(shown, measure, self.direction,
                                                gap, cell.height)
         return places, size, ends, measure, cell
@@ -479,12 +492,13 @@ class TextElement(DesignElement):
     def baseline(self, default_font_path: Optional[str] = None,
                  dpi: int = zpl_fonts.DEFAULT_DPI) -> int:
         """Dots from the field's top down to its first baseline, which is
-        what ^FT names: a bitmap font's own, or measured from the face."""
+        what ^FT names: a bitmap font's own, font 0's from Table 33, or
+        measured from the face."""
         cell = self.cell(default_font_path, dpi)
         if cell.baseline is not None:
             return cell.baseline
         from . import textraster
-        return textraster.baseline_offset(self.font_path or default_font_path,
+        return textraster.baseline_offset(self.face(default_font_path),
                                           self.font_height)
 
     def printed_width(self, default_font_path: Optional[str] = None,
@@ -492,15 +506,17 @@ class TextElement(DesignElement):
         """Width in dots this text will actually occupy on the printer, along
         its row.
 
-        ^A0 with no font file is estimated as len(text) * font_width. ^A@
-        selects a downloaded TrueType, which is proportional - every glyph has
-        its own advance - so the string has to be measured. Assuming fixed
+        ^A@ selects a downloaded TrueType, which is proportional - every glyph
+        has its own advance - so the string has to be measured. Assuming fixed
         width there is what made "IIII" print far narrower and "WWWW" far
-        wider than the designer showed. A resident bitmap font is a row of its
-        magnified cells with its own gap between them.
+        wider than the designer showed. ^A0 with no font file is measured the
+        same way in font 0's stand-in, and only where that is not installed
+        estimated as len(text) * font_width, which is two to four times what
+        font 0 prints. A resident bitmap font is a row of its magnified cells
+        with its own gap between them.
         """
         shown = self.text if text is None else text
-        font_path = self.font_path or default_font_path
+        font_path = self.face(default_font_path)
         cell = self.cell(default_font_path, dpi)
         if cell.row_gap:
             # A gap goes between characters, so they are measured one at a
@@ -528,7 +544,7 @@ class TextElement(DesignElement):
         only be a whole number of its base width, so the nearest is chosen.
         """
         shown = self.text if text is None else text
-        font_path = self.font_path or default_font_path
+        font_path = self.face(default_font_path)
         if self.cell(default_font_path, dpi).baseline is not None:
             return self._bitmap_width_for(target_width, shown, dpi)
         if self.direction == 'V' or self.char_gap:
@@ -589,7 +605,7 @@ class TextElement(DesignElement):
         from . import textraster
         cell = self.cell(default_font_path, dpi)
         measure, _font = textraster.measurer(
-            self.font_path or default_font_path, cell.height, cell.width,
+            self.face(default_font_path), cell.height, cell.width,
             cell.row_gap)
         lines = (self.text or "").split(textraster.FORCED_BREAK)
         widest = max((measure(line) for line in lines), default=0)
@@ -2689,7 +2705,7 @@ class Document:
             return
         from . import textraster
         block = getattr(element, 'block', None)
-        font_path = element.font_path or self.font_path
+        font_path = element.face(self.font_path)
         shown = self.display_text(element)
         pinned = geometry.field_anchor(element)
         by_character = element.by_character(self.font_path, self.dpi)

@@ -592,13 +592,14 @@ class DesignCanvas(Gtk.DrawingArea):
         if not reverse:
             draw_affordance()
 
-        # Draw text using PIL when a custom font is set, otherwise Cairo toy font
+        # Draw text using PIL when there is a face to draw with - a font file,
+        # or font 0's stand-in - otherwise Cairo toy font
         # ^FR: white ink under an OPERATOR_DIFFERENCE invert whatever is
         # already on the canvas under the glyphs, rather than being painted
         # a flat colour of its own.
         ink = (255, 255, 255, 255) if reverse else (0, 0, 0, 255)
         context.set_source_rgb(*(c / 255 for c in ink[:3]))
-        font_path = element.font_path or self.font_path
+        font_path = element.face(self.font_path)
         block = getattr(element, 'block', None)
 
         # Everything below draws the text in its own upright frame; the frame
@@ -630,10 +631,12 @@ class DesignCanvas(Gtk.DrawingArea):
             if font_path:
                 horizontal_scale = element.font_width / max(1, element.font_height)
             else:
-                # No downloaded font means ^AF, i.e. Zebra's built-in font A,
-                # which is fixed width: every character occupies font_width dots
-                # so the text spans the whole box. Stretch the proportional
-                # screen face to match rather than leaving a gap.
+                # No face means the fixed-width estimate - font 0 where its
+                # stand-in is not installed: every character occupies
+                # font_width dots, so the text spans the whole box. Stretch
+                # the proportional screen face to match rather than leaving a
+                # gap. (A bitmap font never reaches here: it is laid out in
+                # its cells by _draw_text_directed.)
                 #
                 # printed_width(), not element.width: a 90/270-degree ^A
                 # orientation has element.width/height already transposed to

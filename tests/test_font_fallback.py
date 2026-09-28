@@ -226,6 +226,82 @@ else:
          "(skipped - no DejaVuSans-Bold.ttf on this system)", True)
 
 
+# --- font 0's stand-in: fc-list's OpenType file, else the scan's ------------
+# fc-match offers the package's Type 1 file first; only the OpenType one was
+# measured against the printer. Neither needs a real font here - only a path.
+
+asked = []
+def _fake_fc_list_standin(args, **kw):
+    asked.append(args)
+    class Result:
+        stdout = ("/usr/share/fonts/X11/Type1/NimbusSansNarrow-Bold.pfb\n"
+                  "/elsewhere/NimbusSansNarrow-Bold.otf\n")
+    return Result()
+
+zpl_fonts._resident_cache.clear()
+subprocess.run = _fake_fc_list_standin
+try:
+    found = zpl_fonts.resident_face('0')
+    other = [zpl_fonts.resident_face(code) for code in 'AFP@']
+finally:
+    subprocess.run = _real_run
+check("fc-list: font 0's stand-in is the OpenType file, not the Type 1",
+      found == "/elsewhere/NimbusSansNarrow-Bold.otf", found)
+check("fc-list: and it is asked for the OpenType face by name and style",
+      len(asked) == 1 and 'Nimbus Sans Narrow:style=Bold:fontformat=CFF'
+      in asked[0], asked)
+check("no other font has a stand-in, and none is looked for",
+      other == [None] * 4 and len(asked) == 1, (other, asked))
+
+def _fake_fc_list_type1_only(args, **kw):
+    class Result:
+        stdout = "/usr/share/fonts/type1/urw-base35/NimbusSansNarrow-Bold.t1\n"
+    return Result()
+
+zpl_fonts._resident_cache.clear()
+subprocess.run = _fake_fc_list_type1_only
+try:
+    type1_only = zpl_fonts._fc_list_standin('Nimbus Sans Narrow', 'Bold',
+                                            'NimbusSansNarrow-Bold.otf')
+finally:
+    subprocess.run = _real_run
+check("fc-list: a Type 1 file alone is no stand-in, whatever it is called",
+      type1_only is None, type1_only)
+
+tmp = tempfile.mkdtemp(prefix='linuxzpl-font-scan-')
+try:
+    fonts_dir = Path(tmp) / "fonts"
+    (fonts_dir / "type1").mkdir(parents=True)
+    (fonts_dir / "opentype" / "urw-base35").mkdir(parents=True)
+    (fonts_dir / "type1" / "NimbusSansNarrow-Bold.t1").write_bytes(b"decoy")
+    standin = fonts_dir / "opentype" / "urw-base35" / "NimbusSansNarrow-Bold.otf"
+    standin.write_bytes(b"not read, only found")
+
+    _real_dirs = zpl_fonts.FALLBACK_FONT_DIRS
+    _real_root = zpl_fonts.FALLBACK_BUNDLED_ROOT
+    zpl_fonts.FALLBACK_BUNDLED_ROOT = str(Path(tmp) / "opt-empty")
+    subprocess.run = _no_fc_list
+    try:
+        zpl_fonts.FALLBACK_FONT_DIRS = (str(fonts_dir),)
+        zpl_fonts._resident_cache.clear()
+        scanned = zpl_fonts.resident_face('0')
+        zpl_fonts.FALLBACK_FONT_DIRS = (str(fonts_dir / "type1"),)
+        zpl_fonts._resident_cache.clear()
+        missing = zpl_fonts.resident_face('0')
+    finally:
+        subprocess.run = _real_run
+        zpl_fonts.FALLBACK_FONT_DIRS = _real_dirs
+        zpl_fonts.FALLBACK_BUNDLED_ROOT = _real_root
+        zpl_fonts._resident_cache.clear()
+
+    check("fc-list failing: the scan finds the stand-in by its file name",
+          scanned == str(standin), scanned)
+    check("fc-list failing: with only the Type 1 file, there is no stand-in",
+          missing is None, missing)
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

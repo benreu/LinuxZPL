@@ -13,6 +13,8 @@ import unicodedata
 from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
                  ImageFont as PILImageFont)
 
+from . import fonts as zpl_fonts
+
 # One entry per string at one size. A label has a handful of text elements, so
 # this only has to survive editing one of them; it exists because the whole
 # string is drawn rather than a truncated preview of it, and a drag can repaint
@@ -22,6 +24,32 @@ _cache = {}
 
 # Padding around the glyphs, so an overhanging edge is not clipped
 MARGIN = 2
+
+
+def open_face(font_path: str, font_height):
+    """The face at the size that draws text font_height dots tall - the
+    height itself, or for font 0's stand-in the size that gives it font 0's
+    cap height (fonts.em_size). Every face opened to measure or draw a field
+    comes from here, so the box and the glyphs cannot be sized apart."""
+    size = zpl_fonts.em_size(font_path, font_height)
+    try:
+        return PILImageFont.truetype(font_path, size)
+    except TypeError:
+        # Pillow before 10.1 opens a face at a whole size only
+        return PILImageFont.truetype(font_path, max(1, int(round(size))))
+
+
+def advance(draw, text, font) -> float:
+    """The advance width of `text` in `font`, less its line breaks.
+
+    A line break in ^FD is not a character: the printer discards it - the
+    manual says so of a block's, where only \\& breaks a line - and the
+    preview never sees one, since it reads a file a line at a time. The
+    parser keeps it, so a field written ^FDtext on one line and ^FS on the
+    next ends in one, and PIL will not measure a string that has one.
+    """
+    return draw.textlength((text or "").replace('\r', '').replace('\n', ''),
+                           font=font)
 
 
 def raster(text: str, font_path: str, font_height: int, ink=(0, 0, 0, 255)):
@@ -39,7 +67,7 @@ def raster(text: str, font_path: str, font_height: int, ink=(0, 0, 0, 255)):
         return hit
 
     try:
-        font = PILImageFont.truetype(font_path, height)
+        font = open_face(font_path, height)
     except Exception:
         return None
 
@@ -137,13 +165,13 @@ def raster_directed(text, font_path, font_height, font_width, direction,
     a lower-case letter does not float up to the top of its cell.
 
     `measure` is the metrics to lay out by when they are not this face's
-    own: the preview draws a field with no font file of its own in a stand-in
-    face, but has to place its characters where the fixed-width estimate the
-    canvas sized its box by puts them.
+    own: the preview draws a field with no face at all in DejaVu Sans, but
+    has to place its characters where the fixed-width estimate the canvas
+    sized its box by puts them.
     """
     height = max(1, int(font_height))
     try:
-        font = PILImageFont.truetype(font_path, height)
+        font = open_face(font_path, height)
     except Exception:
         return None
     if measure is None:
@@ -164,7 +192,7 @@ def raster_directed(text, font_path, font_height, font_width, direction,
     # out by the face's own metrics it is font_width / font_height and each
     # glyph fills its cell exactly; laid out by the fixed-width estimate a
     # narrow glyph is centred in its cell rather than stretched to fill it.
-    naturals = [probe.textlength(piece, font=font) for piece, _x, _y in places]
+    naturals = [advance(probe, piece, font) for piece, _x, _y in places]
     cells = [measure(piece) for piece, _x, _y in places]
     squeeze = (sum(cells) / sum(naturals) if sum(naturals) > 0
                else max(1, int(font_width)) / height)
@@ -239,7 +267,7 @@ def measurer(font_path, font_height, font_width, gap=0):
     font = None
     if font_path:
         try:
-            font = PILImageFont.truetype(font_path, height)
+            font = open_face(font_path, height)
         except Exception:
             font = None
     if font is None:
@@ -256,9 +284,9 @@ def measurer(font_path, font_height, font_width, gap=0):
 
     def measure(text):
         if not gap:
-            return draw.textlength(text or "", font=font) * scale
+            return advance(draw, text, font) * scale
         pieces = clusters(text)
-        return (sum(draw.textlength(piece, font=font) for piece in pieces) * scale
+        return (sum(advance(draw, piece, font) for piece in pieces) * scale
                 + gap * max(0, len(pieces) - 1))
 
     return measure, font
@@ -275,12 +303,17 @@ def baseline_offset(font_path, font_height) -> int:
 
     ^FT names the baseline where ^FO names the top, so converting one into the
     other needs this. Asked of the same library that measures the advance, so
-    the glyphs and the origin that places them cannot disagree.
+    the glyphs and the origin that places them cannot disagree - except for
+    font 0's stand-in, whose own ascent is not where font 0's baseline is:
+    that one is Table 33's (fonts.resident_baseline).
     """
     height = max(1, int(font_height))
+    resident = zpl_fonts.resident_baseline(font_path, height)
+    if resident is not None:
+        return resident
     if font_path:
         try:
-            ascent, descent = PILImageFont.truetype(font_path, height).getmetrics()
+            ascent, descent = open_face(font_path, height).getmetrics()
             if ascent + descent > 0:
                 return int(round(height * ascent / (ascent + descent)))
         except Exception:

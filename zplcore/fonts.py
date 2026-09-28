@@ -400,6 +400,113 @@ def font_discovery_status(refresh: bool = False) -> Tuple[bool, FontScanReport]:
     return fc_list_ok, scan_font_directories(refresh=refresh)
 
 
+# --- a stand-in for the resident scalable font ------------------------------
+
+# Font 0 is CG Triumvirate Bold Condensed, in the printer's firmware, so there
+# is no file of it here to measure or draw with. Nimbus Sans Narrow Bold
+# (Debian's fonts-urw-base35) stands in for it: printed on a 203 dpi printer
+# at ^A0N,40,40, rows of I, W, digits, lower case and H came out within 4% of
+# its widths on average and 13% at worst (the I row), where the len x w
+# estimate it replaces was 2 to 4 times too wide.
+#
+# Only the OpenType file, which is the one that was measured. The Type 1
+# files the same package installs are what fc-match offers first, and a
+# TrueType copy would be one the font chooser offers as a font to upload,
+# which would make the path below ambiguous: a font this app sends the
+# printer is drawn at the size ^A asks, and the stand-in is not.
+_RESIDENT_STANDINS = {'0': ('Nimbus Sans Narrow', 'Bold',
+                            'NimbusSansNarrow-Bold.otf')}
+# The stand-in's cap height is 0.718 em; font 0's printed 0.745 of the height
+# ^A asked for (29.8 dots at 40), so the stand-in is opened that much bigger.
+_STANDIN_EM_SCALE = 0.745 / 0.718
+
+_resident_cache: Dict[str, Optional[str]] = {}
+
+
+def _fc_list_standin(family: str, style: str, filename: str) -> Optional[str]:
+    """fc-list's OpenType file for a family and style, if it has one."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ['fc-list', f'{family}:style={style}:fontformat=CFF',
+             '-f', '%{file}\n'],
+            capture_output=True, text=True, timeout=15, check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    paths = sorted(line.strip() for line in out.splitlines()
+                   if line.strip().lower().endswith('.otf'))
+    # The file that was measured, if fontconfig knows several
+    paths.sort(key=lambda p: Path(p).name != filename)
+    return paths[0] if paths else None
+
+
+def _scan_standin(filename: str) -> Optional[str]:
+    """The stand-in's file found by name in the fallback directories, for
+    when fc-list can't be asked."""
+    for directory in _fallback_directories():
+        try:
+            for path in sorted(Path(directory).rglob(filename)):
+                if path.is_file():
+                    return str(path)
+        except OSError:
+            continue
+    return None
+
+
+def resident_face(code: str) -> Optional[str]:
+    """The installed face that stands in for a resident scalable font, or
+    None: for font 0, Nimbus Sans Narrow Bold's OpenType file when it is
+    installed, and None for every other font and where it is not.
+
+    Never a font_path of its own: a field's font_path is a font this app
+    uploads and reports missing, and font 0 is already in the printer.
+    Fonts P-V are estimated as font 0 is without one - see
+    FUNCTIONAL_SPEC.md section 18 - and get none. Cached, since every text
+    field asks it on every measure.
+    """
+    code = (code or '').upper()
+    if code not in _resident_cache:
+        standin = _RESIDENT_STANDINS.get(code)
+        _resident_cache[code] = (
+            (_fc_list_standin(*standin) or _scan_standin(standin[2]))
+            if standin else None)
+    return _resident_cache[code]
+
+
+def _is_standin(font_path: Optional[str]) -> bool:
+    return bool(font_path) and font_path == resident_face('0')
+
+
+def em_size(font_path: Optional[str], height) -> float:
+    """The size to open `font_path` at for text `height` dots tall.
+
+    The height itself for any font the printer is sent, which it scales to
+    exactly that; for font 0's stand-in, the size that gives it the cap
+    height font 0 prints with - not a whole number, which rounded would be
+    1.2% out at 40 dots and more at smaller sizes. Widths follow, as for any
+    face - an advance at this size scales by width / height - so this is the
+    one place the two faces' proportions are reconciled.
+    """
+    height = max(1, int(height))
+    if _is_standin(font_path):
+        return height * _STANDIN_EM_SCALE
+    return height
+
+
+def resident_baseline(font_path: Optional[str], height) -> Optional[int]:
+    """Dots from the top of the cell down to the baseline for font 0's
+    stand-in at `height`, or None for any other face.
+
+    Table 33 gives font 0's baseline as 3 x height / 4, and it is what ^FT
+    names. Measured from the stand-in instead it would be its ascent,
+    0.718 of the height, since its ascent is its cap height. Rounded down,
+    as graphic_symbols.baseline_offset rounds GS's same figure.
+    """
+    if not _is_standin(font_path):
+        return None
+    return (3 * max(1, int(height))) // 4
+
+
 # --- printer object naming --------------------------------------------------
 
 def printer_font_name(font_path: str, taken: Iterable[str] = ()) -> str:

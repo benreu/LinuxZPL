@@ -79,6 +79,10 @@ disagree.
 - fontconfig (`fc-list`) finds installed fonts when present; if it's missing or
   finds nothing, LinuxZPL falls back to scanning the usual font directories
   itself - Settings → Local Fonts… shows which is in effect
+- optional: `apt install fonts-urw-base35`, whose Nimbus Sans Narrow Bold stands
+  in for the printer's resident font 0, so text in it is drawn and measured
+  within a few percent of what prints; without it, font 0 is estimated at
+  `font_width` dots a character, two to four times too wide
 - **one** GUI toolkit:
   - GTK: `apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0`
   - Qt: `apt install python3-pyside2.qtcore python3-pyside2.qtgui python3-pyside2.qtwidgets`

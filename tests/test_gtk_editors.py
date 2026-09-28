@@ -638,8 +638,8 @@ check("a rotated fallback field still stretches with font_width",
 # layout gives and write what the dialog was told.
 
 fp_el = document.add_text_element("ABCD")
-# The scalable font 0, whose fixed-width estimate keeps the arithmetic plain;
-# the bitmap fonts' own cells are test_core's
+# The scalable font 0, whose rows are the height asked, which keeps the
+# arithmetic plain; the bitmap fonts' own cells are test_core's
 fp_el.font_code, fp_el.font_height, fp_el.font_width = '0', 30, 20
 window.on_element_double_clicked(None, fp_el)
 fp_dialog = window._editors[id(fp_el)]
@@ -683,13 +683,55 @@ def fp_ink(font_path):
     return (min(xs), min(ys), max(xs), max(ys)) if xs else None
 
 from zplcore import fonts as zpl_fonts
-for fp_path in (zpl_fonts.file_for_family('DejaVu Sans'), None):
+STANDIN = zpl_fonts.resident_face('0')
+# Without a font file, font 0 is drawn in its stand-in where that is
+# installed, and in the toy font where it is not - which is how this machine
+# is made to look for the second
+for fp_path, fp_standin, fp_how in (
+        (zpl_fonts.file_for_family('DejaVu Sans'), STANDIN, "with a font file"),
+        (None, STANDIN, "without one"),
+        (None, None, "without one or the stand-in")):
+    zpl_fonts._resident_cache['0'] = fp_standin
     fp_box = fp_ink(fp_path)
-    check(f"the GTK canvas draws a column down its box "
-          f"({'with' if fp_path else 'without'} a font file)",
+    check(f"the GTK canvas draws a column down its box ({fp_how})",
           fp_box is not None and fp_box[3] - fp_box[1] > 3 * (30 + 7)
           and fp_box[2] <= fp_el.x + fp_el.width + 4, (fp_box, fp_el.width))
+zpl_fonts._resident_cache['0'] = STANDIN
 document.elements.remove(fp_el)
+
+# --- font 0 is drawn in its stand-in ----------------------------------------
+# The Qt half is in test_core. With the stand-in installed a font 0 field has
+# a face, so the canvas draws it with the shared raster, its H standing where
+# the preview's does, within the canvas's own two-dot margin; the toy font it
+# used to be drawn in stands just above the foot of the cell, 8 dots lower.
+
+if STANDIN:
+    from zplcore.renderer import ZPLRenderer
+    f0_el = document.add_text_element("HHHH")
+    f0_el.font_code, f0_el.font_height, f0_el.font_width = '0', 40, 40
+    f0_el.font_path = f0_el.font_family = None
+    f0_el.x, f0_el.y = 50, 50
+    document.sync_text_width(f0_el)
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 300, 200)
+    ctx = cairo.Context(surface)
+    ctx.set_source_rgb(1, 1, 1); ctx.paint()
+    canvas._draw_text_element(ctx, f0_el, False)
+    document.elements.remove(f0_el)
+    data, stride = surface.get_data(), surface.get_stride()
+    f0_bottom = max((y for y in range(200) for x in range(300)
+                     if max(data[y * stride + 4 * x:y * stride + 4 * x + 3])
+                     < 100), default=None)
+    preview = ZPLRenderer(300, 200).render(
+        "^XA^PW300^LL200^FO50,50^A0N,40,40^FDHHHH^FS^XZ").convert('L')
+    p_bottom = max(y for y in range(200) for x in range(300)
+                   if preview.getpixel((x, y)) < 100)
+    check("the GTK canvas draws font 0 in the stand-in, standing where the "
+          "preview's does",
+          f0_bottom is not None and abs(f0_bottom - p_bottom) <= 2,
+          (f0_bottom, p_bottom))
+else:
+    print("SKIPPED: font 0's stand-in is not installed "
+          "(apt install fonts-urw-base35) - the GTK canvas's is not checked")
 
 # --- the resolution a rescale is measured against ---------------------------
 # Called with no argument, _offer_dpi_rescale is settling the open design

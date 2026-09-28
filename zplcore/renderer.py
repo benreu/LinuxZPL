@@ -110,9 +110,22 @@ class ZPLRenderer:
     DEFAULT_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
     def _font_path(self) -> str:
-        """The face this field will be drawn with."""
+        """The face a barcode's interpretation line is drawn with."""
         return (self.current_field_font_path or self.custom_font_path
                 or self.DEFAULT_FONT_PATH)
+
+    def _text_face(self, element: TextElement) -> str:
+        """The face a text field is drawn with: the one the canvas measures
+        and draws it in (TextElement.face), font 0's stand-in included, or
+        DejaVu Sans for a field that has none."""
+        return element.face(self.custom_font_path) or self.DEFAULT_FONT_PATH
+
+    def _text_baseline(self, element: TextElement, cell) -> int:
+        """Dots from a text field's top down to the baseline ^FT names: a
+        bitmap font's own, or the face's it is drawn with."""
+        return (cell.baseline if cell.baseline is not None else
+                textraster.baseline_offset(self._text_face(element),
+                                           cell.height))
 
     def _top(self, offset: int) -> int:
         """Where the current field's content starts.
@@ -135,13 +148,15 @@ class ZPLRenderer:
         self.current_font_orientation = self.default_orientation
         self.current_field_font_path = None
 
-    def _get_font(self, size: int) -> ImageFont.FreeTypeFont:
-        """Get or create a cached font."""
-        path = self._font_path()
+    def _get_font(self, size: int,
+                  path: Optional[str] = None) -> ImageFont.FreeTypeFont:
+        """Get or create a cached font: `path`, or the barcode's face, for
+        text `size` dots tall (textraster.open_face)."""
+        path = path or self._font_path()
         cache_key = (size, path)
         if cache_key not in self.font_cache:
             try:
-                self.font_cache[cache_key] = ImageFont.truetype(path, size)
+                self.font_cache[cache_key] = textraster.open_face(path, size)
             except (IOError, OSError):
                 self.font_cache[cache_key] = ImageFont.load_default()
         return self.font_cache[cache_key]
@@ -231,7 +246,7 @@ class ZPLRenderer:
         return geometry.justified_origin(self.current_x, run,
                                          self.current_justify)
 
-    def _turned(self, panel, run: int, stack: int, baseline=None):
+    def _turned(self, panel, run: int, stack: int, baseline: int):
         """Paste a drawn panel onto the label, turned to face the right way.
 
         PIL cannot rotate what has not been drawn, so text goes into its own
@@ -250,10 +265,7 @@ class ZPLRenderer:
         angle = geometry.text_layout(element)['angle']
         if angle:
             panel = panel.rotate(-angle, expand=True)
-        offset = (baseline if baseline is not None else
-                  textraster.baseline_offset(self._font_path(),
-                                             self.current_font_size))
-        pos = (self._left(run), self._top(offset))
+        pos = (self._left(run), self._top(baseline))
         if self.current_reverse:
             self._invert_under(panel, pos)
         else:
@@ -274,7 +286,8 @@ class ZPLRenderer:
             return
         run = element.printed_width(self.custom_font_path)
 
-        font = self._get_font(self.current_font_size)
+        font = self._get_font(self.current_font_size,
+                              self._text_face(element))
         try:
             box = self.draw.textbbox((0, 0), text, font=font)
         except Exception:
@@ -290,7 +303,8 @@ class ZPLRenderer:
         ImageDraw.Draw(panel).text((-box[0], -box[1]), text, fill=ink, font=font)
         if run != natural:
             panel = panel.resize((max(1, run), stack), Image.LANCZOS)
-        self._turned(panel, run, stack)
+        self._turned(panel, run, stack, self._text_baseline(
+            element, element.cell(self.custom_font_path, self.dpi)))
 
     def _text_element(self, text: str) -> TextElement:
         """The field being drawn, as the element the parser builds for it -
@@ -313,8 +327,8 @@ class ZPLRenderer:
         anchor the parser reads its ^FO with.
 
         Laid out by the metrics the parser's element was sized by - a bitmap
-        font's cells, or the fixed-width estimate for a field with no font
-        file of its own - and drawn in whatever face this has.
+        font's cells, a face, or the fixed-width estimate for a field with
+        none - and drawn in whatever face this has.
 
         The raster is padded past its frame on the right and at the bottom,
         for descenders and overhangs, so a turn moves the frame's corner away
@@ -322,7 +336,7 @@ class ZPLRenderer:
         own rotation about the frame's corner lands it.
         """
         text = element.text
-        font_path = self._font_path()
+        font_path = self._text_face(element)
         _places, (run, stack), ends, measure, cell = element.character_layout(
             self.custom_font_path, self.dpi)
         drawn = textraster.raster_directed(
@@ -332,7 +346,8 @@ class ZPLRenderer:
             # No face at all to draw with: the characters still print, in
             # the one the imaging library carries
             self.draw.text((self.current_x, self.current_y), text,
-                           fill='black', font=self._get_font(cell.height))
+                           fill='black',
+                           font=self._get_font(cell.height, font_path))
             return
 
         element.width, element.height = ((stack, run) if element.rotated()
@@ -340,8 +355,7 @@ class ZPLRenderer:
         element.ends = ends
         dx, dy = geometry.field_anchor(element)
         left = self.current_x - dx
-        top = self._top(cell.baseline if cell.baseline is not None else
-                        textraster.baseline_offset(font_path, cell.height)) - dy
+        top = self._top(self._text_baseline(element, cell)) - dy
 
         # The ink alone, as the mask ^FR inverts under or black is pasted
         # through - so the padding covers nothing already on the label.
@@ -368,15 +382,16 @@ class ZPLRenderer:
         rather than agreeing with it by coincidence.
         """
         block = self.current_block
-        font_path = self._font_path()
+        element = self._text_element(text)
+        font_path = self._text_face(element)
         # Wrapped by the metrics the parser sized the block by, as
-        # _render_directed lays a line out: a bitmap font's cells, or the
-        # fixed-width estimate for a field with no font file of its own.
-        # Wrapping by the stand-in face instead broke a font-less block's
-        # lines somewhere the canvas did not.
-        cell = self._text_element(text).cell(self.custom_font_path, self.dpi)
+        # _render_directed lays a line out: a bitmap font's cells, a face,
+        # or the fixed-width estimate for a field with none. Wrapping by
+        # DejaVu Sans, which draws a field with no face, instead broke a
+        # font-less block's lines somewhere the canvas did not.
+        cell = element.cell(self.custom_font_path, self.dpi)
         measure, _font = textraster.measurer(
-            self.current_field_font_path or self.custom_font_path,
+            element.face(self.custom_font_path),
             cell.height, cell.width, cell.row_gap)
         # A 0 background and 255 ink doubles as _invert_under()'s mask when
         # reversed - _turned() does the actual inverting - and is the normal
@@ -389,13 +404,14 @@ class ZPLRenderer:
         if drawn is not None:
             panel = Image.new('L', drawn.size, bg)
             panel.paste(drawn.convert('L'), (0, 0), drawn)
-            self._turned(panel, drawn.width, drawn.height, cell.baseline)
+            self._turned(panel, drawn.width, drawn.height,
+                         self._text_baseline(element, cell))
             return
 
         # No usable font file, so there are no glyph metrics to raster with;
         # the lines still go where they belong. There is no panel here to
         # double as a mask, so one is built by hand, per line.
-        font = self._get_font(cell.height)
+        font = self._get_font(cell.height, font_path)
         step = textraster.pitch(cell.height, block)
         for row, line in enumerate(textraster.wrap(
                 text, font_path, cell.height, cell.width, block,
