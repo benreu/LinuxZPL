@@ -168,7 +168,8 @@ def _belongs_to_field(cmd: str) -> bool:
 
 
 def read_field_origin(params: str) -> tuple:
-    """^FOx,y,z (and ^FT's same three) - as (x, y, justification or None).
+    """^FOx,y,z (and ^FT's same three) - as (x, y, justification), each None
+    where the file gave none.
 
     The field origin is printer state rather than part of one field: it
     survives ^FS, so a field with no ^FO of its own prints at the last one
@@ -176,10 +177,11 @@ def read_field_origin(params: str) -> tuple:
     (page 243) prints both: its border has no ^FO anywhere before it, and
     ^FDARTICLE#^FS lands at the ^FO15,180 an earlier, empty field set.
 
-    x and y each default to 0 when omitted, as the manual gives them, so
-    ^FO,20,20 (page 127's own spelling) is 0,20. Demanding two numbers did not
-    degrade such a field - it dropped every command up to its ^FS, silently,
-    and the next save or print made that permanent.
+    What a coordinate left out means is the command's: ^FO's is 0, so
+    ^FO,20,20 (page 127's own spelling) is 0,20, while ^FT's is wherever the
+    last field ended (page 200). Demanding two numbers did not degrade such a
+    field - it dropped every command up to its ^FS, silently, and the next
+    save or print made that permanent.
     """
     parts = params.split(',')
 
@@ -190,7 +192,7 @@ def read_field_origin(params: str) -> tuple:
                 return int(match.group(1))
         return None
 
-    return number(0) or 0, number(1) or 0, number(2)
+    return number(0), number(1), number(2)
 
 
 def tokenise(zpl_content: str):
@@ -571,7 +573,9 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
     seen_home = False
     # The last ^FO/^FT, as (x, y, typeset, justification): where a field that
     # names no origin of its own is placed. Kept across ^FS, reset at ^XA -
-    # see read_field_origin.
+    # see read_field_origin. A coordinate an ^FT left out is None: the field
+    # follows the one before it, which Document.follow_chains resolves once
+    # every field is built.
     placed = _HOME_ORIGIN
     # The last font ^A@ named by path, as (name, spec): the one a later ^A@
     # that gives no path means - see read_font.
@@ -788,6 +792,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             # a label - it dropped every field in it, so a file from another
             # tool opened completely empty.
             x, y, justify = read_field_origin(params)
+            if cmd == '^FO':
+                x, y = x or 0, y or 0
             placed = (x, y, cmd == '^FT', justify)
             if field is not None and not _has_content(field):
                 # Only its font, symbology or flags so far - ^BCN,80^FO10,10
@@ -883,6 +889,9 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
 
     _flush(field, doc, renderer, pending, comments)
     doc.trailing_comments = comments
+    # Every field is built, so each one whose ^FT left a coordinate out can
+    # be put where the one before it ends.
+    doc.follow_chains()
 
     doc.selected_element = None
     return doc, loaded_dpi
@@ -919,7 +928,7 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'justify': None,
             'symbology': None,
-            'reverse': False, 'own_origin': True,
+            'reverse': False, 'own_origin': True, 'follows': None,
             'direction': 'H', 'char_gap': 0}
 
 
@@ -928,9 +937,16 @@ _HOME_ORIGIN = (0, 0, False, None)
 
 
 def _place(field, placed, origin, default_justify) -> None:
-    """Put a field at an origin read by read_field_origin, plus ^LH/^LS's."""
+    """Put a field at an origin read by read_field_origin, plus ^LH/^LS's.
+
+    A coordinate an ^FT left out is held at 0 and marked as following: where
+    the field before it ends is not known until that field is built, and is
+    Document.follow_chains's to say.
+    """
     x, y, typeset, justify = placed
-    field['x'], field['y'] = x + origin[0], y + origin[1]
+    field['follows'] = ((x is None, y is None)
+                        if x is None or y is None else None)
+    field['x'], field['y'] = (x or 0) + origin[0], (y or 0) + origin[1]
     field['typeset'] = typeset
     # ^FO's own z wins; with none, whatever ^FW last set applies. ^FW is
     # folded into each field rather than written back, so the inherited value
@@ -1430,6 +1446,7 @@ def _flush(field, doc, renderer, pending, comments) -> tuple:
     if element is not None:
         if field['typeset']:
             _apply_typeset(element, doc)
+            element.follows = field['follows']
         _apply_justification(element, field['justify'])
         element.reverse_print = field['reverse']
         doc.elements.append(element)
@@ -1451,15 +1468,7 @@ def _apply_typeset(element, doc) -> None:
     an estimate, and converting to ^FO would bake that estimate into the file
     every time such a label was opened and saved.
     """
-    if element.element_type == 'text':
-        # A bitmap font's own baseline, magnified with it; a face's measured
-        offset = element.baseline(doc.font_path, doc.dpi)
-    elif element.element_type == 'graphic_symbol':
-        # GS has a baseline of its own, three quarters of the way down
-        offset = element.baseline_offset()
-    else:
-        # ^FT names the bottom-left corner of everything that is not text.
-        offset = element.height
+    offset = geometry.typeset_depth(element, doc.font_path, doc.dpi)
     element.typeset = offset
     element.y -= offset
 

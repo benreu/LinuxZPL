@@ -32,6 +32,9 @@ FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'
 FIXTURE_DEFAULTS = ROOT / 'tests' / 'fixtures' / 'default_font.zpl'
 # Fields placed by ^FT, whose y is a baseline rather than a top
 FIXTURE_TYPESET = ROOT / 'tests' / 'fixtures' / 'typeset.zpl'
+# The manual's own ^FT example (page 200): every field after the first leaves
+# its coordinates out, and so follows the one before it
+FIXTURE_CHAIN = ROOT / 'tests' / 'fixtures' / 'typeset_chain.zpl'
 # ^GB rules, where the width or the height is left to default to the thickness
 FIXTURE_RULES = ROOT / 'tests' / 'fixtures' / 'rules.zpl'
 # ^GC as a file gives it: every parameter, none, white inside black, a circle
@@ -1476,6 +1479,22 @@ def sequence(driver, record):
     resolved = driver.elements[-1].resolve()
     record('store a graphic and resolve the reference already pointing at it',
           text=f"resolved={resolved.size if resolved else None}")
+
+    # A field whose ^FT leaves its coordinates out follows the one before it,
+    # and goes on following it through a drag of that field - so both
+    # frontends have to keep the chain up to date as they draw. The one
+    # dragged on its own is written where it lands, from then on.
+    driver.load(FIXTURE_CHAIN)
+    record("load the manual's ^FT example, whose fields follow one another")
+    driver.set_zoom(1.0)
+    driver.fresh_gesture()
+    _lead = driver.elements[0]
+    driver.drag_pointer(_lead.x + 3, _lead.y + 10, 20, 30)
+    record('drag the field the others follow, which they go on following')
+    driver.fresh_gesture()
+    _clearance = driver.elements[3]
+    driver.drag_pointer(_clearance.x + 5, _clearance.y + 20, 15, 0)
+    record('drag one of them on its own, which is written where it lands')
 
 
 def main():

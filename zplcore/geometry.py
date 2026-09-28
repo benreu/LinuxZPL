@@ -93,6 +93,82 @@ def field_anchor(element) -> tuple:
     return (last, 0) if right else (max(0, width - first), 0)
 
 
+def typeset_depth(element, font_path, dpi) -> int:
+    """Dots from an element's top down to the y an ^FT names for it: the
+    first baseline of text, a ^GS symbol's own three quarters of the way down,
+    and the bottom of everything else - the bottom-left corner the manual
+    gives ^FT for boxes, bar codes and images.
+
+    What a field placed by ^FT keeps as `typeset`, and what one placed by ^FO
+    is asked for when the field after it follows it: the printer's pen stops
+    on a field's baseline however the field was placed.
+    """
+    kind = getattr(element, 'element_type', None)
+    if kind == 'text':
+        # A bitmap font's own baseline, magnified with it; a face's measured
+        return element.baseline(font_path, dpi)
+    if kind == 'graphic_symbol':
+        return element.baseline_offset()
+    return element.height
+
+
+def typeset_point(element) -> tuple:
+    """The point an element's ^FT names, in absolute dots: its anchor
+    (field_anchor) on the line `typeset` puts its baseline on."""
+    dx, dy = field_anchor(element)
+    return (element.x + dx, element.y + dy + (element.typeset or 0))
+
+
+# Which way a field's characters run in its own upright frame, by ^FP's
+# direction, and what each of ^A's turns does to that: a quarter turn
+# clockwise at R, so a line that ran right runs down.
+_RUNS = {'H': (1, 0), 'V': (0, 1), 'R': (-1, 0)}
+_TURNS = {'N': lambda u, v: (u, v), 'R': lambda u, v: (-v, u),
+          'I': lambda u, v: (-u, -v), 'B': lambda u, v: (v, -u)}
+
+
+def pen_after(element, depth) -> tuple:
+    """Where the printer's pen stops after a field, which is where a field
+    whose ^FT leaves a coordinate out takes it from.
+
+    The manual (page 200): "When a coordinate is missing, the position
+    following the last formatted field is assumed." For an upright line that
+    is its right end, on its baseline - `depth` dots below its top - whatever
+    its justification, since the characters end there either way; the
+    manual's own example strings five fields along one baseline that way.
+    Every other field continues the same rule along the way its characters
+    run: down a column, or down a line turned to R. That is where a copy of
+    the field would sit if it carried straight on, which is exact for a copy
+    and only close for a field of another size; none of those is printed yet,
+    and FUNCTIONAL_SPEC.md section 18 says so. A block runs as ^FPH, as it is
+    drawn and placed.
+    """
+    direction = 'H'
+    if (getattr(element, 'element_type', None) == 'text'
+            and element.block is None):
+        direction = element.direction
+    turn = (getattr(element, 'orientation', None) or 'N').upper()
+    u, v = _TURNS.get(turn, _TURNS['N'])(*_RUNS.get(direction, (1, 0)))
+    return (element.x + u * element.width,
+            element.y + depth + v * element.height)
+
+
+def following(element) -> tuple:
+    """Whether each of an element's ^FT coordinates still follows the field
+    before it, as (x, y).
+
+    One does while the file left it out and the element still sits where the
+    chain last put it on that axis (Document.follow_chains), or has not been
+    put anywhere yet. Moved off it by anything else, it is where the user put
+    it, and is written as such.
+    """
+    follows = getattr(element, 'follows', None) or (False, False)
+    placed = getattr(element, 'followed_to', None) or (None, None)
+    point = typeset_point(element)
+    return tuple(bool(follow) and (at is None or at == here)
+                 for follow, at, here in zip(follows, placed, point))
+
+
 # The alignments, in menu order: the three horizontal, then the three vertical
 ALIGNMENTS = ('left', 'center', 'right', 'top', 'middle', 'bottom')
 

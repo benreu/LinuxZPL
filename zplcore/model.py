@@ -72,6 +72,15 @@ class DesignElement:
     # and clamping never have to know this exists - the same arrangement
     # `typeset` has for ^FT's baseline.
     justify = None
+    # Which of its ^FT's coordinates the file left out, as (x, y), or None
+    # when it gave both: each one left out is where the field before it
+    # ended, which is how ZPL strings fields along a line. Written back left
+    # out, so the printer goes on following whatever that field becomes.
+    follows = None
+    # The absolute ^FT point the chain last put it at, per axis (None for an
+    # axis not placed yet): an element found anywhere else has been moved, and
+    # is written where it now is - see geometry.following.
+    followed_to = None
     # ^FR: this field prints in reverse - white where the label would
     # otherwise be black, and vice versa.
     reverse_print = False
@@ -110,6 +119,10 @@ class DesignElement:
         written before this was read as - so nothing already on disk moves.
         A reversed (^FPR) text field names its first character rather than a
         corner, and geometry.field_anchor is where both rules live.
+
+        A coordinate that still follows the field before it is left out, as
+        the file left it: written in, it would pin the field wherever the
+        designer's measure of that field's text says it ends.
         """
         dx, dy = geometry.field_anchor(self)
         x = self.x - offset[0] + dx
@@ -117,6 +130,13 @@ class DesignElement:
         place = '' if self.justify in (None, geometry.JUSTIFY_LEFT) else f",{self.justify}"
         if self.typeset is None:
             return f"^FO{x},{y}{place}\n"
+        if self.follows:
+            follow_x, follow_y = geometry.following(self)
+            given = ['' if follow_x else str(x),
+                     '' if follow_y else str(y + self.typeset), place[1:]]
+            while given and not given[-1]:
+                given.pop()
+            return "^FT" + ",".join(given) + "\n"
         return f"^FT{x},{y + self.typeset}{place}\n"
 
     def reverse_zpl(self) -> str:
@@ -2380,6 +2400,9 @@ class Document:
                     keep = depth
                     break
             clone.group = path[keep:] or None
+            # A copy lands where it is shown. It goes on top of the label,
+            # after fields it never followed, so following would move it.
+            clone.follows = clone.followed_to = None
             copies.append(clone)
         return copies
 
@@ -2691,11 +2714,79 @@ class Document:
         self.label_width = s(self.label_width)
         self.label_height = s(self.label_height)
 
+        # Settled first, so a field moved off its chain since the last paint
+        # is known to be before the scale moves everything.
+        self.follow_chains()
         for el in self.elements:
             geometry.scale_element(self, el, 0, 0, factor, factor)
             if el.element_type == 'image':
                 # the bitmap re-dithers from the source at the new size
                 el.reload()
+            if el.follows:
+                # Still following the field before it: the scale moved both,
+                # and a dot of rounding between the two must not read as the
+                # user having moved it.
+                here = geometry.typeset_point(el)
+                el.followed_to = tuple(here[axis] if el.follows[axis] else None
+                                       for axis in (0, 1))
+        self.follow_chains()
+
+    def follow_chains(self) -> None:
+        """Put every field whose ^FT left a coordinate out where the field
+        before it now ends (geometry.pen_after).
+
+        Such a field is written back without the coordinate (origin_zpl), so
+        the printer goes on placing it after that field whatever it becomes,
+        and the design has to follow too: an edit that lengthens a line moves
+        the fields strung after it, as it will on the label. The field before
+        is the last one that prints - a hidden one is never sent - and before
+        the first, the pen is at the label's home, ^LH and ^LS included.
+
+        A coordinate goes on following while the field sits where the chain
+        last put it, or where it puts it now - so a field dragged along with
+        the one before it still follows - and one moved anywhere else stays
+        where it was put, written with the coordinate from then on. Nothing
+        written changes for a field that still follows, so this runs as often
+        as the canvases paint.
+        """
+        before = None
+        for element in self.elements:
+            if element.follows and element.typeset is not None:
+                self._follow(element, self._pen_after(before))
+            if element.print_enabled:
+                before = element
+
+    def _pen_after(self, element) -> tuple:
+        """Where the printer's pen stops after `element`, or the label home
+        for None. Asked only of a field something follows, since a text
+        field placed by ^FO has its baseline measured from its face."""
+        if element is None:
+            return self.transform.field_offset()
+        depth = (element.typeset if element.typeset is not None
+                 else geometry.typeset_depth(element, self.font_path, self.dpi))
+        return geometry.pen_after(element, depth)
+
+    @staticmethod
+    def _follow(element, pen) -> None:
+        """Move one follower's following coordinates to `pen`, or stop an
+        axis following once the element has been moved off it."""
+        still = geometry.following(element)
+        here = geometry.typeset_point(element)
+        follows = list(element.follows)
+        placed = list(element.followed_to or (None, None))
+        shift = [0, 0]
+        for axis in (0, 1):
+            if not follows[axis]:
+                continue
+            if still[axis] or here[axis] == pen[axis]:
+                shift[axis] = pen[axis] - here[axis]
+                placed[axis] = pen[axis]
+            else:
+                follows[axis], placed[axis] = False, None
+        element.x += shift[0]
+        element.y += shift[1]
+        element.follows = tuple(follows) if any(follows) else None
+        element.followed_to = tuple(placed) if element.follows else None
 
     # --- fonts ---------------------------------------------------------------
 
@@ -2860,6 +2951,9 @@ class Document:
         a file. ^CV and ^CI ride on it too, being sticky at the printer the
         same way.
         """
+        # A field dragged along with the one it follows, and not painted since,
+        # is still following it - which only the chain can say.
+        self.follow_chains()
         # Before the fields, because ^LH is the reference point every ^FO after
         # it is measured from. Fitted to the elements first, so the offset it
         # declares is one none of them has to be written above - the commands
@@ -3019,11 +3113,26 @@ class Document:
         return ''.join(f'{cmd}{p}\n' for cmd, p in self.media_settings.items())
 
     def _lowest_element(self):
-        """The smallest (x, y) any element occupies, or None if there are none."""
+        """The smallest (x, y) any element is written at, or None if there
+        are none.
+
+        A coordinate that follows the field before it is not written, so it
+        asks nothing of ^LH: the printer finds it after that field whatever
+        the home is. Fitting the home to one - a first field that follows
+        nothing sits right on it, its box above - moved the home, and with it
+        where the next open found that field.
+        """
         if not self.elements:
             return None
-        return (min(el.x for el in self.elements),
-                min(el.y for el in self.elements))
+        home = self.transform.field_offset()
+        written = ([], [])
+        for el in self.elements:
+            follows = geometry.following(el) if el.follows else (False, False)
+            for axis, at in enumerate((el.x, el.y)):
+                if not follows[axis]:
+                    written[axis].append(at)
+        return (min(written[0], default=home[0]),
+                min(written[1], default=home[1]))
 
     def display_text(self, element) -> str:
         """What a canvas draws for an element, its ^FN placeholder included.

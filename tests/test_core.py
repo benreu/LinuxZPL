@@ -5040,6 +5040,220 @@ check("an ^A@ with no path goes on meaning the last one named",
       == ['E:FOO.TTF', 'E:FOO.TTF', None],
       [e.printer_font_spec for e in _named_font.elements])
 
+# --- ^FT with a coordinate left out follows the last field ------------------
+
+# The manual's own example (page 200), as printed there: after the first, each
+# field strings along the baseline from where the one before it ended.
+CHAIN = ("^XA\n^FT10,200^A0N,30,20^FDACME ^FS\n^FT^GS^FDC^FS\n"
+         "^FT^A0N,30,20^FDSummer ^FS\n^FT^A0N,60,50^FDClearance ^FS\n"
+         "^FT^A0N,120,100^FDSale ^FS\n^XZ")
+
+
+def _chained(zpl=CHAIN):
+    return zpl_parser.parse_zpl(zpl)[0]
+
+
+def _ends(elements):
+    """Where each element's ^FT point is, and where the one before it ends,
+    for an upright line: its right end on its baseline."""
+    return [(geometry.typeset_point(after),
+             (before.x + before.width, geometry.typeset_point(before)[1]))
+            for before, after in zip(elements, elements[1:])]
+
+
+_chain = _chained()
+_links = _chain.elements
+check("the manual's ^FT example opens with all five of its fields",
+      [e.element_type for e in _links]
+      == ['text', 'graphic_symbol', 'text', 'text', 'text'],
+      [e.element_type for e in _links])
+check("each after the first starts where the one before it ends",
+      all(at == end for at, end in _ends(_links)), _ends(_links))
+check("all on the first one's baseline, so none is above the label",
+      [geometry.typeset_point(e)[1] for e in _links] == [200] * 5
+      and min(e.y for e in _links) >= 0,
+      [(e.y, geometry.typeset_point(e)) for e in _links])
+_chain_zpl = _chain.to_zpl()
+check("a save leaves out the coordinates the file left out",
+      _chain_zpl.count("^FT\n") == 4 and "^FT10,200\n" in _chain_zpl,
+      _chain_zpl.replace('\n', ' '))
+check("and opens again with every field where it was",
+      [(e.x, e.y) for e in _chained(_chain_zpl).elements]
+      == [(e.x, e.y) for e in _links])
+
+# The preview reads the file for itself, so it has to string the fields the
+# same way the model does: against the same label with each one written where
+# the model put it.
+_page = CHAIN.replace("^XA\n", "^XA^PW600^LL300\n", 1)
+_pinned = _chained(_page)
+for _link in _pinned.elements:
+    _link.follows = None
+_pinned_zpl = _pinned.to_zpl()
+check("the preview strings them where the model does, dot for dot",
+      "^FT\n" not in _pinned_zpl
+      and ZPLRenderer(600, 300).render(_page).tobytes()
+      == ZPLRenderer(600, 300).render(_pinned_zpl).tobytes()
+      == ZPLRenderer(600, 300).render(_chained(_page).to_zpl()).tobytes(),
+      _pinned_zpl.replace('\n', ' '))
+# ...and after a box, a bar code, and a line turned down the label, which
+# carry on along the way they read
+_mixed = ("^XA^PW600^LL400^FT20,100^A0N,30,30^FDAB^FS^FT^GB40,20,20^FS"
+          "^FT^A0N,30,30^FDCD^FS^FT^BY2^BCN,40^FD12^FS"
+          "^FT^A0R,30,30^FDEF^FS^FT^A0R,30,30^FDGH^FS^XZ")
+_mixed_doc = _chained(_mixed)
+for _link in _mixed_doc.elements:
+    _link.follows = None
+check("and after a box, a bar code and turned text too",
+      len(_mixed_doc.elements) == 6
+      and ZPLRenderer(600, 400).render(_mixed).tobytes()
+      == ZPLRenderer(600, 400).render(_mixed_doc.to_zpl()).tobytes(),
+      _mixed_doc.to_zpl().replace('\n', ' '))
+_ef, _gh = _chained(_mixed).elements[4:]
+check("a line turned to R is followed down the label, not across it",
+      (_gh.x, _gh.y) == (_ef.x, _ef.y + _ef.height),
+      [(e.x, e.y, e.width, e.height) for e in (_ef, _gh)])
+
+# One coordinate left out follows on that axis alone
+_axes = _chained("^XA^FT10,200^A0N,30,30^FDAB^FS^FT,300^A0N,30,30^FDCD^FS"
+                 "^FT500^A0N,30,30^FDEF^FS^FT,,1^A0N,30,30^FDGH^FS^XZ")
+_ab, _cd, _ef, _gh = _axes.elements
+check("^FT,300 follows across, on the baseline it gave",
+      geometry.typeset_point(_cd) == (_ab.x + _ab.width, 300),
+      geometry.typeset_point(_cd))
+check("^FT500 stands where it said, on the baseline before it",
+      geometry.typeset_point(_ef) == (500, 300), geometry.typeset_point(_ef))
+check("^FT,,1 follows, right justified from the end of the one before",
+      _gh.justify == 1 and _gh.x + _gh.width == _ef.x + _ef.width
+      and geometry.typeset_point(_gh) == (_ef.x + _ef.width, 300),
+      (_gh.justify, geometry.typeset_point(_gh)))
+_axes_zpl = _axes.to_zpl()
+check("each written back leaving out what it left out",
+      all(f"{given}\n" in _axes_zpl
+          for given in ("^FT10,200", "^FT,300", "^FT500", "^FT,,1")),
+      _axes_zpl.replace('\n', ' '))
+
+_bare = _chained("^XA^FT20,100^A0N,30,30^FDAB^FS^FT^A0N,30,30^FDCD^FS"
+                 "^A0N,30,30^FDEF^FS^XZ")
+check("a field with no origin after one that follows follows too",
+      all(at == end for at, end in _ends(_bare.elements))
+      and _bare.to_zpl().count("^FT\n") == 2, _ends(_bare.elements))
+
+_home = _chained("^XA^LH30,40^FT^A0N,30,30^FDAB^FS^XZ")
+_home_zpl = _home.to_zpl()
+check("a first field that follows nothing is on the label home",
+      geometry.typeset_point(_home.elements[0]) == (30, 40)
+      and "^LH30,40\n" in _home_zpl and "^FT\n" in _home_zpl,
+      (geometry.typeset_point(_home.elements[0]), _home_zpl.replace('\n', ' ')))
+check("and a save does not pull the home up over its box",
+      _chained(_home_zpl).to_zpl() == _home_zpl)
+
+_hidden = _chained()
+_hidden.elements[2].print_enabled = False
+_hidden.follow_chains()
+check("a hidden field is not followed: the printer is never sent it",
+      geometry.typeset_point(_hidden.elements[3])
+      == (_hidden.elements[1].x + _hidden.elements[1].width, 200),
+      geometry.typeset_point(_hidden.elements[3]))
+
+# Editing and moving
+_edit = _chained()
+_edit.elements[0].text = "ACME CORPORATION "
+_edit.sync_text_width(_edit.elements[0])
+_edit.follow_chains()
+check("lengthening a field moves the ones strung after it",
+      all(at == end for at, end in _ends(_edit.elements))
+      and geometry.typeset_point(_edit.elements[1])[0]
+      > geometry.typeset_point(_links[1])[0],
+      _ends(_edit.elements))
+check("which are still written following it",
+      _edit.to_zpl().count("^FT\n") == 4)
+
+_moved = _chained()
+_summer = _moved.elements[2]
+_was = geometry.typeset_point(_summer)
+geometry.move_element(_moved, _summer, 5, 0)
+_moved.follow_chains()
+check("a follower moved on its own stays where it was put",
+      geometry.typeset_point(_summer) == (_was[0] + 5, 200),
+      geometry.typeset_point(_summer))
+check("written there across, its baseline still following",
+      f"^FT{_was[0] + 5}\n" in _moved.to_zpl(),
+      _moved.to_zpl().replace('\n', ' '))
+check("and the fields after it follow it to its new place",
+      all(at == end for at, end in _ends(_moved.elements[2:])),
+      _ends(_moved.elements[2:]))
+_moved.elements[0].text = "ACME CORPORATION "
+_moved.sync_text_width(_moved.elements[0])
+_moved.follow_chains()
+check("it no longer moves with the field before it, across",
+      geometry.typeset_point(_summer)[0] == _was[0] + 5,
+      geometry.typeset_point(_summer))
+geometry.move_element(_moved, _summer, 0, 5)
+_moved.follow_chains()
+check("moved down as well, it is written with both coordinates",
+      f"^FT{_was[0] + 5},205\n" in _moved.to_zpl(),
+      _moved.to_zpl().replace('\n', ' '))
+
+_dragged = _chained()
+geometry.move_selection(_dragged, _dragged.elements, 30, 40)
+_dragged_zpl = _dragged.to_zpl()
+check("dragged along with the field before it, a follower goes on following",
+      _dragged_zpl.count("^FT\n") == 4 and "^FT40,240\n" in _dragged_zpl,
+      _dragged_zpl.replace('\n', ' '))
+
+_scaled_chain = _chained()
+_scaled_chain.rescale(1.5)
+_scaled_zpl = _scaled_chain.to_zpl()
+check("a rescale keeps the chain, on the scaled baseline",
+      _scaled_zpl.count("^FT\n") == 4 and "^FT15,300\n" in _scaled_zpl
+      and all(at == end for at, end in _ends(_scaled_chain.elements)),
+      (_scaled_zpl.replace('\n', ' '), _ends(_scaled_chain.elements)))
+
+_pinned_then_scaled = _chained()
+_was = geometry.typeset_point(_pinned_then_scaled.elements[2])
+geometry.move_element(_pinned_then_scaled, _pinned_then_scaled.elements[2],
+                      5, 0)
+_pinned_then_scaled.rescale(1.5)
+check("one moved off the chain before a rescale is scaled where it was put",
+      f"^FT{round((_was[0] + 5) * 1.5)}\n" in _pinned_then_scaled.to_zpl(),
+      _pinned_then_scaled.to_zpl().replace('\n', ' '))
+
+_undone = _chained()
+_before_edit = _undone.snapshot()
+_undone.elements[0].text = "ACME CORPORATION "
+_undone.sync_text_width(_undone.elements[0])
+_undone.follow_chains()
+_undone.restore(_before_edit)
+_undone.follow_chains()
+check("an undo puts the followers back after the field as it was",
+      [(e.x, e.y) for e in _undone.elements] == [(e.x, e.y) for e in _links]
+      and _undone.to_zpl() == _chain_zpl)
+
+_copied = _chained()
+_copied.select(_copied.elements[3])
+_shown = geometry.typeset_point(_copied.elements[3])
+check("a copy of a follower is written where it is shown",
+      f"^FT{_shown[0]},{_shown[1]}\n" in _copied.copy_zpl(),
+      _copied.copy_zpl().replace('\n', ' '))
+_copied.duplicate_selected()
+check("and so is a duplicate, while the original goes on following",
+      _copied.elements[-1].follows is None
+      and _copied.to_zpl().count("^FT\n") == 4)
+
+# The canvas catches a follower up as it paints, whatever edited the field
+# before it
+_painted_chain = _chained()
+_chain_canvas = qt_canvas.DesignCanvas(_painted_chain)
+_chain_canvas.set_view_size(812, 1218)
+_chain_canvas.set_zoom(1.0)
+_painted_chain.elements[0].text = "ACME CORPORATION "
+_painted_chain.sync_text_width(_painted_chain.elements[0])
+_chain_target = QImage(812, 1218, QImage.Format_ARGB32)
+_chain_canvas.render(_chain_target)
+check("the Qt canvas strings the followers along as it paints",
+      all(at == end for at, end in _ends(_painted_chain.elements)),
+      _ends(_painted_chain.elements))
+
 # --- a symbology this designer cannot draw is not text ----------------------
 
 # ^B3, ^BE and ^BQ are no longer in this list - they draw for real now, checked

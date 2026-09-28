@@ -733,6 +733,24 @@ else:
     print("SKIPPED: font 0's stand-in is not installed "
           "(apt install fonts-urw-base35) - the GTK canvas's is not checked")
 
+# --- a field whose ^FT leaves a coordinate out follows as the canvas paints -
+# The Qt half is in test_core. Whatever edits the field before it, the
+# follower catches up in on_draw, where the printer will put it.
+
+from zplcore import parser as zpl_parser
+chain_doc = zpl_parser.parse_zpl("^XA^FT10,200^A0N,30,20^FDACME ^FS"
+                                 "^FT^A0N,30,20^FDSummer ^FS^XZ")[0]
+lead, follower = chain_doc.elements
+canvas.set_document(chain_doc)
+lead.text = "ACME CORPORATION "
+chain_doc.sync_text_width(lead)
+canvas.on_draw(canvas, cairo.Context(
+    cairo.ImageSurface(cairo.FORMAT_ARGB32, 400, 400)))
+canvas.set_document(document)
+check("the GTK canvas strings a follower along as it paints",
+      geometry.typeset_point(follower) == (lead.x + lead.width, 200),
+      (geometry.typeset_point(follower), lead.x + lead.width))
+
 # --- the resolution a rescale is measured against ---------------------------
 # Called with no argument, _offer_dpi_rescale is settling the open design
 # against a resolution that changed underneath it, so the design's own dpi is

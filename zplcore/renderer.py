@@ -5,6 +5,7 @@ Renders ZPL commands to PIL Image objects for display.
 """
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
+from types import SimpleNamespace
 from typing import List, Optional
 from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphic_symbols, graphics, parser, textraster, transforms
 from .model import (BarcodeElement, CircleElement, DiagonalLineElement,
@@ -89,8 +90,12 @@ class ZPLRenderer:
         self.font_registry: dict = {}
         # The last ^FO/^FT as the file wrote it, before ^LH/^LS: printer state
         # that outlives ^FS, and places every field that names no origin of its
-        # own - see parser.read_field_origin.
+        # own - see parser.read_field_origin. A coordinate an ^FT left out is
+        # None, and taken from the pen.
         self.placed = (0, 0)
+        # Where the last field drawn ended, in absolute dots, or None for the
+        # label home before the first - geometry.pen_after
+        self.pen = None
         # Whether the field being read had a ^FO/^FT of its own, and whether
         # it carries an ^FN - the two together decide whether it is a field
         # or a value for one, as parser._build_element does.
@@ -216,6 +221,8 @@ class ZPLRenderer:
         if layout['angle']:
             panel = panel.rotate(-layout['angle'], expand=True)
         pos = (x, y - element.height if self.typeset else y)
+        element.x, element.y = pos
+        self._advance(element, element.height)
         if self.current_reverse:
             self._invert_under(panel, pos)
         else:
@@ -246,6 +253,14 @@ class ZPLRenderer:
         return geometry.justified_origin(self.current_x, run,
                                          self.current_justify)
 
+    def _advance(self, footprint, depth: int) -> None:
+        """Move the pen past the field being drawn: `footprint` is where it
+        lands on the label, top-left and size, and `depth` how far below its
+        top the line an ^FT names runs. Through geometry.pen_after, as the
+        canvas's chain is (Document.follow_chains), so the preview and the
+        canvas cannot disagree about where a following field goes."""
+        self.pen = geometry.pen_after(footprint, depth)
+
     def _turned(self, panel, run: int, stack: int, baseline: int):
         """Paste a drawn panel onto the label, turned to face the right way.
 
@@ -266,6 +281,10 @@ class ZPLRenderer:
         if angle:
             panel = panel.rotate(-angle, expand=True)
         pos = (self._left(run), self._top(baseline))
+        element.x, element.y = pos
+        if element.rotated():
+            element.width, element.height = stack, run
+        self._advance(element, baseline)
         if self.current_reverse:
             self._invert_under(panel, pos)
         else:
@@ -356,6 +375,8 @@ class ZPLRenderer:
         dx, dy = geometry.field_anchor(element)
         left = self.current_x - dx
         top = self._top(self._text_baseline(element, cell)) - dy
+        element.x, element.y = left, top
+        self._advance(element, self._text_baseline(element, cell))
 
         # The ink alone, as the mask ^FR inverts under or black is pasted
         # through - so the padding covers nothing already on the label.
@@ -452,6 +473,7 @@ class ZPLRenderer:
                                    *parser._read_frame(params))
         element.x = self._left(element.width)
         element.y = self._top(element.height)
+        self._advance(element, element.height)
         thickness = max(1, element.thickness)
         radius = element.corner_radius()
 
@@ -497,6 +519,7 @@ class ZPLRenderer:
                                       *parser._read_diagonal(params))
         element.x = self._left(element.width)
         element.y = self._top(element.height)
+        self._advance(element, element.height)
         # PIL fills a polygon's edges as well as its inside, so the right end
         # of each run and the bottom row come in a dot - as _render_frame's
         # box does - or every ^GD would draw a dot wider and taller here than
@@ -522,6 +545,7 @@ class ZPLRenderer:
                                  *parser._read_ellipse(params))
         element.x = self._left(element.width)
         element.y = self._top(element.height)
+        self._advance(element, element.height)
         # The ring as a mask, local to its own top-left: the outer ellipse
         # less the hole geometry.ellipse_hole gives, which is what both
         # canvases cut too. PIL's ellipse includes both corners of the box it
@@ -562,6 +586,8 @@ class ZPLRenderer:
         if angle:
             mask = mask.rotate(-angle, expand=True)
         pos = (self._left(element.width), self._top(element.baseline_offset()))
+        element.x, element.y = pos
+        self._advance(element, element.baseline_offset())
         if self.current_reverse:
             self._invert_under(mask, pos)
         else:
@@ -584,8 +610,10 @@ class ZPLRenderer:
         # a whole number of bytes, which is exactly what mode '1' expects.
         inverted = bytes(b ^ 0xFF for b in raw[:rows * bytes_per_row])
         bitmap = Image.frombytes('1', (bytes_per_row * 8, rows), inverted)
-        self.image.paste(bitmap.convert('RGB'),
-                         (self._left(bytes_per_row * 8), self._top(rows)))
+        pos = (self._left(bytes_per_row * 8), self._top(rows))
+        self._advance(SimpleNamespace(x=pos[0], y=pos[1], width=bitmap.width,
+                                      height=rows), rows)
+        self.image.paste(bitmap.convert('RGB'), pos)
 
     def _render_stored_graphic(self, command: str, params: str):
         """Render a ^XG/^IM field, if this session's ^IS has the image it names.
@@ -601,8 +629,10 @@ class ZPLRenderer:
         if mag_x != 1 or mag_y != 1:
             image = image.resize((max(1, image.width * mag_x),
                                   max(1, image.height * mag_y)))
-        self.image.paste(image.convert('RGB'),
-                         (self._left(image.width), self._top(image.height)))
+        pos = (self._left(image.width), self._top(image.height))
+        self._advance(SimpleNamespace(x=pos[0], y=pos[1], width=image.width,
+                                      height=image.height), image.height)
+        self.image.paste(image.convert('RGB'), pos)
 
     def render(self, zpl_content: str) -> Image.Image:
         """
@@ -705,15 +735,21 @@ class ZPLRenderer:
         return commands
     
     def _start_format(self):
-        """^XA: no field open, and the field origin back at 0,0."""
+        """^XA: no field open, the field origin back at 0,0 and the pen at
+        the label home."""
         self.placed = (0, 0)
+        self.pen = None
         self._place()
         self._reset_field()
 
     def _place(self):
-        """Put the field at the last ^FO/^FT, plus ^LH/^LS's offset."""
-        self.current_x = self.placed[0] + self.origin[0]
-        self.current_y = self.placed[1] + self.origin[1]
+        """Put the field at the last ^FO/^FT, plus ^LH/^LS's offset - and a
+        coordinate an ^FT left out where the last field ended, as the parser
+        leaves it for Document.follow_chains to do."""
+        x, y = self.placed
+        pen = self.pen or self.origin
+        self.current_x = pen[0] if x is None else x + self.origin[0]
+        self.current_y = pen[1] if y is None else y + self.origin[1]
 
     def _has_content(self) -> bool:
         """Whether the open field holds something to draw - see
@@ -789,6 +825,9 @@ class ZPLRenderer:
                 self._render_text(self.field_data)
             self.field_data = None
         self._reset_field()
+        # A field with no origin of its own after an ^FT that left one out
+        # follows the field just drawn, not the one before it.
+        self._place()
 
     def _execute_command(self, cmd: str):
         """Execute a single ZPL command."""
@@ -850,8 +889,11 @@ class ZPLRenderer:
                 self._place()
         elif command in ('FO', 'FT'):
             # Field origin: ^FOx,y names the top-left, ^FTx,y the baseline.
-            # Read the parser's way, so an omitted coordinate is 0 in both.
+            # Read the parser's way: a coordinate ^FO leaves out is 0, and one
+            # ^FT leaves out is where the last field ended (_place).
             x, y, justify = parser.read_field_origin(params)
+            if command == 'FO':
+                x, y = x or 0, y or 0
             if self._has_content():
                 # A field that never saw ^FS still ends here, at the next one.
                 # One with only its font, symbology or flags so far is still

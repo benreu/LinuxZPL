@@ -472,6 +472,9 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def on_draw(self, widget, context):
         """Draw the canvas and elements."""
+        # Every edit ends in a paint, so this is where a field following the
+        # one before it catches up with whatever that one has become.
+        self.document.follow_chains()
         # Draw white background
         context.set_source_rgb(1, 1, 1)
         context.paint()

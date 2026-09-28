@@ -182,6 +182,9 @@ class DesignCanvas(QWidget):
     # --- painting ------------------------------------------------------------
 
     def paintEvent(self, event):
+        # Every edit ends in a paint, so this is where a field following the
+        # one before it catches up with whatever that one has become.
+        self.document.follow_chains()
         painter = QPainter(self)
         painter.fillRect(self.rect(), Qt.white)
 

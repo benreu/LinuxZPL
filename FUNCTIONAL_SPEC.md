@@ -610,7 +610,12 @@ pinned.
   the label: `0 ≤ x ≤ label_width − width`, likewise for y. A group moves by one
   shared delta, clamped against the group's own bounding box — clamping each
   element separately would let the ones still inside carry on while the one
-  against the edge stopped, and the group would come apart.
+  against the edge stopped, and the group would come apart. A field that
+  follows the one before it (§8.3) stays where it is dropped when it is
+  dragged on its own, and is written with the coordinates the drag moved;
+  dragged together with the field it follows, it goes on following. A nudge,
+  an align, a resize that moves its corner and a label shrunk under it are
+  moves of their own the same way.
 - **Eight resize handles** on the *resize target* — four corners, four edge
   midpoints — drawn as small filled squares, once, after every element, so
   nothing drawn above the target covers them. The target is the one selected
@@ -801,7 +806,9 @@ each paste after that beside the last; Duplicate starts one step out. The set
 moves as one box, held inside the label the way a drag holds a group (§5), and
 stops stepping once the edge holds it; only a member still hanging over the
 edge after that — a copy from a larger label — is cut down, as a label shrunk
-under it would cut it.
+under it would cut it. A copy of a field that follows the one before it (§8.3)
+is placed where it was shown and written with its coordinates: it lands after
+fields it never followed.
 
 **Select All** (Ctrl+A) selects every element, whole groups included, with the
 topmost element as the primary; it is enabled while anything is left
@@ -1034,6 +1041,10 @@ file choosers and the prompts — are modal.
 | Barcode | `^FO<x>,<y>` / `^BY<module_width>[,<ratio>]` / (`^A…` if one was set) / `^BC<orientation>,<height><options>` / `^FD<value>^FS` — or `^B3`, `^BE`, `^B2`, `^BS`, `^BQ` for the other symbologies, each in its own parameter order (§3.3). Every parameter is trimmed after the last one that is not that position's default, except the height and the magnification, which are always written: they are the two a printer would otherwise resolve from its own settings, so a file that left them out would come back a different size on a different head. A matrix symbology writes no `^BY`, whose module width it is not drawn at |
 | Image | `^FO<x>,<y>` / `^FXDESIGNER_PREVIEW:<base64 JPEG>` / `^FXDESIGNER_PATH:<path>` / `^GFA,<bytes>,<bytes>,<bytes_per_row>,<hex>` / `^FS` |
 
+A field placed by `^FT` is written `^FT<x>,<y>` where the table says
+`^FO<x>,<y>` (§8.3), and a coordinate that still follows the field before it
+is left out: `^FT`, `^FT,<y>` or `^FT<x>`, a justification kept as `^FT,,1`.
+
 Each command is on its own line. `^BY` must be emitted: without it the printer
 uses its own default module width of 2, which pins the barcode's physical size
 to the head resolution and makes it the one element that cannot be rescaled.
@@ -1194,6 +1205,8 @@ one the model holds:
 | `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
 | `^BY3,3.0,150` | and a `^BC` that gives no height of its own is 150 dots tall |
 | `^FO,20,20` | x 0, y 20: both coordinates default to 0 (the manual's own spelling, page 127) |
+| `^FT` | both coordinates where the last field ended, written back as `^FT` (below) |
+| `^FT,300` | x where the last field ended, the baseline at 300: each coordinate left out follows on its own |
 
 `^A0N,40` came back as `^A0N,36,20`, losing the height it did give, while the
 preview - which required nothing - drew it at 40. `^GB300` and `^GB,,4` were
@@ -1393,6 +1406,41 @@ permanent. Two refinements keep this from inventing fields:
 
 A save writes every such field with its origin spelled out, which prints the
 same.
+
+**A coordinate `^FT` leaves out is where the last field ended.** *"When a
+coordinate is missing, the position following the last formatted field is
+assumed"* (page 200), which is how ZPL strings fields along a line. The
+manual's own example is `^FT10,200^A0N,30,20^FDACME ^FS` followed by four
+fields placed by `^FT` alone, and it prints `ACME ™ Summer Clearance Sale`
+along one baseline. Reading the missing coordinates as 0, as `^FO`'s are, put
+four of its five fields above the label's top edge, and a save wrote them
+there as `^FT0,0`.
+
+Where an upright line ends is its right end on its baseline, whatever its
+justification: the baseline an `^FT` names for text and `^GS`, and the bottom
+for everything else, as above. A field that runs another way - turned by `^A`,
+or top to bottom or right to left by `^FP` - carries on the way it runs (§18).
+The last field is the last one sent to the printer, so a hidden one (§6.6) is
+skipped, and before the first the pen is at the label home, `^LH` and `^LS`
+included. Each coordinate follows on its own: `^FT,300` takes x from the
+chain and puts the baseline at 300. A field with no origin of its own after
+such an `^FT` follows too, since the running origin it opens at is that
+`^FT`.
+
+**The chain is kept, not resolved.** A field that follows is written back
+without the coordinates it left out, so the printer goes on putting it after
+whatever the field before it becomes - and the design follows too: both
+canvases catch every follower up as they paint, and a save does the same
+first, so lengthening `ACME ` moves the four fields after it on screen as it
+will on the label. Writing the coordinates in would pin each field wherever
+this designer measures the text before it to end, which is an estimate (§3.3),
+and bake that into the file: the reason `^FT`'s baseline offset is kept rather
+than normalised, above. A coordinate stops following once the field is moved
+on its own (§5), and is written where it was put; moved with the field it
+follows, or rescaled with the label, it goes on following. Fitting `^LH` to
+the elements (§11) passes over a coordinate that follows, since it is not
+written: a first field that follows nothing sits on the home, its box above
+it, and fitting the home to that box moved where the next open found it.
 
 Parsing is deliberately tolerant: an unrecognised command is skipped rather
 than treated as an error, and missing parameters fall back to the defaults in
@@ -2644,6 +2692,16 @@ rather than requirements:
   through the turn. `^FT` with a turned `^FPR` is placed as `^FO` is, with
   the baseline offset taken down the label as every `^FT` text field's is,
   though Table 46 draws its crosshair elsewhere.
+- **Where a field whose `^FT` leaves a coordinate out goes is read off the
+  manual, and none of it has been printed yet.** Page 200 says the position
+  following the last formatted field; the parameter table on page 199 says
+  the last formatted *text* field. Every field moves the pen here, a box and a
+  bar code included, which is page 200's reading. After a field turned by
+  `^A`, or run top to bottom or right to left by `^FP`, the next carries on
+  the way the characters run, to where a copy of that field would sit if it
+  carried straight on: exact for a copy, close for a field of another size.
+  After a block, it starts at the right end of the block's width, on its first
+  baseline.
 - **A direction inside a `^FB` is carried, not drawn.** The manual does not
   say what `^FB` does with `^FPV` or `^FPR`, so such a block round-trips its
   `^FP` but is wrapped, drawn and placed left to right. The gap is drawn: it
