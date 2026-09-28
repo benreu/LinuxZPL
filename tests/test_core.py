@@ -7326,6 +7326,246 @@ check("report_text(): says so rather than returning nothing for an "
       zpl_status.report_text(None).strip() == '(the printer could not be asked)',
       zpl_status.report_text(None))
 
+# --- copy, paste and duplicate -----------------------------------------------
+# The clipboard holds ZPL - the copied elements written out as a label of their
+# own - and a paste reads it back with the parser Open uses. Duplicate copies
+# in place without the round trip. What both have to get right is where the
+# copies land and which groups they belong to.
+
+check("paste_step(): a tenth of an inch at every head resolution",
+      [Document(dpi=d).paste_step() for d in (203, 300, 600)] == [20, 30, 60],
+      [Document(dpi=d).paste_step() for d in (203, 300, 600)])
+
+_cp_png = os.path.join(tempfile.mkdtemp(), 'logo.png')
+_cp_img = Image.new('L', (60, 40), 255)
+for _x in range(0, 60, 3):
+    for _y in range(40):
+        _cp_img.putpixel((_x, _y), 0)
+_cp_img.save(_cp_png)
+
+_cp_src = Document(812, 1218)
+_cp_hidden = _cp_src.add_text_element("Copy me")
+_cp_hidden.print_enabled = False
+_cp_src.add_text_element("Grüße")
+_cp_src.add_frame_element()
+_cp_src.add_circle_element()
+_cp_src.add_ellipse_element()
+_cp_src.add_diagonal_element()
+_cp_src.add_graphic_symbol_element('B')
+_cp_turned = _cp_src.add_barcode_element()
+_cp_turned.orientation = 'R'
+_cp_turned.sync_box()
+_cp_src.add_image_element(_cp_png)
+_cp_src.add_stored_graphic_element()
+_cp_src.select_all()
+_cp_clip = _cp_src.copy_zpl()
+_cp_into = Document(812, 1218)
+_cp_count, _cp_drawn = _cp_into.paste_zpl(_cp_clip)
+check("copy/paste: every element type pasted into an empty label writes the "
+      "label it was copied from", _cp_into.to_zpl() == _cp_src.to_zpl(),
+      [line for line in _cp_into.to_zpl().splitlines()
+       if line not in _cp_src.to_zpl().splitlines()][:6])
+check("copy/paste: counts what it added, and nothing was rescaled",
+      (_cp_count, _cp_drawn) == (len(_cp_src.elements), None),
+      (_cp_count, _cp_drawn))
+check("copy/paste: what was pasted is the selection",
+      _cp_into.selection == _cp_into.elements)
+check("copy: a label with anything outside ASCII says it is UTF-8",
+      '^CI28' in _cp_clip)
+check("copy: a copy made here brings nothing a paste has to leave out",
+      workflow.left_out_of_paste(_cp_clip) == [],
+      workflow.left_out_of_paste(_cp_clip))
+check("copy: nothing selected is nothing to copy",
+      Document().copy_zpl() == '')
+
+# Where a paste lands: where it was copied from, unless that spot is taken by
+# what it copied - then a step down and right, and a step more each time.
+_cp_doc = Document(812, 1218)
+_cp_f = _cp_doc.add_frame_element()
+_cp_doc.select(_cp_f)
+_cp_one = _cp_doc.copy_zpl()
+_cp_doc.paste_zpl(_cp_one)
+_cp_p1 = _cp_doc.selected_element
+_cp_doc.paste_zpl(_cp_one)
+_cp_p2 = _cp_doc.selected_element
+check("paste: beside what it copied, one step down and right",
+      (_cp_p1.x - _cp_f.x, _cp_p1.y - _cp_f.y) == (20, 20),
+      (_cp_p1.x, _cp_p1.y, _cp_f.x, _cp_f.y))
+check("paste: and the next paste a step beyond that",
+      (_cp_p2.x - _cp_f.x, _cp_p2.y - _cp_f.y) == (40, 40),
+      (_cp_p2.x, _cp_p2.y))
+check("paste: on top of the z-order", _cp_doc.elements[-1] is _cp_p2)
+
+_cp_cut = Document(812, 1218)
+_cp_cut.add_frame_element()
+_cp_cut.add_barcode_element()
+_cp_before = _cp_cut.to_zpl()
+_cp_cut.select(_cp_cut.elements[-1])
+_cp_moved = _cp_cut.copy_zpl()
+_cp_cut.remove_selected()
+_cp_cut.paste_zpl(_cp_moved)
+check("cut then paste: back where it was", _cp_cut.to_zpl() == _cp_before)
+
+# Groups: a copy of a group is a group of its own, never another member of
+# the group it was copied from; a group only partly copied is not copied.
+_cp_g = Document(812, 1218)
+_cp_ga, _cp_gb = _cp_g.add_frame_element(), _cp_g.add_circle_element()
+_cp_g.select_many([_cp_ga, _cp_gb])
+_cp_g.group_selected()
+_cp_g.paste_zpl(_cp_g.copy_zpl())
+_cp_gp = list(_cp_g.selection)
+check("paste: a copied group comes back a group of its own",
+      len(_cp_gp) == 2 and _cp_gp[0].group and _cp_gp[0].group == _cp_gp[1].group
+      and _cp_gp[0].group[0] != _cp_ga.group[0],
+      [(el.group) for el in _cp_g.elements])
+_cp_g.select(_cp_gp[0])
+check("paste: and a click on one member of it selects the pasted pair",
+      set(map(id, _cp_g.selection)) == set(map(id, _cp_gp)))
+
+_cp_n = Document(812, 1218)
+_cp_na, _cp_nb, _cp_nc = (_cp_n.add_frame_element(), _cp_n.add_circle_element(),
+                          _cp_n.add_ellipse_element())
+_cp_n.select_many([_cp_na, _cp_nb])
+_cp_n.group_selected()
+_cp_n.select_many([_cp_na, _cp_nc])
+_cp_n.group_selected()
+_cp_n.select(_cp_na)
+_cp_nold = {gid for el in _cp_n.elements for gid in el.group}
+check("duplicate: a nest makes three copies", _cp_n.duplicate_selected() == 3)
+_cp_nd = {el.element_type: el for el in _cp_n.selection}
+_cp_nnew = {gid for el in _cp_n.selection for gid in el.group}
+check("duplicate: a nest comes back a nest - the pair inside, the third beside it",
+      len(_cp_nd['frame'].group) == 2 and _cp_nd['frame'].group == _cp_nd['circle'].group
+      and _cp_nd['ellipse'].group == _cp_nd['frame'].group[:1],
+      [el.group for el in _cp_n.selection])
+check("duplicate: with ids of its own at every depth",
+      len(_cp_nnew) == 2 and not (_cp_nnew & _cp_nold), (_cp_nold, _cp_nnew))
+
+_cp_d = Document(812, 1218)
+_cp_da, _cp_db = _cp_d.add_frame_element(), _cp_d.add_circle_element()
+_cp_d.select_many([_cp_da, _cp_db])
+_cp_d.group_selected()
+_cp_d.select(_cp_da, direct=True)
+_cp_d.duplicate_selected()
+check("duplicate: a directly picked member comes out loose",
+      len(_cp_d.selection) == 1 and _cp_d.selected_element.group is None
+      and _cp_da.group == _cp_db.group and _cp_da.group is not None,
+      [el.group for el in _cp_d.elements])
+
+_cp_t = Document(812, 1218)
+_cp_ta, _cp_tb, _cp_tc = (_cp_t.add_frame_element(), _cp_t.add_circle_element(),
+                          _cp_t.add_ellipse_element())
+_cp_t.select_many([_cp_ta, _cp_tb, _cp_tc])
+_cp_t.group_selected()
+_cp_t.select(_cp_ta, direct=True)
+_cp_t.select(_cp_tb, additive=True, direct=True)
+_cp_tp = Document(812, 1218)
+_cp_tp.paste_zpl(_cp_t.copy_zpl())
+check("copy: two of a group's three members picked directly paste loose, "
+      "not as a group of two",
+      len(_cp_tp.elements) == 2 and all(el.group is None for el in _cp_tp.elements),
+      [el.group for el in _cp_tp.elements])
+
+# Resolution: a copy from a 300 dpi label keeps its size on paper in a 203
+# dpi one. Text that records none is taken dot for dot.
+_cp_hi = Document(1200, 1800, 300)
+_cp_hf = _cp_hi.add_frame_element()
+_cp_hf.x, _cp_hf.y, _cp_hf.width, _cp_hf.height = 300, 600, 300, 300
+_cp_hi.select(_cp_hf)
+_cp_lo = Document(812, 1218, 203)
+_cp_message = workflow.paste_zpl(_cp_lo, _cp_hi.copy_zpl())
+_cp_lp = _cp_lo.selected_element
+check("paste: a copy drawn at 300 dpi keeps its size and place on paper at 203",
+      (_cp_lp.x, _cp_lp.y, _cp_lp.width, _cp_lp.height) == (203, 406, 203, 203),
+      (_cp_lp.x, _cp_lp.y, _cp_lp.width, _cp_lp.height))
+check("paste: and says it rescaled",
+      _cp_message == "Pasted 1 element - rescaled from 300 to 203 dpi", _cp_message)
+_cp_raw = Document(1200, 1800, 300)
+_cp_raw.paste_zpl("^XA^FO10,20^GB100,50,3^FS^XZ")
+_cp_rp = _cp_raw.selected_element
+check("paste: ZPL that records no resolution is taken dot for dot",
+      (_cp_rp.x, _cp_rp.y, _cp_rp.width, _cp_rp.height) == (10, 20, 100, 50),
+      (_cp_rp.x, _cp_rp.y, _cp_rp.width, _cp_rp.height))
+
+# The edge: a duplicate of something against the bottom-right corner cannot
+# step further, and stops looking rather than looking forever.
+_cp_e = Document(400, 400)
+_cp_ef = _cp_e.add_frame_element()
+_cp_ef.x, _cp_ef.y = 400 - _cp_ef.width, 400 - _cp_ef.height
+_cp_e.select(_cp_ef)
+_cp_e.duplicate_selected()
+_cp_e.duplicate_selected()
+check("duplicate: held inside the label at its edge, without looping",
+      len(_cp_e.elements) == 3 and all(
+          el.x + el.width <= 400 and el.y + el.height <= 400 for el in _cp_e.elements),
+      [(el.x, el.y) for el in _cp_e.elements])
+
+# ^LH: an element holds its absolute position, so a copy is written against
+# no home at all and lands at the same absolute place.
+_cp_lh = Document(812, 1218)
+_cp_lf = _cp_lh.add_frame_element()
+_cp_lf.x, _cp_lf.y = 150, 160
+_cp_lh.transform.home = (100, 100)
+_cp_lh.select(_cp_lf)
+_cp_lclip = _cp_lh.copy_zpl()
+check("copy: written at absolute positions, with the label's ^LH left behind",
+      '^FO150,160' in _cp_lclip and '^LH' not in _cp_lclip, _cp_lclip)
+
+# The font table: a pasted field may call a ^CW letter only the pasted text
+# defines.
+_cp_cw = Document(812, 1218)
+_cp_cw.paste_zpl("^XA^CWQ,E:FOO.TTF^FO10,10^AQN,30,30^FDHi^FS^XZ")
+check("paste: brings the ^CW letter its field calls",
+      _cp_cw.font_identifiers.get('Q') == 'Q,E:FOO.TTF' and '^CWQ,E:FOO.TTF' in _cp_cw.to_zpl(),
+      _cp_cw.font_identifiers)
+_cp_cw2 = Document(812, 1218)
+_cp_cw2.font_identifiers['Q'] = 'Q,E:BAR.TTF'
+_cp_cw2.paste_zpl("^XA^CWQ,E:FOO.TTF^FO10,10^AQN,30,30^FDHi^FS^XZ")
+check("paste: but a letter the label already assigns keeps its own assignment",
+      _cp_cw2.font_identifiers['Q'] == 'Q,E:BAR.TTF', _cp_cw2.font_identifiers)
+
+# What the status bar is told.
+_cp_empty = Document(812, 1218)
+check("paste: text that describes no element is nothing to paste, and changes nothing",
+      workflow.paste_zpl(_cp_empty, "hello") is None and _cp_empty.elements == [])
+check("paste: names what belongs to the label it came from and was left out",
+      workflow.paste_zpl(Document(812, 1218), "^XA^PQ5^FO10,10^GB50,50,2^FS^XZ")
+      == "Pasted 1 element - left out ^PQ",
+      workflow.paste_zpl(Document(812, 1218), "^XA^PQ5^FO10,10^GB50,50,2^FS^XZ"))
+check("elements_phrase(): one element, two elements",
+      (workflow.elements_phrase(1), workflow.elements_phrase(2))
+      == ('1 element', '2 elements'))
+
+# Through the Qt window: Copy records no undo entry, and Paste, Duplicate and
+# Cut record one each.
+_cw_win = qt_main.ZPLDesignerWindow()
+_cw_win._save_settings = lambda *a: None
+_cw_win.document.add_frame_element()
+_cw_win.canvas.commit()
+_cw_win.document.select(_cw_win.document.elements[0])
+_cw_undo = len(_cw_win._undo_stack)
+_cw_win.on_copy()
+check("Qt Copy: puts ZPL on the clipboard and records no undo entry",
+      app.clipboard().text().startswith('^XA') and len(_cw_win._undo_stack) == _cw_undo)
+_cw_win.on_paste()
+check("Qt Paste: adds the copy, one undo entry",
+      len(_cw_win.document.elements) == 2 and len(_cw_win._undo_stack) == _cw_undo + 1)
+_cw_win.on_duplicate()
+check("Qt Duplicate: one more, one undo entry",
+      len(_cw_win.document.elements) == 3 and len(_cw_win._undo_stack) == _cw_undo + 2)
+_cw_win.on_cut()
+check("Qt Cut: takes the selection out, one undo entry",
+      len(_cw_win.document.elements) == 2 and len(_cw_win._undo_stack) == _cw_undo + 3)
+_cw_win.on_undo()
+check("Qt Cut: and Undo puts it back", len(_cw_win.document.elements) == 3)
+_cw_win.document.clear_selection()
+_cw_win._update_edit_menu()
+_cw_greyed = not _cw_win.copy_action.isEnabled()
+_cw_win._release_edit_menu()
+check("Qt Edit menu: greys Copy out with nothing selected, and lets go of it "
+      "once closed, so Ctrl+C works on whatever is picked next",
+      _cw_greyed and _cw_win.copy_action.isEnabled())
+
 # CONTRIBUTING rule 4: no module in zplcore may import a GUI toolkit. Checked
 # by reading the source, since this suite imports PySide2 itself for other
 # reasons and so sys.modules proves nothing.

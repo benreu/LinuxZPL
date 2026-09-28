@@ -505,6 +505,31 @@ class ZPLViewerWindow(Gtk.Window):
 
         edit_menu.append(Gtk.SeparatorMenuItem())
 
+        # The clipboard holds ZPL (Document.copy_zpl), so what one window
+        # copies another - this frontend's or the Qt one's - can paste. Like
+        # Ctrl+A, these keys are matched before any focused widget sees them,
+        # which the main window can afford only because it holds no entry.
+        self.cut_item = Gtk.MenuItem.new_with_mnemonic("Cu_t")
+        self.cut_item.connect("activate", self.on_cut_clicked)
+        add_accel(self.cut_item, "<Control>x")
+        edit_menu.append(self.cut_item)
+
+        self.copy_item = Gtk.MenuItem.new_with_mnemonic("_Copy")
+        self.copy_item.connect("activate", self.on_copy_clicked)
+        add_accel(self.copy_item, "<Control>c")
+        edit_menu.append(self.copy_item)
+
+        self.paste_item = Gtk.MenuItem.new_with_mnemonic("_Paste")
+        self.paste_item.connect("activate", self.on_paste_clicked)
+        add_accel(self.paste_item, "<Control>v")
+        edit_menu.append(self.paste_item)
+
+        # No accelerator and no mnemonic: reached by a click, from this menu
+        # or the canvas's right-click menu.
+        self.duplicate_item = Gtk.MenuItem(label="Duplicate")
+        self.duplicate_item.connect("activate", self.on_duplicate_clicked)
+        edit_menu.append(self.duplicate_item)
+
         self.delete_item = Gtk.MenuItem.new_with_mnemonic("_Delete")
         self.delete_item.connect("activate", self.on_delete_clicked)
         add_accel(self.delete_item, "Delete")
@@ -828,10 +853,13 @@ class ZPLViewerWindow(Gtk.Window):
         # rather than at build time: show_all() emits "show", and the handler
         # needs the canvas.
         self._edit_menu.connect("show", self._update_edit_menu)
+        self._edit_menu.connect("hide", self._release_edit_menu)
         # The toolbar's copy can be opened without the Edit menu ever having
         # been shown, so every copy re-evaluates the rules on the way up.
         for menu in self._align_menus:
             menu.connect("show", lambda _m: self._update_align_items())
+            menu.connect("hide", lambda _m: self._release_align_items())
+        self.design_canvas.connect("edit-requested", self._on_edit_requested)
 
         # Edit history: snapshots older than the current state, and newer ones
         self._undo_stack = []
@@ -3102,9 +3130,40 @@ class ZPLViewerWindow(Gtk.Window):
         for item in self.align_items:
             item.set_sensitive(selected)
 
+    def _release_align_items(self):
+        for item in self.align_items:
+            item.set_sensitive(True)
+
+    def _release_edit_menu(self, menu):
+        """Make sensitive again, once the menu has closed, everything its
+        enable rules greyed out.
+
+        The rules are for reading an open menu. An insensitive item also
+        swallows its accelerator, and the selection goes on changing after
+        the menu closes: a menu last opened with nothing selected would leave
+        Ctrl+C dead on an element picked afterwards. Every handler already
+        does nothing when there is nothing to do, which is all a shortcut
+        owes the user (FUNCTIONAL_SPEC.md section 14).
+        """
+        for item in (self.cut_item, self.copy_item, self.paste_item,
+                     self.duplicate_item, self.delete_item,
+                     self.select_all_item, self.deselect_all_item,
+                     self.invert_selection_item, self.group_item,
+                     self.ungroup_item, self.remove_from_group_item,
+                     *self.zorder_items):
+            item.set_sensitive(True)
+        self._release_align_items()
+
     def _update_edit_menu(self, menu):
         """Grey out the actions that need a selected element."""
         doc = self.design_canvas.document
+        for item in (self.cut_item, self.copy_item, self.duplicate_item):
+            item.set_sensitive(bool(doc.selection))
+        # Any text at all: whether it is ZPL is the paste's to find out, and
+        # fetching a clipboard that may hold an image's worth of hex every
+        # time the menu opens is not worth an earlier answer.
+        self.paste_item.set_sensitive(
+            Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).wait_is_text_available())
         self.delete_item.set_sensitive(doc.selected_element is not None)
         self.select_all_item.set_sensitive(len(doc.selection) < len(doc.elements))
         self.deselect_all_item.set_sensitive(bool(doc.selection))
@@ -3260,7 +3319,62 @@ class ZPLViewerWindow(Gtk.Window):
         self.design_canvas.remove_selected()
         for element in doomed:
             self._close_editor_for(element)
-    
+
+    # The clipboard holds ZPL (Document.copy_zpl), so what one window copies
+    # another - this frontend's or the Qt one's - can paste.
+
+    def _set_clipboard(self, text):
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(text, -1)
+        # Handed to the clipboard manager, if there is one, so a copy outlives
+        # this window - as Qt's does on its own.
+        clipboard.store()
+
+    def on_copy_clicked(self, widget):
+        """Copy changes the clipboard and never the document: no undo entry."""
+        document = self.design_canvas.document
+        text = document.copy_zpl()
+        if not text:
+            return
+        self._set_clipboard(text)
+        self.update_status(f"Copied {workflow.elements_phrase(len(document.selection))}")
+
+    def on_cut_clicked(self, widget):
+        """Copy, then Delete - which is the one undo entry."""
+        document = self.design_canvas.document
+        count = len(document.selection)
+        text = document.copy_zpl()
+        if not text:
+            return
+        self._set_clipboard(text)
+        self.on_delete_clicked(widget)
+        self.update_status(f"Cut {workflow.elements_phrase(count)}")
+
+    def on_paste_clicked(self, widget):
+        text = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).wait_for_text() or ''
+        try:
+            message = workflow.paste_zpl(self.design_canvas.document, text,
+                                         self.renderer)
+        except Exception as e:
+            self.show_error_dialog(f"Failed to paste: {e}")
+            return
+        if message is None:
+            self.update_status(workflow.NOTHING_TO_PASTE)
+            return
+        self.design_canvas.queue_draw()
+        self.on_canvas_changed()
+        self.update_status(message)
+
+    def on_duplicate_clicked(self, widget):
+        count = self.design_canvas.duplicate_selected()
+        if count:
+            self.update_status(f"Duplicated {workflow.elements_phrase(count)}")
+
+    def _on_edit_requested(self, _canvas, command: str):
+        """A clipboard command chosen from the canvas's right-click menu."""
+        {'cut': self.on_cut_clicked, 'copy': self.on_copy_clicked,
+         'duplicate': self.on_duplicate_clicked}[command](None)
+
     def on_canvas_draw(self, widget, context):
         """Canvas draw event handler - re-render when canvas changes."""
         # This is called when the canvas is drawn, we can use it to trigger re-rendering

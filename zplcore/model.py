@@ -1754,6 +1754,12 @@ class StoredGraphicElement(DesignElement):
         return zpl
 
 
+# How far a paste or a duplicate steps down and right from a spot that is
+# already taken, in inches rather than dots, so it is the same distance on
+# paper at every head resolution: 20 dots at 203 dpi, 30 at 300, 60 at 600.
+PASTE_STEP_INCHES = 0.1
+
+
 class Document:
     """The label being designed: its size, its elements, and its z-order.
 
@@ -2275,6 +2281,175 @@ class Document:
         """Clear all elements."""
         self.elements.clear()
         self.selected_element = None
+
+    # --- copy, paste and duplicate -------------------------------------------
+    #
+    # What goes on the clipboard is ZPL: the copied elements written out as a
+    # label of their own. So a copy reaches another window of this program,
+    # the other frontend, or a text editor, and ZPL from anywhere can be
+    # pasted in - read by the same parser Open uses, so a file and a
+    # clipboard have one way in between them. Duplicate never leaves the
+    # document, so it copies the elements directly and loses nothing on the
+    # way through ZPL.
+
+    def paste_step(self) -> int:
+        """PASTE_STEP_INCHES, in this label's dots."""
+        return max(1, int(round(self.dpi * PASTE_STEP_INCHES)))
+
+    def _detached(self, elements) -> List[DesignElement]:
+        """Copies of these elements, in z-order, in only the groups they are
+        wholly inside.
+
+        What is copied is what the outline says is selected: a group every
+        member of which is here comes along as a group, and one only partly
+        here - the group around a directly picked member - does not, since
+        its other members are not there to be grouped with. A path runs from
+        the outside in, so what is kept is always the inner end of it.
+        """
+        chosen = [el for el in self.elements if el in elements]
+        picked = {id(el) for el in chosen}
+        copies = []
+        for element in chosen:
+            clone = _copy_element(element)
+            path = element.group or ()
+            keep = len(path)
+            for depth, gid in enumerate(path):
+                if all(id(m) in picked for m in self._members_of(gid)):
+                    keep = depth
+                    break
+            clone.group = path[keep:] or None
+            copies.append(clone)
+        return copies
+
+    def copy_zpl(self) -> str:
+        """The selection as ZPL for the clipboard, or '' for no selection.
+
+        Written as a label of its own at this label's size, resolution and
+        fonts, so ^FXDESIGNER_DPI says what the dots were drawn for and a
+        field in the document's font still names it. The label's transforms
+        stay behind - an element holds its absolute position, and a copy
+        written against an ^LH would land every paste off by it - and so does
+        everything else that belongs to the label rather than to an element
+        on it: ^PQ, the printer's settings, a stored format. ^CW and ^FL go
+        along, since a field may call a letter only they define.
+        """
+        copies = self._detached(self.selection)
+        if not copies:
+            return ''
+        fragment = Document(self.label_width, self.label_height, self.dpi)
+        fragment.font_device = self.font_device
+        fragment.font_path = self.font_path
+        fragment.font_family = self.font_family
+        fragment.printer_font_name = self.printer_font_name
+        fragment.encoding = self.encoding
+        fragment.font_identifiers = dict(self.font_identifiers)
+        fragment.font_links = list(self.font_links)
+        fragment.elements = copies
+        return fragment.to_zpl()
+
+    def paste_zpl(self, text: str, renderer=None):
+        """Add the elements a piece of ZPL describes, on top, and select them.
+
+        Returns how many were added, and the resolution the text was drawn
+        for when it was not this label's - it has then been scaled to keep
+        its physical size, the answer Rescale gives for a file, without
+        asking: a prompt on every paste is a nuisance, and the dots of the
+        wrong head are never what a paste means. Text that records no
+        resolution is taken dot for dot, unlike a file, whose missing record
+        is assumed to be 203: whoever pastes it knows what they are pasting
+        into. Nothing but the elements and the font table is taken; the
+        label's own settings stay this label's.
+        """
+        from . import parser as zpl_parser
+        source, drawn_at = zpl_parser.parse_zpl(text or '', renderer)
+        pasted = source.elements
+        if not pasted:
+            return 0, None
+        rescaled = None
+        if drawn_at and drawn_at != self.dpi:
+            # About the label's origin, as a rescale is, so a field an inch
+            # in from the edge is still an inch in.
+            factor = self.dpi / drawn_at
+            for element in pasted:
+                geometry.scale_element(self, element, 0, 0, factor, factor)
+                if element.element_type == 'image':
+                    element.reload()
+            rescaled = drawn_at
+        # A pasted field may call a ^CW letter or lean on an ^FL link. A
+        # letter this label already assigns keeps its own assignment: the
+        # label's other fields are printing with it.
+        for letter, params in source.font_identifiers.items():
+            self.font_identifiers.setdefault(letter, params)
+        self.font_links += [link for link in source.font_links
+                            if link not in self.font_links]
+        self._place(pasted, first_step=0)
+        return len(pasted), rescaled
+
+    def duplicate_selected(self) -> int:
+        """Copy the selection in place, a step down and right, and select the
+        copies. Returns how many were made."""
+        copies = self._detached(self.selection)
+        if copies:
+            self._place(copies, first_step=1)
+        return len(copies)
+
+    def _place(self, copies, first_step: int) -> None:
+        """Put copies on top of the design and make them the selection.
+
+        Their groups get ids of their own, so a copy never joins the group it
+        was copied from. The set is then stepped down and right, `first_step`
+        steps to begin with and one more while it would land exactly on
+        elements already there: a cut pasted back lands where it was, a paste
+        of something still there lands beside it, and each paste after that
+        beside the last. It moves as one box, held inside the label the way a
+        drag holds a group; only a member still hanging over the edge after
+        that - a copy from a larger label - is cut down, as a label shrunk
+        under it would cut it.
+        """
+        renumbered = {}
+        fresh = self._fresh_group_id()
+        for clone in copies:
+            if clone.group:
+                for gid in clone.group:
+                    if gid not in renumbered:
+                        renumbered[gid] = fresh
+                        fresh += 1
+                clone.group = tuple(renumbered[gid] for gid in clone.group)
+            # Measured against this label's font, which a pasted field with
+            # none of its own now prints in.
+            self.sync_text_width(clone)
+
+        x, y, width, height = geometry.selection_bounds(copies)
+
+        def held(step):
+            dx = dy = step * self.paste_step()
+            return (max(-x, min(dx, self.label_width - width - x)),
+                    max(-y, min(dy, self.label_height - height - y)))
+
+        taken = {(el.element_type, el.x, el.y, el.width, el.height)
+                 for el in self.elements}
+
+        def lands_on_another(dx, dy):
+            return any((c.element_type, c.x + dx, c.y + dy, c.width, c.height)
+                       in taken for c in copies)
+
+        step = first_step
+        dx, dy = held(step)
+        while lands_on_another(dx, dy):
+            step += 1
+            further = held(step)
+            if further == (dx, dy):
+                break           # held against the edge; stepping moves nothing
+            dx, dy = further
+
+        for clone in copies:
+            clone.x += dx
+            clone.y += dy
+            if (clone.x + clone.width > self.label_width
+                    or clone.y + clone.height > self.label_height):
+                self._clamp_element_to_bounds(clone)
+        self.elements.extend(copies)
+        self.select_many(copies)
 
     # --- z-order -------------------------------------------------------------
     #

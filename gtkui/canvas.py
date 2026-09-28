@@ -97,6 +97,10 @@ class DesignCanvas(Gtk.DrawingArea):
         # the zoom moves everything, and the window owns the scrollbars, so the
         # window applies the whole thing.
         'zoom-at': (GObject.SignalFlags.RUN_FIRST, None, (float, float, bool)),
+        # 'cut', 'copy' or 'duplicate', chosen from the right-click menu. The
+        # window owns the clipboard and the editors a cut has to close, so it
+        # carries the command out.
+        'edit-requested': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
     # Cursor shown while hovering each resize handle
@@ -305,6 +309,12 @@ class DesignCanvas(Gtk.DrawingArea):
     def remove_from_group(self):
         if self.document.remove_from_group():
             self._changed()
+
+    def duplicate_selected(self) -> int:
+        count = self.document.duplicate_selected()
+        if count:
+            self._changed()
+        return count
 
     def snapshot(self):
         return self.document.snapshot()
@@ -1124,6 +1134,14 @@ class DesignCanvas(Gtk.DrawingArea):
 
         item_print.connect("toggled", on_toggle_print)
         menu.append(item_print)
+        menu.append(Gtk.SeparatorMenuItem())
+
+        for label, command in (("Cut", 'cut'), ("Copy", 'copy'),
+                               ("Duplicate", 'duplicate')):
+            item = Gtk.MenuItem(label=label)
+            item.connect("activate",
+                         lambda _i, command=command: self.emit('edit-requested', command))
+            menu.append(item)
         menu.append(Gtk.SeparatorMenuItem())
 
         item_group = Gtk.MenuItem(label="Group")

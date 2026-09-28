@@ -117,6 +117,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.canvas = DesignCanvas(document)
         self.canvas.documentChanged.connect(self.on_canvas_changed)
         self.canvas.elementDoubleClicked.connect(self.on_element_double_clicked)
+        self.canvas.editRequested.connect(self._on_edit_requested)
 
         self.canvas.scaleChanged.connect(self._update_zoom_readout)
         self.canvas.zoomAt.connect(self._zoom_at)
@@ -279,6 +280,15 @@ class ZPLDesignerWindow(QMainWindow):
         self.redo_alt_action = self._action("Redo", self.on_redo, "Ctrl+Y")
         self.redo_alt_action.setVisible(False)
 
+        # Literal keys rather than QKeySequence.Cut/Copy/Paste, which on X11
+        # also bind Shift+Del, Ctrl+Insert and Shift+Insert - keys the GTK
+        # frontend does not take, and the two have to agree.
+        self.cut_action = self._action("Cu&t", self.on_cut, "Ctrl+X")
+        self.copy_action = self._action("&Copy", self.on_copy, "Ctrl+C")
+        self.paste_action = self._action("&Paste", self.on_paste, "Ctrl+V")
+        # No shortcut and no mnemonic: reached by a click, from this menu or
+        # the canvas's right-click menu.
+        self.duplicate_action = self._action("Duplicate", self.on_duplicate)
         self.delete_action = self._action("&Delete", self.on_delete, QKeySequence.Delete)
 
         # Literal keys rather than QKeySequence.SelectAll / Deselect: the
@@ -361,7 +371,9 @@ class ZPLDesignerWindow(QMainWindow):
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.redo_action)
         edit_menu.addSeparator()
-        edit_menu.addAction(self.delete_action)
+        for action in (self.cut_action, self.copy_action, self.paste_action,
+                       self.duplicate_action, self.delete_action):
+            edit_menu.addAction(action)
         edit_menu.addSeparator()
         edit_menu.addAction(self.select_all_action)
         edit_menu.addAction(self.deselect_all_action)
@@ -379,8 +391,10 @@ class ZPLDesignerWindow(QMainWindow):
         for action in self.align_actions:
             align_menu.addAction(action)
         # Re-evaluated each time the menu opens, since the selection and the
-        # z-order both move underneath it.
+        # z-order both move underneath it - and released when it closes, see
+        # _release_edit_menu.
         edit_menu.aboutToShow.connect(self._update_edit_menu)
+        edit_menu.aboutToHide.connect(self._release_edit_menu)
 
         view_menu = menubar.addMenu("&View")
         view_menu.addAction(self.zoom_in_action)
@@ -464,6 +478,7 @@ class ZPLDesignerWindow(QMainWindow):
         # The popup can open without the Edit menu ever having been shown, so
         # it re-evaluates the same enable rules on the way up.
         align_popup.aboutToShow.connect(self._update_edit_menu)
+        align_popup.aboutToHide.connect(self._release_edit_menu)
         align_button.setMenu(align_popup)
         self.align_button = align_button
         toolbar.addWidget(align_button)
@@ -477,9 +492,41 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar.addAction(self.undo_button_action)
         toolbar.addAction(self.redo_button_action)
 
+    def _edit_menu_actions(self):
+        """Every action _update_edit_menu greys out."""
+        return ([self.cut_action, self.copy_action, self.paste_action,
+                 self.duplicate_action, self.delete_action,
+                 self.select_all_action, self.deselect_all_action,
+                 self.invert_selection_action, self.group_action,
+                 self.ungroup_action, self.remove_from_group_action,
+                 self.front_action, self.forward_action,
+                 self.backward_action, self.back_action]
+                + self.align_actions)
+
+    def _release_edit_menu(self):
+        """Enable again, once the menu has closed, everything its enable rules
+        greyed out.
+
+        The rules are for reading an open menu. A disabled action also
+        swallows its shortcut, and the selection goes on changing after the
+        menu closes: a menu last opened with nothing selected would leave
+        Ctrl+C dead on an element picked afterwards. Every handler already
+        does nothing when there is nothing to do, which is all a shortcut
+        owes the user (FUNCTIONAL_SPEC.md section 14).
+        """
+        for action in self._edit_menu_actions():
+            action.setEnabled(True)
+
     def _update_edit_menu(self):
         """Grey out the actions that need a selection, or a place to move to."""
         doc = self.document
+        for action in (self.cut_action, self.copy_action, self.duplicate_action):
+            action.setEnabled(bool(doc.selection))
+        # Any text at all: whether it is ZPL is the paste's to find out, and
+        # fetching a clipboard that may hold an image's worth of hex every
+        # time the menu opens is not worth an earlier answer.
+        mime = QApplication.clipboard().mimeData()
+        self.paste_action.setEnabled(mime is not None and mime.hasText())
         self.delete_action.setEnabled(bool(doc.selection))
         self.select_all_action.setEnabled(len(doc.selection) < len(doc.elements))
         self.deselect_all_action.setEnabled(bool(doc.selection))
@@ -608,6 +655,52 @@ class ZPLDesignerWindow(QMainWindow):
             for element in doomed:
                 self._close_editor_for(element)
             self.canvas.commit()
+
+    # The clipboard holds ZPL (Document.copy_zpl), so what one window copies
+    # another - this frontend's or the GTK one's - can paste.
+
+    def on_copy(self):
+        """Copy changes the clipboard and never the document: no undo entry."""
+        text = self.document.copy_zpl()
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self.update_status(f"Copied {workflow.elements_phrase(len(self.document.selection))}")
+
+    def on_cut(self):
+        """Copy, then Delete - which is the one undo entry."""
+        count = len(self.document.selection)
+        text = self.document.copy_zpl()
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self.on_delete()
+        self.update_status(f"Cut {workflow.elements_phrase(count)}")
+
+    def on_paste(self):
+        text = QApplication.clipboard().text()
+        try:
+            message = workflow.paste_zpl(self.document, text, self.renderer)
+        except Exception as e:
+            self.show_error(f"Failed to paste: {e}")
+            return
+        if message is None:
+            self.update_status(workflow.NOTHING_TO_PASTE)
+            return
+        self._register_label_fonts()
+        self.canvas.commit()
+        self.update_status(message)
+
+    def on_duplicate(self):
+        count = self.document.duplicate_selected()
+        if count:
+            self.canvas.commit()
+            self.update_status(f"Duplicated {workflow.elements_phrase(count)}")
+
+    def _on_edit_requested(self, command: str):
+        """A clipboard command chosen from the canvas's right-click menu."""
+        {'cut': self.on_cut, 'copy': self.on_copy,
+         'duplicate': self.on_duplicate}[command]()
 
     # Selection commands change the selection and never the document, so
     # they repaint and record nothing - the same as a click or a band.

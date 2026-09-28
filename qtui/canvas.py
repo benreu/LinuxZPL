@@ -53,6 +53,10 @@ class DesignCanvas(QWidget):
 
     elementDoubleClicked = Signal(object)
     documentChanged = Signal()
+    # 'cut', 'copy' or 'duplicate', chosen from the right-click menu. The
+    # window owns the clipboard and the editors a cut has to close, so it
+    # carries the command out.
+    editRequested = Signal(str)
     scaleChanged = Signal()
     # (pointer position in canvas pixels, zooming in) - a request rather than
     # a notification. Keeping the dot under the pointer needs its position
@@ -1028,6 +1032,10 @@ class DesignCanvas(QWidget):
         print_action.setChecked(element.print_enabled)
         menu.addSeparator()
 
+        clipboard = {menu.addAction(label): command for label, command in
+                     (("Cut", 'cut'), ("Copy", 'copy'), ("Duplicate", 'duplicate'))}
+        menu.addSeparator()
+
         group = menu.addAction("Group")
         ungroup = menu.addAction("Ungroup")
         remove = menu.addAction("Remove from Group")
@@ -1049,6 +1057,10 @@ class DesignCanvas(QWidget):
 
         chosen = menu.exec_(event.globalPos())
         if chosen is None:
+            return
+        if chosen in clipboard:
+            # The window records its own undo entry, if the command makes one
+            self.editRequested.emit(clipboard[chosen])
             return
         if chosen is print_action:
             # Keeps the element in the design and in the saved file, but off the

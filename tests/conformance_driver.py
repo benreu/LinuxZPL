@@ -365,6 +365,21 @@ class GtkDriver:
     def invert_selection(self):
         self.window.on_invert_selection_clicked(None)
 
+    def copy(self):
+        self.window.on_copy_clicked(None)
+
+    def cut(self):
+        self.window.on_cut_clicked(None)
+
+    def paste(self):
+        self.window.on_paste_clicked(None)
+
+    def duplicate(self):
+        self.window.on_duplicate_clicked(None)
+
+    def delete(self):
+        self.window.on_delete_clicked(None)
+
     def resize_target(self):
         return self.canvas.document.resize_target()
 
@@ -652,6 +667,21 @@ class QtDriver:
 
     def invert_selection(self):
         self.window.on_invert_selection()
+
+    def copy(self):
+        self.window.on_copy()
+
+    def cut(self):
+        self.window.on_cut()
+
+    def paste(self):
+        self.window.on_paste()
+
+    def duplicate(self):
+        self.window.on_duplicate()
+
+    def delete(self):
+        self.window.on_delete()
 
     def resize_target(self):
         return self.document.resize_target()
@@ -973,6 +1003,30 @@ def sequence(driver, record):
     driver.select(text)
     driver.ungroup()
     record('everything ungrouped again')
+
+    # The clipboard, through each window's own handlers and each toolkit's own
+    # clipboard. A group copied and pasted comes back a group of its own a
+    # step down and right; a duplicate steps again; a cut pasted back lands
+    # where it was. Then the copies go, so the steps after this one see the
+    # same three elements they always did.
+    driver.select_many([text, frame])
+    driver.group()
+    driver.copy()
+    record('copying the pair changed nothing in the design')
+    driver.paste()
+    record('the pair pasted, selecting: ' + json.dumps(driver.selection()))
+    driver.duplicate()
+    record('the pasted pair duplicated, selecting: ' + json.dumps(driver.selection()))
+    driver.cut()
+    record('the duplicate cut, selecting: ' + json.dumps(driver.selection()))
+    driver.paste()
+    record('and pasted back where it was, selecting: ' + json.dumps(driver.selection()))
+    driver.delete()
+    driver.select_many(driver.elements[3:])
+    driver.delete()
+    driver.select(text)
+    driver.ungroup()
+    record('the copies deleted and the pair ungrouped again')
 
     driver.select(barcode)
     for edge in ('right', 'bottom', 'center', 'middle'):

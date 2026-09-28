@@ -721,12 +721,49 @@ must report the real error and leave the flag set.
 
 ### 6.2 Edit
 
-Undo, Redo, Delete, then Select All / Deselect All / Invert Selection, then
-Group / Ungroup / Remove from Group, then Bring to Front / Bring Forward / Send
-Backward / Send to Back, then an **Align** submenu. Delete and the four z-order
-items are disabled when nothing is selected; the raise pair is disabled when
-the selection is already on top and the lower pair when it is already at the
-bottom. Sensitivity is re-evaluated each time the menu opens.
+Undo, Redo, then Cut / Copy / Paste / Duplicate / Delete, then Select All /
+Deselect All / Invert Selection, then Group / Ungroup / Remove from Group, then
+Bring to Front / Bring Forward / Send Backward / Send to Back, then an
+**Align** submenu. Cut, Copy, Duplicate, Delete and the four z-order items are
+disabled when nothing is selected; Paste is disabled when the clipboard holds
+no text; the raise pair is disabled when the selection is already on top and
+the lower pair when it is already at the bottom. Sensitivity is re-evaluated
+each time the menu opens, and **released when it closes**: a greyed-out item
+also swallows its shortcut, and the selection goes on changing while the menu
+is shut, so a menu last opened with nothing selected would otherwise leave
+Ctrl+C dead on whatever is picked next. Every command does nothing when there
+is nothing for it to do (§14), which is all a shortcut needs.
+
+**Copy** (Ctrl+C) puts the selection on the system clipboard as ZPL (§8.4) and
+changes nothing in the document. **Cut** (Ctrl+X) is Copy then Delete, and is
+one undo entry. **Paste** (Ctrl+V) adds the elements the clipboard's ZPL
+describes on top of the z-order and makes them the selection — ZPL from
+anywhere, not only a copy made here, since the clipboard is read with the
+parser Open uses. **Duplicate** copies the selection in place without going
+through the clipboard; it has no shortcut and no mnemonic, and is reached by a
+click, here or in the right-click menu (§6.6). Paste and Duplicate are one undo entry
+each; a paste that finds nothing to build records none and says "Nothing to
+paste".
+
+What is copied is what the outline says is selected (§5): a group every member
+of which is selected comes along as a group, nested groups inside it too, and
+a group only partly selected — the group around a directly picked member, or
+two of a group's three members picked directly — does not. A copy is **never
+a member of the group it was copied from**: every group it arrives in gets an
+id of its own, so a group pasted twice is two groups, and a directly picked
+member duplicated comes out loose.
+
+**Where the copies land.** Where they were copied from, unless that spot is
+taken: while any copy would land exactly on an element already there — same
+type, same box — the whole set steps a tenth of an inch down and to the right
+(20 dots at 203 dpi, 30 at 300, 60 at 600), and steps again. So a cut pasted
+back lands where it was, a paste into another label of the same stock lands in
+the same place, a paste of something still on the label lands beside it and
+each paste after that beside the last; Duplicate starts one step out. The set
+moves as one box, held inside the label the way a drag holds a group (§5), and
+stops stepping once the edge holds it; only a member still hanging over the
+edge after that — a copy from a larger label — is cut down, as a label shrunk
+under it would cut it.
 
 **Select All** (Ctrl+A) selects every element, whole groups included, with the
 topmost element as the primary; it is enabled while anything is left
@@ -850,6 +887,10 @@ other does not.
   in the design and in the saved file but leaves it off the printed label. This
   is how a user suppresses an element that would otherwise print through an
   image covering it.
+- **Cut / Copy / Duplicate**, exactly as the Edit menu's (§6.2), on the
+  selection the right click left - the whole group, when the element is in one.
+  Paste is not here: this menu opens on an element, and a paste lands where
+  its copy was, not where the pointer is.
 - **Group / Ungroup / Remove from Group**, under the same rules as in the Edit
   menu (§6.2).
 - **Bring to Front / Bring Forward / Send Backward / Send to Back**, disabled at
@@ -1385,6 +1426,47 @@ gathered into one run the first time their depth is changed (§6.2).
 2. the embedded JPEG preview
 3. decoding the 1-bit `^GF` data, in any of the encodings of §8.1 (the only
    option for ZPL from other tools)
+
+### 8.4 The clipboard
+
+**What Copy puts on the clipboard is ZPL**, as plain text: the copied elements
+written out as a label of their own, exactly as §8.1 writes one, at the size,
+resolution and document font of the label they came from. So a copy reaches
+another window of this program, the other frontend, a text editor or the
+Printer Console (§10.6), and Paste reads it back with the parser Open uses —
+which is also what lets ZPL from anywhere be pasted in. A copy carries:
+
+- the `^FXDESIGNER_DPI` line, so a paste into a label for another head
+  resolution knows what the dots were drawn for (below)
+- each element's group marker, its path cut down to the groups wholly inside
+  what was copied (§6.2), and a hidden element's no-print block
+- `^CI`, `^CW` and `^FL`, since a field may be written in the encoding one
+  names or call a letter only one defines
+
+and leaves behind everything that belongs to the label rather than to an
+element on it: `^LH` and `^LS` (an element holds its absolute position, so a
+copy is written against no home at all and lands at the same absolute place),
+the flips, `^PQ`, `^CV`, the printer's settings, a stored format and its
+recalls, and `^IL`/`^IS`.
+
+**Paste takes elements, and the font table, and nothing else.** A pasted `^CW`
+letter this label does not assign is added to it; one it already assigns keeps
+its own assignment, since the label's other fields print with it. Every other
+label-level command in the pasted text — `^DF`, `^XF`, `^IL`, `^IS`, `^PQ`,
+`^CV`, `^PR`, `^MD`, `^MM`, `^MN`, `^MT`, `^LT`, `^PO`, `^PM`, `^LR` — is left
+out, and the status bar names what was, after anything a save could not keep
+either (§8.3's list): *"Pasted 4 elements - left out ^PQ, ^B4"*. A status line
+rather than the load's dialog, because nothing is lost: the text is still on
+the clipboard.
+
+**A paste keeps the physical size of what it pastes.** Text whose
+`^FXDESIGNER_DPI` differs from this label's is scaled by the ratio of the two,
+about the label's origin — the rule §11's Rescale applies, without the prompt,
+since a paste at the wrong head's dots is never what a paste means — and the
+status bar says so: *"Pasted 1 element - rescaled from 300 to 203 dpi"*. Text
+that records no resolution is taken dot for dot. That is not §11's rule for a
+file, which assumes 203: a file is opened on its own, whereas a paste is into
+a label whose resolution the person pasting already knows.
 
 ---
 
@@ -2061,13 +2143,16 @@ to come back as the group.
 
 - **One entry per user action.** A drag or a resize is one entry, recorded when
   the mouse is released — not one per motion event.
-- Every document change is undoable: adding, deleting, moving, resizing,
-  reordering, aligning, grouping and ungrouping, editing an element through its
-  dialog, toggling Print This Element, and changing the label size (including
-  the element clamping that a smaller label causes).
+- Every document change is undoable: adding, deleting, cutting, pasting,
+  duplicating, moving, resizing, reordering, aligning, grouping and
+  ungrouping, editing an element through its dialog, toggling Print This
+  Element, and changing the label size (including the element clamping that a
+  smaller label causes).
 - Changing the **selection** is not a document change and is not undoable: a
   click, a shift-click, a rubber band, Select All, Deselect All and Invert
-  Selection record no entry. An align that moves nothing records none either.
+  Selection record no entry. An align that moves nothing records none either,
+  and neither does Copy, which changes only the clipboard, or a paste that
+  found nothing to build.
 - Performing a new action after undoing discards the redo branch.
 - History is capped at 50 entries, oldest discarded.
 - Loading a file clears the history — undo never crosses a file boundary.
@@ -2077,7 +2162,8 @@ to come back as the group.
   Restoring a snapshot replaces every element object, so an editor left open
   would hold one the document no longer has; accepting it would write the edit
   into that detached copy, where it would be lost with no error to show for it.
-  Deleting an element closes the editor open on it for the same reason.
+  Deleting an element closes the editor open on it for the same reason, and so
+  does cutting one.
 
 Changes that are *not* part of the document — printer address, port, resolution
 — are not undoable. This holds for a resolution changed through Label Size too:
@@ -2150,6 +2236,9 @@ treated as corrupt and falls back too.
 | Ctrl+Q | Quit |
 | Ctrl+Z | Undo |
 | Ctrl+Shift+Z, Ctrl+Y | Redo |
+| Ctrl+X | Cut |
+| Ctrl+C | Copy |
+| Ctrl+V | Paste |
 | Delete | Delete selected element |
 | Ctrl+A | Select All |
 | Ctrl+Shift+A | Deselect All |
@@ -2169,13 +2258,18 @@ Three notes for a port:
 
 - Shortcuts are global to the window, not only active while a menu is open —
   which is why Page Up / Home were avoided for the z-order actions: they would
-  be taken away from scrolling the canvas. For the same reason Ctrl+A means
-  the main window must never hold a text entry of its own: the binding would
-  take select-all-text away from it. The element editors are windows of their
-  own and keep theirs.
+  be taken away from scrolling the canvas. For the same reason Ctrl+A, Ctrl+X,
+  Ctrl+C and Ctrl+V mean the main window must never hold a text entry of its
+  own: the bindings would take select-all, cut, copy and paste of its text
+  away from it. The element editors are windows of their own and keep theirs.
+  Cut, Copy and Paste are bound to those three keys alone, not also to the
+  Shift+Delete, Ctrl+Insert and Shift+Insert some toolkits add, so that both
+  frontends take the same keys.
 - A shortcut is subject to the same enable/disable rules as its menu item. Ctrl+Y
   does nothing when there is nothing to redo, and Delete does nothing with no
-  selection; neither is an error.
+  selection; neither is an error. The rules are applied while the menu is open
+  and released when it closes (§6.2), so it is the command itself that decides
+  there is nothing to do.
 - On toolkits that report the *shifted* key symbol, `Ctrl+Shift+]` arrives as
   `}` and will not match a binding declared on `]`; both forms may need
   registering. `Ctrl++` has the same problem from the other side — it needs
@@ -2188,8 +2282,12 @@ Three notes for a port:
 A status bar reports the last significant action: `Ready`, `Loaded: <file>`,
 `Saved: <file>`, `Save failed`, `Error loading file`, `Undo`, `Redo`,
 `Printing cancelled`, `Rescaled from <old> to <new> dpi`,
-`Label size set to <w>x<h>`, `Printer set to <address>:<port>`, and progress
-while uploading a font.
+`Label size set to <w>x<h>`, `Printer set to <address>:<port>`,
+`Copied <n> elements`, `Cut <n> elements`, `Duplicated <n> elements`,
+`Pasted <n> elements` with what the paste rescaled or left out (§8.4),
+`Nothing to paste`, and progress while uploading a font. The paste line and
+the element count in all four are worded in the core, so the two frontends
+say the same thing.
 
 Failures are reported in a modal error dialog with the actual underlying
 message — never a swallowed exception or a placeholder.
@@ -2224,6 +2322,7 @@ message — never a swallowed exception or a placeholder.
 | Zoom range | 5% to 800%, along a fixed ladder of steps |
 | Window opening size | the monitor's work area × 0.9, capped at 1200 × 900, minimum 480 × 360 |
 | Double-click interval | 500 ms |
+| Paste and Duplicate step | 1/10 inch down and right - 20 dots at 203 dpi, 30 at 300, 60 at 600 |
 | Undo depth | 50 |
 | Printer font object name | 8 characters, `[A-Z0-9_-]`, stored on `E:` |
 | Print timeout | 10 s |
@@ -2547,6 +2646,27 @@ rather than requirements:
   out of a nest can leave two group ids over the same pair — legal, and two
   Ungroups clear it. The z-order commands on a directly picked member move
   its whole top-level group, since a group has one depth.
+- **A paste goes through ZPL, and a duplicate does not.** Copy writes ZPL and
+  Paste parses it (§8.4), so a pasted element is what a save and a reopen
+  would give back, not the object copied: an image with no source file left
+  on disk comes back from its embedded JPEG preview, one generation further
+  from the original, so its dither can differ from the copy's by a few dots;
+  and a field printing in the document's font arrives naming that font as its
+  own, so it keeps printing in it on a label whose document font is another.
+  Duplicate copies the elements themselves and loses neither. A copy made in
+  one of the two frontends pastes into the other the same way.
+- **Duplicate and Paste make a copy loose rather than a member of the group it
+  was copied from.** A duplicate of a directly picked member does not join the
+  group around it (§6.2): joining would mean choosing a place for it inside
+  the group's run and moving the group's outline under the user. Group it
+  afterwards, or duplicate the whole group.
+- **A `^CW` letter a paste adds stays when the paste is undone.** The font
+  table is not in the undo snapshot (it has no editor), so undoing the paste
+  takes the elements away and leaves the letter assigned. Nothing calls it
+  then, and a printer given it only assigns a letter no field uses.
+- **A paste can squash a copy from a larger label.** The copies move as one
+  box and stop at the edge; a member still hanging over it is cut down one by
+  one, as a label made smaller cuts its elements down.
 - **`^XG`/`^IM`/`^IL` resolve a stored graphic in `graphic_store` (the local,
   in-session cache) by name and extension only — the `R:`/`E:`/`B:`/`A:`
   device prefix is preserved for round-tripping but does not distinguish

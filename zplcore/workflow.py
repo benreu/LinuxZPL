@@ -395,3 +395,53 @@ def warn_unsupported(zpl_content: str, notify, notify_redefined) -> list:
     if dropped:
         notify(dropped)
     return redefined + dropped
+
+
+# --- the clipboard -------------------------------------------------------------
+#
+# Cut, Copy, Paste and Duplicate say what they did in the status bar, in these
+# words, so the two frontends say it the same way.
+
+NOTHING_TO_PASTE = "Nothing to paste"
+
+# Commands a file keeps and a paste does not: they are about the label as a
+# whole rather than any element on it, and the label being pasted into has
+# its own. A copy made here writes none of them, so only ZPL from elsewhere
+# can bring one - a whole label pasted in, say, with its ^PQ5 - and the user
+# is told, as a load tells them what it could not keep.
+LABEL_COMMANDS = ('^DF', '^XF', '^IL', '^IS', '^PQ', '^CV', '^PR', '^MD',
+                  '^MM', '^MN', '^MT', '^LT', '^PO', '^PM', '^LR')
+
+
+def elements_phrase(count: int) -> str:
+    """'1 element', '3 elements'."""
+    return f"{count} element{'' if count == 1 else 's'}"
+
+
+def left_out_of_paste(zpl_content: str) -> list:
+    """What a paste of this text leaves behind: the commands no save could
+    keep either, then the ones that belong to a label rather than to the
+    elements pasted into one, in the order they appear."""
+    from .parser import canonicalise, tokenise
+
+    left = unsupported_commands(zpl_content)
+    for command, _params in tokenise(canonicalise(zpl_content)[0]):
+        if command in LABEL_COMMANDS and command not in left:
+            left.append(command)
+    return left
+
+
+def paste_zpl(document, text: str, renderer=None):
+    """Paste ZPL into the document (Document.paste_zpl) and return the
+    status-bar line for it, or None when the text held nothing to paste -
+    in which case the document is untouched and there is nothing to undo."""
+    count, drawn_at = document.paste_zpl(text, renderer)
+    if not count:
+        return None
+    parts = [f"Pasted {elements_phrase(count)}"]
+    if drawn_at:
+        parts.append(f"rescaled from {drawn_at} to {document.dpi} dpi")
+    left = left_out_of_paste(text)
+    if left:
+        parts.append("left out " + ", ".join(left))
+    return " - ".join(parts)
