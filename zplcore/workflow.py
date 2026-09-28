@@ -41,6 +41,9 @@ def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):
 
     if old == printer_dpi or not document.elements:
         document.dpi = printer_dpi
+        # A resident bitmap font's cell is the resolution's, so a field in
+        # one can change size without a single dot being rescaled
+        document.sync_all_text()
         return None
 
     # What keeping the dots would physically measure on this printer
@@ -51,11 +54,13 @@ def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):
     if answer == 'rescale':
         document.rescale(printer_dpi / old)
         document.dpi = printer_dpi
+        document.sync_all_text()
         return f"rescaled from {old} to {printer_dpi} dpi"
 
     # Keep Dots and Cancel both leave the dots alone; the document still
     # belongs to this printer now, so it is stamped either way.
     document.dpi = printer_dpi
+    document.sync_all_text()
     return None
 
 

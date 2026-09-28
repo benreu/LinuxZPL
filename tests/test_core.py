@@ -39,9 +39,13 @@ check("proportional text: IIII narrower than WWWW",
       narrow.printed_width() < wide.printed_width(),
       f"{narrow.printed_width()} vs {wide.printed_width()}")
 
-builtin = TextElement(0, 0, 'IIII')   # no font -> ^AF, fixed width
-check("built-in font width = len*font_width",
-      builtin.printed_width() == 4 * builtin.font_width, builtin.printed_width())
+builtin = TextElement(0, 0, 'IIII')   # no font -> ^AF, a bitmap font
+check("built-in font F is a row of its cells with its gap between them",
+      builtin.printed_width() == 4 * 26 + 3 * 6, builtin.printed_width())
+scalable = TextElement(0, 0, 'IIII', font_code='0')   # ^A0, no font file
+check("the scalable font 0 with no font file is len*font_width",
+      scalable.printed_width() == 4 * scalable.font_width,
+      scalable.printed_width())
 
 # font_width_for is the inverse of printed_width
 t = TextElement(0, 0, 'Hello World'); t.font_path = FONT
@@ -220,7 +224,7 @@ _fd.font_device = 'R'
 check("font_sources(): and it follows the Font memory setting when that moves",
       _fd.font_sources() == {'R:NEWFACE.TTF': '/x/NewFace.ttf'}, _fd.font_sources())
 check("to_zpl(): the ^A@ follows it too",
-      '^A@N,36,20,R:NEWFACE.TTF' in _fd.to_zpl(), _font_written(_fd))
+      '^A@N,26,26,R:NEWFACE.TTF' in _fd.to_zpl(), _font_written(_fd))
 # A loaded element carries a font name *and* a path of its own, and that
 # path wins over the setting - which is what keeps a file saying what it said.
 _loaded = zpl_parser.parse_zpl(
@@ -233,7 +237,7 @@ check("a loaded element's own path wins over the setting, in both",
 # ...but an element with no font of its own still follows the document, which
 # is why to_zpl only trusts a path when the element names the font too.
 check("an element with no font of its own follows the document's drive",
-      '^A@N,36,20,R:NEWFACE.TTF' in _fd.to_zpl(), _font_written(_fd))
+      '^A@N,26,26,R:NEWFACE.TTF' in _fd.to_zpl(), _font_written(_fd))
 
 # --- ^A@'s own d:f.x path ----------------------------------------------------
 # ^A@o,h,w,d:f.x names a drive (R:/E:/B:/A:, defaulting to R: - not E:) and an
@@ -2802,8 +2806,10 @@ check("the wrap set in the dialog reaches the element",
       de.block == FieldBlock(220, 5, 3, 'C', 4), de.block)
 check("a break typed in the dialog reaches the field data",
       de.text == r"ACME Widget\&Model 4400", de.text)
+# Font F's 26-dot cells are 32 dots apart, so "ACME Widget" (346) no longer
+# fits 220 and breaks at its space: four lines, not two
 check("the dialog leaves the box equal to the wrap",
-      (de.width, de.height) == (220, 2 * (de.font_height + 3)),
+      (de.width, de.height) == (220, 4 * (de.font_height + 3)),
       (de.width, de.height))
 
 _drive_text_dialog(de, ddoc,
@@ -3525,15 +3531,22 @@ check("but the label still takes the size the dialog was accepted on",
       (kw.document.label_width, kw.document.label_height))
 
 # --- the preview draws the design, it does not merely agree with it ---------
-pdoc = Document(400, 300, dpi=203)
+# Tall enough for six lines of font F at 40 x 40, whose cell is 52 dots tall
+pdoc = Document(400, 400, dpi=203)
 pt = pdoc.add_text_element('one two three four five six seven eight')
 pt.x, pt.y = 0, 0
 pt.font_height = pt.font_width = 40
 pt.block = FieldBlock(300, 6, 0, 'C', 0)
 pdoc.sync_text_width(pt)
-preview = ZPLRenderer(400, 300).render(pdoc.to_zpl()).convert('L')
-expected = textraster.raster_block(pt.text, ZPLRenderer.DEFAULT_FONT_PATH,
-                                   pt.font_height, pt.font_width, pt.block)
+preview = ZPLRenderer(400, 400).render(pdoc.to_zpl()).convert('L')
+# Laid out by what the canvas lays it out by - font F's cells, since the
+# field has no font file - and drawn in the preview's stand-in face
+_pcell = pt.cell(pdoc.font_path, pdoc.dpi)
+expected = textraster.raster_block(
+    pt.text, ZPLRenderer.DEFAULT_FONT_PATH, _pcell.height, _pcell.width,
+    pt.block, gap=_pcell.row_gap,
+    measure=textraster.measurer(None, _pcell.height, _pcell.width,
+                                _pcell.row_gap)[0])
 def _rows(get, width, height):
     return [y for y in range(height) if any(get(x, y) for x in range(width))]
 preview_rows = _rows(lambda x, y: preview.getpixel((x, y)) < 128,
@@ -6484,8 +6497,9 @@ check("and nothing in it is reported as unsupported",
 # ^FPd,g belongs to one font field: H runs its characters left to right, V
 # top to bottom, R right to left, and g puts that many extra dots between
 # them. The manual's Field Interactions charts (Tables 45-48) are the picture
-# of where each lands. ^AF has no font file, so these are laid out with the
-# built-in fixed-width estimate: every character font_width dots wide.
+# of where each lands. ^A0 with no font file is laid out with the fixed-width
+# estimate - every character font_width dots wide - which keeps the arithmetic
+# plain; a bitmap font's own cells are the next section's.
 
 def _fp(fields):
     return zpl_parser.parse_zpl("^XA^PW812^LL1218" + fields + "^XZ")[0]
@@ -6495,11 +6509,11 @@ def _fp_lines(doc):
             if l.startswith(('^FO', '^FT', '^FP'))]
 
 for _spelled in ('^FPV', '^FPR,10', '^FPH,5', '^FPV,3'):
-    _d = _fp(f"^FO100,50{_spelled}^AFN,30,20^FDABCD^FS")
+    _d = _fp(f"^FO100,50{_spelled}^A0N,30,20^FDABCD^FS")
     check(f"{_spelled} comes back out of a save as it went in",
           _spelled in _d.to_zpl().split('\n'), _fp_lines(_d))
 check("^FPH with no gap is ZPL's own default, and writes nothing",
-      '^FP' not in _fp("^FO100,50^FPH^AFN,30,20^FDABCD^FS").to_zpl())
+      '^FP' not in _fp("^FO100,50^FPH^A0N,30,20^FDABCD^FS").to_zpl())
 _plain_fp = zpl_parser.parse_zpl((FIXTURES / 'sample_203dpi.zpl').read_text())[0]
 check("a label that never used ^FP gains none on a save",
       '^FP' not in _plain_fp.to_zpl()
@@ -6507,7 +6521,7 @@ check("a label that never used ^FP gains none on a save",
               for e in _plain_fp.elements if e.element_type == 'text'))
 check("^FP is no longer reported as something a save would drop",
       '^FP' not in workflow.unsupported_commands(
-          "^XA^FO100,50^FPV,10^AFN,30,20^FDABCD^FS^XZ"))
+          "^XA^FO100,50^FPV,10^A0N,30,20^FDABCD^FS^XZ"))
 
 check("^FP's letter is read in either case",
       zpl_parser.read_field_parameter('v,4') == ('V', 4))
@@ -6516,25 +6530,25 @@ check("a letter ZPL does not define is read as its default, H",
 check("the gap is held to ZPL's 0-9999",
       [zpl_parser.read_field_parameter(p)[1]
        for p in ('V,99999', 'R,-5', 'R,abc', 'R,')] == [9999, 0, 0, 0])
-_two = _fp("^FO10,10^FPV,5^AFN,30,20^FDA^FS^FO10,300^AFN,30,20^FDB^FS")
+_two = _fp("^FO10,10^FPV,5^A0N,30,20^FDA^FS^FO10,300^A0N,30,20^FDB^FS")
 check("^FP is a field's own: the next field is back to H with no gap",
       [(e.direction, e.char_gap) for e in _two.elements] == [('V', 5), ('H', 0)],
       [(e.direction, e.char_gap) for e in _two.elements])
 
 # The box is whatever the characters fill
-_spaced = _fp("^FO100,50^FPH,5^AFN,30,20^FDABCD^FS").elements[0]
+_spaced = _fp("^FO100,50^FPH,5^A0N,30,20^FDABCD^FS").elements[0]
 check("a gap widens a row by the gaps between its characters, not after them",
       (_spaced.width, _spaced.height) == (4 * 20 + 3 * 5, 30),
       (_spaced.width, _spaced.height))
-_column = _fp("^FO100,50^FPV,10^AFN,30,20^FDABCD^FS").elements[0]
+_column = _fp("^FO100,50^FPV,10^A0N,30,20^FDABCD^FS").elements[0]
 check("top to bottom the box is one character wide and a row per character",
       (_column.width, _column.height) == (20, 4 * 30 + 3 * 10),
       (_column.width, _column.height))
-_turned_column = _fp("^FO100,50^FPV,10^AFR,30,20^FDABCD^FS").elements[0]
+_turned_column = _fp("^FO100,50^FPV,10^A0R,30,20^FDABCD^FS").elements[0]
 check("and a quarter turn transposes it, as it does any text",
       (_turned_column.width, _turned_column.height) == (150, 20),
       (_turned_column.width, _turned_column.height))
-_backward = _fp("^FO100,50^FPR,5^AFN,30,20^FDABCD^FS").elements[0]
+_backward = _fp("^FO100,50^FPR,5^A0N,30,20^FDABCD^FS").elements[0]
 check("right to left the box is the same row, run the other way",
       (_backward.width, _backward.height) == (95, 30),
       (_backward.width, _backward.height))
@@ -6546,34 +6560,34 @@ check("a combining mark shares its letter's cell rather than taking a row",
 # check that it is placed where the chart puts it, and it must also write
 # back the origin it came in with.
 _placements = (
-    ("^FO100,50^FPV^AFN,30,20^FDABCD^FS",
+    ("^FO100,50^FPV^A0N,30,20^FDABCD^FS",
      "top to bottom, ^FO names the column's top-left (Table 45)",
      lambda e: (e.x, e.y) == (100, 50)),
-    ("^FO300,50,1^FPV^AFN,30,20^FDABCD^FS",
+    ("^FO300,50,1^FPV^A0N,30,20^FDABCD^FS",
      "and right justified, its top-right",
      lambda e: (e.x + e.width, e.y) == (300, 50)),
-    ("^FT100,80^FPV^AFN,30,20^FDABCD^FS",
+    ("^FT100,80^FPV^A0N,30,20^FDABCD^FS",
      "and ^FT names the first character's baseline",
      lambda e: (e.x, e.y + e.typeset) == (100, 80)),
-    ("^FO300,50^FPR^AFN,30,20^FDABCD^FS",
+    ("^FO300,50^FPR^A0N,30,20^FDABCD^FS",
      "right to left, ^FO names the first character's top-left, at the right end",
      lambda e: (e.x + e.width - 20, e.y) == (300, 50)),
-    ("^FO300,50,1^FPR^AFN,30,20^FDABCD^FS",
+    ("^FO300,50,1^FPR^A0N,30,20^FDABCD^FS",
      "and right justified, the right edge of the last, at the left end",
      lambda e: (e.x + 20, e.y) == (300, 50)),
-    ("^FT300,80^FPR^AFN,30,20^FDABCD^FS",
+    ("^FT300,80^FPR^A0N,30,20^FDABCD^FS",
      "and ^FT names the first character's baseline",
      lambda e: (e.x + e.width - 20, e.y + e.typeset) == (300, 80)),
-    ("^FO100,300^FPV^AFR,30,20^FDABCD^FS",
+    ("^FO100,300^FPV^A0R,30,20^FDABCD^FS",
      "turned 90 degrees, a column still hangs from its ^FO (Table 46)",
      lambda e: (e.x, e.y) == (100, 300)),
-    ("^FO100,300^FPR^AFR,30,20^FDABCD^FS",
+    ("^FO100,300^FPR^A0R,30,20^FDABCD^FS",
      "and a reversed row, read downward, has its first character at the bottom",
      lambda e: (e.x, e.y + e.height - 20) == (100, 300)),
-    ("^FO100,300^FPR^AFI,30,20^FDABCD^FS",
+    ("^FO100,300^FPR^A0I,30,20^FDABCD^FS",
      "upside down, a reversed row starts at the left, where ^FO is (Table 48)",
      lambda e: (e.x, e.y) == (100, 300)),
-    ("^FO100,300^FPR^AFB,30,20^FDABCD^FS",
+    ("^FO100,300^FPR^A0B,30,20^FDABCD^FS",
      "and read upward, at the top, where ^FO is (Table 47)",
      lambda e: (e.x, e.y) == (100, 300)),
 )
@@ -6587,7 +6601,7 @@ for _fields, _name, _placed in _placements:
 
 # The point a ^FO names stays put when the text changes, which for a reversed
 # field is its first character - so it grows leftward
-_grow_fp = _fp("^FO300,50^FPR^AFN,30,20^FDAB^FS")
+_grow_fp = _fp("^FO300,50^FPR^A0N,30,20^FDAB^FS")
 _ge_fp = _grow_fp.elements[0]
 _ge_fp.text = 'ABCDEF'
 _grow_fp.sync_text_width(_ge_fp)
@@ -6598,8 +6612,8 @@ check("a right to left field grows leftward from its first character",
 # A rescale moves the point a reversed field's ^FO names with the label, as it
 # does every other origin - to the dot, give or take the rounding every
 # rescale has
-_rescaled_fp = _fp("^FO350,50^FPR,10^AFN,30,20^FDreverse^FS"
-                   "^FO100,300^FPR^AFR,30,20^FDABCD^FS")
+_rescaled_fp = _fp("^FO350,50^FPR,10^A0N,30,20^FDreverse^FS"
+                   "^FO100,300^FPR^A0R,30,20^FDABCD^FS")
 _rescaled_fp.rescale(300 / 203)
 _scaled_origins = [tuple(int(n) for n in l[3:].split(','))
                    for l in _rescaled_fp.to_zpl().split('\n') if l.startswith('^FO')]
@@ -6614,6 +6628,7 @@ check("a rescale carries a right to left field's ^FO with the label",
 _switch = Document(812, 1218, dpi=203)
 _sw = _switch.add_text_element('ABCD')
 _sw.x, _sw.y, _sw.font_height, _sw.font_width = 100, 50, 30, 20
+_sw.font_code = '0'
 _switch.sync_text_width(_sw)
 _sw.direction = 'R'
 _switch.sync_text_width(_sw)
@@ -6636,6 +6651,7 @@ check("dragging a column taller makes each row taller, gaps unchanged",
       (_sw.font_height, _sw.char_gap, _sw.height))
 _narrow = _switch.add_text_element('ABCD')
 _narrow.font_height, _narrow.font_width = 13, 7
+_narrow.font_code = '0'
 _narrow.direction, _narrow.char_gap = 'V', 4
 _switch.sync_text_width(_narrow)
 geometry.resize_by_handle(_switch, _narrow, 'bm', 0, 40)
@@ -6650,12 +6666,12 @@ check("and a rescale scales the gap with the font",
 # The gap goes into a block's wrap as well
 # "AB CD EF" is 160 dots on one line; 20 more between each of its eight
 # characters makes it 300, and "AB CD" alone 180
-_unwrapped = _fp("^FO50,50^FB200,4,0,L^AFN,30,20^FDAB CD EF^FS").elements[0]
-_wrapped = _fp("^FO50,50^FB200,4,0,L^FPH,20^AFN,30,20^FDAB CD EF^FS").elements[0]
+_unwrapped = _fp("^FO50,50^FB200,4,0,L^A0N,30,20^FDAB CD EF^FS").elements[0]
+_wrapped = _fp("^FO50,50^FB200,4,0,L^FPH,20^A0N,30,20^FDAB CD EF^FS").elements[0]
 check("a block wraps a gapped line sooner",
       (_unwrapped.height, _wrapped.height) == (30, 2 * 30),
       (_unwrapped.height, _wrapped.height))
-_blocked_v = _fp("^FO50,50^FB200,4,0,L^FPV^AFN,30,20^FDAB CD^FS")
+_blocked_v = _fp("^FO50,50^FB200,4,0,L^FPV^A0N,30,20^FDAB CD^FS")
 check("a direction a block leaves undefined is carried, and placed as H",
       '^FPV' in _blocked_v.to_zpl() and _blocked_v.elements[0].x == 50,
       _fp_lines(_blocked_v))
@@ -6731,6 +6747,115 @@ for _path in (FONT, None):
           f"({'with' if _path else 'without'} a font file)",
           _box is not None and _box[3] - _box[1] > 3 * (30 + 10), _box)
     _fw.document.elements.remove(_fe)
+
+# --- the resident bitmap fonts print in whole-number magnifications -------
+# A bitmap font can only be magnified by whole numbers, 1 to 10 on each axis,
+# with its own fixed gap after each character. The designer drew ^AFN,36,20
+# as 20 dots a character at 36 tall; a 203 dpi printer printed it as 26 x 26
+# cells 32 dots apart - left to right, right to left and top to bottom alike -
+# which is what these numbers are taken from.
+
+check("^AFN,36,20 is font F once down and twice across, with twice its gap",
+      tuple(zpl_fonts.bitmap_cell('F', 36, 20, 203)) == (26, 26, 6, 21),
+      zpl_fonts.bitmap_cell('F', 36, 20, 203))
+check("^AF,52 and ^AF,54 are the same 52, as the manual's own ^AD example is",
+      zpl_fonts.bitmap_cell('F', 52, 13).height
+      == zpl_fonts.bitmap_cell('F', 54, 13).height == 52)
+check("magnification stops at 10 and never falls below 1",
+      tuple(zpl_fonts.bitmap_cell('F', 999, 1)) == (260, 13, 3, 210),
+      zpl_fonts.bitmap_cell('F', 999, 1))
+check("the scalable font 0 and a downloaded font are not bitmap fonts",
+      zpl_fonts.bitmap_cell('0', 36, 20) is None
+      and zpl_fonts.bitmap_cell('@', 36, 20) is None)
+check("E has a bigger cell at 300 dpi",
+      zpl_fonts.bitmap_cell('E', 28, 15, 203)[:2] == (28, 15)
+      and zpl_fonts.bitmap_cell('E', 42, 20, 300)[:2] == (42, 20))
+
+# The calibration label, as printed and scanned
+_scanned = zpl_parser.parse_zpl(
+    "^XA^PW812\n"
+    "^FO40,40^AFN,36,20^FDHHHHHHHHHH^FS\n"
+    "^FO700,120^FPR^AFN,36,20^FDHHHHHHHHHH^FS\n"
+    "^FO40,220^FPV^AFN,36,20^FDHHHHH^FS\n"
+    "^FO200,220^FPV^A0N,36,20^FDHHHHH^FS\n^XZ")[0]
+_row, _back, _col, _col0 = _scanned.elements
+check("a row of ^AFN,36,20 is ten 26-dot cells with 6 dots between",
+      (_row.x, _row.y, _row.width, _row.height) == (40, 40, 10 * 26 + 9 * 6, 26),
+      (_row.x, _row.y, _row.width, _row.height))
+check("right to left is the same row, its first cell starting at the ^FO",
+      (_back.width, _back.x + _back.width - 26, _back.y) == (314, 700, 120),
+      (_back.x, _back.y, _back.width))
+check("top to bottom the rows are the cell's height apart, with no gap",
+      (_col.x, _col.y, _col.width, _col.height) == (40, 220, 26, 5 * 26),
+      (_col.x, _col.y, _col.width, _col.height))
+check("and the scalable font 0 is laid out as it always was",
+      (_col0.width, _col0.height) == (20, 5 * 36), (_col0.width, _col0.height))
+check("the sizes the file gave are written back, not the ones that print",
+      _scanned.to_zpl().count('^AFN,36,20') == 3, _font_written(_scanned))
+_ft_bitmap = zpl_parser.parse_zpl("^XA^FT40,80^AFN,36,20^FDH^FS^XZ")[0].elements[0]
+check("^FT names font F's own baseline, 21 dots down its cell",
+      (_ft_bitmap.typeset, _ft_bitmap.y) == (21, 59),
+      (_ft_bitmap.typeset, _ft_bitmap.y))
+_with_file = TextElement(0, 0, 'HHHH', 36, 20)
+_with_file.font_path = FONT
+check("a field with a font file writes ^A@ and is not a bitmap font",
+      _with_file.cell().baseline is None
+      and _with_file.cell()[:2] == (36, 20))
+
+# New text starts at a size font F prints exactly
+_new_doc = Document(812, 1218, dpi=203)
+_new_text = _new_doc.add_text_element('New Text')
+check("a new text field is ^AFN,26,26, and its box is what that prints",
+      '^AFN,26,26' in _new_text.to_zpl()
+      and (_new_text.width, _new_text.height) == (8 * 26 + 7 * 6, 26),
+      (_new_text.width, _new_text.height))
+
+# A drag steps through whole magnifications
+geometry.resize_by_handle(_new_doc, _new_text, 'bm', 0, 30)
+check("dragging a bitmap field taller snaps it to twice the cell",
+      _new_text.height == 52, (_new_text.font_height, _new_text.height))
+geometry.resize_by_handle(_new_doc, _new_text, 'mr', -120, 0)
+check("and narrower, to a whole number of the base width",
+      _new_text.font_width % 13 == 0 and _new_text.width == 8 * 13 + 7 * 3,
+      (_new_text.font_width, _new_text.width))
+
+# A bitmap cell belongs to the resolution, so settling a design on another
+# printer re-sizes it even when no dot is rescaled
+_e_doc = Document(812, 1218, dpi=203)
+_e_el = _e_doc.add_text_element('E')
+_e_el.font_code, _e_el.font_height, _e_el.font_width = 'E', 42, 20
+_e_doc.sync_text_width(_e_el)
+_e_before = _e_el.height
+workflow.reconcile_dpi(_e_doc, 300, lambda *a: 'keep')
+# 42 is one and a half of E's 28 at 203 dpi, which rounds up to two; at 300
+# dpi it is E's own 42
+check("keeping the dots on a 300 dpi printer takes E's bigger cell",
+      (_e_before, _e_el.height) == (56, 42), (_e_before, _e_el.height))
+
+# The preview and the canvas draw the cells the box holds
+for _el, _name in ((_row, "a row"), (_col, "a column")):
+    _box_ink = _preview_ink(
+        "^XA^PW812^LL400" + ("^FO40,40^AFN,36,20^FDHHHHHHHHHH^FS" if _el is _row
+                             else "^FO40,220^FPV^AFN,36,20^FDHHHHH^FS") + "^XZ",
+        812, 400)
+    check(f"the preview draws {_name} of font F inside its box, filling it",
+          _inside(_box_ink, _el)
+          and _box_ink[2] >= _el.width - 12 and _box_ink[3] >= _el.height - 12,
+          (_box_ink, (_el.x, _el.y, _el.width, _el.height)))
+_bw = qt_main.ZPLDesignerWindow()
+_bw.unsaved_changes = False
+_bw.on_new()
+_bw.document.set_label_size(812, 1218)
+_bw.canvas.set_zoom(1.0)
+_brow = _bw.document.add_text_element('HHHHHHHHHH')
+_brow.x, _brow.y, _brow.font_height, _brow.font_width = 40, 40, 36, 20
+_bw.document.sync_text_width(_brow)
+_surface = QImage(812, 1218, QImage.Format_ARGB32); _surface.fill(Qt.white)
+_bw.canvas.render(_surface)
+_bbox = _ink_box(_surface, _brow)
+check("the Qt canvas draws a row of font F across the whole of its box",
+      _bbox is not None and _bbox[2] - _bbox[0] >= _brow.width - 12,
+      (_bbox, _brow.width))
 
 # --- printer_status: what the printer reports about itself -------------------
 # Every fixture below is either the ZPL manual's own worked example or a reply

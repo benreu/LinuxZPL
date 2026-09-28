@@ -58,6 +58,65 @@ RESIDENT_FONTS = [
     {'code': 'GS', 'name': 'Font GS', 'matrix': '24 x 24', 'kind': 'Symbols'},
 ]
 
+# The resident bitmap fonts' base character cell, H x W in dots, per head
+# resolution (the Programming Guide's Tables 35-37), and the fixed gap between
+# characters and the baseline's depth in the cell (Table 33). A bitmap font is
+# magnified by whole numbers only - ^AFN,36,20 prints F's 26 x 13 cell once
+# down and twice across, 26 x 26, with twice F's 3-dot gap after each
+# character - so a field in one is a row of cells, not a string that scales
+# to whatever ^A asks. Confirmed on a 203 dpi printer for F, in all three ^FP
+# directions: the gap runs along a row and never down a column.
+#
+# Table 33 gives one gap and baseline per font, measured against the 203 dpi
+# cell. Only E and H have a bigger cell at 300 and 600 dpi, and theirs are
+# scaled from it here - inferred, not from the manual; see FUNCTIONAL_SPEC.md
+# section 18. Fonts P-V have no gap in Table 33, and GS is ^GS's own, so none
+# of them is here.
+_BITMAP_203 = {'A': (9, 5, 1, 7), 'B': (11, 7, 2, 11), 'C': (18, 10, 2, 14),
+               'D': (18, 10, 2, 14), 'E': (28, 15, 5, 23), 'F': (26, 13, 3, 21),
+               'G': (60, 40, 8, 48), 'H': (21, 13, 6, 21)}
+_BITMAP_LARGER = {'E': (42, 20), 'H': (34, 22)}      # at 300 and 600 dpi
+MAX_MAGNIFICATION = 10
+
+
+class BitmapCell(NamedTuple):
+    """One character of a resident bitmap font as it prints: its magnified
+    cell, the gap after it along a row, and the baseline's depth in it."""
+    height: int
+    width: int
+    gap: int
+    baseline: int
+
+
+def bitmap_cell(code: str, height: int, width: int,
+                dpi: int = DEFAULT_DPI) -> Optional[BitmapCell]:
+    """The cell ^A<code>,<height>,<width> prints, or None for a font that
+    is not a resident bitmap font.
+
+    "The value is rounded to the nearest integer multiple of the font's base
+    height, then divided by the font's base height to give a magnification",
+    and the same across, from 1 to 10 - so ^AF,36 is 26 dots tall, not 36,
+    and ^AF,52 and ^AF,54 are the same 52.
+    """
+    base = _BITMAP_203.get((code or '').upper())
+    if base is None:
+        return None
+    base_h, base_w, gap, baseline = base
+    if dpi >= 300 and code.upper() in _BITMAP_LARGER:
+        larger_h, larger_w = _BITMAP_LARGER[code.upper()]
+        gap = int(round(gap * larger_w / base_w))
+        baseline = int(round(baseline * larger_h / base_h))
+        base_h, base_w = larger_h, larger_w
+
+    def magnification(value, size):
+        return max(1, min(MAX_MAGNIFICATION,
+                          int(max(0, value or 0) / size + 0.5)))
+
+    down = magnification(height, base_h)
+    across = magnification(width, base_w)
+    return BitmapCell(base_h * down, base_w * across, gap * across,
+                      baseline * down)
+
 # Where fonts live when fc-list can't be asked - fontconfig missing, broken,
 # or just not installed on a minimal system. Module-level so tests can
 # monkeypatch them without touching the real filesystem.

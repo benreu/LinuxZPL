@@ -664,10 +664,11 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
                         (stack - (rows - 1) * element.char_gap) / rows)))
                 if across:
                     element.font_width = element.font_width_for(
-                        run, document.font_path, shown)
+                        run, document.font_path, shown, document.dpi)
             else:
                 element.font_height = stack
-                element.font_width = element.font_width_for(run, document.font_path)
+                element.font_width = element.font_width_for(
+                    run, document.font_path, dpi=document.dpi)
             # Snap the box to what will actually print, so the outline the user
             # drags is the outline that comes out of the printer.
             document.sync_text_width(element)

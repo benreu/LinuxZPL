@@ -10,7 +10,7 @@ in this module, so they can be exercised without a display.
 import base64 as _b64
 import copy
 import io as _io
-from typing import Dict, List, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
                  ImageFont as PILImageFont)
@@ -227,6 +227,26 @@ class DesignElement:
                 self.y <= y <= self.y + self.height)
 
 
+class TextCell(NamedTuple):
+    """The character cell a text field is laid out in, in printed dots.
+
+    The ^A sizes and ^FP's gap for a field with a font file or in the scalable
+    font 0; for a resident bitmap font, the whole-number magnification the
+    printer rounds them to, whose own fixed gap runs along a row with ^FP's
+    and never down a column (fonts.bitmap_cell). `baseline` is the bitmap
+    font's own depth to it in the cell, or None where it has to be measured.
+    """
+    height: int
+    width: int
+    row_gap: int
+    column_gap: int
+    baseline: Optional[int]
+
+    def spacing(self, direction: str) -> int:
+        """The gap between characters running in ^FP's `direction`."""
+        return self.column_gap if direction == 'V' else self.row_gap
+
+
 class FieldBlock:
     """^FB - the block a piece of text is wrapped into.
 
@@ -328,7 +348,7 @@ class TextElement(DesignElement):
     MAX_CHAR_GAP = 9999
 
     def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
-                 font_height: int = 36, font_width: int = 20,
+                 font_height: int = 26, font_width: int = 26,
                  font_code: str = 'F', orientation: str = 'N',
                  field_number=None, field_prompt=None,
                  serial_start=None, serial_increment=None,
@@ -409,25 +429,82 @@ class TextElement(DesignElement):
         except Exception:
             return 0.0
 
-    def printed_width(self, default_font_path: Optional[str] = None,
-                      text=None) -> int:
-        """Width in dots this text will actually occupy on the printer.
+    def cell(self, default_font_path: Optional[str] = None,
+             dpi: int = zpl_fonts.DEFAULT_DPI) -> TextCell:
+        """The character cell this field prints in - see TextCell.
 
-        ^AF selects Zebra's built-in font A, which is fixed width, so
-        len(text) * font_width holds. ^A@ selects a downloaded TrueType, which
-        is proportional - every glyph has its own advance - so the string has
-        to be measured. Assuming fixed width there is what made "IIII" print
-        far narrower and "WWWW" far wider than the designer showed.
+        A resident bitmap font only applies with no font file, since a field
+        with one writes ^A@: the same test that used to fall back to the
+        fixed-width estimate, which drew ^AFN,36,20 as 20 dots a character at
+        36 tall where the printer prints 26 x 26 cells 32 dots apart.
+        """
+        bitmap = (None if (self.font_path or default_font_path)
+                  else zpl_fonts.bitmap_cell(self.font_code, self.font_height,
+                                             self.font_width, dpi))
+        if bitmap is None:
+            return TextCell(self.font_height, self.font_width, self.char_gap,
+                            self.char_gap, None)
+        return TextCell(bitmap.height, bitmap.width,
+                        self.char_gap + bitmap.gap, self.char_gap,
+                        bitmap.baseline)
+
+    def by_character(self, default_font_path: Optional[str] = None,
+                     dpi: int = zpl_fonts.DEFAULT_DPI) -> bool:
+        """Whether this field is laid out a character at a time: any ^FP
+        direction but H, any gap between characters - which every bitmap
+        font has - and not only the whole string at once."""
+        return (self.direction != 'H'
+                or bool(self.cell(default_font_path, dpi).row_gap))
+
+    def character_layout(self, default_font_path: Optional[str] = None,
+                         dpi: int = zpl_fonts.DEFAULT_DPI, text=None):
+        """(places, size, ends, measure, cell): where each character goes, in
+        the field's own upright frame, from the one layout every drawing path
+        and the box read (textraster.layout), and the measure and cell it was
+        laid out with."""
+        from . import textraster
+        shown = self.text if text is None else text
+        cell = self.cell(default_font_path, dpi)
+        gap = cell.spacing(self.direction)
+        measure, _font = textraster.measurer(
+            self.font_path or default_font_path, cell.height, cell.width, gap)
+        places, size, ends = textraster.layout(shown, measure, self.direction,
+                                               gap, cell.height)
+        return places, size, ends, measure, cell
+
+    def baseline(self, default_font_path: Optional[str] = None,
+                 dpi: int = zpl_fonts.DEFAULT_DPI) -> int:
+        """Dots from the field's top down to its first baseline, which is
+        what ^FT names: a bitmap font's own, or measured from the face."""
+        cell = self.cell(default_font_path, dpi)
+        if cell.baseline is not None:
+            return cell.baseline
+        from . import textraster
+        return textraster.baseline_offset(self.font_path or default_font_path,
+                                          self.font_height)
+
+    def printed_width(self, default_font_path: Optional[str] = None,
+                      text=None, dpi: int = zpl_fonts.DEFAULT_DPI) -> int:
+        """Width in dots this text will actually occupy on the printer, along
+        its row.
+
+        ^A0 with no font file is estimated as len(text) * font_width. ^A@
+        selects a downloaded TrueType, which is proportional - every glyph has
+        its own advance - so the string has to be measured. Assuming fixed
+        width there is what made "IIII" print far narrower and "WWWW" far
+        wider than the designer showed. A resident bitmap font is a row of its
+        magnified cells with its own gap between them.
         """
         shown = self.text if text is None else text
         font_path = self.font_path or default_font_path
-        if self.char_gap:
-            # ^FP's gap goes between characters, so they are measured one at
-            # a time, as the printer places them - the same arithmetic the
+        cell = self.cell(default_font_path, dpi)
+        if cell.row_gap:
+            # A gap goes between characters, so they are measured one at a
+            # time, as the printer places them - the same arithmetic the
             # layout they are drawn from does.
             from . import textraster
             measure, _font = textraster.measurer(
-                font_path, self.font_height, self.font_width, self.char_gap)
+                font_path, cell.height, cell.width, cell.row_gap)
             return max(1, round(measure(shown)))
         natural = self._measure(font_path, shown) if font_path else 0.0
         if natural <= 0:
@@ -438,15 +515,18 @@ class TextElement(DesignElement):
 
     def font_width_for(self, target_width: int,
                        default_font_path: Optional[str] = None,
-                       text=None) -> int:
+                       text=None, dpi: int = zpl_fonts.DEFAULT_DPI) -> int:
         """The font_width that makes this text print target_width dots wide.
 
         Top to bottom (^FPV) the width is the column's, which is its widest
         character; with a gap it is the characters' and the gaps between
-        them, and only the characters scale with the font.
+        them, and only the characters scale with the font. A bitmap font can
+        only be a whole number of its base width, so the nearest is chosen.
         """
         shown = self.text if text is None else text
         font_path = self.font_path or default_font_path
+        if self.cell(default_font_path, dpi).baseline is not None:
+            return self._bitmap_width_for(target_width, shown, dpi)
         if self.direction == 'V' or self.char_gap:
             from . import textraster
             pieces = textraster.clusters(shown) or [" "]
@@ -469,11 +549,33 @@ class TextElement(DesignElement):
             return max(1, round(target_width / max(1, len(shown))))
         return max(1, round(target_width * max(1, self.font_height) / natural))
 
+    def _bitmap_width_for(self, target_width: int, shown: str, dpi: int) -> int:
+        """The base width times whichever magnification lays `shown` out
+        nearest `target_width` - a column's width top to bottom, a row's
+        otherwise. The smaller wins a tie."""
+        from . import textraster
+        pieces = textraster.clusters(shown) or [" "]
+        base = zpl_fonts.bitmap_cell(self.font_code, 1, 1, dpi).width
+        best = None
+        for times in range(1, zpl_fonts.MAX_MAGNIFICATION + 1):
+            bitmap = zpl_fonts.bitmap_cell(self.font_code, self.font_height,
+                                           base * times, dpi)
+            if self.direction == 'V':
+                run = bitmap.width * max(len(piece) for piece in pieces)
+            else:
+                run = (len(shown) * bitmap.width + (len(pieces) - 1)
+                       * (bitmap.gap + self.char_gap))
+            miss = abs(run - target_width)
+            if best is None or miss < best[0]:
+                best = (miss, base * times)
+        return best[1]
+
     def rotated(self) -> bool:
         """Whether the text runs down or up the label rather than across it."""
         return self.orientation in ('R', 'B')
 
-    def default_block(self, default_font_path: Optional[str] = None) -> 'FieldBlock':
+    def default_block(self, default_font_path: Optional[str] = None,
+                      dpi: int = zpl_fonts.DEFAULT_DPI) -> 'FieldBlock':
         """A block that wraps this text where it already ends.
 
         Switching wrapping on should not move anything: the width is what the
@@ -481,9 +583,10 @@ class TextElement(DesignElement):
         unchanged, ready to be narrowed.
         """
         from . import textraster
+        cell = self.cell(default_font_path, dpi)
         measure, _font = textraster.measurer(
-            self.font_path or default_font_path, self.font_height,
-            self.font_width, self.char_gap)
+            self.font_path or default_font_path, cell.height, cell.width,
+            cell.row_gap)
         lines = (self.text or "").split(textraster.FORCED_BREAK)
         widest = max((measure(line) for line in lines), default=0)
         # Rounded up, not to nearest: a block a fraction of a dot narrower than
@@ -2360,26 +2463,24 @@ class Document:
         font_path = element.font_path or self.font_path
         shown = self.display_text(element)
         pinned = geometry.field_anchor(element)
+        by_character = element.by_character(self.font_path, self.dpi)
         if block is not None:
             # A block is sized by ^FB, not by the string: its width is fixed
             # and its height follows however many lines the text wraps into.
+            cell = element.cell(self.font_path, self.dpi)
             run, stack = textraster.block_size(
-                shown, font_path, element.font_height, element.font_width,
-                block, element.char_gap)
-        elif textraster.directed(element.direction, element.char_gap):
-            # ^FP lays the characters out one at a time, and its frame is
-            # whatever they fill: a column top to bottom, a row otherwise.
-            measure, _font = textraster.measurer(
-                font_path, element.font_height, element.font_width,
-                element.char_gap)
-            _places, (run, stack), element.ends = textraster.layout(
-                shown, measure, element.direction, element.char_gap,
-                element.font_height)
+                shown, font_path, cell.height, cell.width, block, cell.row_gap)
+        elif by_character:
+            # Laid out a character at a time - by ^FP, or in a bitmap font's
+            # cells - its frame is whatever they fill: a column top to bottom,
+            # a row otherwise.
+            _places, (run, stack), element.ends, _measure, _cell = \
+                element.character_layout(self.font_path, self.dpi, shown)
         else:
-            run, stack = (element.printed_width(self.font_path, shown),
+            run, stack = (element.printed_width(self.font_path, shown,
+                                                self.dpi),
                           element.font_height)
-        if block is None and not textraster.directed(element.direction,
-                                                     element.char_gap):
+        if block is None and not by_character:
             # Kept whatever the direction, so switching one to right to left
             # measures the anchor from where the characters already are.
             measure, _font = textraster.measurer(
@@ -2403,6 +2504,12 @@ class Document:
         if anchor != pinned:
             element.x = max(0, element.x + pinned[0] - anchor[0])
             element.y = max(0, element.y + pinned[1] - anchor[1])
+
+    def sync_all_text(self) -> None:
+        """Re-size every text element - after the resolution changes, since a
+        bitmap font's cell is the resolution's (fonts.bitmap_cell)."""
+        for element in self.elements:
+            self.sync_text_width(element)
 
     def set_font(self, font_path: str, font_family: str, printer_font_name: str):
         """Set the document-wide font."""

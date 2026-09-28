@@ -74,6 +74,13 @@ def _ellipse_path(context, x, y, width, height):
     context.restore()
 
 
+
+def _toy_baseline(cell) -> int:
+    """How far down its cell a toy-font character sits: a bitmap font's own
+    baseline, or just above the cell's foot for a face with none to go by."""
+    return cell.baseline if cell.baseline is not None else cell.height - 2
+
+
 class DesignCanvas(Gtk.DrawingArea):
     """Canvas widget for designing ZPL layouts with drag and drop.
 
@@ -412,9 +419,9 @@ class DesignCanvas(Gtk.DrawingArea):
         ^FR field.
         """
         block = getattr(element, 'block', None)
-        if block is not None or textraster.directed(element.direction,
-                                                    element.char_gap):
-            # A ^FB block, or a ^FP field laid out a character at a time, is
+        if block is not None or element.by_character(self.document.font_path,
+                                                     self.document.dpi):
+            # A ^FB block, or a field laid out a character at a time, is
             # rasterised at its printed size, so nothing further is scaled
             # here.
             shown = self.document.display_text(element)
@@ -602,8 +609,8 @@ class DesignCanvas(Gtk.DrawingArea):
 
         if not pil_rendered and block is not None:
             self._draw_text_block(context, element, font_path, block)
-        elif not pil_rendered and textraster.directed(element.direction,
-                                                      element.char_gap):
+        elif not pil_rendered and element.by_character(self.document.font_path,
+                                                      self.document.dpi):
             self._draw_text_directed(context, element, font_path)
         elif not pil_rendered:
             context.select_font_face(element.font_family or self.font_family or "monospace")
@@ -652,28 +659,30 @@ class DesignCanvas(Gtk.DrawingArea):
         The lines and where they sit still come from the shared rasteriser, so
         only the glyphs differ from what will print.
         """
+        # In the cell the field prints in, which for a bitmap font is not the
+        # ^A sizes but their whole-number magnification (TextElement.cell)
+        cell = element.cell(self.document.font_path, self.document.dpi)
         context.select_font_face(element.font_family or self.font_family or "monospace")
-        context.set_font_size(element.font_height)
-        gap = element.char_gap
-        measure, _font = textraster.measurer(font_path, element.font_height,
-                                             element.font_width, gap)
-        step = textraster.pitch(element.font_height, block)
+        context.set_font_size(cell.height)
+        gap = cell.row_gap
+        measure, _font = textraster.measurer(font_path, cell.height,
+                                             cell.width, gap)
+        step = textraster.pitch(cell.height, block)
         marked = textraster.wrap_marked(self.document.display_text(element), font_path,
-                                        element.font_height, element.font_width,
-                                        block, gap)
+                                        cell.height, cell.width, block, gap)
         for row, (line, last) in enumerate(marked):
             for piece, x in textraster.placements(line, measure, block, last):
                 if gap:
-                    # ^FP's gap goes between the characters, so they are
-                    # placed one at a time rather than stretched apart.
+                    # A gap goes between the characters, so they are placed
+                    # one at a time rather than stretched apart.
                     places, _size, _ends = textraster.layout(
-                        piece, measure, 'H', gap, element.font_height)
+                        piece, measure, 'H', gap, cell.height)
                     self._draw_cells(context, places, measure, x,
-                                     row * step, element.font_height)
+                                     row * step, _toy_baseline(cell))
                     continue
                 drawn = context.text_extents(piece).width or 1.0
                 context.save()
-                context.translate(x, row * step + element.font_height - 2)
+                context.translate(x, row * step + cell.height - 2)
                 context.scale(max(1.0, measure(piece)) / drawn, 1.0)
                 # show_text() draws from the current point, and the current
                 # point is part of the path, which save/restore does not carry.
@@ -685,28 +694,27 @@ class DesignCanvas(Gtk.DrawingArea):
                 context.restore()
 
     def _draw_text_directed(self, context, element, font_path):
-        """A ^FP field in the Cairo toy font, when it cannot be rasterised.
+        """A field laid out a character at a time, in the Cairo toy font,
+        when it cannot be rasterised - a ^FP field, or any in a bitmap font.
 
         The characters still go where the shared layout puts them - down a
-        column, right to left, or apart by the gap - so only the glyphs
-        differ from what will print, as with a block.
+        column, right to left, apart by the gap, or in a bitmap font's cells
+        - so only the glyphs differ from what will print, as with a block.
         """
+        places, _size, _ends, measure, cell = element.character_layout(
+            self.document.font_path, self.document.dpi,
+            self.document.display_text(element))
         context.select_font_face(element.font_family or self.font_family or "monospace")
-        context.set_font_size(element.font_height)
-        measure, _font = textraster.measurer(font_path, element.font_height,
-                                             element.font_width,
-                                             element.char_gap)
-        places, _size, _ends = textraster.layout(
-            self.document.display_text(element), measure, element.direction,
-            element.char_gap, element.font_height)
-        self._draw_cells(context, places, measure, 0, 0, element.font_height)
+        context.set_font_size(cell.height)
+        self._draw_cells(context, places, measure, 0, 0, _toy_baseline(cell))
 
-    def _draw_cells(self, context, places, measure, left, top, font_height):
-        """Draw each (character, x, y) of a layout, squeezed to its advance."""
+    def _draw_cells(self, context, places, measure, left, top, baseline):
+        """Draw each (character, x, y) of a layout, squeezed to its advance,
+        on a baseline `baseline` dots down its row."""
         for piece, x, y in places:
             drawn = context.text_extents(piece).x_advance or 1.0
             context.save()
-            context.translate(left + x, top + y + font_height - 2)
+            context.translate(left + x, top + y + baseline)
             context.scale(max(1.0, measure(piece)) / drawn, 1.0)
             # From the current point, which save/restore does not carry
             context.move_to(0, 0)

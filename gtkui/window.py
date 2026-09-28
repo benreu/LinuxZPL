@@ -3684,7 +3684,8 @@ class ZPLViewerWindow(Gtk.Window):
 
             # Wrapping (^FB)
             document = self.design_canvas.document
-            block = element.block or element.default_block(document.font_path)
+            block = element.block or element.default_block(
+                document.font_path, document.dpi)
 
             wrap_check = Gtk.CheckButton(label="Wrap the text into a block")
             wrap_check.set_active(element.block is not None)
@@ -3754,7 +3755,8 @@ class ZPLViewerWindow(Gtk.Window):
                         # A break typed into an element that never had a block
                         # still needs one, for the same reason. Sized to the
                         # longest line, so nothing moves.
-                        element.block = element.default_block(document.font_path)
+                        element.block = element.default_block(
+                            document.font_path, document.dpi)
 
                     self.design_canvas.sync_text_width(element)
 

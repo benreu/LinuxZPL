@@ -41,6 +41,13 @@ def to_qimage(pil_image) -> Optional[QImage]:
     return QImage(data, width, height, 4 * width, QImage.Format_RGBA8888).copy()
 
 
+def _toy_baseline(cell) -> int:
+    """How far down its cell a screen-face character sits: a bitmap font's
+    own baseline, or just above the cell's foot for a face with none to go
+    by."""
+    return cell.baseline if cell.baseline is not None else cell.height - 2
+
+
 class DesignCanvas(QWidget):
     """Canvas widget for designing ZPL layouts with drag and drop."""
 
@@ -338,11 +345,12 @@ class DesignCanvas(QWidget):
             painter.setCompositionMode(QPainter.CompositionMode_Difference)
 
         raster = None
-        directed = textraster.directed(element.direction, element.char_gap)
+        directed = element.by_character(self.document.font_path,
+                                        self.document.dpi)
         if block is not None or directed:
-            # A ^FB block, or a ^FP field laid out a character at a time, is
-            # rasterised at its printed size, so nothing further is scaled
-            # here.
+            # A ^FB block, or a field laid out a character at a time - by ^FP
+            # or in a bitmap font's cells - is rasterised at its printed size,
+            # so nothing further is scaled here.
             shown = self.document.display_text(element)
             if not font_path:
                 laid = None
@@ -402,64 +410,65 @@ class DesignCanvas(QWidget):
         The lines and where they sit still come from the shared rasteriser, so
         only the glyphs differ from what will print.
         """
+        # In the cell the field prints in, which for a bitmap font is not the
+        # ^A sizes but their whole-number magnification (TextElement.cell)
+        cell = element.cell(self.document.font_path, self.document.dpi)
         family = element.font_family or self.document.font_family or "monospace"
         font = QFont(family)
-        font.setPixelSize(max(1, element.font_height))
+        font.setPixelSize(max(1, cell.height))
         painter.setFont(font)
         painter.setPen(QColor(255, 255, 255) if reverse else QColor(0, 0, 0))
         metrics = QFontMetricsF(font)
-        gap = element.char_gap
-        measure, _font = textraster.measurer(font_path, element.font_height,
-                                             element.font_width, gap)
-        step = textraster.pitch(element.font_height, block)
+        gap = cell.row_gap
+        measure, _font = textraster.measurer(font_path, cell.height,
+                                             cell.width, gap)
+        step = textraster.pitch(cell.height, block)
         marked = textraster.wrap_marked(self.document.display_text(element), font_path,
-                                        element.font_height, element.font_width,
-                                        block, gap)
+                                        cell.height, cell.width, block, gap)
         for row, (line, last) in enumerate(marked):
             for piece, x in textraster.placements(line, measure, block, last):
                 if gap:
-                    # ^FP's gap goes between the characters, so they are
-                    # placed one at a time rather than stretched apart.
+                    # A gap goes between the characters, so they are placed
+                    # one at a time rather than stretched apart.
                     places, _size, _ends = textraster.layout(
-                        piece, measure, 'H', gap, element.font_height)
+                        piece, measure, 'H', gap, cell.height)
                     self._draw_cells(painter, metrics, places, measure, x,
-                                     row * step, element.font_height)
+                                     row * step, _toy_baseline(cell))
                     continue
                 drawn = metrics.horizontalAdvance(piece) or 1.0
                 painter.save()
-                painter.translate(x, row * step + element.font_height - 2)
+                painter.translate(x, row * step + cell.height - 2)
                 painter.scale(max(1.0, measure(piece)) / drawn, 1.0)
                 painter.drawText(QPointF(0, 0), piece)
                 painter.restore()
 
     def _draw_text_directed(self, painter, element, font_path, reverse=False):
-        """A ^FP field in a Qt face, when it cannot be rasterised.
+        """A field laid out a character at a time, in a Qt face, when it
+        cannot be rasterised - a ^FP field, or any in a bitmap font.
 
         The characters still go where the shared layout puts them - down a
-        column, right to left, or apart by the gap - so only the glyphs
-        differ from what will print, as with a block.
+        column, right to left, apart by the gap, or in a bitmap font's cells
+        - so only the glyphs differ from what will print, as with a block.
         """
+        places, _size, _ends, measure, cell = element.character_layout(
+            self.document.font_path, self.document.dpi,
+            self.document.display_text(element))
         family = element.font_family or self.document.font_family or "monospace"
         font = QFont(family)
-        font.setPixelSize(max(1, element.font_height))
+        font.setPixelSize(max(1, cell.height))
         painter.setFont(font)
         painter.setPen(QColor(255, 255, 255) if reverse else QColor(0, 0, 0))
-        measure, _font = textraster.measurer(font_path, element.font_height,
-                                             element.font_width,
-                                             element.char_gap)
-        places, _size, _ends = textraster.layout(
-            self.document.display_text(element), measure, element.direction,
-            element.char_gap, element.font_height)
         self._draw_cells(painter, QFontMetricsF(font), places, measure, 0, 0,
-                         element.font_height)
+                         _toy_baseline(cell))
 
     def _draw_cells(self, painter, metrics, places, measure, left, top,
-                    font_height):
-        """Draw each (character, x, y) of a layout, squeezed to its advance."""
+                    baseline):
+        """Draw each (character, x, y) of a layout, squeezed to its advance,
+        on a baseline `baseline` dots down its row."""
         for piece, x, y in places:
             drawn = metrics.horizontalAdvance(piece) or 1.0
             painter.save()
-            painter.translate(left + x, top + y + font_height - 2)
+            painter.translate(left + x, top + y + baseline)
             painter.scale(max(1.0, measure(piece)) / drawn, 1.0)
             painter.drawText(QPointF(0, 0), piece)
             painter.restore()

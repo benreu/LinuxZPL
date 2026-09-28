@@ -84,8 +84,8 @@ every member's path, and ungrouping takes the outermost id off again (§6.2).
 | Property | Default |
 |---|---|
 | `text` | `"New Text"` |
-| `font_height` | 36 dots |
-| `font_width` | 20 dots |
+| `font_height` | 26 dots |
+| `font_width` | 26 dots - with `F`, a size the font prints exactly: its 26 × 13 cell once down and twice across |
 | `font_path`, `font_family`, `printer_font_name` | none (uses the document font, or the printer's built-in font) |
 | `font_code` | `F` - the built-in font designator, written as `^A<code>`. `0` is the scalable font most other tools use |
 | `orientation` | `N` - `^A`'s orientation letter: `N`, `R` (90°), `I` (180°), `B` (270°). A letter the file leaves out is `^FW`'s (§8.3) |
@@ -93,7 +93,8 @@ every member's path, and ungrouping takes the outermost id off again (§6.2).
 | `direction` | `H` - `^FP`'s direction: `H` left to right, `V` top to bottom, `R` right to left |
 | `char_gap` | 0 - `^FP`'s extra dots between characters, 0-9999 |
 
-`height` always equals `font_height` **unless the element has a block**. **`width` is derived, never set
+`height` always equals `font_height` **unless the element has a block or is in a
+bitmap font**. **`width` is derived, never set
 directly**, and must be recomputed whenever the text, the font or either font
 dimension changes:
 
@@ -101,12 +102,35 @@ dimension changes:
   string with that font at em size = `font_height`, then multiply by
   `font_width / font_height` (the printer scales the em square to
   `font_width × font_height`). Round to an integer, minimum 1.
-- **Without one** (Zebra's built-in font A, which is fixed-width):
-  `len(text) × font_width`.
+- **Without one, in a resident bitmap font** (`A` to `H`, `F` being the
+  default): a row of the font's magnified cells. A bitmap font is magnified
+  by whole numbers only - each of `font_height` and `font_width` is rounded
+  to the nearest whole multiple (1 to 10) of the font's base cell, from the
+  manual's tables for the head's resolution - and it puts its own fixed gap,
+  magnified with the width, between each character and the next. So
+  `^AFN,36,20` is F's 26 × 13 cell once down and twice across, 26 × 26, with
+  6 dots between cells: `HHHHHHHHHH` is `10 × 26 + 9 × 6` = 314 dots wide and
+  26 tall, not the 200 × 36 the two numbers suggest. Confirmed against a 203
+  dpi printer, which printed it 312 dots wide, 32 dots a character. The file
+  keeps the sizes it gave; only the box and the drawing snap.
+- **Without one, in the scalable font `0`**: `len(text) × font_width`.
 
 Getting this wrong is the single most visible defect a port can have: assuming
 fixed width for a proportional font makes `IIII` print far narrower and `WWWW`
-far wider than the canvas showed.
+far wider than the canvas showed, and taking a bitmap font's sizes at their
+word made every default-font field on the canvas 36 tall and 20 a character
+where it printed 26 tall and 32.
+
+**A bitmap font's field is laid out a character at a time, in every
+direction**, as a `^FP` field is (below): each character one cell, the font's
+gap along a row, and none down a column - the printer stacked `^FPV` rows
+exactly a cell apart. `^FT` names the font's own baseline, magnified with its
+height (21 of F's 26 dots). A resize handle asks for a height and a width and
+the box snaps to the nearest whole magnification, so dragging steps through
+26, 52, 78 rather than moving smoothly. A bitmap cell belongs to the head's
+resolution - only `E` and `H` differ, at 300 and 600 dpi - so settling a
+design on another printer re-sizes such a field even where no dot is
+rescaled.
 
 **A field block replaces both derivations.** `^FB` gives a width in dots, a
 maximum number of lines, extra spacing between them, a justification
@@ -171,12 +195,13 @@ letter's cell.
   font width, each from the one side the handle moves, since a column one
   character wide is often narrower than the minimum a resize clamps to.
 
-`H` with no gap is the whole-string measurement above, unchanged. Anything
+`H` with no gap is the whole-string measurement above, unchanged, except in a
+bitmap font, which has a gap of its own. Anything
 else is measured a character at a time, which is also how every drawing path
 places it: the canvases and the preview all draw from one layout
 (`textraster.layout`), so none of them can put a character somewhere the box
-does not. Without a font file each character is the built-in font's
-`font_width` cell. Inside a block the gap widens every line and so wraps it
+does not. Without a font file each character is a bitmap font's magnified
+cell, or font `0`'s `font_width`. Inside a block the gap widens every line and so wraps it
 sooner; the direction is carried but a block is always laid out left to right
 (§18).
 
@@ -2178,7 +2203,7 @@ message — never a swallowed exception or a placeholder.
 | Default label | the size last chosen in Label Settings, 4 × 6 inches until one is, at the configured dpi |
 | Default printer | `192.168.50.21:9100`, 203 dpi |
 | Supported resolutions | 203, 300, 600 dpi |
-| Text | 36 dot height, 20 dot width, `"New Text"` |
+| Text | `^AF`, 26 dot height, 26 dot width - font F once down and twice across, so it prints at the size it says - `"New Text"` |
 | Text dialog limits | font height and width 8–500 dots, character gap 0–9999 dots |
 | Frame | 200 × 150 dots, 2 dot thickness |
 | Frame dialog limits | width 10–800, height 10–1200, thickness 1 to `min(w,h)/2` |
@@ -2232,7 +2257,19 @@ rather than requirements:
 - **Canvas text is truncated to the first 20 characters for display**, while
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
-  drawn whole, wrapped, whether or not a font file is available.
+  drawn whole, wrapped, whether or not a font file is available, and so is
+  text in a bitmap font or with a `^FP` direction or gap, which is laid out a
+  character at a time.
+- **A bitmap font is drawn in a screen face, not in its own bitmap.** Its
+  cells, the gap between them and its baseline are the printer's (§3.3); the
+  glyph in each cell is a screen face squeezed to it, so the letters' shapes
+  differ from the print while their places and sizes do not.
+- **Fonts `E` and `H` at 300 and 600 dpi take gaps and baselines scaled from
+  their 203 dpi ones.** The manual gives their bigger cells there (42 × 20 and
+  34 × 22) but one gap and baseline per font, which match the 203 dpi cells.
+  Fonts `P` to `V`, listed in the manual's size tables with no gap, are not
+  modelled as bitmap fonts: with no font file they are estimated as font `0`
+  is, `len(text) × font_width`.
 - **Twenty-three symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
   the postal codes and the stacked family are still not offered, and no
   symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are

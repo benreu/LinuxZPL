@@ -479,7 +479,8 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     clear_btn.clicked.connect(on_clear)
 
     # --- wrapping (^FB) ---
-    block = element.block or element.default_block(document.font_path)
+    block = element.block or element.default_block(document.font_path,
+                                                   document.dpi)
 
     wrap_check = QCheckBox("Wrap the text into a block")
     wrap_check.setObjectName("wrap")
@@ -561,7 +562,8 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
             # A break typed into an element that never had a block still
             # needs one, for the same reason. Sized to the longest line,
             # so nothing moves.
-            element.block = element.default_block(document.font_path)
+            element.block = element.default_block(document.font_path,
+                                                  document.dpi)
 
         if chosen['path'] != element.font_path:
             if chosen['path']:

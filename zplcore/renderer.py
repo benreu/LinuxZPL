@@ -48,6 +48,9 @@ class ZPLRenderer:
         self.is_barcode_mode = False
         self.current_font_width = 0
         self.current_font_orientation = 'N'
+        # ^A's font designator: a resident bitmap font prints in whole
+        # magnifications of its cell, which the scalable 0 does not
+        self.current_font_code = parser.DEFAULT_FONT['code']
         self.current_block = None
         # ^CF's font, for any field that names none of its own
         self.default_font = dict(parser.DEFAULT_FONT)
@@ -128,6 +131,7 @@ class ZPLRenderer:
         """
         self.current_font_size = self.default_font['height']
         self.current_font_width = self.default_font['width']
+        self.current_font_code = self.default_font['code']
         self.current_font_orientation = self.default_orientation
         self.current_field_font_path = None
 
@@ -226,7 +230,7 @@ class ZPLRenderer:
         return geometry.justified_origin(self.current_x, run,
                                          self.current_justify)
 
-    def _turned(self, panel, run: int, stack: int):
+    def _turned(self, panel, run: int, stack: int, baseline=None):
         """Paste a drawn panel onto the label, turned to face the right way.
 
         PIL cannot rotate what has not been drawn, so text goes into its own
@@ -245,8 +249,9 @@ class ZPLRenderer:
         angle = geometry.text_layout(element)['angle']
         if angle:
             panel = panel.rotate(-angle, expand=True)
-        offset = textraster.baseline_offset(self._font_path(),
-                                            self.current_font_size)
+        offset = (baseline if baseline is not None else
+                  textraster.baseline_offset(self._font_path(),
+                                             self.current_font_size))
         pos = (self._left(run), self._top(offset))
         if self.current_reverse:
             self._invert_under(panel, pos)
@@ -262,14 +267,10 @@ class ZPLRenderer:
         ^A0N,40,80 drew identically - the same 178 dots, where the design said
         70 and 560.
         """
-        if textraster.directed(self.current_direction, self.current_char_gap):
-            self._render_directed(text)
+        element = self._text_element(text)
+        if element.by_character(self.custom_font_path, self.dpi):
+            self._render_directed(element)
             return
-        element = TextElement(self.current_x, self.current_y, text,
-                              self.current_font_size,
-                              self.current_font_width or self.current_font_size,
-                              orientation=self.current_font_orientation)
-        element.font_path = self.current_field_font_path
         run = element.printed_width(self.custom_font_path)
 
         font = self._get_font(self.current_font_size)
@@ -290,46 +291,56 @@ class ZPLRenderer:
             panel = panel.resize((max(1, run), stack), Image.LANCZOS)
         self._turned(panel, run, stack)
 
-    def _render_directed(self, text: str):
-        """A ^FP field: laid out a character at a time by the layout both
-        canvases draw, and placed by the anchor the parser reads its ^FO with.
+    def _text_element(self, text: str) -> TextElement:
+        """The field being drawn, as the element the parser builds for it -
+        its font, cell, direction and justification - so the preview sizes
+        it by the same rules the canvas's box comes from."""
+        element = TextElement(self.current_x, self.current_y, text,
+                              self.current_font_size,
+                              self.current_font_width or self.current_font_size,
+                              font_code=self.current_font_code,
+                              orientation=self.current_font_orientation,
+                              direction=self.current_direction,
+                              char_gap=self.current_char_gap)
+        element.font_path = self.current_field_font_path
+        element.justify = self.current_justify
+        return element
+
+    def _render_directed(self, element: TextElement):
+        """A field laid out a character at a time - by ^FP, or in a bitmap
+        font's cells - by the layout both canvases draw, and placed by the
+        anchor the parser reads its ^FO with.
+
+        Laid out by the metrics the parser's element was sized by - a bitmap
+        font's cells, or the fixed-width estimate for a field with no font
+        file of its own - and drawn in whatever face this has.
 
         The raster is padded past its frame on the right and at the bottom,
         for descenders and overhangs, so a turn moves the frame's corner away
         from the panel's; the paste position puts it back where the canvas's
         own rotation about the frame's corner lands it.
         """
+        text = element.text
         font_path = self._font_path()
-        size = self.current_font_size
-        font_width = self.current_font_width or size
-        direction, gap = self.current_direction, self.current_char_gap
-        # Laid out by the metrics the parser's element was sized by - none,
-        # for a field with no font file of its own, which is the built-in
-        # fixed-width estimate - and drawn in whatever face this has.
-        measure, _font = textraster.measurer(
-            self.current_field_font_path or self.custom_font_path, size,
-            font_width, gap)
-        drawn = textraster.raster_directed(text, font_path, size, font_width,
-                                           direction, gap, measure=measure)
+        _places, (run, stack), ends, measure, cell = element.character_layout(
+            self.custom_font_path, self.dpi)
+        drawn = textraster.raster_directed(
+            text, font_path, cell.height, cell.width, element.direction,
+            cell.spacing(element.direction), measure=measure)
         if drawn is None:
-            # No face to lay out with: the characters still print, in a row
-            self.current_direction, self.current_char_gap = 'H', 0
-            self._render_text(text)
+            # No face at all to draw with: the characters still print, in
+            # the one the imaging library carries
+            self.draw.text((self.current_x, self.current_y), text,
+                           fill='black', font=self._get_font(cell.height))
             return
 
-        _places, (run, stack), ends = textraster.layout(text, measure,
-                                                        direction, gap, size)
-        element = TextElement(self.current_x, self.current_y, text, size,
-                              font_width,
-                              orientation=self.current_font_orientation,
-                              direction=direction, char_gap=gap)
         element.width, element.height = ((stack, run) if element.rotated()
                                          else (run, stack))
         element.ends = ends
-        element.justify = self.current_justify
         dx, dy = geometry.field_anchor(element)
         left = self.current_x - dx
-        top = self._top(textraster.baseline_offset(font_path, size)) - dy
+        top = self._top(cell.baseline if cell.baseline is not None else
+                        textraster.baseline_offset(font_path, cell.height)) - dy
 
         # The ink alone, as the mask ^FR inverts under or black is pasted
         # through - so the padding covers nothing already on the label.
@@ -357,29 +368,37 @@ class ZPLRenderer:
         """
         block = self.current_block
         font_path = self._font_path()
-        font_width = self.current_font_width or self.current_font_size
+        # Wrapped by the metrics the parser sized the block by, as
+        # _render_directed lays a line out: a bitmap font's cells, or the
+        # fixed-width estimate for a field with no font file of its own.
+        # Wrapping by the stand-in face instead broke a font-less block's
+        # lines somewhere the canvas did not.
+        cell = self._text_element(text).cell(self.custom_font_path, self.dpi)
+        measure, _font = textraster.measurer(
+            self.current_field_font_path or self.custom_font_path,
+            cell.height, cell.width, cell.row_gap)
         # A 0 background and 255 ink doubles as _invert_under()'s mask when
         # reversed - _turned() does the actual inverting - and is the normal
         # black-on-white panel otherwise.
         bg, ink = (0, (255, 255, 255, 255)) if self.current_reverse \
             else (255, (0, 0, 0, 255))
-        drawn = textraster.raster_block(text, font_path, self.current_font_size,
-                                        font_width, block, ink,
-                                        self.current_char_gap)
+        drawn = textraster.raster_block(text, font_path, cell.height,
+                                        cell.width, block, ink, cell.row_gap,
+                                        measure)
         if drawn is not None:
             panel = Image.new('L', drawn.size, bg)
             panel.paste(drawn.convert('L'), (0, 0), drawn)
-            self._turned(panel, drawn.width, drawn.height)
+            self._turned(panel, drawn.width, drawn.height, cell.baseline)
             return
 
         # No usable font file, so there are no glyph metrics to raster with;
         # the lines still go where they belong. There is no panel here to
         # double as a mask, so one is built by hand, per line.
-        font = self._get_font(self.current_font_size)
-        step = textraster.pitch(self.current_font_size, block)
+        font = self._get_font(cell.height)
+        step = textraster.pitch(cell.height, block)
         for row, line in enumerate(textraster.wrap(
-                text, font_path, self.current_font_size, font_width, block,
-                self.current_char_gap)):
+                text, font_path, cell.height, cell.width, block,
+                cell.row_gap, measure)):
             y = self.current_y + row * step
             if self.current_reverse:
                 box = self.draw.textbbox((0, 0), line, font=font)
@@ -859,6 +878,7 @@ class ZPLRenderer:
             self.current_font_orientation = font['orientation']
             self.current_font_size = font['height']
             self.current_font_width = font['width']
+            self.current_font_code = font['code']
             self.current_field_font_path = (self.font_registry.get(font['name'])
                                             if font['name'] else None)
         elif command == 'FR':

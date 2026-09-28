@@ -1438,9 +1438,8 @@ def _apply_typeset(element, doc) -> None:
     every time such a label was opened and saved.
     """
     if element.element_type == 'text':
-        from . import textraster
-        offset = textraster.baseline_offset(
-            element.font_path or doc.font_path, element.font_height)
+        # A bitmap font's own baseline, magnified with it; a face's measured
+        offset = element.baseline(doc.font_path, doc.dpi)
     elif element.element_type == 'graphic_symbol':
         # GS has a baseline of its own, three quarters of the way down
         offset = element.baseline_offset()

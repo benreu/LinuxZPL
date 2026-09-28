@@ -570,7 +570,9 @@ check("a rotated fallback field still stretches with font_width",
 # layout gives and write what the dialog was told.
 
 fp_el = document.add_text_element("ABCD")
-fp_el.font_height, fp_el.font_width = 30, 20
+# The scalable font 0, whose fixed-width estimate keeps the arithmetic plain;
+# the bitmap fonts' own cells are test_core's
+fp_el.font_code, fp_el.font_height, fp_el.font_width = '0', 30, 20
 window.on_element_double_clicked(None, fp_el)
 fp_dialog = window._editors[id(fp_el)]
 fp_combos = _find_all(fp_dialog.get_content_area(), Gtk.ComboBoxText)
