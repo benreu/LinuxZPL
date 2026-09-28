@@ -2462,8 +2462,11 @@ class Document:
                         fresh += 1
                 clone.group = tuple(renumbered[gid] for gid in clone.group)
             # Measured against this label's font, which a pasted field with
-            # none of its own now prints in.
+            # none of its own now prints in - and a MaxiCode drawn for this
+            # label's head, which a paste from another resolution, or from
+            # text that names none, did not come in drawn for.
             self.sync_text_width(clone)
+            self._stamp_dpi(clone)
 
         x, y, width, height = geometry.selection_bounds(copies)
 

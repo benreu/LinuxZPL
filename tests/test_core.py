@@ -2578,6 +2578,20 @@ check("rescaling to 600 dpi moves it and re-draws it, not scales it",
 _new_doc = Document(812, 1218, dpi=300)
 check("a barcode added to a 300 dpi label is drawn for it",
       _new_doc.add_barcode_element().dpi == 300)
+# A paste reads its elements through the parser, which draws them for the
+# resolution the text names - or 203 when it names none. Either way they land
+# on this label, so a MaxiCode is re-drawn for this label's head.
+_copied_from = zpl_parser.parse_zpl(_UPS_LABEL)[0]
+_copied_from.selection = list(_copied_from.elements)
+for _how, _text in (("copied from a 203 dpi label", _copied_from.copy_zpl()),
+                    ("from ZPL that names no resolution", _UPS_LABEL)):
+    _into = Document(1200, 1800, dpi=300)
+    _into.paste_zpl(_text)
+    check(f"a MaxiCode pasted into a 300 dpi label {_how} is drawn for it",
+          (_into.elements[0].dpi, _into.elements[0].width,
+           _into.elements[0].height) == (300, 333, 315),
+          (_into.elements[0].dpi, _into.elements[0].width,
+           _into.elements[0].height))
 
 # No handles, and nothing a drag or a group resize could ask of it.
 _fixed_doc = zpl_parser.parse_zpl(_UPS_LABEL)[0]

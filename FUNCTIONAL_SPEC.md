@@ -1489,7 +1489,9 @@ since a paste at the wrong head's dots is never what a paste means — and the
 status bar says so: *"Pasted 1 element - rescaled from 300 to 203 dpi"*. Text
 that records no resolution is taken dot for dot. That is not §11's rule for a
 file, which assumes 203: a file is opened on its own, whereas a paste is into
-a label whose resolution the person pasting already knows.
+a label whose resolution the person pasting already knows. A MaxiCode is the
+exception either way: it has only the one size a printer prints it at, so it
+is re-drawn for this label's head (§3.3) whatever the text records.
 
 ---
 
