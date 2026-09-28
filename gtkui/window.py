@@ -26,7 +26,8 @@ from zplcore import textraster
 from zplcore import graphic_symbols
 from zplcore.model import (DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
-                           TEXT_JUSTIFICATIONS, BarcodeElement,
+                           TEXT_DIRECTIONS, TEXT_JUSTIFICATIONS,
+                           BarcodeElement,
                            CircleElement, DiagonalLineElement, Document,
                            EllipseElement, FieldBlock, FrameElement,
                            GraphicSymbolElement, ImageElement,
@@ -3605,6 +3606,15 @@ class ZPLViewerWindow(Gtk.Window):
                 ORIENTATIONS, element.orientation)
             make_row("Orientation:", orientation_combo)
 
+            # ^FP: which way the characters run inside that turn, and how
+            # far apart
+            direction_combo, direction_codes = _make_combo(
+                TEXT_DIRECTIONS, element.direction)
+            make_row("Direction:", direction_combo)
+
+            gap_spin = _make_spin(element.char_gap, 0, TextElement.MAX_CHAR_GAP)
+            make_row("Character Gap:", gap_spin)
+
             fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
             fr_check.set_active(element.reverse_print)
             make_row("Reverse:", fr_check)
@@ -3702,6 +3712,9 @@ class ZPLViewerWindow(Gtk.Window):
             def on_wrap_toggled(btn):
                 for field in block_fields:
                     field.set_sensitive(btn.get_active())
+                # The manual does not say what ^FB does with a direction, so
+                # a block keeps whichever it has and offers no other.
+                direction_combo.set_sensitive(not btn.get_active())
 
             on_wrap_toggled(wrap_check)
             wrap_check.connect("toggled", on_wrap_toggled)
@@ -3717,6 +3730,9 @@ class ZPLViewerWindow(Gtk.Window):
                     element.font_width = int(width_spin.get_value())
                     element.orientation = orientation_codes[
                         orientation_combo.get_active()]
+                    element.direction = direction_codes[
+                        direction_combo.get_active()]
+                    element.char_gap = int(gap_spin.get_value())
                     element.reverse_print = fr_check.get_active()
 
                     if wrap_check.get_active():

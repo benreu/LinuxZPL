@@ -33,7 +33,8 @@ from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
                            DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
-                           TEXT_JUSTIFICATIONS, CircleElement,
+                           TEXT_DIRECTIONS, TEXT_JUSTIFICATIONS,
+                           CircleElement,
                            DiagonalLineElement, Document, EllipseElement,
                            FieldBlock, FrameElement, GraphicSymbolElement,
                            TextElement, graphic_symbol_choices)
@@ -421,6 +422,22 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
+    # ^FP: which way the characters run inside that turn, and how far apart
+    direction_combo = QComboBox()
+    direction_combo.setObjectName("direction")
+    for label, code in TEXT_DIRECTIONS:
+        direction_combo.addItem(label, code)
+    ways = [code for _label, code in TEXT_DIRECTIONS]
+    direction_combo.setCurrentIndex(ways.index(element.direction)
+                                    if element.direction in ways else 0)
+    form.addRow("Direction:", direction_combo)
+
+    gap_spin = QSpinBox()
+    gap_spin.setObjectName("char_gap")
+    gap_spin.setRange(0, TextElement.MAX_CHAR_GAP)
+    gap_spin.setValue(element.char_gap)
+    form.addRow("Character Gap:", gap_spin)
+
     fr_check = QCheckBox("Reverse print (^FR)")
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
@@ -508,6 +525,9 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     def sync_block_fields():
         for field in block_fields:
             field.setEnabled(wrap_check.isChecked())
+        # The manual does not say what ^FB does with a direction, so a block
+        # keeps whichever it has and offers no other.
+        direction_combo.setEnabled(not wrap_check.isChecked())
 
     sync_block_fields()
     wrap_check.stateChanged.connect(sync_block_fields)
@@ -519,6 +539,8 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
         element.orientation = orientation_combo.currentData()
+        element.direction = direction_combo.currentData()
+        element.char_gap = gap_spin.value()
         element.height = element.font_height
         element.reverse_print = fr_check.isChecked()
 

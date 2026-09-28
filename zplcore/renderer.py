@@ -61,6 +61,9 @@ class ZPLRenderer:
         self.unsupported_field = False
         # ^FR: the current field prints in reverse
         self.current_reverse = False
+        # ^FP: the current field's direction and extra dots between characters
+        self.current_direction = 'H'
+        self.current_char_gap = 0
         # A ^GB's, ^GC's, ^GD's or ^GE's (command, params), held until ^FS so
         # a ^FR that comes after it in the same field is already known by the
         # time it is drawn.
@@ -259,6 +262,9 @@ class ZPLRenderer:
         ^A0N,40,80 drew identically - the same 178 dots, where the design said
         70 and 560.
         """
+        if textraster.directed(self.current_direction, self.current_char_gap):
+            self._render_directed(text)
+            return
         element = TextElement(self.current_x, self.current_y, text,
                               self.current_font_size,
                               self.current_font_width or self.current_font_size,
@@ -284,6 +290,63 @@ class ZPLRenderer:
             panel = panel.resize((max(1, run), stack), Image.LANCZOS)
         self._turned(panel, run, stack)
 
+    def _render_directed(self, text: str):
+        """A ^FP field: laid out a character at a time by the layout both
+        canvases draw, and placed by the anchor the parser reads its ^FO with.
+
+        The raster is padded past its frame on the right and at the bottom,
+        for descenders and overhangs, so a turn moves the frame's corner away
+        from the panel's; the paste position puts it back where the canvas's
+        own rotation about the frame's corner lands it.
+        """
+        font_path = self._font_path()
+        size = self.current_font_size
+        font_width = self.current_font_width or size
+        direction, gap = self.current_direction, self.current_char_gap
+        # Laid out by the metrics the parser's element was sized by - none,
+        # for a field with no font file of its own, which is the built-in
+        # fixed-width estimate - and drawn in whatever face this has.
+        measure, _font = textraster.measurer(
+            self.current_field_font_path or self.custom_font_path, size,
+            font_width, gap)
+        drawn = textraster.raster_directed(text, font_path, size, font_width,
+                                           direction, gap, measure=measure)
+        if drawn is None:
+            # No face to lay out with: the characters still print, in a row
+            self.current_direction, self.current_char_gap = 'H', 0
+            self._render_text(text)
+            return
+
+        _places, (run, stack), ends = textraster.layout(text, measure,
+                                                        direction, gap, size)
+        element = TextElement(self.current_x, self.current_y, text, size,
+                              font_width,
+                              orientation=self.current_font_orientation,
+                              direction=direction, char_gap=gap)
+        element.width, element.height = ((stack, run) if element.rotated()
+                                         else (run, stack))
+        element.ends = ends
+        element.justify = self.current_justify
+        dx, dy = geometry.field_anchor(element)
+        left = self.current_x - dx
+        top = self._top(textraster.baseline_offset(font_path, size)) - dy
+
+        # The ink alone, as the mask ^FR inverts under or black is pasted
+        # through - so the padding covers nothing already on the label.
+        mask = drawn.getchannel('A')
+        wide, tall = mask.size
+        angle = geometry.text_layout(element)['angle']
+        if angle:
+            mask = mask.rotate(-angle, expand=True)
+        shift = {90: (stack - tall, 0),
+                 180: (run - wide, stack - tall),
+                 270: (0, run - wide)}.get(angle, (0, 0))
+        pos = (left + shift[0], top + shift[1])
+        if self.current_reverse:
+            self._invert_under(mask, pos)
+        else:
+            self.image.paste((0, 0, 0), pos, mask)
+
     def _render_block(self, text: str):
         """Draw text wrapped into the ^FB block, so the preview matches.
 
@@ -301,7 +364,8 @@ class ZPLRenderer:
         bg, ink = (0, (255, 255, 255, 255)) if self.current_reverse \
             else (255, (0, 0, 0, 255))
         drawn = textraster.raster_block(text, font_path, self.current_font_size,
-                                        font_width, block, ink)
+                                        font_width, block, ink,
+                                        self.current_char_gap)
         if drawn is not None:
             panel = Image.new('L', drawn.size, bg)
             panel.paste(drawn.convert('L'), (0, 0), drawn)
@@ -314,7 +378,8 @@ class ZPLRenderer:
         font = self._get_font(self.current_font_size)
         step = textraster.pitch(self.current_font_size, block)
         for row, line in enumerate(textraster.wrap(
-                text, font_path, self.current_font_size, font_width, block)):
+                text, font_path, self.current_font_size, font_width, block,
+                self.current_char_gap)):
             y = self.current_y + row * step
             if self.current_reverse:
                 box = self.draw.textbbox((0, 0), line, font=font)
@@ -630,6 +695,8 @@ class ZPLRenderer:
         self.current_block = None
         self.unsupported_field = False
         self.current_reverse = False
+        self.current_direction = 'H'
+        self.current_char_gap = 0
         self.hex_indicator = None
         self.pending_frame = None
         self.pending_symbol = None
@@ -832,6 +899,11 @@ class ZPLRenderer:
         elif command == 'FB':
             # Field block: the text that follows is wrapped into it
             self.current_block = FieldBlock.from_zpl(params)
+        elif command == 'FP':
+            # Field parameter: which way this field's characters run, and how
+            # far apart - read the parser's way
+            self.current_direction, self.current_char_gap = \
+                parser.read_field_parameter(params)
         elif command == 'FS':
             self._end_field()
         elif command == 'GF':

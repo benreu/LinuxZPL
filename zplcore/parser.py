@@ -162,9 +162,9 @@ MEDIA_SETTINGS = ('^PR', '^MD', '^MM', '^MN', '^MT')
 # running field origin when no ^FO/^FT has opened it yet. The ^A fonts and the
 # ^B symbologies are matched by prefix in _belongs_to_field; ^BY is not a
 # field command, and is read before anything reaches that test.
-FIELD_COMMANDS = frozenset({'^FB', '^FR', '^GS', '^GB', '^GC', '^GD', '^GE',
-                            '^GF', '^IM', '^XG', '^FN', '^SN', '^SF', '^FC',
-                            '^FH', '^FD', '^FV'})
+FIELD_COMMANDS = frozenset({'^FB', '^FP', '^FR', '^GS', '^GB', '^GC', '^GD',
+                            '^GE', '^GF', '^IM', '^XG', '^FN', '^SN', '^SF',
+                            '^FC', '^FH', '^FD', '^FV'})
 
 
 def _belongs_to_field(cmd: str) -> bool:
@@ -825,6 +825,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             field['block'] = FieldBlock.from_zpl(params)
         elif cmd == '^FR':
             field['reverse'] = True
+        elif cmd == '^FP':
+            field['direction'], field['char_gap'] = read_field_parameter(params)
         elif cmd in BARCODE_COMMANDS:
             field['barcode'] = _read_barcode(cmd, params, field['bar_height'],
                                              default_orientation,
@@ -919,7 +921,8 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'stored_graphic': None, 'data': None,
             'preview': None, 'path': None, 'typeset': False, 'justify': None,
             'symbology': None,
-            'reverse': False, 'own_origin': True}
+            'reverse': False, 'own_origin': True,
+            'direction': 'H', 'char_gap': 0}
 
 
 # Where a field is placed when no ^FO/^FT has been read since ^XA
@@ -1011,6 +1014,24 @@ def read_field_orientation(params: str, current: str) -> str:
     """
     letter = params.strip()[:1].upper()
     return letter if letter in _ORIENTATION_LETTERS else current
+
+
+def read_field_parameter(params: str) -> tuple:
+    """^FPd,g - as (direction, gap).
+
+    A field's own, not sticky: the next field starts at ZPL's H and 0 again.
+    A letter ZPL does not define is read as its default, H, rather than
+    turning the field some way the file never spelled, and the gap is held to
+    ZPL's own 0-9999.
+    """
+    parts = [p.strip() for p in params.split(',')]
+    letter = parts[0][:1].upper() if parts and parts[0] else 'H'
+    direction = letter if letter in TextElement.DIRECTIONS else 'H'
+    try:
+        gap = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+    except ValueError:
+        gap = 0
+    return direction, max(0, min(gap, TextElement.MAX_CHAR_GAP))
 
 
 def read_field_justification(params: str, current):
@@ -1431,17 +1452,19 @@ def _apply_typeset(element, doc) -> None:
 
 
 def _apply_justification(element, justify) -> None:
-    """Move a field whose ^FO names its right edge rather than its left.
+    """Move a field whose ^FO names something other than its top-left: its
+    right edge when right justified, its first character when right to left.
 
     Applied here rather than when the ^FO is read, because the width it turns
     on is not known until the element exists - the same reason ^FT's baseline
-    offset waits for _apply_typeset. The element then holds its left edge like
-    any other, and origin_zpl puts the width back on the way out.
+    offset waits for _apply_typeset. The element then holds its top-left like
+    any other, and origin_zpl puts the anchor back on the way out.
     """
-    if justify is None:
-        return
-    element.justify = justify
-    element.x = geometry.justified_origin(element.x, element.width, justify)
+    if justify is not None:
+        element.justify = justify
+    dx, dy = geometry.field_anchor(element)
+    element.x -= dx
+    element.y -= dy
 
 
 def _build_element(field, doc, renderer):
@@ -1598,7 +1621,9 @@ def _build_text(x, y, field, doc, renderer):
                           clock_chars=field['clock_chars'],
                           serial_field_raw=field['serial_field_raw'],
                           hex_indicator=field['hex_indicator'],
-                          variable_data=field['variable_data'])
+                          variable_data=field['variable_data'],
+                          direction=field['direction'],
+                          char_gap=field['char_gap'])
     # ^A's letter when the field named a font - read against the ^FW in force
     # at the ^A - and ^FW's own when it relies on ^CF, which carries none.
     element.orientation = (font['orientation'] if field['font']
@@ -1622,4 +1647,8 @@ def _build_text(x, y, field, doc, renderer):
         if renderer is not None:
             renderer.register_font(font['name'], local)
     doc.sync_text_width(element)
+    # Sizing keeps a field's anchor where it is, which is right for an edit
+    # and wrong here: until _apply_justification has run, x and y are still
+    # the point the file named, not a corner to pin.
+    element.x, element.y = x, y
     return element

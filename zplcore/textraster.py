@@ -8,6 +8,8 @@ printer honours. Both frontends blit the result; only the wrapping into a
 toolkit image differs.
 """
 
+import unicodedata
+
 from PIL import (Image as PILImage, ImageDraw as PILImageDraw,
                  ImageFont as PILImageFont)
 
@@ -61,6 +63,138 @@ def clear_cache():
     _cache.clear()
 
 
+# --- field direction (^FP) -------------------------------------------------
+
+def clusters(text):
+    """The characters ^FP places one at a time.
+
+    Each is a base character with the combining marks that follow it - what
+    the manual calls combining semantic clusters. Placing a code point at a
+    time would give an accent a cell of its own, a row below the letter it
+    belongs on.
+    """
+    pieces = []
+    for char in text or "":
+        if pieces and unicodedata.combining(char):
+            pieces[-1] += char
+        else:
+            pieces.append(char)
+    return pieces
+
+
+def layout(text, measure, direction='H', gap=0, font_height=0):
+    """Where ^FP puts each character of a one-line field.
+
+    Returns (places, size, ends): `places` is (character, x, y) in dots in the
+    field's own upright frame, `size` that frame's (width, height), and `ends`
+    the advances of the first and last characters, which is what a reversed
+    field's origin is measured by (geometry.field_anchor).
+
+    H runs the characters left to right with `gap` extra dots between them;
+    R runs the same row right to left, the first character at the right end;
+    V stacks them top to bottom, one to a row of font_height + gap, each
+    centred on a column as wide as the widest. Arithmetic over `measure`
+    alone, so the fixed-width estimate lays out the same way a real face does
+    and every drawing path reads the one answer - as placements() is for a
+    block.
+    """
+    pieces = clusters(text)
+    advances = [measure(piece) for piece in pieces]
+    gap = max(0, int(gap or 0))
+    height = max(1, int(font_height))
+    ends = ((int(round(advances[0])), int(round(advances[-1])))
+            if pieces else (0, 0))
+
+    if direction == 'V':
+        column = max(advances, default=0.0)
+        places = [(piece, (column - advance) / 2, row * (height + gap))
+                  for row, (piece, advance) in enumerate(zip(pieces, advances))]
+        rows = max(1, len(pieces))
+        return (places, (max(1, int(round(column))),
+                         rows * height + (rows - 1) * gap), ends)
+
+    places = []
+    x = 0.0
+    for piece, advance in zip(pieces, advances):
+        places.append((piece, x, 0))
+        x += advance + gap
+    run = x - gap if pieces else 0.0
+    if direction == 'R':
+        places = [(piece, run - px - advance, 0)
+                  for (piece, px, _y), advance in zip(places, advances)]
+    return places, (max(1, int(round(run))), height), ends
+
+
+def directed(direction, gap) -> bool:
+    """Whether ^FP asks for anything but ZPL's default, left to right with
+    no gap - which is the only case the whole-string raster can draw."""
+    return (direction or 'H') != 'H' or bool(gap)
+
+
+def raster_directed(text, font_path, font_height, font_width, direction,
+                    gap, ink=(0, 0, 0, 255), measure=None):
+    """A ^FP field as a PIL RGBA image, already at its printed size, or None.
+
+    Like raster_block(), nothing further is scaled by the caller: the image's
+    top-left is the field's frame's. Each character is drawn at em size,
+    squeezed, and centred in the cell layout() gave it - so the glyphs cannot
+    drift from the box the field was sized by.
+    Every row shares the one baseline raster() would give the whole line, so
+    a lower-case letter does not float up to the top of its cell.
+
+    `measure` is the metrics to lay out by when they are not this face's
+    own: the preview draws a field with no font file of its own in a stand-in
+    face, but has to place its characters where the fixed-width estimate the
+    canvas sized its box by puts them.
+    """
+    height = max(1, int(font_height))
+    try:
+        font = PILImageFont.truetype(font_path, height)
+    except Exception:
+        return None
+    if measure is None:
+        measure, _font = measurer(font_path, font_height, font_width, gap)
+    places, (width, tall), _ends = layout(text, measure, direction, gap,
+                                          font_height)
+    probe = PILImageDraw.Draw(PILImage.new('RGBA', (1, 1)))
+    try:
+        top = font.getbbox(text or " ", anchor='ls')[1]
+    except Exception:
+        top = -height
+    baseline = MARGIN - top
+    # Room below the last row for its descenders, and to the right for an
+    # overhanging last glyph, as raster() pads its own
+    image = PILImage.new('RGBA', (width + 2 * MARGIN, tall + height // 2),
+                         (0, 0, 0, 0))
+    # One squeeze for every character, as the whole-string raster has: laid
+    # out by the face's own metrics it is font_width / font_height and each
+    # glyph fills its cell exactly; laid out by the fixed-width estimate a
+    # narrow glyph is centred in its cell rather than stretched to fill it.
+    naturals = [probe.textlength(piece, font=font) for piece, _x, _y in places]
+    cells = [measure(piece) for piece, _x, _y in places]
+    squeeze = (sum(cells) / sum(naturals) if sum(naturals) > 0
+               else max(1, int(font_width)) / height)
+    for (piece, x, y), natural, cell in zip(places, naturals, cells):
+        x += (cell - natural * squeeze) / 2
+        box = font.getbbox(piece, anchor='ls')
+        glyph = PILImage.new('RGBA', (max(1, max(box[2], int(natural)))
+                                      + 2 * MARGIN,
+                                      baseline + max(0, box[3]) + MARGIN),
+                             (0, 0, 0, 0))
+        PILImageDraw.Draw(glyph).text((MARGIN, baseline), piece, fill=ink,
+                                      font=font, anchor='ls')
+        if abs(squeeze - 1.0) > 1e-6:
+            glyph = glyph.resize((max(1, int(round(glyph.width * squeeze))),
+                                  glyph.height), PILImage.LANCZOS)
+        # The glyph's own margin sits left of where the character starts,
+        # and the first character starts at the frame's edge: what would
+        # land left of the image is only that blank margin, so it is cut.
+        left = int(round(x - MARGIN * squeeze))
+        image.alpha_composite(glyph, (max(0, left), int(round(y))),
+                              (max(0, -left), 0))
+    return image
+
+
 # --- field blocks (^FB) -----------------------------------------------------
 
 # A forced line break inside ^FD, which is how ZPL splits a block by hand
@@ -93,7 +227,7 @@ def join_lines(text: str) -> str:
                     (text or "").split(FORCED_BREAK) if part.strip())
 
 
-def measurer(font_path, font_height, font_width):
+def measurer(font_path, font_height, font_width, gap=0):
     """Advance width of a string in printed dots, however little is known.
 
     The printer scales the em square to font_width x font_height, so a width
@@ -101,8 +235,13 @@ def measurer(font_path, font_height, font_width):
     TextElement.printed_width() uses, so a wrap and the box that holds it
     cannot disagree. With no font file there are no metrics, and the built-in
     fixed-width estimate is all there is.
+
+    `gap` is ^FP's extra dots between characters. With one, the string is
+    measured a character at a time, as the printer places it - so a single
+    character measures the same with a gap as without.
     """
     height = max(1, int(font_height))
+    gap = max(0, int(gap or 0))
     font = None
     if font_path:
         try:
@@ -110,13 +249,23 @@ def measurer(font_path, font_height, font_width):
         except Exception:
             font = None
     if font is None:
-        return lambda text: len(text) * max(1, int(font_width)), None
+        if not gap:
+            return lambda text: len(text) * max(1, int(font_width)), None
+
+        def fixed(text):
+            gaps = max(0, len(clusters(text)) - 1)
+            return len(text or "") * max(1, int(font_width)) + gap * gaps
+        return fixed, None
 
     draw = PILImageDraw.Draw(PILImage.new('RGBA', (1, 1)))
     scale = max(1, int(font_width)) / height
 
     def measure(text):
-        return draw.textlength(text or "", font=font) * scale
+        if not gap:
+            return draw.textlength(text or "", font=font) * scale
+        pieces = clusters(text)
+        return (sum(draw.textlength(piece, font=font) for piece in pieces) * scale
+                + gap * max(0, len(pieces) - 1))
 
     return measure, font
 
@@ -145,7 +294,7 @@ def baseline_offset(font_path, font_height) -> int:
     return int(round(height * BASELINE_RATIO))
 
 
-def wrap_marked(text, font_path, font_height, font_width, block):
+def wrap_marked(text, font_path, font_height, font_width, block, gap=0):
     """(line, ends_a_paragraph) for each line `text` breaks into in `block`.
 
     Greedy, like the printer: words are added until the next one would not
@@ -156,8 +305,11 @@ def wrap_marked(text, font_path, font_height, font_width, block):
     The flag is what justification needs: a line that ends a paragraph is
     short because the text ran out, not because the next word would not fit,
     so stretching it to both edges would be wrong.
+
+    `gap` is ^FP's, which widens every line by its characters' gaps and so
+    wraps it sooner.
     """
-    measure, _font = measurer(font_path, font_height, font_width)
+    measure, _font = measurer(font_path, font_height, font_width, gap)
     marked = []
     for paragraph in (text or "").split(FORCED_BREAK):
         words = paragraph.split()
@@ -182,15 +334,15 @@ def wrap_marked(text, font_path, font_height, font_width, block):
     return kept
 
 
-def wrap(text, font_path, font_height, font_width, block):
+def wrap(text, font_path, font_height, font_width, block, gap=0):
     """The lines `text` breaks into inside `block`."""
     return [line for line, _last in
-            wrap_marked(text, font_path, font_height, font_width, block)]
+            wrap_marked(text, font_path, font_height, font_width, block, gap)]
 
 
-def block_size(text, font_path, font_height, font_width, block):
+def block_size(text, font_path, font_height, font_width, block, gap=0):
     """The dots a wrapped block occupies: the block's width by its lines."""
-    lines = wrap(text, font_path, font_height, font_width, block)
+    lines = wrap(text, font_path, font_height, font_width, block, gap)
     return block.width, max(1, len(lines) * pitch(font_height, block))
 
 
@@ -199,18 +351,21 @@ def pitch(font_height, block) -> int:
     return max(1, int(font_height) + block.line_spacing)
 
 
-def raster_block(text, font_path, font_height, font_width, block, ink=(0, 0, 0, 255)):
+def raster_block(text, font_path, font_height, font_width, block,
+                 ink=(0, 0, 0, 255), gap=0):
     """A wrapped block as a PIL RGBA image, already at its printed size.
 
     Unlike raster(), nothing further is scaled by the caller: the block width
     is in final dots, so the horizontal squeeze from font_width is applied
-    here, per line.
+    here, per line. With ^FP's gap each piece is laid out a character at a
+    time instead, since squeezing a whole piece to its gapped width would
+    widen the glyphs rather than the spaces between them.
     """
-    measure, font = measurer(font_path, font_height, font_width)
+    measure, font = measurer(font_path, font_height, font_width, gap)
     if font is None:
         return None
 
-    marked = wrap_marked(text, font_path, font_height, font_width, block)
+    marked = wrap_marked(text, font_path, font_height, font_width, block, gap)
     step = pitch(font_height, block)
     height = max(1, len(marked) * step)
     image = PILImage.new('RGBA', (max(1, block.width), height), (0, 0, 0, 0))
@@ -219,6 +374,12 @@ def raster_block(text, font_path, font_height, font_width, block, ink=(0, 0, 0, 
         if not line:
             continue
         for piece, x in placements(line, measure, block, last):
+            if gap:
+                spaced = raster_directed(piece, font_path, font_height,
+                                         font_width, 'H', gap, ink)
+                if spaced is not None:
+                    image.alpha_composite(spaced, (x, row * step))
+                continue
             drawn = raster(piece, font_path, max(1, int(font_height)), ink)
             if drawn is None:
                 continue

@@ -90,6 +90,8 @@ every member's path, and ungrouping takes the outermost id off again (§6.2).
 | `font_code` | `F` - the built-in font designator, written as `^A<code>`. `0` is the scalable font most other tools use |
 | `orientation` | `N` - `^A`'s orientation letter: `N`, `R` (90°), `I` (180°), `B` (270°). A letter the file leaves out is `^FW`'s (§8.3) |
 | `block` | none - a field block (`^FB`), when the text wraps rather than running on one line |
+| `direction` | `H` - `^FP`'s direction: `H` left to right, `V` top to bottom, `R` right to left |
+| `char_gap` | 0 - `^FP`'s extra dots between characters, 0-9999 |
 
 `height` always equals `font_height` **unless the element has a block**. **`width` is derived, never set
 directly**, and must be recomputed whenever the text, the font or either font
@@ -151,6 +153,32 @@ maximum number of lines, so dragging the bottom edge up cuts lines the printer
 would then drop and dragging it down reveals them. The box is then whatever the
 text wraps into - it is never stretched to fill the dragged rectangle, and the
 font size is the dialog's business alone.
+
+**`^FP` lays the characters out one at a time, inside the element's own
+upright frame; `orientation` then turns that frame as it turns any text.** The
+manual's Field Interactions charts (Tables 45-48) come out of exactly those two
+steps. A character is a base character with the combining marks that follow
+it - the manual's *combining semantic clusters* - so an accent shares its
+letter's cell.
+
+- `H`: a row, left to right, `char_gap` extra dots between each character and
+  the next (none after the last). `width` is the advances plus the gaps.
+- `R`: the same row, run right to left: the first character at the right end.
+- `V`: a column, top to bottom, each character centred on it. The column is as
+  wide as its widest character; each row is `font_height` tall with `char_gap`
+  between rows, so `height` is `rows × font_height + (rows − 1) × char_gap`.
+  Dragging a column's top or bottom sets the row height and its sides the
+  font width, each from the one side the handle moves, since a column one
+  character wide is often narrower than the minimum a resize clamps to.
+
+`H` with no gap is the whole-string measurement above, unchanged. Anything
+else is measured a character at a time, which is also how every drawing path
+places it: the canvases and the preview all draw from one layout
+(`textraster.layout`), so none of them can put a character somewhere the box
+does not. Without a font file each character is the built-in font's
+`font_width` cell. Inside a block the gap widens every line and so wraps it
+sooner; the direction is carried but a block is always laid out left to right
+(§18).
 
 #### Frame
 
@@ -857,7 +885,7 @@ file choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
-| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across every element editor that has one. |
+| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Direction; Character Gap; Reverse; Font (Choose… / Clear); Wrap; Wrap Width; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The six wrap fields are the `^FB` block (§3.3): 10–2000 dots, 1–64 lines, −100–100 spacing, 0–2000 indent, and the justification list of §3.3. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at. Direction and Character Gap are `^FP` (§3.3): the list of directions both frontends share, and 0–9999 dots. Direction is insensitive while Wrap is ticked, and keeps whatever the element has. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across every element editor that has one. |
 | **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) inverts whatever is already on the label, ignoring Colour (§18). |
 | **Edit Circle** | Diameter; Thickness; Colour; Reverse | Diameter 3–4095, `^GC`'s own range, so a small circle from a file is not enlarged by accepting an editor it was only looked at in. Thickness 1 to `diameter / 2`, the maximum updating live as the diameter changes. Colour and Reverse as Edit Frame's. |
 | **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
@@ -892,6 +920,7 @@ file choosers and the prompts — are modal.
 |---|---|
 | Text, built-in font | `^FO<x>,<y>` / `^A<font_code><orientation>,<font_height>,<font_width>` / `^FD<text>^FS` |
 | Text in a block | as above, with `^FB<width>,<lines>,<spacing>,<justification>,<indent>` between the font and the data |
+| Text with a direction or gap | as above, with `^FP<direction>[,<gap>]` after the font and any `^FB` — written only when it is not `H` with no gap, and the gap only when it is not 0 |
 | Text, downloaded font | `^FO<x>,<y>` / `^A@<orientation>,<font_height>,<font_width>,<path>` / `^FD<text>^FS` — `<path>` is `E:<NAME>.TTF` for a font this designer assigned, since that is where it uploads one; a font a loaded file named is written back at the path that file gave, verbatim (§10.2) |
 | Frame | `^FO<x>,<y>` / `^GB<width>,<height>,<thickness>[,<colour>[,<rounding>]]` / `^FS` — the colour and rounding are written only when they are not `B` and `0` |
 | Circle | `^FO<x>,<y>` / `^GC<diameter>,<thickness>[,<colour>]` / `^FS` — the colour is written only when it is not `B` |
@@ -1026,7 +1055,7 @@ does not know is not taken for a comment.
 ### 8.3 What is read
 
 `^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
-`^A@`), `^CF`, `^FW`, `^FB`, `^GB`, `^GC`, `^GD`, `^GE`, `^GS`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
+`^A@`), `^CF`, `^FW`, `^FB`, `^FP`, `^GB`, `^GC`, `^GD`, `^GE`, `^GS`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
 `^PO`, `^PM`, `^LR`), `^FO`/`^FT`'s justification and `^FW`'s, `^PQ`, `^CV`,
@@ -1963,9 +1992,32 @@ its orientation. Since `^FW` is resolved into each field rather than written
 back, an inherited justification is folded onto that field's own `^FO`, exactly
 as an inherited orientation is folded onto its `^A`.
 
-**The right edge is what a right justified field is pinned by**, so editing its
-text grows it leftward rather than moving the `^FO` the file named — clamped at
-the label edge like any other move, since `^FO`'s range starts at 0. A field
+**`^FP` moves the point the origin names.** Top to bottom (`^FPV`) it is
+the column's top-left, or top-right when right justified: the `^FPH` rule,
+applied to the column. Right to left (`^FPR`) it follows the characters
+rather than the box. Left justified, it is the top-left of the first
+character's cell, wherever the turn has put that character: the right end
+upright, the bottom at `R`, and the box's own top-left at `I` and `B`, where
+the first character lands anyway. Right justified, it is the top-right of the
+cell at the box's left end (`N`, `I`) or bottom (`R`, `B`). An element still
+holds its box's top-left, and one function (`geometry.field_anchor`) both
+folds the anchor out on the way in and puts it back on the way out, so the two
+cannot disagree. `^FT` names the first character's baseline, which is the
+same offset from the top as a row's. `^FP` belongs to one field only: the
+next field starts again at `H` with no gap. In a field that is not text it
+formats nothing and is not kept.
+
+| Written | Element holds | Saves as |
+|---|---|---|
+| `^FO300,50^FPR` + four 20-dot characters | left 240 | `^FO300,50` |
+| `^FO300,50,1^FPR` + four 20-dot characters | left 280 | `^FO300,50,1` |
+| `^FO100,300^FPR^AFR` + four 20-dot characters | top 240 | `^FO100,300` |
+
+**The point the origin names is what a field is pinned by**, so editing a
+right justified field's text grows it leftward rather than moving the `^FO`
+the file named, and so does a right to left one's - clamped at the label edge
+like any other move, since `^FO`'s range starts at 0. Changing the direction
+in the editor leaves the box where it is on the canvas; the `^FO` follows it. A field
 whose *origin* leaves it overhanging the left edge is left overhanging: that is
 what the printer does, and moving it would change what prints.
 
@@ -2127,7 +2179,7 @@ message — never a swallowed exception or a placeholder.
 | Default printer | `192.168.50.21:9100`, 203 dpi |
 | Supported resolutions | 203, 300, 600 dpi |
 | Text | 36 dot height, 20 dot width, `"New Text"` |
-| Text dialog limits | font height and width 8–500 dots |
+| Text dialog limits | font height and width 8–500 dots, character gap 0–9999 dots |
 | Frame | 200 × 150 dots, 2 dot thickness |
 | Frame dialog limits | width 10–800, height 10–1200, thickness 1 to `min(w,h)/2` |
 | Circle | 150 dot diameter, 2 dot thickness, black |
@@ -2372,10 +2424,21 @@ rather than requirements:
   left, and the parameter round-trips unchanged either way. A right-to-left
   script would want it resolved as right, which needs a script this model has
   no notion of.
-- **`^FP`'s field direction is not modelled**, so justification is read as the
-  `^FPH` column of the manual's Table 45 — horizontal, the power-up default.
-  `^FPV` and `^FPR` place a justified field differently, and neither is
-  something a designer emits.
+- **Where `^FPR` places a field is read off the manual's charts, and only
+  its commonest case has been tested on a printer.** Left justified and
+  upright, the chart is clear, the origin being the first character's
+  top-left, and a 203 dpi printer agrees: `^FO700,120^FPR` put the first
+  character's left edge at x = 699. Right justified, its crosshair falls in
+  the middle of the last character, so the rule used - the right edge of the
+  cell at the left end - mirrors the left justified one rather than reading
+  the drawing literally. The turned cells (Tables 46-48) follow the same rule
+  through the turn. `^FT` with a turned `^FPR` is placed as `^FO` is, with
+  the baseline offset taken down the label as every `^FT` text field's is,
+  though Table 46 draws its crosshair elsewhere.
+- **A direction inside a `^FB` is carried, not drawn.** The manual does not
+  say what `^FB` does with `^FPV` or `^FPR`, so such a block round-trips its
+  `^FP` but is wrapped, drawn and placed left to right. The gap is drawn: it
+  widens every line of the block.
 - **`^FR` inverts whatever is already on the label under the field's own ink
   shape — glyph outlines, bar rectangles, the frame's, circle's or ellipse's own
   border or fill, a diagonal line's run, a graphic symbol's strokes —

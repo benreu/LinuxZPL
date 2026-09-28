@@ -412,12 +412,21 @@ class DesignCanvas(Gtk.DrawingArea):
         ^FR field.
         """
         block = getattr(element, 'block', None)
-        if block is not None:
-            # A ^FB block is rasterised at its printed size, wrapped and
-            # justified, so nothing further is scaled here.
-            pixbuf = to_pixbuf(textraster.raster_block(
-                self.document.display_text(element), font_path, element.font_height,
-                element.font_width, block, ink))
+        if block is not None or textraster.directed(element.direction,
+                                                    element.char_gap):
+            # A ^FB block, or a ^FP field laid out a character at a time, is
+            # rasterised at its printed size, so nothing further is scaled
+            # here.
+            shown = self.document.display_text(element)
+            if block is not None:
+                drawn = textraster.raster_block(
+                    shown, font_path, element.font_height, element.font_width,
+                    block, ink, element.char_gap)
+            else:
+                drawn = textraster.raster_directed(
+                    shown, font_path, element.font_height, element.font_width,
+                    element.direction, element.char_gap, ink)
+            pixbuf = to_pixbuf(drawn)
             if not pixbuf:
                 return False
             context.save()
@@ -593,6 +602,9 @@ class DesignCanvas(Gtk.DrawingArea):
 
         if not pil_rendered and block is not None:
             self._draw_text_block(context, element, font_path, block)
+        elif not pil_rendered and textraster.directed(element.direction,
+                                                      element.char_gap):
+            self._draw_text_directed(context, element, font_path)
         elif not pil_rendered:
             context.select_font_face(element.font_family or self.font_family or "monospace")
             context.set_font_size(element.font_height)
@@ -642,14 +654,23 @@ class DesignCanvas(Gtk.DrawingArea):
         """
         context.select_font_face(element.font_family or self.font_family or "monospace")
         context.set_font_size(element.font_height)
+        gap = element.char_gap
         measure, _font = textraster.measurer(font_path, element.font_height,
-                                             element.font_width)
+                                             element.font_width, gap)
         step = textraster.pitch(element.font_height, block)
         marked = textraster.wrap_marked(self.document.display_text(element), font_path,
                                         element.font_height, element.font_width,
-                                        block)
+                                        block, gap)
         for row, (line, last) in enumerate(marked):
             for piece, x in textraster.placements(line, measure, block, last):
+                if gap:
+                    # ^FP's gap goes between the characters, so they are
+                    # placed one at a time rather than stretched apart.
+                    places, _size, _ends = textraster.layout(
+                        piece, measure, 'H', gap, element.font_height)
+                    self._draw_cells(context, places, measure, x,
+                                     row * step, element.font_height)
+                    continue
                 drawn = context.text_extents(piece).width or 1.0
                 context.save()
                 context.translate(x, row * step + element.font_height - 2)
@@ -662,6 +683,35 @@ class DesignCanvas(Gtk.DrawingArea):
                 context.move_to(0, 0)
                 context.show_text(piece)
                 context.restore()
+
+    def _draw_text_directed(self, context, element, font_path):
+        """A ^FP field in the Cairo toy font, when it cannot be rasterised.
+
+        The characters still go where the shared layout puts them - down a
+        column, right to left, or apart by the gap - so only the glyphs
+        differ from what will print, as with a block.
+        """
+        context.select_font_face(element.font_family or self.font_family or "monospace")
+        context.set_font_size(element.font_height)
+        measure, _font = textraster.measurer(font_path, element.font_height,
+                                             element.font_width,
+                                             element.char_gap)
+        places, _size, _ends = textraster.layout(
+            self.document.display_text(element), measure, element.direction,
+            element.char_gap, element.font_height)
+        self._draw_cells(context, places, measure, 0, 0, element.font_height)
+
+    def _draw_cells(self, context, places, measure, left, top, font_height):
+        """Draw each (character, x, y) of a layout, squeezed to its advance."""
+        for piece, x, y in places:
+            drawn = context.text_extents(piece).x_advance or 1.0
+            context.save()
+            context.translate(left + x, top + y + font_height - 2)
+            context.scale(max(1.0, measure(piece)) / drawn, 1.0)
+            # From the current point, which save/restore does not carry
+            context.move_to(0, 0)
+            context.show_text(piece)
+            context.restore()
 
     def _draw_frame_element(self, context, element, selected: bool):
         """Draw a frame element."""

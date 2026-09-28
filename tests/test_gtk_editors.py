@@ -565,6 +565,62 @@ wide_height = fallback_ink_height(60)
 check("a rotated fallback field still stretches with font_width",
       wide_height > narrow_height * 1.5, (narrow_height, wide_height))
 
+# --- ^FP: the direction and gap, in the editor and on the canvas ------------
+# The Qt half is in test_core. Both halves have to draw the column the shared
+# layout gives and write what the dialog was told.
+
+fp_el = document.add_text_element("ABCD")
+fp_el.font_height, fp_el.font_width = 30, 20
+window.on_element_double_clicked(None, fp_el)
+fp_dialog = window._editors[id(fp_el)]
+fp_combos = _find_all(fp_dialog.get_content_area(), Gtk.ComboBoxText)
+fp_spins = _find_all(fp_dialog.get_content_area(), Gtk.SpinButton)
+fp_wrap = [b for b in _find_all(fp_dialog.get_content_area(), Gtk.CheckButton)
+           if b.get_label() == "Wrap the text into a block"][0]
+# Orientation, then Direction; Font Height, Font Width, then Character Gap
+fp_combos[1].set_active(1)
+fp_spins[2].set_value(7)
+fp_offered = fp_combos[1].get_sensitive()
+fp_wrap.set_active(True)
+check("the direction is offered only while the text is not a block",
+      fp_offered and not fp_combos[1].get_sensitive())
+fp_wrap.set_active(False)
+fp_dialog.response(Gtk.ResponseType.OK)
+check("OK in Edit Text writes ^FP's direction and gap",
+      (fp_el.direction, fp_el.char_gap) == ('V', 7)
+      and '^FPV,7' in fp_el.to_zpl(),
+      (fp_el.direction, fp_el.char_gap))
+check("and the box follows them",
+      fp_el.height == 4 * fp_el.font_height + 3 * 7, (fp_el.width, fp_el.height))
+
+def fp_ink(font_path):
+    """The bounds of the dark ink a column draws, or None."""
+    fp_el.font_path = font_path
+    fp_el.x, fp_el.y = 20, 20
+    document.sync_text_width(fp_el)
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 300, 300)
+    ctx = cairo.Context(surface)
+    ctx.set_source_rgb(1, 1, 1); ctx.paint()
+    canvas._draw_text_element(ctx, fp_el, False)
+    data, stride = surface.get_data(), surface.get_stride()
+    xs, ys = [], []
+    for y in range(300):
+        row = data[y * stride:(y + 1) * stride]
+        for x in range(300):
+            if row[4 * x] < 100 and row[4 * x + 1] < 100 and row[4 * x + 2] < 100:
+                xs.append(x)
+                ys.append(y)
+    return (min(xs), min(ys), max(xs), max(ys)) if xs else None
+
+from zplcore import fonts as zpl_fonts
+for fp_path in (zpl_fonts.file_for_family('DejaVu Sans'), None):
+    fp_box = fp_ink(fp_path)
+    check(f"the GTK canvas draws a column down its box "
+          f"({'with' if fp_path else 'without'} a font file)",
+          fp_box is not None and fp_box[3] - fp_box[1] > 3 * (30 + 7)
+          and fp_box[2] <= fp_el.x + fp_el.width + 4, (fp_box, fp_el.width))
+document.elements.remove(fp_el)
+
 # --- the resolution a rescale is measured against ---------------------------
 # Called with no argument, _offer_dpi_rescale is settling the open design
 # against a resolution that changed underneath it, so the design's own dpi is

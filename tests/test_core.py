@@ -6480,6 +6480,258 @@ check("and nothing in it is reported as unsupported",
       workflow.unsupported_commands(_just_raw) == [],
       workflow.unsupported_commands(_just_raw))
 
+# --- ^FP: which way a text field's characters run, and how far apart -------
+# ^FPd,g belongs to one font field: H runs its characters left to right, V
+# top to bottom, R right to left, and g puts that many extra dots between
+# them. The manual's Field Interactions charts (Tables 45-48) are the picture
+# of where each lands. ^AF has no font file, so these are laid out with the
+# built-in fixed-width estimate: every character font_width dots wide.
+
+def _fp(fields):
+    return zpl_parser.parse_zpl("^XA^PW812^LL1218" + fields + "^XZ")[0]
+
+def _fp_lines(doc):
+    return [l for l in doc.to_zpl().split('\n')
+            if l.startswith(('^FO', '^FT', '^FP'))]
+
+for _spelled in ('^FPV', '^FPR,10', '^FPH,5', '^FPV,3'):
+    _d = _fp(f"^FO100,50{_spelled}^AFN,30,20^FDABCD^FS")
+    check(f"{_spelled} comes back out of a save as it went in",
+          _spelled in _d.to_zpl().split('\n'), _fp_lines(_d))
+check("^FPH with no gap is ZPL's own default, and writes nothing",
+      '^FP' not in _fp("^FO100,50^FPH^AFN,30,20^FDABCD^FS").to_zpl())
+_plain_fp = zpl_parser.parse_zpl((FIXTURES / 'sample_203dpi.zpl').read_text())[0]
+check("a label that never used ^FP gains none on a save",
+      '^FP' not in _plain_fp.to_zpl()
+      and all(e.direction == 'H' and e.char_gap == 0
+              for e in _plain_fp.elements if e.element_type == 'text'))
+check("^FP is no longer reported as something a save would drop",
+      '^FP' not in workflow.unsupported_commands(
+          "^XA^FO100,50^FPV,10^AFN,30,20^FDABCD^FS^XZ"))
+
+check("^FP's letter is read in either case",
+      zpl_parser.read_field_parameter('v,4') == ('V', 4))
+check("a letter ZPL does not define is read as its default, H",
+      zpl_parser.read_field_parameter('X') == ('H', 0))
+check("the gap is held to ZPL's 0-9999",
+      [zpl_parser.read_field_parameter(p)[1]
+       for p in ('V,99999', 'R,-5', 'R,abc', 'R,')] == [9999, 0, 0, 0])
+_two = _fp("^FO10,10^FPV,5^AFN,30,20^FDA^FS^FO10,300^AFN,30,20^FDB^FS")
+check("^FP is a field's own: the next field is back to H with no gap",
+      [(e.direction, e.char_gap) for e in _two.elements] == [('V', 5), ('H', 0)],
+      [(e.direction, e.char_gap) for e in _two.elements])
+
+# The box is whatever the characters fill
+_spaced = _fp("^FO100,50^FPH,5^AFN,30,20^FDABCD^FS").elements[0]
+check("a gap widens a row by the gaps between its characters, not after them",
+      (_spaced.width, _spaced.height) == (4 * 20 + 3 * 5, 30),
+      (_spaced.width, _spaced.height))
+_column = _fp("^FO100,50^FPV,10^AFN,30,20^FDABCD^FS").elements[0]
+check("top to bottom the box is one character wide and a row per character",
+      (_column.width, _column.height) == (20, 4 * 30 + 3 * 10),
+      (_column.width, _column.height))
+_turned_column = _fp("^FO100,50^FPV,10^AFR,30,20^FDABCD^FS").elements[0]
+check("and a quarter turn transposes it, as it does any text",
+      (_turned_column.width, _turned_column.height) == (150, 20),
+      (_turned_column.width, _turned_column.height))
+_backward = _fp("^FO100,50^FPR,5^AFN,30,20^FDABCD^FS").elements[0]
+check("right to left the box is the same row, run the other way",
+      (_backward.width, _backward.height) == (95, 30),
+      (_backward.width, _backward.height))
+_accent = TextElement(0, 0, "éa", 30, 20, direction='V')
+check("a combining mark shares its letter's cell rather than taking a row",
+      textraster.clusters(_accent.text) == ["é", "a"])
+
+# Where the ^FO or ^FT lands, from the charts. Each case is the field, the
+# check that it is placed where the chart puts it, and it must also write
+# back the origin it came in with.
+_placements = (
+    ("^FO100,50^FPV^AFN,30,20^FDABCD^FS",
+     "top to bottom, ^FO names the column's top-left (Table 45)",
+     lambda e: (e.x, e.y) == (100, 50)),
+    ("^FO300,50,1^FPV^AFN,30,20^FDABCD^FS",
+     "and right justified, its top-right",
+     lambda e: (e.x + e.width, e.y) == (300, 50)),
+    ("^FT100,80^FPV^AFN,30,20^FDABCD^FS",
+     "and ^FT names the first character's baseline",
+     lambda e: (e.x, e.y + e.typeset) == (100, 80)),
+    ("^FO300,50^FPR^AFN,30,20^FDABCD^FS",
+     "right to left, ^FO names the first character's top-left, at the right end",
+     lambda e: (e.x + e.width - 20, e.y) == (300, 50)),
+    ("^FO300,50,1^FPR^AFN,30,20^FDABCD^FS",
+     "and right justified, the right edge of the last, at the left end",
+     lambda e: (e.x + 20, e.y) == (300, 50)),
+    ("^FT300,80^FPR^AFN,30,20^FDABCD^FS",
+     "and ^FT names the first character's baseline",
+     lambda e: (e.x + e.width - 20, e.y + e.typeset) == (300, 80)),
+    ("^FO100,300^FPV^AFR,30,20^FDABCD^FS",
+     "turned 90 degrees, a column still hangs from its ^FO (Table 46)",
+     lambda e: (e.x, e.y) == (100, 300)),
+    ("^FO100,300^FPR^AFR,30,20^FDABCD^FS",
+     "and a reversed row, read downward, has its first character at the bottom",
+     lambda e: (e.x, e.y + e.height - 20) == (100, 300)),
+    ("^FO100,300^FPR^AFI,30,20^FDABCD^FS",
+     "upside down, a reversed row starts at the left, where ^FO is (Table 48)",
+     lambda e: (e.x, e.y) == (100, 300)),
+    ("^FO100,300^FPR^AFB,30,20^FDABCD^FS",
+     "and read upward, at the top, where ^FO is (Table 47)",
+     lambda e: (e.x, e.y) == (100, 300)),
+)
+for _fields, _name, _placed in _placements:
+    _d = _fp(_fields)
+    _e = _d.elements[0]
+    _origin = re.match(r"\^F[OT][\d,]+", _fields).group(0)
+    check(_name, _placed(_e), (_e.x, _e.y, _e.width, _e.height, _e.typeset))
+    check(f"  and writes {_origin} back as it came in",
+          _origin in _d.to_zpl().split('\n'), _fp_lines(_d))
+
+# The point a ^FO names stays put when the text changes, which for a reversed
+# field is its first character - so it grows leftward
+_grow_fp = _fp("^FO300,50^FPR^AFN,30,20^FDAB^FS")
+_ge_fp = _grow_fp.elements[0]
+_ge_fp.text = 'ABCDEF'
+_grow_fp.sync_text_width(_ge_fp)
+check("a right to left field grows leftward from its first character",
+      _ge_fp.x + _ge_fp.width - 20 == 300 and '^FO300,50' in _grow_fp.to_zpl(),
+      (_ge_fp.x, _ge_fp.width, _fp_lines(_grow_fp)))
+
+# A rescale moves the point a reversed field's ^FO names with the label, as it
+# does every other origin - to the dot, give or take the rounding every
+# rescale has
+_rescaled_fp = _fp("^FO350,50^FPR,10^AFN,30,20^FDreverse^FS"
+                   "^FO100,300^FPR^AFR,30,20^FDABCD^FS")
+_rescaled_fp.rescale(300 / 203)
+_scaled_origins = [tuple(int(n) for n in l[3:].split(','))
+                   for l in _rescaled_fp.to_zpl().split('\n') if l.startswith('^FO')]
+check("a rescale carries a right to left field's ^FO with the label",
+      all(abs(got - want) <= 1 for pair in zip(_scaled_origins,
+                                               [(517, 74), (148, 443)])
+          for got, want in zip(*pair)),
+      _scaled_origins)
+
+# Switching direction is an edit of the field, not a move: the box stays where
+# the user sees it, and the ^FO follows it
+_switch = Document(812, 1218, dpi=203)
+_sw = _switch.add_text_element('ABCD')
+_sw.x, _sw.y, _sw.font_height, _sw.font_width = 100, 50, 30, 20
+_switch.sync_text_width(_sw)
+_sw.direction = 'R'
+_switch.sync_text_width(_sw)
+check("turning a field right to left leaves its box where it was",
+      (_sw.x, _sw.y, _sw.width) == (100, 50, 80), (_sw.x, _sw.y, _sw.width))
+check("and writes the ^FO its first character now needs",
+      '^FO160,50' in _switch.to_zpl(), _fp_lines(_switch))
+_sw.direction = 'V'
+_switch.sync_text_width(_sw)
+check("and a column hangs from the same top-left",
+      (_sw.x, _sw.y, _sw.width, _sw.height) == (100, 50, 20, 120),
+      (_sw.x, _sw.y, _sw.width, _sw.height))
+
+# A drag asks a column for a row height, not a font as tall as the column
+_sw.char_gap = 10
+_switch.sync_text_width(_sw)
+geometry.resize_by_handle(_switch, _sw, 'bm', 0, 40)
+check("dragging a column taller makes each row taller, gaps unchanged",
+      (_sw.font_height, _sw.char_gap, _sw.height) == (40, 10, 4 * 40 + 30),
+      (_sw.font_height, _sw.char_gap, _sw.height))
+_narrow = _switch.add_text_element('ABCD')
+_narrow.font_height, _narrow.font_width = 13, 7
+_narrow.direction, _narrow.char_gap = 'V', 4
+_switch.sync_text_width(_narrow)
+geometry.resize_by_handle(_switch, _narrow, 'bm', 0, 40)
+check("and leaves the font width alone, however narrow the column",
+      (_narrow.font_width, _narrow.width, _narrow.font_height) == (7, 7, 23),
+      (_narrow.font_width, _narrow.width, _narrow.font_height))
+_switch.elements.remove(_narrow)
+_switch.rescale(2)
+check("and a rescale scales the gap with the font",
+      (_sw.font_height, _sw.char_gap) == (80, 20), (_sw.font_height, _sw.char_gap))
+
+# The gap goes into a block's wrap as well
+# "AB CD EF" is 160 dots on one line; 20 more between each of its eight
+# characters makes it 300, and "AB CD" alone 180
+_unwrapped = _fp("^FO50,50^FB200,4,0,L^AFN,30,20^FDAB CD EF^FS").elements[0]
+_wrapped = _fp("^FO50,50^FB200,4,0,L^FPH,20^AFN,30,20^FDAB CD EF^FS").elements[0]
+check("a block wraps a gapped line sooner",
+      (_unwrapped.height, _wrapped.height) == (30, 2 * 30),
+      (_unwrapped.height, _wrapped.height))
+_blocked_v = _fp("^FO50,50^FB200,4,0,L^FPV^AFN,30,20^FDAB CD^FS")
+check("a direction a block leaves undefined is carried, and placed as H",
+      '^FPV' in _blocked_v.to_zpl() and _blocked_v.elements[0].x == 50,
+      _fp_lines(_blocked_v))
+
+# The Qt editor
+_qd = Document(812, 1218, dpi=203)
+_qe = _qd.add_text_element('ABCD')
+
+def _fill_direction(dialog):
+    dialog.findChild(QComboBox, 'direction').setCurrentIndex(1)   # Top to bottom
+    dialog.findChild(QSpinBox, 'char_gap').setValue(7)
+
+check("the text dialog sets ^FP's direction and gap",
+      _drive_text_dialog(_qe, _qd, _fill_direction)
+      and (_qe.direction, _qe.char_gap) == ('V', 7),
+      (_qe.direction, _qe.char_gap))
+check("and the box follows them",
+      _qe.height == 4 * _qe.font_height + 3 * 7 and '^FPV,7' in _qe.to_zpl(),
+      (_qe.width, _qe.height))
+_qdlg = qt_dialogs.edit_text_dialog(None, _qe, _qd)
+_qdir = _qdlg.findChild(QComboBox, 'direction')
+_was_enabled = _qdir.isEnabled()
+_qdlg.findChild(QCheckBox, 'wrap').setChecked(True)
+check("the direction is offered only while the text is not a block",
+      _was_enabled and not _qdir.isEnabled())
+_qdlg.reject()
+
+# The preview draws what the canvas boxes. The preview has no font file of the
+# field's own either, so it lays out by the same fixed-width estimate.
+for _fields in ("^FO100,50^FPV,10^A0N,30,24^FDABCD^FS",
+                "^FO300,50^FPR,10^A0N,30,24^FDABCD^FS",
+                "^FO150,250^FPR^A0R,30,24^FDABCD^FS",
+                "^FO100,50^FPH,8^A0N,30,24^FDABCD^FS"):
+    _e = _fp(_fields).elements[0]
+    _ink = _preview_ink(f"^XA^PW400^LL400{_fields}^XZ", 400, 400)
+    _how = re.search(r"\^FP[^^]*\^A0(.)", _fields)
+    check(f"the preview draws {_how.group(0)[:-4]} turned {_how.group(1)} "
+          f"inside the box the canvas shows",
+          _inside(_ink, _e), (_ink, (_e.x, _e.y, _e.width, _e.height)))
+_col_ink = _preview_ink("^XA^PW400^LL400^FO100,50^FPV,10^A0N,30,24^FDABCD^FS^XZ",
+                        400, 400)
+check("and a column's ink runs down every row",
+      _col_ink is not None and _col_ink[3] > 3 * (30 + 10), _col_ink)
+_back_ink = _preview_ink("^XA^PW400^LL400^FO300,50^FPR,10^A0N,30,24^FDABCD^FS^XZ",
+                         400, 400)
+check("and a reversed row runs left from its first character",
+      _back_ink is not None and _back_ink[0] < 300 - 2 * 24
+      and 300 < _back_ink[0] + _back_ink[2] <= 300 + 24 + 2, _back_ink)
+_rev_img = ZPLRenderer(400, 200).render(
+    "^XA^PW400^LL200^FO50,50^GB200,60,60^FS"
+    "^FO60,60^FR^FPH,6^A0N,30,24^FDAB^FS^XZ").convert('L')
+check("a reversed ^FP field inverts under its glyphs only",
+      any(_rev_img.getpixel((x, y)) > 128 for x in range(60, 130)
+          for y in range(60, 90))
+      and _rev_img.getpixel((245, 105)) < 128)
+
+# The Qt canvas, with a font file and without
+_fw = qt_main.ZPLDesignerWindow()
+_fw.unsaved_changes = False
+_fw.on_new()
+_fw.document.set_label_size(812, 1218)
+_fw.canvas.set_zoom(1.0)
+for _path in (FONT, None):
+    _fe = _fw.document.add_text_element('ABCD')
+    _fe.x, _fe.y, _fe.font_height, _fe.font_width = 60, 60, 30, 24
+    _fe.font_path = _path
+    _fe.direction, _fe.char_gap = 'V', 10
+    _fw.document.sync_text_width(_fe)
+    _surface = QImage(812, 1218, QImage.Format_ARGB32); _surface.fill(Qt.white)
+    _fw.canvas.render(_surface)
+    _box = _ink_box(_surface, _fe)
+    check(f"the Qt canvas draws a column down its box "
+          f"({'with' if _path else 'without'} a font file)",
+          _box is not None and _box[3] - _box[1] > 3 * (30 + 10), _box)
+    _fw.document.elements.remove(_fe)
+
 # --- printer_status: what the printer reports about itself -------------------
 # Every fixture below is either the ZPL manual's own worked example or a reply
 # captured from real hardware, never one composed to match the parser.

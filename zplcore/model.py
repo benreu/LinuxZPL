@@ -105,9 +105,12 @@ class DesignElement:
         ^FO names its right edge, so the width goes back on. The parameter is
         trimmed when it is left, which is ZPL's default and what every file
         written before this was read as - so nothing already on disk moves.
+        A reversed (^FPR) text field names its first character rather than a
+        corner, and geometry.field_anchor is where both rules live.
         """
-        x = geometry.justified_x(self.x - offset[0], self.width, self.justify)
-        y = self.y - offset[1]
+        dx, dy = geometry.field_anchor(self)
+        x = self.x - offset[0] + dx
+        y = self.y - offset[1] + dy
         place = '' if self.justify in (None, geometry.JUSTIFY_LEFT) else f",{self.justify}"
         if self.typeset is None:
             return f"^FO{x},{y}{place}\n"
@@ -320,6 +323,10 @@ class TextElement(DesignElement):
     # into before the printer starts dropping lines.
     DEFAULT_MAX_LINES = 4
 
+    # ^FP's directions, and the most extra dots it will put between characters
+    DIRECTIONS = ('H', 'V', 'R')
+    MAX_CHAR_GAP = 9999
+
     def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
                  font_height: int = 36, font_width: int = 20,
                  font_code: str = 'F', orientation: str = 'N',
@@ -328,7 +335,8 @@ class TextElement(DesignElement):
                  serial_leading_zero=False,
                  clock_format=False, clock_chars=None,
                  serial_field_raw=None, hex_indicator=None,
-                 variable_data=False):
+                 variable_data=False, direction: str = 'H',
+                 char_gap: int = 0):
         self.x = x
         self.y = y
         self.text = text
@@ -371,6 +379,19 @@ class TextElement(DesignElement):
         self.orientation = (orientation or 'N').upper()
         # ^FB, when the text is a wrapped block rather than a single line
         self.block: Optional['FieldBlock'] = None
+        # ^FP: which way the characters run inside the field's own frame -
+        # left to right, top to bottom or right to left - and how many extra
+        # dots go between them. The frame is then turned by `orientation` as
+        # any text's is, which is all the manual's charts need of the two.
+        self.direction = (direction or 'H').upper()
+        if self.direction not in self.DIRECTIONS:
+            self.direction = 'H'
+        self.char_gap = max(0, min(int(char_gap or 0), self.MAX_CHAR_GAP))
+        # The first and last characters' advances, in dots, which is what a
+        # right to left field's ^FO is measured from (geometry.field_anchor).
+        # Kept by Document.sync_text_width alongside the box, for the same
+        # reason the box is: nothing else knows the font.
+        self.ends = (0, 0)
 
     def _measure(self, font_path: str, text=None) -> float:
         """Advance width of the text at em = font_height, or 0 if unmeasurable.
@@ -400,6 +421,14 @@ class TextElement(DesignElement):
         """
         shown = self.text if text is None else text
         font_path = self.font_path or default_font_path
+        if self.char_gap:
+            # ^FP's gap goes between characters, so they are measured one at
+            # a time, as the printer places them - the same arithmetic the
+            # layout they are drawn from does.
+            from . import textraster
+            measure, _font = textraster.measurer(
+                font_path, self.font_height, self.font_width, self.char_gap)
+            return max(1, round(measure(shown)))
         natural = self._measure(font_path, shown) if font_path else 0.0
         if natural <= 0:
             return max(1, len(shown) * self.font_width)
@@ -410,9 +439,29 @@ class TextElement(DesignElement):
     def font_width_for(self, target_width: int,
                        default_font_path: Optional[str] = None,
                        text=None) -> int:
-        """The font_width that makes this text print target_width dots wide."""
+        """The font_width that makes this text print target_width dots wide.
+
+        Top to bottom (^FPV) the width is the column's, which is its widest
+        character; with a gap it is the characters' and the gaps between
+        them, and only the characters scale with the font.
+        """
         shown = self.text if text is None else text
         font_path = self.font_path or default_font_path
+        if self.direction == 'V' or self.char_gap:
+            from . import textraster
+            pieces = textraster.clusters(shown) or [" "]
+            if self.direction == 'V':
+                natural = max(self._measure(font_path, piece)
+                              for piece in pieces) if font_path else 0.0
+                count = max(len(piece) for piece in pieces)
+            else:
+                target_width -= self.char_gap * (len(pieces) - 1)
+                natural = sum(self._measure(font_path, piece)
+                              for piece in pieces) if font_path else 0.0
+                count = len(shown)
+            if natural <= 0:
+                return max(1, round(target_width / max(1, count)))
+            return max(1, round(target_width * max(1, self.font_height) / natural))
         natural = self._measure(font_path, shown) if font_path else 0.0
         if natural <= 0:
             # An empty literal - a ^FN placeholder has one - would divide by a
@@ -433,7 +482,8 @@ class TextElement(DesignElement):
         """
         from . import textraster
         measure, _font = textraster.measurer(
-            self.font_path or default_font_path, self.font_height, self.font_width)
+            self.font_path or default_font_path, self.font_height,
+            self.font_width, self.char_gap)
         lines = (self.text or "").split(textraster.FORCED_BREAK)
         widest = max((measure(line) for line in lines), default=0)
         # Rounded up, not to nearest: a block a fraction of a dot narrower than
@@ -464,11 +514,18 @@ class TextElement(DesignElement):
             zpl += f"^A{self.font_code}{turn},{self.font_height},{self.font_width}\n"
         if self.block is not None:
             zpl += self.block.to_zpl() + "\n"
+        zpl += self.parameter_zpl()
         # ^FR immediately before the data it reverses, not right after ^FO -
         # the working convention, and the one place this differed from it.
         zpl += self.reverse_zpl()
         zpl += self.data_zpl()
         return zpl
+
+    def parameter_zpl(self) -> str:
+        """^FP, or nothing for ZPL's own default of left to right with no gap
+        - so a label that never used it is written exactly as it always was."""
+        options = _trimmed_options((self.direction, self.char_gap), ('H', 0))
+        return f"^FP{options[1:]}\n" if options else ""
 
 
 class FrameElement(DesignElement):
@@ -1389,6 +1446,10 @@ def graphic_symbol_choices(current: str) -> tuple:
 TEXT_JUSTIFICATIONS = (("Left", 'L'), ("Centred", 'C'),
                        ("Right", 'R'), ("Justified", 'J'))
 
+# ^FP's direction, for the same reason
+TEXT_DIRECTIONS = (("Left to right", 'H'), ("Top to bottom", 'V'),
+                   ("Right to left", 'R'))
+
 # ^XG/^IM name a stored image as d:o.x - device, object name, extension - and
 # both editors offer the same choices for the same reason every list above
 # does.
@@ -2294,31 +2355,54 @@ class Document:
         """Resize a text element's box to the size it will print at."""
         if getattr(element, 'element_type', None) != 'text':
             return
+        from . import textraster
         block = getattr(element, 'block', None)
+        font_path = element.font_path or self.font_path
+        shown = self.display_text(element)
+        pinned = geometry.field_anchor(element)
         if block is not None:
             # A block is sized by ^FB, not by the string: its width is fixed
             # and its height follows however many lines the text wraps into.
-            from . import textraster
             run, stack = textraster.block_size(
-                self.display_text(element), element.font_path or self.font_path,
-                element.font_height, element.font_width, block)
+                shown, font_path, element.font_height, element.font_width,
+                block, element.char_gap)
+        elif textraster.directed(element.direction, element.char_gap):
+            # ^FP lays the characters out one at a time, and its frame is
+            # whatever they fill: a column top to bottom, a row otherwise.
+            measure, _font = textraster.measurer(
+                font_path, element.font_height, element.font_width,
+                element.char_gap)
+            _places, (run, stack), element.ends = textraster.layout(
+                shown, measure, element.direction, element.char_gap,
+                element.font_height)
         else:
-            run, stack = (element.printed_width(self.font_path,
-                                                self.display_text(element)),
+            run, stack = (element.printed_width(self.font_path, shown),
                           element.font_height)
+        if block is None and not textraster.directed(element.direction,
+                                                     element.char_gap):
+            # Kept whatever the direction, so switching one to right to left
+            # measures the anchor from where the characters already are.
+            measure, _font = textraster.measurer(
+                font_path, element.font_height, element.font_width)
+            pieces = textraster.clusters(shown)
+            element.ends = ((int(round(measure(pieces[0]))),
+                             int(round(measure(pieces[-1]))))
+                            if pieces else (0, 0))
         # The run is along the text, so a quarter turn swaps it with the stack.
-        was = element.width
         element.width, element.height = ((stack, run) if element.rotated()
                                          else (run, stack))
-        # A right justified field is pinned by its right edge - that is what
-        # the justification means - so a string that grows grows leftward.
-        # Leaving the left edge fixed instead would move the ^FO the file
-        # named, which reads as the designer having shifted the field.
-        if element.justify == geometry.JUSTIFY_RIGHT:
-            # Clamped at the label edge like every other move: a string long
-            # enough to push the left edge off the label would otherwise take
-            # the ^FO negative, which ZPL has no room for.
-            element.x = max(0, element.x - (element.width - was))
+        # The point the ^FO names stays where it is - that is what the
+        # justification means - so a right justified string that grows grows
+        # leftward, and so does a right to left one, whose ^FO names its
+        # first character. Leaving the top-left fixed instead would move the
+        # ^FO the file named, which reads as the designer having shifted the
+        # field. Clamped at the label edge like every other move: a string
+        # long enough to push the left edge off the label would otherwise
+        # take the ^FO negative, which ZPL has no room for.
+        anchor = geometry.field_anchor(element)
+        if anchor != pinned:
+            element.x = max(0, element.x + pinned[0] - anchor[0])
+            element.y = max(0, element.y + pinned[1] - anchor[1])
 
     def set_font(self, font_path: str, font_family: str, printer_font_name: str):
         """Set the document-wide font."""

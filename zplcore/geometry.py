@@ -38,19 +38,59 @@ def justified_origin(x: int, width: int, justify) -> int:
     The manual's Field Interactions chart (Table 45) is the authority: with
     ^FPH, the field-direction default, the origin crosshair sits at the top
     left of a left justified field and at the top right of a right justified
-    one, which extends leftward from it.
+    one, which extends leftward from it. What a text field's ^FP adds to that
+    is field_anchor's.
     """
     return x - width if justify == JUSTIFY_RIGHT else x
 
 
-def justified_x(x: int, width: int, justify) -> int:
-    """The x a ^FO must name for a field whose left edge is `x`.
+def field_anchor(element) -> tuple:
+    """Where the point a field's ^FO or ^FT names sits in its footprint, as
+    (dx, dy) from the footprint's top-left - before ^FT's baseline, which
+    `typeset` carries on its own.
 
-    The inverse of justified_origin, and its inverse by construction rather
-    than by two places agreeing about a sign - which is how ^LH's offset went
-    wrong, fold and unfold each doing their own arithmetic.
+    The manual's Field Interactions charts (Tables 45-48) are the authority.
+    Left to right (^FPH) and top to bottom (^FPV) the point is the footprint's
+    top-left, or its top-right when right justified, at every orientation -
+    which is all justified_origin() knows. Right to left (^FPR) it follows the
+    characters instead:
+
+    - left justified, the top-left of the first character's cell, wherever
+      the turn has put that character: the right end upright, the bottom at
+      R, and the footprint's own top-left at I and B, where the first
+      character lands there anyway
+    - right justified, the top-right of the cell at the footprint's left end
+      (N, I) or bottom (R, B) - the last character upright and at B, the
+      first at I and R
+
+    The ^FPR cells are read off the charts' drawings and are not tested on a
+    printer; FUNCTIONAL_SPEC.md section 18 says so. `ends` - the first and
+    last characters' advances - is kept on a text element by
+    Document.sync_text_width. A block is placed as ^FPH: the manual does not
+    say what ^FB does with the direction.
+
+    The parser takes this off the point the file named and origin_zpl puts it
+    back, so the two are inverses by construction rather than by two places
+    agreeing about a sign - which is how ^LH's offset went wrong, fold and
+    unfold each doing their own arithmetic.
     """
-    return x + width if justify == JUSTIFY_RIGHT else x
+    width, height = element.width, element.height
+    right = getattr(element, 'justify', None) == JUSTIFY_RIGHT
+    # Text only: a ^GD's `direction` is which way it leans, and its R is not
+    # ^FP's
+    if (getattr(element, 'element_type', None) != 'text'
+            or element.direction != 'R' or element.block is not None):
+        return (width if right else 0, 0)
+
+    first, last = getattr(element, 'ends', None) or (0, 0)
+    orientation = (getattr(element, 'orientation', 'N') or 'N').upper()
+    if orientation == 'R':          # reads downward, first character at the bottom
+        return (width if right else 0, max(0, height - first))
+    if orientation == 'B':          # reads upward, first character at the top
+        return (width, max(0, height - last)) if right else (0, 0)
+    if orientation == 'I':          # upside down, first character at the left
+        return (first, 0) if right else (0, 0)
+    return (last, 0) if right else (max(0, width - first), 0)
 
 
 # The alignments, in menu order: the three horizontal, then the three vertical
@@ -422,6 +462,15 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
     if kind == 'text':
         element.font_height = _scaled(element.font_height, stack)
         element.font_width = _scaled(element.font_width, run)
+        # ^FP's gap is in dots along the characters: down the column top to
+        # bottom, along the row otherwise
+        if element.char_gap:
+            element.char_gap = int(round(element.char_gap * (
+                stack if element.direction == 'V' else run)))
+        # The characters' advances a reversed field's ^FO is measured from
+        # scale with the box they sit in, or the re-derived box below would
+        # be pinned by the old ones and move the field by the difference
+        element.ends = tuple(int(round(end * run)) for end in element.ends)
         if element.block is not None:
             # The wrap width is in dots like everything else, so a block
             # left unscaled would re-wrap at the old physical width -
@@ -597,8 +646,28 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
             # the string as soon as a rotated element was dragged.
             run, stack = ((element.height, element.width) if element.rotated()
                           else (element.width, element.height))
-            element.font_height = stack
-            element.font_width = element.font_width_for(run, document.font_path)
+            if element.direction == 'V':
+                # Top to bottom the stack is every row, and the gaps between
+                # them, so the font is the height of one row; the run is the
+                # column, as wide as its widest character. Only the side the
+                # handle moves is read: a column is one character wide, often
+                # under MIN_SIZE, so the clamped width of a drag down it is
+                # not a width anyone asked for.
+                from . import textraster
+                shown = document.display_text(element)
+                rows = max(1, len(textraster.clusters(shown)))
+                across, down = handle[1] in 'lr', handle[0] in 'tb'
+                if element.rotated():
+                    across, down = down, across
+                if down:
+                    element.font_height = max(1, int(round(
+                        (stack - (rows - 1) * element.char_gap) / rows)))
+                if across:
+                    element.font_width = element.font_width_for(
+                        run, document.font_path, shown)
+            else:
+                element.font_height = stack
+                element.font_width = element.font_width_for(run, document.font_path)
             # Snap the box to what will actually print, so the outline the user
             # drags is the outline that comes out of the printer.
             document.sync_text_width(element)

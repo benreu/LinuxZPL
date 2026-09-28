@@ -53,6 +53,10 @@ FIXTURE_PARTIAL = ROOT / 'tests' / 'fixtures' / 'partial_font.zpl'
 # The manual's own ^FW example, plus a ^CF field and a barcode that defer to
 # it the same way.
 FIXTURE_ORIENTED = ROOT / 'tests' / 'fixtures' / 'field_orientation.zpl'
+# ^FP as a file gives it: the manual's own vertical and reverse examples, a
+# gap on an ordinary line, right to left right justified and by ^FT, both
+# turned, a gapped block and a direction a block leaves undefined
+FIXTURE_DIRECTION = ROOT / 'tests' / 'fixtures' / 'field_direction.zpl'
 # A logo in the encoding label software actually sends: :Z64: rather than the
 # uncompressed hex this designer writes
 FIXTURE_COMPRESSED = ROOT / 'tests' / 'fixtures' / 'compressed_logo.zpl'
@@ -1238,6 +1242,25 @@ def sequence(driver, record):
     record('load a file whose ^A leaves its sizes off')
     driver.load(FIXTURE_ORIENTED)
     record('load a file whose fields turn with ^FW')
+    driver.load(FIXTURE_DIRECTION)
+    record('load a file whose fields run with ^FP')
+    # A column's gap and direction changed as the Edit Text dialog changes
+    # them, then dragged: the box follows the characters, and a right to
+    # left field keeps its first character where the ^FO names it.
+    column = next(e for e in driver.elements
+                  if e.element_type == 'text' and e.direction == 'V'
+                  and e.block is None)
+    column.char_gap = 4
+    driver.resync(column)
+    record("a column's gap narrowed")
+    driver.resize(column, 'bm', 0, 40)
+    record('the column dragged taller')
+    column.direction = 'R'
+    driver.resync(column)
+    record('the column run right to left')
+    column.text = 'reversed further'
+    driver.resync(column)
+    record('a right to left field given more text')
     driver.load(FIXTURE_COMPRESSED)
     record('load a file whose logo is :Z64: compressed')
 
