@@ -668,7 +668,7 @@ check("the round trip is stable", zpl_parser.parse_zpl(out)[0].to_zpl() == out)
 
 # markers ahead of a field the model cannot hold are used up by it
 leak = ("^XA^PW400^LL400\n^FXDESIGNER_GROUP:7\n^FXDESIGNER_NOPRINT\n"
-        "^FO10,10^BDN,2,3^FDmaxi^FS\n^FO20,20^A0N,30,30^FDafter^FS\n^XZ")
+        "^FO10,10^B4N,6,200^FDdata^FS\n^FO20,20^A0N,30,30^FDafter^FS\n^XZ")
 back, _ = zpl_parser.parse_zpl(leak)
 check("neither marker leaks onto the next supported field",
       len(back.elements) == 1 and back.elements[0].group is None
@@ -1530,7 +1530,7 @@ check("nothing is reported for the templates",
       workflow.unsupported_commands(product) == []
       and workflow.unsupported_commands(serial) == [])
 check("unmodelled commands are reported",
-      workflow.unsupported_commands("^XA^FO1,1^BDN,2,10^FDmaxi^FS^FH^XZ") == ['^BD'])
+      workflow.unsupported_commands("^XA^FO1,1^B4N,6,200^FDdata^FS^FH^XZ") == ['^B4'])
 check("and the label transforms are not, now that they survive a save",
       workflow.unsupported_commands(
           "^XA^LH10,10^LS1^LT1^POI^PMY^LRY^FO1,1^A0N,30,30^FDx^FS^XZ") == [],
@@ -1566,19 +1566,19 @@ check("a redefinition with nothing after it is recorded bare and breaks nothing"
       and redefs("^XA^FO1,1^FDx^FS^CC\n^XZ") == ['^CC'])
 
 heard = []
-said = workflow.warn_unsupported("^XA^CC//FO1,1/BDN,2,10/FDmaxi/FS/CC^^XZ",
+said = workflow.warn_unsupported("^XA^CC//FO1,1/B4N,6,200/FDdata/FS/CC^^XZ",
                                  lambda cmds: heard.append(('dropped', cmds)),
                                  lambda found: heard.append(('redefined', found)))
 check("a redefining label hears the redefinition notice, then the ordinary "
-      "list - read on the canonical text, so it names the real ^BD",
-      heard == [('redefined', ['^CC/', '/CC^']), ('dropped', ['^BD'])]
-      and said == ['^CC/', '/CC^', '^BD'], heard)
+      "list - read on the canonical text, so it names the real ^B4",
+      heard == [('redefined', ['^CC/', '/CC^']), ('dropped', ['^B4'])]
+      and said == ['^CC/', '/CC^', '^B4'], heard)
 heard = []
-said = workflow.warn_unsupported("^XA^FO1,1^BDN,2,10^FDmaxi^FS^XZ",
+said = workflow.warn_unsupported("^XA^FO1,1^B4N,6,200^FDdata^FS^XZ",
                                  lambda cmds: heard.append(('dropped', cmds)),
                                  lambda found: heard.append(('redefined', found)))
 check("and one that does not is reported exactly as before",
-      heard == [('dropped', ['^BD'])] and said == ['^BD'], heard)
+      heard == [('dropped', ['^B4'])] and said == ['^B4'], heard)
 heard = []
 check("a clean label says nothing either way",
       workflow.warn_unsupported(product, lambda c: heard.append(c),
@@ -1670,9 +1670,9 @@ check("and the image it decodes to is the same one",
 
 check("the redefinitions themselves are not in the unsupported list - the "
       "notice covers them - and what follows them is read for real",
-      workflow.unsupported_commands("^XA^CC//FO1,1/BDN,2,10/FDmaxi/FS/CC^^XZ")
-      == ['^BD'],
-      workflow.unsupported_commands("^XA^CC//FO1,1/BDN,2,10/FDmaxi/FS/CC^^XZ"))
+      workflow.unsupported_commands("^XA^CC//FO1,1/B4N,6,200/FDdata/FS/CC^^XZ")
+      == ['^B4'],
+      workflow.unsupported_commands("^XA^CC//FO1,1/B4N,6,200/FDdata/FS/CC^^XZ"))
 check("a stray prefix left by the restore is skipped, as a stray ^ is today",
       canon("^XA^CC//FO1,1/FDx/FS/CC^^^XZ")[0] == "^XA^FO1,1^FDx^FS^^XZ"
       and [(e.text) for e in zpl_parser.parse_zpl(
@@ -1777,12 +1777,22 @@ check("Codabar spells a check digit its own command fixes at N",
       and not zpl_symbology.varies('codabar', 'e')
       and BARCODE_FEATURES['codabar']['check_digit'] is None,
       "the manual gives it as a fixed value; Codabar has no checksum")
-check("and a matrix symbology offers neither a height nor a line",
+check("and a matrix symbology, or one the printer fixes the size of, "
+      "offers neither a height nor a line",
       [name for name, feat in BARCODE_FEATURES.items()
        if feat['height'] is None or not feat['text']]
-      == sorted(zpl_symbology.MATRIX, key=list(BARCODE_FEATURES).index),
+      == sorted(zpl_symbology.MATRIX | zpl_symbology.FIXED_SIZE,
+                key=list(BARCODE_FEATURES).index),
       [(n, f['height'], f['text']) for n, f in BARCODE_FEATURES.items()
        if f['height'] is None or not f['text']])
+check("a symbology offers an orientation row exactly when its command has an o",
+      [name for name, feat in BARCODE_FEATURES.items() if feat['orientation']]
+      == [name for name in BARCODE_FEATURES if zpl_symbology.varies(name, 'o')],
+      [n for n, f in BARCODE_FEATURES.items()
+       if f['orientation'] != zpl_symbology.varies(n, 'o')])
+check("and only MaxiCode offers the GS, RS and EOT buttons",
+      [name for name, feat in BARCODE_FEATURES.items()
+       if feat['control_chars']] == ['maxicode'])
 
 # Code 39: self-checking, so every character costs the same twelve modules -
 # three wide (2) plus six narrow (1) plus the inter-character gap.
@@ -2376,6 +2386,274 @@ for command in ('^B0', '^BO'):
     check(f"{command} is no longer a command a save would drop",
           workflow.unsupported_commands(
               f"^XA^FO0,0{command}N,4^FDHI^FS^XZ") == [])
+
+# --- ^BD, UPS MaxiCode -----------------------------------------------------
+from zplcore import fields as zpl_fields, maxicode as zpl_maxicode
+from zplcore.maxicode_map import MODULE_BITS as _MAXI_BITS, DARK as _MAXI_DARK
+from PySide2.QtWidgets import (QComboBox as _QComboBox,
+                               QDialogButtonBox as _QDialogButtonBox,
+                               QLineEdit as _QLineEdit,
+                               QPushButton as _QPushButton)
+
+# The manual's own example: a US parcel's sorting code - class of service 001,
+# country 840, ZIP 15238-2802 - and then the UPS message, fields separated by
+# GS, formats by RS and ended with EOT, all written as ^FH escapes.
+_UPS = ("001840152382802[)>_1E01_1D961Z00004951_1DUPSN_1D_06X610_1D159_1D1234567"
+        "_1D1/1_1D_1DY_1D634 ALPHA DR_1DPITTSBURGH_1DPA_1E_04")
+_UPS_LABEL = f"^XA^PW812^LL1218^FO50,50^BD^FH^FD{_UPS}^FS^XZ"
+
+# Every one of the 864 codeword bits has exactly one module, and the modules
+# a reader orients itself by are none of them.
+_placed = sorted(bit for row in _MAXI_BITS for bit in row if bit >= 0)
+check("the MaxiCode module map places every codeword bit exactly once",
+      _placed == list(range(864)) and len(_MAXI_BITS) == 33
+      and all(len(row) == 30 for row in _MAXI_BITS))
+check("and the thirteen orientation and filler modules are always dark",
+      sum(row.count(_MAXI_DARK) for row in _MAXI_BITS) == 13
+      and all(zpl_maxicode.encode('X', 4)[r][c]
+              for r, row in enumerate(_MAXI_BITS)
+              for c, bit in enumerate(row) if bit == _MAXI_DARK))
+
+# The primary's correction covers its ten codewords; the secondary's is split
+# between its odd and even codewords, twenty each in the standard modes and
+# twenty-eight in mode 5. Each must vanish at every root of its generator.
+_exp6, _log6 = zpl_aztec._field(6)
+
+
+def _syndromes(word, count):
+    bad = []
+    for power in range(1, count + 1):
+        total = 0
+        for value in word:
+            total = (0 if total == 0 else _exp6[_log6[total] + power]) ^ value
+        if total:
+            bad.append(power)
+    return bad
+
+
+for _mode, _correction in ((2, 40), (3, 40), (4, 40), (5, 56), (6, 40)):
+    _data = {2: zpl_fields.decode_hex(_UPS, '_'),
+             3: "066826ABC123[)>\x1e01\x1d96INTL\x1e\x04"}.get(
+                 _mode, "MAXICODE 123456789 mixed Case, Été")
+    _words = zpl_maxicode.codewords(_data, _mode)
+    _body = _words[20:]
+    check(f"mode {_mode}: 144 codewords whose three corrections all check out",
+          len(_words) == 144 and not _syndromes(_words[:20], 10)
+          and not _syndromes(_body[0::2], _correction // 2)
+          and not _syndromes(_body[1::2], _correction // 2),
+          (_syndromes(_words[:20], 10), _syndromes(_body[0::2], _correction // 2),
+           _syndromes(_body[1::2], _correction // 2)))
+
+
+# The sorting code is packed as bits across the primary's first ten
+# codewords, in an order the standard fixes. Read back through those bit
+# numbers - 1 is the top bit of codeword 0 - it has to be what was written.
+def _primary_bits(words, positions):
+    value = 0
+    for position in positions:
+        index = position - 1
+        value = (value << 1) | ((words[index // 6] >> (5 - index % 6)) & 1)
+    return value
+
+
+_POSTCODE = (33, 34, 35, 36, 25, 26, 27, 28, 29, 30, 19, 20, 21, 22, 23, 24,
+             13, 14, 15, 16, 17, 18, 7, 8, 9, 10, 11, 12, 1, 2)
+_COUNTRY = (53, 54, 43, 44, 45, 46, 47, 48, 37, 38)
+_SERVICE = (55, 56, 57, 58, 59, 60, 49, 50, 51, 52)
+_us = zpl_maxicode.codewords(zpl_fields.decode_hex(_UPS, '_'), 2)
+check("mode 2 packs the ZIP+4, the country and the class of service",
+      (_us[0] & 0x0F, _primary_bits(_us, _POSTCODE),
+       _primary_bits(_us, (39, 40, 41, 42, 31, 32)),
+       _primary_bits(_us, _COUNTRY), _primary_bits(_us, _SERVICE))
+      == (2, 152382802, 9, 840, 1),
+      (_us[0] & 0x0F, _primary_bits(_us, _POSTCODE), _primary_bits(_us, _COUNTRY),
+       _primary_bits(_us, _SERVICE)))
+_intl = zpl_maxicode.codewords("066826ab1 c2", 3)
+_letters = [_primary_bits(_intl, bits) for bits in (
+    (39, 40, 41, 42, 31, 32), (33, 34, 35, 36, 25, 26), (27, 28, 29, 30, 19, 20),
+    (21, 22, 23, 24, 13, 14), (15, 16, 17, 18, 7, 8), (9, 10, 11, 12, 1, 2))]
+check("mode 3 packs six letters and digits, upper-cased, in code set A",
+      (_intl[0] & 0x0F, ''.join(zpl_maxicode.CODE_SETS['A'][v] for v in _letters),
+       _primary_bits(_intl, _COUNTRY), _primary_bits(_intl, _SERVICE))
+      == (3, 'AB1 C2', 826, 66),
+      (_letters, _primary_bits(_intl, _COUNTRY), _primary_bits(_intl, _SERVICE)))
+
+# Structured append is a PAD and one codeword - which symbol of how many - at
+# the head of the message, and only when there is more than one symbol.
+_sa = zpl_maxicode.codewords("PART", 4, 3, 5)
+check("symbol 3 of 5 opens its message with PAD and (3-1)<<3 | (5-1)",
+      _sa[1:3] == [33, (2 << 3) | 4], _sa[:4])
+check("and a symbol that is one of one says nothing of the kind",
+      zpl_maxicode.codewords("PART", 4, 1, 1)[1] != 33)
+
+# Nine digits in a row go in as one number, five codewords after an NS, which
+# is a third of what writing them out costs.
+check("nine digits are packed behind a Numeric Shift",
+      zpl_maxicode.codewords("123456789", 4)[1:7]
+      == [31] + [(123456789 >> s) & 0x3F for s in (24, 18, 12, 6, 0)],
+      zpl_maxicode.codewords("123456789", 4)[1:7])
+check("every character from 0 to 255 has a code set that carries it",
+      all(chr(c) in zpl_maxicode._WHERE for c in range(256)))
+try:
+    zpl_maxicode.codewords("x" * 100, 5)
+    _too_long = None
+except ValueError as exc:
+    _too_long = str(exc)
+check("a message too long for the mode says so rather than truncating",
+      _too_long is not None and 'mode 5 holds 77' in _too_long, _too_long)
+
+# Reading it: the manual's example, with no orientation, height, magnification
+# or ^BY, comes back written the same way.
+_maxi = zpl_parser.parse_zpl(_UPS_LABEL)[0].elements
+check("^BD is read as a MaxiCode barcode, mode 2 by default",
+      len(_maxi) == 1 and _maxi[0].symbology == 'maxicode'
+      and (_maxi[0].maxi_mode, _maxi[0].symbol_number, _maxi[0].symbol_count)
+      == (2, 1, 1) and _maxi[0].symbol_error is None,
+      [(e.symbology, getattr(e, 'symbol_error', None)) for e in _maxi])
+_maxi_zpl = _maxi[0].to_zpl() if _maxi else ''
+check("and written back as ^BD and the ^FH data it came with, no ^BY",
+      f"^BD\n^FH_^FD{_UPS}^FS" in _maxi_zpl and '^BY' not in _maxi_zpl,
+      _maxi_zpl.replace('\n', ' '))
+_maxi_out = zpl_parser.parse_zpl(_UPS_LABEL)[0].to_zpl()
+check("a label holding one round-trips unchanged",
+      zpl_parser.parse_zpl(_maxi_out)[0].to_zpl() == _maxi_out)
+check("^BD is no longer a command a save would drop",
+      workflow.unsupported_commands(_UPS_LABEL) == [],
+      workflow.unsupported_commands(_UPS_LABEL))
+_three = zpl_parser.parse_zpl("^XA^FO10,10^BD3,2,4^FDx^FS^XZ")[0].elements[0]
+check("every parameter is kept: mode 3, symbol 2 of 4",
+      (_three.maxi_mode, _three.symbol_number, _three.symbol_count) == (3, 2, 4)
+      and "^BD3,2,4\n" in _three.to_zpl(), _three.to_zpl().replace('\n', ' '))
+_lettered = zpl_parser.parse_zpl("^XA^FO10,10^BDN,2,3^FDx^FS^XZ")[0].elements[0]
+check("an orientation letter written out of habit is an unreadable mode, so 2",
+      (_lettered.maxi_mode, _lettered.symbol_number, _lettered.symbol_count)
+      == (2, 2, 3), (_lettered.maxi_mode, _lettered.symbol_number))
+_glued = zpl_parser.parse_zpl("^XA^FO10,10^BD4,3,5^FDx^FS^XZ")[0].elements[0]
+check("and a glued first parameter is not split as if it were one",
+      (_glued.maxi_mode, _glued.symbol_number, _glued.symbol_count) == (4, 3, 5))
+_turned = zpl_parser.parse_zpl(
+    "^XA^FWR^FO10,10^BD4^FDturn me^FS^XZ")[0].elements[0]
+check("^FW does not turn a MaxiCode, which has no orientation to take",
+      _turned.orientation == '' and not _turned.rotated()
+      and (_turned.width, _turned.height) == zpl_maxicode.size(203),
+      (_turned.orientation, _turned.width, _turned.height))
+
+# One size on paper, whatever the head: 28.14 mm across.
+for _dpi, _dots in ((203, (225, 213)), (300, (333, 315)), (600, (665, 630))):
+    _sized = zpl_parser.parse_zpl(
+        f"^XA^FXDESIGNER_DPI:{_dpi}\n^FO10,10^BD4^FDsize^FS^XZ")[0].elements[0]
+    check(f"at {_dpi} dpi a MaxiCode is {_dots[0]} x {_dots[1]} dots, "
+          f"28.14 mm across",
+          (_sized.width, _sized.height) == _dots
+          and abs(_sized.width / _dpi * 25.4 - 28.14) < 0.15,
+          (_sized.width, _sized.height))
+_bad = BarcodeElement(0, 0, 60, '12345', symbology='maxicode')
+check("a mode 2 message with no 15-digit sorting code draws nothing, and says "
+      "why, over the ground the symbol will take",
+      _bad.symbol()[1] == [] and 'mode 2' in (_bad.symbol_error or '')
+      and (_bad.width, _bad.height) == zpl_maxicode.size(203),
+      (_bad.symbol_error, _bad.width, _bad.height))
+check("the rectangles are one dot tall and inside the symbol",
+      all(h == 1 and 0 <= x and x + w <= 225 and 0 <= y < 213
+          for x, y, w, h in geometry.barcode_rects(_maxi[0])))
+
+# Following the printer: kept dots, rescaled dots and undo all leave it the
+# same size on paper, since that is the only size a printer draws it at.
+_kept = zpl_parser.parse_zpl(_UPS_LABEL)[0]
+_before = _kept.snapshot()
+workflow.reconcile_dpi(_kept, 300, lambda *a: 'keep')
+check("keeping the dots on a 300 dpi printer re-draws it at 300 dpi",
+      (_kept.elements[0].dpi, box_of(_kept.elements[0])) == (300, (50, 50, 333, 315)),
+      (_kept.elements[0].dpi, box_of(_kept.elements[0])))
+_kept.restore(_before)
+check("and an undo across the change brings it back at the new resolution",
+      (_kept.elements[0].dpi, box_of(_kept.elements[0])) == (300, (50, 50, 333, 315)),
+      (_kept.elements[0].dpi, box_of(_kept.elements[0])))
+_scaled = zpl_parser.parse_zpl(_UPS_LABEL)[0]
+workflow.reconcile_dpi(_scaled, 600, lambda *a: 'rescale')
+check("rescaling to 600 dpi moves it and re-draws it, not scales it",
+      box_of(_scaled.elements[0]) == (148, 148, 665, 630)
+      and '^BD\n' in _scaled.to_zpl() and '^BY' not in _scaled.to_zpl(),
+      box_of(_scaled.elements[0]))
+_new_doc = Document(812, 1218, dpi=300)
+check("a barcode added to a 300 dpi label is drawn for it",
+      _new_doc.add_barcode_element().dpi == 300)
+
+# No handles, and nothing a drag or a group resize could ask of it.
+_fixed_doc = zpl_parser.parse_zpl(_UPS_LABEL)[0]
+_fixed = _fixed_doc.elements[0]
+_fixed_doc.selection = [_fixed]
+check("a MaxiCode offers no resize handles",
+      _fixed_doc.resize_target() is None and not _fixed.resizable)
+geometry.resize_by_handle(_fixed_doc, _fixed, 'br', 60, 40)
+check("and a drag at where one would be changes nothing",
+      box_of(_fixed) == (50, 50, 225, 213), box_of(_fixed))
+geometry.scale_element(_fixed_doc, _fixed, 0, 0, 2.0, 2.0)
+check("a group scaled round it moves it and leaves its size alone",
+      box_of(_fixed) == (100, 100, 225, 213), box_of(_fixed))
+
+# Made a MaxiCode in an editor, a barcode drops what ^BD cannot say.
+_switched = BarcodeElement(10, 10, 80, 'ABC', orientation='R')
+_switched.symbology = 'maxicode'
+_switched.maxi_mode = 4
+_switched.sync_box()
+check("a rotated Code 128 made a MaxiCode is no longer turned or lined",
+      (_switched.orientation, _switched.show_text, box_of(_switched))
+      == ('', False, (10, 10, 225, 213)),
+      (_switched.orientation, _switched.show_text, box_of(_switched)))
+check("and is written as ^BD4 with no ^BY",
+      "^BD4\n^FDABC^FS" in _switched.to_zpl() and '^BY' not in _switched.to_zpl(),
+      _switched.to_zpl().replace('\n', ' '))
+
+# The Insert buttons' one rule.
+check("an escape goes in at the cursor, switching ^FH on",
+      zpl_fields.insert_escape('AB', 1, 0x1D) == ('A_1DB', 4, '_'))
+check("switching ^FH on escapes the underscores already typed, and the cursor "
+      "moves with them",
+      zpl_fields.insert_escape('A_B', 2, 0x04) == ('A_5F_04B', 7, '_'))
+check("a field that has ^FH keeps its own indicator",
+      zpl_fields.insert_escape('A_1DB', 5, 0x1E, '_') == ('A_1DB_1E', 8, '_')
+      and zpl_fields.insert_escape('X', 1, 0x1D, '\\') == ('X\\1D', 4, '\\'))
+
+# Edit Barcode: MaxiCode's own rows, and the buttons, in the Qt dialog.
+_qt_maxi = BarcodeElement(40, 40, 80, 'A_B', orientation='R')
+_qt_accepted = []
+_qt_dialog = qt_dialogs.edit_barcode_dialog(
+    None, _qt_maxi, on_accept=lambda: _qt_accepted.append(True))
+_qt_symbology = _qt_dialog.findChild(_QComboBox, 'symbology')
+_qt_symbology.setCurrentIndex(_qt_symbology.findData('maxicode'))
+_qt_orientation = _qt_dialog.findChild(_QComboBox, 'orientation')
+_qt_insert = _qt_dialog.findChild(_QPushButton, 'insert_GS')
+check("Edit Barcode hides Orientation for a MaxiCode and shows Insert",
+      not _qt_orientation.isVisibleTo(_qt_dialog)
+      and _qt_insert.isVisibleTo(_qt_dialog))
+_qt_value = _qt_dialog.findChild(_QLineEdit, 'value')
+_qt_value.setCursorPosition(3)
+_qt_insert.click()
+_qt_dialog.findChild(_QPushButton, 'insert_EOT').click()
+check("Insert GS then EOT write their escapes at the cursor",
+      _qt_value.text() == 'A_5FB_1D_04' and _qt_value.cursorPosition() == 11,
+      (_qt_value.text(), _qt_value.cursorPosition()))
+_qt_maxi.hex_indicator = None
+_qt_dialog.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Ok).click()
+check("OK makes it a MaxiCode with ^FH on, unturned",
+      _qt_accepted and _qt_maxi.symbology == 'maxicode'
+      and _qt_maxi.hex_indicator == '_' and _qt_maxi.orientation == ''
+      and "^BD\n^FH_^FDA_5FB_1D_04^FS" in _qt_maxi.to_zpl(),
+      _qt_maxi.to_zpl().replace('\n', ' '))
+_qt_cancelled = BarcodeElement(40, 40, 80, 'AB')
+_qt_cancel = qt_dialogs.edit_barcode_dialog(None, _qt_cancelled)
+_qt_cancel.findChild(_QPushButton, 'insert_RS').click()
+_qt_cancel.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Cancel).click()
+check("Cancel leaves both the value and ^FH as they were",
+      (_qt_cancelled.barcode_value, _qt_cancelled.hex_indicator) == ('AB', None))
+_qt_code128 = qt_dialogs.edit_barcode_dialog(None, BarcodeElement(0, 0, 80, 'AB'))
+check("and a Code 128 keeps its Orientation row and has no Insert",
+      _qt_code128.findChild(_QComboBox, 'orientation').isVisibleTo(_qt_code128)
+      and not _qt_code128.findChild(_QPushButton, 'insert_GS').isVisibleTo(_qt_code128))
+# Closed, or the checks that drive the next dialog by finding whichever one is
+# on screen would find this one.
+_qt_code128.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Cancel).click()
 
 # --- ^BR, the GS1 DataBar family and its relations --------------------------
 from zplcore import databar as zpl_databar
@@ -4663,10 +4941,10 @@ check("an ^A@ with no path goes on meaning the last one named",
 
 # ^B3, ^BE and ^BQ are no longer in this list - they draw for real now, checked
 # below - and nor is ^GS, the symbol font, which is an element of its own now
-# (see "^GS, the graphic symbol"). ^BD MaxiCode and ^B4 Code 49 are the ones
-# that still do not.
-for symbology, source in (("^BD", "^BDN,2,5^FDMM,AHELLO^FS"),
-                          ("^B4", "^B4N,6,200^FDdata^FS")):
+# (see "^GS, the graphic symbol"), and nor is ^BD, MaxiCode (see "^BD, UPS
+# MaxiCode"). ^B4 Code 49 and ^BF MicroPDF417 are two that still do not.
+for symbology, source in (("^B4", "^B4N,6,200^FDdata^FS"),
+                          ("^BF", "^BFN,8,3^FDdata^FS")):
     page = f"^XA^PW812^LL1218^FO50,50{source}^XZ"
     read = zpl_parser.parse_zpl(page)[0]
     check(f"{symbology} is dropped, not turned into text",
@@ -4676,9 +4954,9 @@ for symbology, source in (("^BD", "^BDN,2,5^FDMM,AHELLO^FS"),
           workflow.unsupported_commands(page))
 
 check("the preview draws nothing for one still unsupported either",
-      _preview_ink("^XA^PW400^LL300^FO50,50^BDN,2,5^FDMM,AHELLO^FS^XZ",
+      _preview_ink("^XA^PW400^LL300^FO50,50^B4N,6,200^FDdata^FS^XZ",
                    400, 300) is None,
-      _preview_ink("^XA^PW400^LL300^FO50,50^BDN,2,5^FDMM,AHELLO^FS^XZ", 400, 300))
+      _preview_ink("^XA^PW400^LL300^FO50,50^B4N,6,200^FDdata^FS^XZ", 400, 300))
 
 check("the preview draws a QR code for real, at the magnification the command gives",
       _preview_ink("^XA^PW400^LL400^FO50,50^BQ,2,4^FDMM,AAC-42^FS^XZ", 400, 400)

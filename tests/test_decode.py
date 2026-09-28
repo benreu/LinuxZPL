@@ -266,6 +266,53 @@ for name, value in (("upper case", "ZEBRA TECHNOLOGIES"),
     reads(f"^B0 encodes {name}",
           f"^XA^PW700^LL500^FO60,60^B0N,5^FD{value}^FS^XZ", value, 'Aztec')
 
+# --- ^BD, UPS MaxiCode -----------------------------------------------------
+
+# zxing reads a MaxiCode only from a "pure" image - the symbol and nothing
+# else, found by the extent of its dark dots - so each label holds only the
+# one symbol. What it returns is compared as bytes, since its default text
+# shows GS and RS as picture symbols rather than the characters themselves.
+def reads_maxicode(name: str, zpl: str, expect: str, dpi=203,
+                   size=(700, 700)) -> None:
+    image = ZPLRenderer(size[0], size[1], dpi).render(zpl).convert('L')
+    found = [result.bytes.decode('latin-1') for result in
+             zxingcpp.read_barcodes(image, formats=zxingcpp.BarcodeFormat.MaxiCode)]
+    check(name, found == [expect], found or "nothing decoded")
+
+
+_UPS = ("001840152382802[)>_1E01_1D961Z00004951_1DUPSN_1D_06X610_1D159_1D1234567"
+        "_1D1/1_1D_1DY_1D634 ALPHA DR_1DPITTSBURGH_1DPA_1E_04")
+# A reader hands back the sorting code - ZIP+4, country, class of service -
+# spliced in after the message's own header, which is how a mode 2 or 3
+# symbol is meant to be read.
+_UPS_READ = ("[)>\x1e01\x1d96152382802\x1d840\x1d001\x1d1Z00004951\x1dUPSN"
+             "\x1d\x06X610\x1d159\x1d1234567\x1d1/1\x1d\x1dY\x1d634 ALPHA DR"
+             "\x1dPITTSBURGH\x1dPA\x1e\x04")
+for dpi, page in ((203, (700, 700)), (300, (900, 900)), (600, (1500, 1500))):
+    reads_maxicode(f"the manual's own UPS MaxiCode reads back at {dpi} dpi",
+                   f"^XA^PW{page[0]}^LL{page[1]}^FO60,60^BD^FH^FD{_UPS}^FS^XZ",
+                   _UPS_READ, dpi, page)
+reads_maxicode("mode 3 carries an international postal code of letters",
+               "^XA^PW700^LL700^FO60,60^BD3^FH"
+               "^FD066826ABC123[)>_1E01_1D96INTL_1D_1E_04^FS^XZ",
+               "[)>\x1e01\x1d96ABC123\x1d826\x1d066\x1dINTL\x1d\x1e\x04")
+# Every code set, the shifts and latches between them, and a Numeric Shift.
+for mode in (4, 5, 6):
+    reads_maxicode(f"mode {mode} carries upper and lower case, digits and "
+                   "Latin-1",
+                   f"^XA^PW700^LL700^FO60,60^BD{mode}^FH"
+                   "^FDCaf_E9 Stra_DFe 123456789 {x} _A9_B1_80_04^FS^XZ",
+                   "Café Straße 123456789 {x} ©±\x80\x04")
+reads_maxicode("a symbol that is one of a set still reads as its own message",
+               "^XA^PW700^LL700^FO60,60^BD4,2,3^FDSECOND OF THREE^FS^XZ",
+               "SECOND OF THREE")
+# What a save writes has to be what was read: the round trip, read back.
+from zplcore import parser as _parser
+_saved = _parser.parse_zpl(
+    f"^XA^PW700^LL700^FO60,60^BD^FH^FD{_UPS}^FS^XZ")[0].to_zpl()
+reads_maxicode("and it reads the same after the designer has saved it",
+               _saved, _UPS_READ)
+
 # --- ^BR, the six of twelve that are drawn ----------------------------------
 
 reads("^BR type 7 is a UPC-A, composite half and all left off",

@@ -1345,18 +1345,22 @@ def _read_barcode(cmd: str, params: str, default_height=None,
     actually turns it is spelled out on the way back.
     """
     parts = [p.strip() for p in params.split(',')]
+    names = BARCODE_COMMANDS[cmd]
     # The orientation is one letter, so whatever follows it before the comma
     # is the next parameter with its comma missing. The manual's own ^CV
     # example spells its QR code ^BQN2,3; reading the 2 as part of the
     # orientation pushed the 3 into the model and left the magnification at
-    # the default, which a save then wrote back as ^BQN,2,2.
-    if len(parts[0]) > 1 and parts[0][:1].isalpha():
+    # the default, which a save then wrote back as ^BQN,2,2. Only for a
+    # command that starts with one: ^BD's first parameter is its mode.
+    if names[0] == 'o' and len(parts[0]) > 1 and parts[0][:1].isalpha():
         parts[0:1] = [parts[0][:1], parts[0][1:].strip()]
     fallback = DESIGNER_BAR_HEIGHT if default_height is None else default_height
-    names = BARCODE_COMMANDS[cmd]
     fields = dict(zip(names, parts))
 
-    orientation = '' if default_orientation == 'N' else default_orientation
+    # ^FW turns the fields that have an orientation to take its default. A
+    # command with none - ^BD, a MaxiCode read at any angle - is not turned.
+    orientation = ('' if default_orientation == 'N' or 'o' not in names
+                   else default_orientation)
     o = fields.get('o', '')
     if o[:1].isalpha():
         orientation = o[:1].upper()
@@ -1392,6 +1396,7 @@ def _read_barcode(cmd: str, params: str, default_height=None,
             'orientation': orientation,
             'height': height,
             'magnification': magnification,
+            'dpi': dpi,
             'options': (fields.get('f', ''), fields.get('g', ''),
                         fields.get('e', ''), fields.get('m', '')),
             'params': {name: fields.get(name, '') for name in names
@@ -1567,6 +1572,7 @@ def _build_element(field, doc, renderer):
                               serial_field_raw=field['serial_field_raw'],
                               hex_indicator=field['hex_indicator'],
                               variable_data=field['variable_data'],
+                              dpi=bc['dpi'],
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
 

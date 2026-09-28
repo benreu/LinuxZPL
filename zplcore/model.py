@@ -33,6 +33,7 @@ from . import postal
 from . import datamatrix
 from . import pdf417
 from . import aztec
+from . import maxicode
 from . import databar
 from . import upcext
 from . import fields as zpl_fields
@@ -88,6 +89,9 @@ class DesignElement:
     # written on their own lines ahead of the element, so they move, hide
     # and are deleted with it.
     comments = ()
+    # Whether the handles can resize it. A MaxiCode is the one thing that
+    # cannot be any other size, so it offers none.
+    resizable = True
 
     def origin_zpl(self, offset=(0, 0)) -> str:
         """The ^FO or ^FT that places this element.
@@ -1009,9 +1013,14 @@ class BarcodeElement(DesignElement):
                  serial_leading_zero=False,
                  clock_format=False, clock_chars=None,
                  serial_field_raw=None, hex_indicator=None,
-                 variable_data=False):
+                 variable_data=False, dpi: int = zpl_fonts.DEFAULT_DPI):
         self.x = x
         self.y = y
+        # The head resolution this barcode is drawn for. Only a symbology
+        # printed at a fixed physical size needs it - its size in dots is the
+        # resolution's - and the document keeps it current (see
+        # Document.sync_to_dpi).
+        self.dpi = dpi
         self.bar_height = height
         self.barcode_value = barcode_value
         self.field_number = field_number
@@ -1076,6 +1085,12 @@ class BarcodeElement(DesignElement):
         for name, spec in symbologies.PARAMETERS.items():
             raw = given.get(name, '')
             setattr(self, name, spec.read(raw, self.symbology))
+
+    @property
+    def resizable(self) -> bool:
+        """A MaxiCode is the size the printer fixes; everything else can be
+        asked for another module width or height."""
+        return self.symbology not in symbologies.FIXED_SIZE
 
     @property
     def DEFAULTS(self) -> tuple:
@@ -1177,7 +1192,10 @@ class BarcodeElement(DesignElement):
         `('linear', modules)` is the bar and space widths of a
         one-dimensional symbol, alternating, starting with a bar.
         `('grid', rows)` is a matrix symbology, a list of rows of booleans,
-        dark where True. Every drawing path goes through
+        dark where True. `('dots', (width, height, runs))` is a symbol drawn
+        at the head's own resolution because it is not squares at all - a
+        MaxiCode's hexagons and rings - as runs of dark dots, (x, y, length).
+        Every drawing path goes through
         `geometry.barcode_layout`, which turns whichever kind this is into
         plain rectangles, so no canvas has to know the difference.
 
@@ -1189,13 +1207,19 @@ class BarcodeElement(DesignElement):
         every other field on it.
         """
         self.symbol_error = None
-        if self.symbology in symbologies.POSTAL:
+        if self.symbology in symbologies.FIXED_SIZE:
+            kind = 'dots'
+        elif self.symbology in symbologies.POSTAL:
             kind = 'postal'
         elif self.symbology in symbologies.MATRIX:
             kind = 'grid'
         else:
             kind = 'linear'
         try:
+            if kind == 'dots':
+                return ('dots', maxicode.symbol(
+                    self._raw_value(), self.maxi_mode, self.symbol_number,
+                    self.symbol_count, self.dpi))
             if kind == 'grid':
                 return ('grid', self._grid())
             if kind == 'postal':
@@ -1364,6 +1388,11 @@ class BarcodeElement(DesignElement):
             # Narrow bars at a one-to-one pitch: n bars and n - 1 gaps.
             bars = len(payload) or symbologies.PLACEHOLDER_MODULES
             return (max(1, 2 * bars - 1) * module, max(1, self.bar_height))
+        if kind == 'dots':
+            # The one size a MaxiCode prints at, whether or not this data
+            # made one - so a symbol that could not be built still covers
+            # exactly the ground it will take up once it can.
+            return maxicode.size(self.dpi)
         raise ValueError(f"unknown symbol kind {kind!r}")
 
     def printed_width(self) -> int:
@@ -1387,7 +1416,18 @@ class BarcodeElement(DesignElement):
         return self.orientation.upper() in ('R', 'B')
 
     def sync_box(self) -> None:
-        """Set the footprint from what the barcode will actually print."""
+        """Set the footprint from what the barcode will actually print.
+
+        What the symbology cannot carry is dropped first. Both editors change
+        `symbology` in place and write every row back, shown or not, so a
+        rotated Code 128 made into a MaxiCode would otherwise stay turned -
+        which ^BD has no parameter to say - and a line would go on printing
+        under a QR code that has none.
+        """
+        if not symbologies.varies(self.symbology, 'o'):
+            self.orientation = ''
+        if self.symbology in symbologies.NO_TEXT:
+            self.show_text = self.text_above = False
         run, stack = self.symbol_size()
         stack += self.text_height()
         self.width, self.height = (stack, run) if self.rotated() else (run, stack)
@@ -1516,6 +1556,7 @@ BARCODE_CHECK_DIGIT = (("No", False), ("Yes", True))
 BARCODE_SYMBOLOGIES = symbologies.BARCODE_SYMBOLOGIES
 BARCODE_FEATURES = symbologies.BARCODE_FEATURES
 BARCODE_PARAMETERS = symbologies.BARCODE_PARAMETERS
+BARCODE_CONTROL_CHARACTERS = symbologies.CONTROL_CHARACTERS
 
 FRAME_COLOURS = (("Black", 'B'), ("White", 'W'))
 
@@ -2127,9 +2168,13 @@ class Document:
         From the inside out, so that every member of a nested pair picked
         directly resizes the pair and not the group around it; a plain click
         on the nest, which selects all of it, resizes the outer group.
+
+        An element that cannot be resized at all - a MaxiCode - has no
+        handles to belong to. In a group it simply moves with the rest.
         """
         if len(self.selection) == 1:
-            return self.selection[0]
+            element = self.selection[0]
+            return element if element.resizable else None
         if not self.selection:
             return None
         picked = {id(el) for el in self.selection}
@@ -2234,6 +2279,7 @@ class Document:
                                                   command=command, device_spec=device_spec))
 
     def _append(self, element: DesignElement) -> DesignElement:
+        self._stamp_dpi(element)
         self._fit_new_element_to_bounds(element)
         self.elements.append(element)
         self.selected_element = element
@@ -2561,6 +2607,11 @@ class Document:
         self.fields = table.copy()
         self.transform = transform.copy()
         self.print_quantity = print_quantity
+        # The resolution is not part of the snapshot, so an undo across a
+        # change of printer would otherwise bring back a MaxiCode drawn for
+        # the old one.
+        for element in self.elements:
+            self._stamp_dpi(element)
 
     # --- geometry ------------------------------------------------------------
 
@@ -2680,11 +2731,21 @@ class Document:
             element.x = max(0, element.x + pinned[0] - anchor[0])
             element.y = max(0, element.y + pinned[1] - anchor[1])
 
-    def sync_all_text(self) -> None:
-        """Re-size every text element - after the resolution changes, since a
-        bitmap font's cell is the resolution's (fonts.bitmap_cell)."""
+    def sync_to_dpi(self) -> None:
+        """Re-size everything whose size in dots is the resolution's, after
+        the resolution changes: text in a bitmap font, whose cell is the
+        resolution's (fonts.bitmap_cell), and a MaxiCode, which prints the
+        same size on paper at every resolution."""
         for element in self.elements:
             self.sync_text_width(element)
+            self._stamp_dpi(element)
+
+    def _stamp_dpi(self, element) -> None:
+        """Give a barcode this document's resolution, re-sizing it if that
+        changes what it draws."""
+        if element.element_type == 'barcode' and element.dpi != self.dpi:
+            element.dpi = self.dpi
+            element.sync_box()
 
     def set_font(self, font_path: str, font_family: str, printer_font_name: str):
         """Set the document-wide font."""

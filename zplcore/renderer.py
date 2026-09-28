@@ -163,6 +163,7 @@ class ZPLRenderer:
             params=getattr(self, 'barcode_params', None),
             total_height=self.barcode_default_height,
             ratio=getattr(self, 'ratio', 3.0),
+            dpi=self.dpi,
             font=(('0', self.current_font_size,
                    self.current_font_width or self.current_font_size)
                   if self.current_font_size else None))
@@ -996,8 +997,8 @@ class ZPLRenderer:
             self.barcode_magnification = bc['magnification']
             self.is_barcode_mode = True
         elif command[0] == 'B':
-            # Code 49, Codablock, MaxiCode, MicroPDF417 and TLC39 - the
-            # symbologies this designer still cannot draw. ^BY and every
+            # Code 49, Codablock, MicroPDF417 and TLC39 - the symbologies
+            # this designer still cannot draw. ^BY and every
             # other ^B command are matched above, so only those reach here.
             self.unsupported_field = True
     

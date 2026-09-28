@@ -129,6 +129,26 @@ def decode_hex(text, indicator):
     return ''.join(out)
 
 
+def insert_escape(text: str, position: int, code: int, indicator=None) -> tuple:
+    """Insert one ^FH escape for the character `code` at `position` in a
+    field's literal, as (text, position after it, indicator).
+
+    A field with no ^FH yet gets ZPL's own default indicator, and every one
+    of that character already in the text is escaped first. The user typed
+    those meaning the character itself, and switching ^FH on under them would
+    otherwise make "A_1B" mean something else. The position moves with the
+    text it was in.
+    """
+    if not indicator:
+        indicator = '_'
+        escaped = f"{indicator}{ord(indicator):02X}"
+        position = len(text[:position].replace(indicator, escaped))
+        text = text.replace(indicator, escaped)
+    escape = f"{indicator}{code:02X}"
+    return (text[:position] + escape + text[position:],
+            position + len(escape), indicator)
+
+
 def clock_chars_zpl(chars) -> str:
     """^FC's parameters, trimmed after the last one that is actually set.
 

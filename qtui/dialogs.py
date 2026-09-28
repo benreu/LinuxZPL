@@ -27,7 +27,8 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
 from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
                      graphic_store, printer_io, printer_objects,
                      printer_status, textraster, workflow)
-from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_FEATURES,
+from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
+                           BARCODE_FEATURES,
                            BARCODE_MODES, BARCODE_ORIENTATIONS,
                            BARCODE_PARAMETERS,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
@@ -1267,6 +1268,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     layout.addLayout(form)
 
     symbology_combo = QComboBox()
+    symbology_combo.setObjectName("symbology")
     for label, code in BARCODE_SYMBOLOGIES:
         symbology_combo.addItem(label, code)
     symbology_combo.setCurrentIndex(
@@ -1274,7 +1276,35 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     form.addRow("Symbology:", symbology_combo)
 
     value_edit = QLineEdit(element.barcode_value)
+    value_edit.setObjectName("value")
     form.addRow("Barcode Value:", value_edit)
+
+    # The control characters a MaxiCode's message is built out of, which no
+    # keyboard types. Each goes in at the cursor as a ^FH escape, switching
+    # ^FH on if the field had none - held here until OK, like every other
+    # row, so Cancel leaves the element as it was.
+    pending = {'indicator': element.hex_indicator}
+    control_row = QWidget()
+    control_layout = QHBoxLayout(control_row)
+    control_layout.setContentsMargins(0, 0, 0, 0)
+
+    def _insert(code):
+        text, position, pending['indicator'] = zpl_fields.insert_escape(
+            value_edit.text(), value_edit.cursorPosition(), code,
+            pending['indicator'])
+        value_edit.setText(text)
+        value_edit.setCursorPosition(position)
+        value_edit.setFocus()
+
+    for label, code in BARCODE_CONTROL_CHARACTERS:
+        button = QPushButton(label)
+        button.setObjectName(f"insert_{label}")
+        button.setAutoDefault(False)
+        button.clicked.connect(lambda _checked=False, code=code: _insert(code))
+        control_layout.addWidget(button)
+    control_layout.addStretch(1)
+    form.addRow("Insert:", control_row)
+    control_label = form.labelForField(control_row)
 
     height_spin = QSpinBox()
     height_spin.setRange(20, 300)
@@ -1326,6 +1356,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     form.addRow("Ratio:", ratio_spin)
 
     orientation_combo = QComboBox()
+    orientation_combo.setObjectName("orientation")
     for label, code in BARCODE_ORIENTATIONS:
         orientation_combo.addItem(label, code)
     current = (element.orientation or 'N').upper()
@@ -1404,6 +1435,13 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         for widget in (text_combo, form.labelForField(text_combo),
                        font_spin, form.labelForField(font_spin)):
             widget.setVisible(bool(features['text']))
+        # A MaxiCode has no orientation to set, and a message built out of
+        # characters only the Insert buttons can write.
+        for widget in (orientation_combo,
+                       form.labelForField(orientation_combo)):
+            widget.setVisible(features['orientation'])
+        for widget in (control_row, control_label):
+            widget.setVisible(features['control_chars'])
         _load_extra_rows()
 
     symbology_combo.currentIndexChanged.connect(_update_visible_rows)
@@ -1414,6 +1452,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     def _apply():
         element.symbology = symbology_combo.currentData()
         element.barcode_value = value_edit.text()
+        element.hex_indicator = pending['indicator']
         element.bar_height = height_spin.value()
         element.module_width = module_spin.value()
         element.ratio = ratio_spin.value()

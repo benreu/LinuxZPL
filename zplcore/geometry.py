@@ -498,6 +498,11 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
         # Its thickness is a run of dots along each row, so it scales with
         # the width - which keeps the line the same shape at any factor.
         element.thickness = _scaled(element.thickness, sx)
+    elif kind == 'barcode' and element.symbology in symbology.FIXED_SIZE:
+        # The one size the printer fixes. A group scaled round it moves it;
+        # a change of resolution re-draws it at the same size on paper, which
+        # is the document's business (Document.sync_to_dpi), not a factor's.
+        element.sync_box()
     elif kind == 'barcode':
         # A module is a whole number of dots, so 2 becomes 3 rather than
         # 2.96 going 203 -> 300 dpi. Positions and heights scale exactly; a
@@ -746,6 +751,10 @@ def _resize_barcode(element, run: int, stack: int) -> None:
         element.module_width = max(1, round(run / bars))
         element.bar_height = max(MIN_SIZE, stack)
         return
+    if kind == 'dots':
+        # A MaxiCode is the one size the printer fixes; there is nothing a
+        # drag could ask it for.
+        return
     raise ValueError(f"unknown symbol kind {kind!r}")
 
 
@@ -875,6 +884,11 @@ def barcode_rects(element) -> list:
             height = max(1, round(bottom * stack) - y)
             rects.append((index * 2 * module, y, module, height))
         return rects
+
+    if kind == 'dots':
+        # Already at the head's resolution: each run is one dot tall.
+        return [(x, y, length, 1)
+                for x, y, length in (payload[2] if payload else ())]
 
     raise ValueError(f"unknown symbol kind {kind!r}")
 

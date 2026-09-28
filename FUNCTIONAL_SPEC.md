@@ -332,16 +332,16 @@ always the one the symbols print in.
 
 #### Barcode
 
-One element, seventeen symbologies: Code 128 (`^BC`, subsets B and C), Code
+One element, twenty-four symbologies: Code 128 (`^BC`, subsets B and C), Code
 39 (`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`), a UPC/EAN Extension
 add-on (`^BS`), UPC-A (`^BU`), UPC-E (`^B9`), EAN-8 (`^B8`), Code 93
 (`^BA`), Codabar (`^BK`), Code 11 (`^B1`), MSI (`^BM`), Plessey (`^BP`),
 Industrial 2 of 5 (`^BI`), Standard 2 of 5 (`^BJ`), LOGMARS (`^BL`), the
 POSTAL family (`^BZ` - Postnet, PLANET and the USPS Intelligent Mail
 barcode), Planet Code (`^B5`), Data Matrix (`^BX`), PDF417 (`^B7`), Aztec
-(`^B0`, also spelled `^BO`), six of `^BR`'s twelve, and QR (`^BQ`). Code 49,
-Codablock, MaxiCode, MicroPDF417, TLC39 and the GS1 DataBar family proper are
-still not offered - see §18.
+(`^B0`, also spelled `^BO`), six of `^BR`'s twelve, UPS MaxiCode (`^BD`), and
+QR (`^BQ`). Code 49, Codablock, MicroPDF417, TLC39 and the GS1 DataBar family
+proper are still not offered - see §18.
 
 **Which command spells which symbology, and what each of its parameters
 means, is one table** - `zplcore/symbology.py` - read by the model, the
@@ -350,13 +350,15 @@ five places that could disagree about where `^B3` spells its check digit.
 
 **The symbol reaches the canvas as rectangles.** `symbol()` says what kind of
 thing the printer will lay down - `linear` for bars and spaces, `grid` for a
-matrix of square modules - and `geometry.barcode_rects()` turns either into
-`(x, y, w, h)` in dots. The preview and both canvases draw those and nothing
+matrix of square modules, `postal` for bars of differing height, and `dots`
+for a symbol that is not squares at all and is drawn at the head's own
+resolution (MaxiCode's hexagons and rings) - and `geometry.barcode_rects()`
+turns each into `(x, y, w, h)` in dots. The preview and both canvases draw those and nothing
 else, so a symbology that is not bars and spaces needs nothing from them.
 
 | Property | Default |
 |---|---|
-| `symbology` | `code128` - which of the twenty-three |
+| `symbology` | `code128` - which of the twenty-four |
 | `barcode_value` | `"123456789"` |
 | `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots - and, for a matrix symbology, the magnification its own command carries instead of `^BY`'s w. An omitted one is the manual's default for the print resolution: 1 at 150 dpi, 2 at 200, 3 at 300, 6 at 600 |
@@ -378,6 +380,9 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `databar_type` | `1` - which of `^BR`'s twelve. `7`–`10` are UPC-A, UPC-E, EAN-13 and EAN-8, and `11`–`12` GS1-128; `1`–`6` are the DataBar family and are not drawn (§18) |
 | `separator`, `segments` | `1`, `22` - `^BR`'s separator height and segments per line. Carried; nothing draws a composite yet |
 | `postal_type` | `0` - `^BZ`'s Postnet, `1` PLANET, `3` the USPS Intelligent Mail barcode. `2` is reserved and draws nothing |
+| `maxi_mode` | `2` - `^BD`'s mode: `2` a US parcel's sorting code (numeric postal code) ahead of the message, `3` an international one (alphanumeric postal code), `4` a plain message, `5` the same with more error correction, `6` reader programming |
+| `symbol_number`, `symbol_count` | `1`, `1` - which of how many MaxiCodes, up to eight, carry one message between them |
+| `dpi` | the document's resolution - the head a barcode is drawn for. Only MaxiCode's size depends on it (below), and the document keeps it current |
 | `mode` | `N` - `A` lets Code 128 use subset C; no other symbology has a mode |
 | `quality` | QR's error correction: `Q` when `^BQ` leaves it out, `M` when `^BQ` names a letter QR has no level for - the manual distinguishes the two |
 | `qr_model` | `2`, the model the manual recommends. `1` is carried but drawn as 2 |
@@ -393,6 +398,8 @@ linear:  run = sum(module widths) × module_width,  stack = bar_height
 grid:    run = columns × module_width,             stack = rows × module_width
 postal:  run = (2 × bars - 1) × module_width,      stack = bar_height
 PDF417:  a grid, whose rows are each bar_height modules tall
+dots:    MaxiCode's one size at the document's resolution - 28.14 mm across:
+         225 × 213 dots at 203 dpi, 333 × 315 at 300, 665 × 630 at 600
 box      = (run, stack + text height) upright,  transposed rotated
 ```
 
@@ -406,6 +413,22 @@ Intelligent Mail barcode uses four such extents rather than two.
 A matrix symbology has no bar height at all - its size is its grid - so
 neither its own command nor `^BY` carries one, and the Bar Height row is not
 offered for it.
+
+**A MaxiCode is one size.** UPS's parcel symbol is 33 rows of 30 hexagons
+round a bullseye, about an inch across at every resolution: `^BD` carries no
+height, magnification or orientation, and the manual says `^BY` "has no
+effect" on it. So it is written with no `^BY`, `^FW` does not turn it, it
+offers no resize handles, a group resized round it moves it without resizing
+it, and its size in dots is the resolution's. Settling a design on another
+printer, whether the dots are rescaled or kept, re-draws it at the same size
+on paper (§11). Its field data is what the manual describes: in modes 2 and 3
+a high-priority message comes first - `aaabbbcccccdddd`, a class of service,
+a country code and a nine-digit ZIP+4, or `aaabbbcccccc` with a six-character
+alphanumeric postal code - and the rest is the message, normally fields
+separated by GS and RS and ended by EOT, written as `^FH` escapes. Modes 4, 5
+and 6 carry the whole field as the message. A high-priority message that does
+not fit its mode draws nothing, keeps the symbol's footprint and says why; a
+printer errors out on the same field.
 
 Because a quarter turn leaves the box axis-aligned, rotation needs nothing from
 hit-testing, dragging or the resize handles - they only ever see the box.
@@ -957,7 +980,7 @@ file choosers and the prompts — are modal.
 | **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
 | **Edit Diagonal Line** | Width; Height; Thickness; Colour; Direction; Reverse | Width and height 3–32000, `^GD`'s own range, so a line from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to the width, the maximum updating live as the width changes. Direction is right-leaning ( / ) or left-leaning ( \ ) (§3.3). Colour and Reverse as Edit Frame's. |
 | **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
-| **Edit Barcode** | Symbology; Value; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
+| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
@@ -1308,12 +1331,12 @@ where a baseline sits inside a character cell is measured from the font file and
 is only an estimate of what the printer will do - and normalising bakes that
 estimate into the file every time such a label is opened and saved.
 
-**A symbology that cannot be drawn is dropped, not redrawn as text.** `^BD`,
-`^B4` and the rest still reach the text branch's own trap otherwise, so a QR
+**A symbology that cannot be drawn is dropped, not redrawn as text.** `^B4`,
+`^BF` and the rest still reach the text branch's own trap otherwise, so a QR
 code sixty dots tall would arrive as nine-dot text holding its data, and save
 that way. The label gaining something that was never in it is worse than
 losing the barcode, which the load warning names either way. `^B3`, `^BE`,
-`^B2`, `^BS` and `^BQ` used to be dropped the same way; they are real
+`^B2`, `^BS`, `^BQ` and `^BD` used to be dropped the same way; they are real
 symbologies now (§3.3) and reach the barcode branch instead. Which commands
 those are is `zplcore/symbology.py`'s catalogue, which is also what the load
 warning's own list of modelled commands is built from - so a symbology cannot
@@ -1883,7 +1906,9 @@ from either dialog — offer three choices:
 Rescaling multiplies positions, sizes, label dimensions, font height and width,
 frame thickness and barcode module width, rounding to whole dots; text widths
 are then recomputed from font metrics rather than scaled, and images re-dither
-from their source at the new size. It is the one rule for scaling an element
+from their source at the new size. A MaxiCode is not scaled at all: whichever
+choice is made, it is re-drawn at the new resolution at the one size a printer
+prints it (§3.3), and an undo across the change brings it back at the new one. It is the one rule for scaling an element
 that resizing a group (§5) applies too, there with a factor per axis and about
 the group's anchor rather than the label's origin.
 
@@ -2369,8 +2394,8 @@ rather than requirements:
   Fonts `P` to `V`, listed in the manual's size tables with no gap, are not
   modelled as bitmap fonts: with no font file they are estimated as font `0`
   is, `len(text) × font_width`.
-- **Twenty-three symbologies** (§3.3). Data Matrix, PDF417, Aztec, GS1 DataBar,
-  the postal codes and the stacked family are still not offered, and no
+- **Twenty-four symbologies** (§3.3). Code 49, Codablock, MicroPDF417, TLC39
+  and the GS1 DataBar family proper are still not offered, and no
   symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are
   given rather than rejecting it (§3.3), and Code 39 draws an out-of-set
   character as a blank rather than refusing the barcode.
@@ -2404,6 +2429,27 @@ rather than requirements:
 - **Aztec's encodation is greedy rather than optimal**: a shift where one
   exists and only one character needs it, a latch otherwise. Within a few
   bits of the best for label data, and any reader accepts it.
+- **MaxiCode's dots are drawn from the standard's geometry, not taken from a
+  Zebra printer.** The pitch comes from ISO/IEC 16023's nominal 28.14 mm
+  symbol width (Zebra gives 1.11 in); rows nest at √3/2 of that; each hexagon
+  is drawn a little smaller than its cell, so neighbours stay apart; and the
+  bullseye's light centre, three dark rings and the bands between them follow
+  §4.11.4 of the standard. A printer's own bitmap may differ by a dot here and
+  there - the symbol, the modules each codeword lands in and what a reader
+  gets are the standard's. Inferred, not confirmed against a printer.
+- **MaxiCode's module map and code sets are ISO/IEC 16023's own**
+  (`zplcore/maxicode_map.py` and `zplcore/maxicode.py`), transcribed from two
+  independent implementations that agree on all 990 modules and all 256
+  characters. There is no formula for either.
+- **MaxiCode's code sets are chosen by a shortest path**, not greedily as
+  Aztec's are: a UPS message moves between upper case, lower case and the
+  control characters of set E often enough that the difference decides
+  whether a long address fits. A printer may choose differently and use a
+  codeword or two more or fewer; a reader gets the same message either way.
+- **MaxiCode's structured append is carried and drawn**: symbol `n` of `t`
+  opens its own message with a PAD and one codeword saying which it is, as
+  the standard specifies. A symbol that is one of one says nothing of the
+  kind.
 - **`^B7`'s `h` is a row height in modules, not dots**, which is what the
   manual means by "this number multiplied by the module equals the height of
   the individual rows". A rescale for another head resolution therefore

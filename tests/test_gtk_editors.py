@@ -349,6 +349,74 @@ dark = _painted_symbol(reversed_mark, under=(50, 50, 100, 100))
 check("and inverts under its own ink for ^FR",
       not dark(56, 100) and dark(70, 100), (dark(56, 100), dark(70, 100)))
 
+# --- Edit Barcode: MaxiCode's own rows, and the Insert buttons -------------
+
+from zplcore import model as zpl_model
+
+
+def _row_for(content, label_text):
+    """The dialog row whose label reads `label_text`."""
+    for row in content.get_children():
+        if isinstance(row, Gtk.Box):
+            labels = [c for c in row.get_children() if isinstance(c, Gtk.Label)]
+            if labels and labels[0].get_text() == label_text:
+                return row
+    return None
+
+
+def _named_button(content, name):
+    return next((b for b in _find_all(content, Gtk.Button) if b.get_name() == name),
+                None)
+
+
+maxi = document.add_barcode_element()
+maxi.barcode_value, maxi.orientation = 'A_B', 'R'
+maxi.sync_box()
+window.on_element_double_clicked(None, maxi)
+maxi_dialog = window._editors[id(maxi)]
+maxi_content = maxi_dialog.get_content_area()
+_find_all(maxi_content, Gtk.ComboBoxText)[0].set_active(
+    [code for _l, code in zpl_model.BARCODE_SYMBOLOGIES].index('maxicode'))
+check("Edit Barcode hides Orientation, Bar Height and Module Width for a MaxiCode",
+      not any(_row_for(maxi_content, label).get_visible()
+              for label in ("Orientation:", "Bar Height:", "Module Width:")))
+check("and shows its Mode, Symbol Number, Total Symbols and Insert rows",
+      all(_row_for(maxi_content, label).get_visible()
+          for label in ("MaxiCode Mode:", "Symbol Number:", "Total Symbols:",
+                        "Insert:")))
+maxi_entry = next(e for e in _find_all(maxi_content, Gtk.Entry)
+                  if not isinstance(e, Gtk.SpinButton))
+maxi_entry.set_position(3)
+_named_button(maxi_content, 'insert_GS').clicked()
+_named_button(maxi_content, 'insert_EOT').clicked()
+check("Insert GS then EOT write their escapes at the cursor, escaping the "
+      "underscore already there",
+      (maxi_entry.get_text(), maxi_entry.get_position()) == ('A_5FB_1D_04', 11),
+      (maxi_entry.get_text(), maxi_entry.get_position()))
+maxi_dialog.response(Gtk.ResponseType.OK)
+check("OK makes it a MaxiCode with ^FH on, unturned",
+      maxi.symbology == 'maxicode' and maxi.hex_indicator == '_'
+      and maxi.orientation == ''
+      and "^BD\n^FH_^FDA_5FB_1D_04^FS" in maxi.to_zpl(),
+      maxi.to_zpl().replace('\n', ' '))
+
+window.on_element_double_clicked(None, maxi)
+_cancelled = window._editors[id(maxi)]
+_named_button(_cancelled.get_content_area(), 'insert_RS').clicked()
+_cancelled.response(Gtk.ResponseType.CANCEL)
+check("Cancel leaves the value as it was",
+      maxi.barcode_value == 'A_5FB_1D_04', maxi.barcode_value)
+
+plain = document.add_barcode_element()
+window.on_element_double_clicked(None, plain)
+plain_content = window._editors[id(plain)].get_content_area()
+check("a Code 128 keeps its Orientation row and has no Insert",
+      _row_for(plain_content, "Orientation:").get_visible()
+      and not _row_for(plain_content, "Insert:").get_visible())
+window._editors[id(plain)].response(Gtk.ResponseType.CANCEL)
+document.elements.remove(maxi)
+document.elements.remove(plain)
+
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen
 # over one would write its fields into a copy the document no longer has, and

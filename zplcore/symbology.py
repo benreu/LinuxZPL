@@ -35,6 +35,7 @@ SYMBOLOGIES = {
     'pdf417': "PDF417",
     'aztec': "Aztec Code",
     'databar': "GS1 DataBar",
+    'maxicode': "MaxiCode",
     'qr': "QR Code",
 }
 
@@ -62,6 +63,7 @@ COMMAND = {
     'pdf417': '^B7',
     'aztec': '^B0',
     'databar': '^BR',
+    'maxicode': '^BD',
     'qr': '^BQ',
 }
 
@@ -80,6 +82,9 @@ COMMAND_PARAMS = {
     '^B0': ('o', 'w', 'eci', 'aztec_size', 'menu', 'append_count',
             'append_id'),
     '^BR': ('o', 'databar_type', 'w', 'separator', 'h', 'segments'),
+    # ^BD alone has no orientation, height or module width: a MaxiCode is
+    # one fixed size and is read at any angle by its bullseye.
+    '^BD': ('maxi_mode', 'symbol_number', 'symbol_count'),
     '^BO': ('o', 'w', 'eci', 'aztec_size', 'menu', 'append_count',
             'append_id'),
     '^BU': ('o', 'h', 'f', 'g', 'e'),
@@ -250,6 +255,15 @@ PARAMETERS = {
     # ^BR f - how many segments per line a DataBar Expanded Stacked symbol
     # runs to, even numbers only.
     'segments': Param(int, 22),
+    # ^BD m - what the symbol carries. 2 and 3 are a parcel's sorting code,
+    # a US numeric postal code or an international alphanumeric one, ahead
+    # of the message; 4 is a plain message, 5 the same with more error
+    # correction, and 6 programs the reader that sees it.
+    'maxi_mode': Param(int, 2, choices=(2, 3, 4, 5, 6)),
+    # ^BD n and t - which symbol this is of how many carry one message,
+    # up to eight.
+    'symbol_number': Param(int, 1, choices=tuple(range(1, 9))),
+    'symbol_count': Param(int, 1, choices=tuple(range(1, 9))),
 }
 
 # What an omitted f, g, e and m mean, per symbology, in that order - the
@@ -307,7 +321,15 @@ HEIGHT_UNIT = {
     # different head resolution would double-count, since the module width
     # it multiplies is scaled already.
     'pdf417': 'modules',
+    'maxicode': None,
 }
+
+# The symbologies drawn at the one size the printer fixes. The manual says
+# ^BY "has no effect on the UPS MaxiCode", and ^BD carries no height or
+# magnification of its own either, so such a symbol is the same size on paper
+# at every resolution - which makes its size in dots the resolution's - and
+# nothing resizes, scales or turns it.
+FIXED_SIZE = frozenset(('maxicode',))
 
 # The symbologies whose symbol is a grid of square modules rather than bars
 # and spaces. Their size is the grid, so neither ^BY's height nor their own
@@ -329,12 +351,13 @@ POSTAL = frozenset(('postal', 'planet'))
 # ordinary bars and spaces and takes both its module width and, when its own
 # command leaves the row height out, its height from ^BY.
 READS_BY = frozenset(key for key, command in COMMAND.items()
-                     if 'w' not in COMMAND_PARAMS[command])
+                     if 'w' not in COMMAND_PARAMS[command]
+                     and key not in FIXED_SIZE)
 
 # Symbologies with no interpretation line at all - the matrix codes, whose
 # commands carry no f parameter. Everything else has one, on by default or
 # not as flag_defaults says.
-NO_TEXT = frozenset(('qr', 'datamatrix', 'pdf417', 'aztec'))
+NO_TEXT = frozenset(('qr', 'datamatrix', 'pdf417', 'aztec', 'maxicode'))
 
 
 # The matrix symbologies whose own command, with its size left out, means
@@ -376,9 +399,11 @@ BARCODE_SYMBOLOGIES = tuple((label, key) for key, label in SYMBOLOGIES.items())
 
 
 def _features(mode=False, ratio=False, check_digit=None, height=(20, 300),
-              module_width="Module Width", text=True):
+              module_width="Module Width", text=True, orientation=True,
+              control_chars=False):
     return {'mode': mode, 'ratio': ratio, 'check_digit': check_digit,
-            'height': height, 'module_width': module_width, 'text': text}
+            'height': height, 'module_width': module_width, 'text': text,
+            'orientation': orientation, 'control_chars': control_chars}
 
 
 # Which of the dialog's own rows apply to a given symbology, and what to call
@@ -388,7 +413,9 @@ def _features(mode=False, ratio=False, check_digit=None, height=(20, 300),
 # None for a symbology whose height is its grid; `module_width` is the row's
 # label (a matrix code calls it magnification) or None; `text` is False for a
 # symbology with no interpretation line and 'always' for one whose command
-# cannot switch it off.
+# cannot switch it off; `orientation` is False for a command that cannot be
+# turned; and `control_chars` offers the buttons that write GS, RS and EOT
+# into the value, for a symbology whose data is built out of them.
 BARCODE_FEATURES = {
     'code128':          _features(mode=True, check_digit="UCC Check Digit"),
     'code39':           _features(ratio=True, check_digit="Mod-43 Check Digit"),
@@ -420,6 +447,8 @@ BARCODE_FEATURES = {
                                   text=False),
     'qr':               _features(height=None, module_width="Magnification",
                                   text=False),
+    'maxicode':         _features(height=None, module_width=None, text=False,
+                                  orientation=False, control_chars=True),
 }
 
 # The rows a symbology adds to the dialog for its own parameters, as
@@ -479,9 +508,24 @@ BARCODE_PARAMETERS = {
     'postal': (('postal_type', "Postal Code",
                 (("Postnet", '0'), ("PLANET", '1'),
                  ("USPS Intelligent Mail", '3'), ("Reserved", '2'))),),
+    'maxicode': (('maxi_mode', "MaxiCode Mode",
+                  (("2 - US carrier (numeric postal code)", 2),
+                   ("3 - international carrier (alphanumeric postal code)", 3),
+                   ("4 - standard", 4), ("5 - full error correction", 5),
+                   ("6 - reader programming", 6))),
+                 ('symbol_number', "Symbol Number",
+                  tuple((str(n), n) for n in range(1, 9))),
+                 ('symbol_count', "Total Symbols",
+                  tuple((str(n), n) for n in range(1, 9)))),
     'msi': (('msi_check', "Check Digits",
              (("One Mod 10", 'B'), ("None", 'A'), ("Two Mod 10", 'C'),
               ("Mod 11 then Mod 10", 'D'))),
             ('msi_show_check', "Show Check Digits",
              (("No", 'N'), ("Yes", 'Y')))),
 }
+
+
+# The control characters the editors offer to insert, as (label, code). The
+# UPS message a MaxiCode carries is fields separated by GS, formats by RS and
+# ended by EOT, none of which can be typed; each goes in as a ^FH escape.
+CONTROL_CHARACTERS = (("GS", 0x1D), ("RS", 0x1E), ("EOT", 0x04))

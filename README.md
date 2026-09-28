@@ -169,7 +169,7 @@ zplcore/    no GUI toolkit, runs headless
   code128.py, code39.py, ean13.py, i2of5.py, upcext.py, upca.py, upce.py,
   ean8.py, code93.py, codabar.py, code11.py, msi.py, plessey.py,
   twoof5.py, postal.py, qr.py, datamatrix.py, pdf417.py, aztec.py,
-  databar.py, pdf417_patterns.py
+  maxicode.py, databar.py, pdf417_patterns.py, maxicode_map.py
                  barcode encoding, one file per symbology
 gtkui/      GTK3 frontend: Cairo painting, dialogs, menus
 qtui/       PySide2/Qt5 frontend: QPainter painting, dialogs, menus
@@ -210,6 +210,8 @@ Read when loading a file and written when saving:
   field data (`A` to `E`)
 - `^BC` / `^B3` / `^BE` / `^B2` / `^BS` / `^BY` - Code 128, Code 39, EAN-13,
   Interleaved 2 of 5 and UPC/EAN Extension barcodes, and their module width
+- `^BD` - UPS MaxiCode, the same size on paper at every resolution, with the
+  GS, RS and EOT its message is built from written as `^FH` escapes
 - `^GF` - Graphic field (images, 1-bit, where a set bit is black)
 - `^DF` / `^XF` - Store / recall a format, with `^FN` / `^FV` variable fields
 - `^IM` / `^XG` - Recall a stored graphic into a field (Image Move / Recall Graphic)
@@ -274,10 +276,10 @@ Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
 - Barcodes are Code 128, Code 39, EAN-13, Interleaved 2 of 5, the UPC/EAN
   extension, UPC-A, UPC-E, EAN-8, Code 93, Codabar, Code 11, MSI, Plessey,
   Industrial and Standard 2 of 5, LOGMARS, the POSTAL family (Postnet,
-  PLANET and USPS Intelligent Mail), Data Matrix, PDF417, Aztec, QR, and six
-  of `^BR`'s twelve types - UPC-A, UPC-E, EAN-13, EAN-8 and GS1-128. The GS1
-  DataBar family proper (`^BR` types 1-6), Code 49, Codablock, MaxiCode,
-  MicroPDF417 and TLC39 are not offered yet, and neither is `^BR`'s composite
+  PLANET and USPS Intelligent Mail), Data Matrix, PDF417, Aztec, UPS
+  MaxiCode, QR, and six of `^BR`'s twelve types - UPC-A, UPC-E, EAN-13, EAN-8
+  and GS1-128. The GS1 DataBar family proper (`^BR` types 1-6), Code 49,
+  Codablock, MicroPDF417 and TLC39 are not offered yet, and neither is `^BR`'s composite
   component, which round-trips undrawn. Data Matrix is drawn as ECC 200 whatever
   quality its command asks for. A QR code carries
   what its `^FD` switches say and no interpretation line, and is drawn as
@@ -287,4 +289,5 @@ Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
   than a readable barcode for a different product code.
 - Rescaling between resolutions cannot be exact for barcodes: a module is a
   whole number of dots, so 2 becomes 3 going from 203 to 300 dpi. Positions and
-  heights scale exactly.
+  heights scale exactly. A MaxiCode is not scaled at all: it is re-drawn at the
+  one size a printer prints it.

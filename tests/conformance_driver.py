@@ -1128,6 +1128,26 @@ def sequence(driver, record):
         driver.resync_barcode(bars)
         record('barcode rotated 90 degrees')
 
+    # MaxiCode is neither bars nor squares, and one fixed size: the two have to
+    # agree about the footprint of a symbol neither can resize, and write its
+    # ^FH data back the same way.
+    maxi = driver.add_barcode()
+    maxi.symbology, maxi.hex_indicator = 'maxicode', '_'
+    maxi.barcode_value = ("001840152382802[)>_1E01_1D961Z00004951_1DUPSN"
+                          "_1D_06X610_1D159_1D1234567_1D1/1_1D_1DY"
+                          "_1D634 ALPHA DR_1DPITTSBURGH_1DPA_1E_04")
+    driver.resync_barcode(maxi)
+    record("a MaxiCode, the manual's own UPS example")
+    maxi.maxi_mode, maxi.hex_indicator = 4, None
+    maxi.barcode_value = 'Standard symbol 123456789'
+    driver.resync_barcode(maxi)
+    record('the MaxiCode as a plain mode 4 message')
+    driver.select(maxi)
+    record('a selected MaxiCode offers no handles',
+           repr((driver.resize_target(), maxi.width, maxi.height)))
+    driver.resize(maxi, 'br', 40, 40)
+    record('and a resize leaves it the size it prints at')
+
     block = next((e for e in driver.elements if e.element_type == 'text'), None)
     if block is not None:
         block.text = 'Stainless Steel Hex Head Bolt 10mm'

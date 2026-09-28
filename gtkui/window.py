@@ -3923,6 +3923,30 @@ class ZPLViewerWindow(Gtk.Window):
             value_entry.set_text(element.barcode_value)
             make_row("Barcode Value:", value_entry)
 
+            # The control characters a MaxiCode's message is built out of,
+            # which no keyboard types. Each goes in at the cursor as a ^FH
+            # escape, switching ^FH on if the field had none - held here
+            # until OK, like every other row, so Cancel leaves the element
+            # as it was.
+            pending = {'indicator': element.hex_indicator}
+            control_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                                  spacing=4)
+
+            def on_insert(_button, code):
+                text, position, pending['indicator'] = zpl_fields.insert_escape(
+                    value_entry.get_text(), value_entry.get_position(), code,
+                    pending['indicator'])
+                value_entry.set_text(text)
+                value_entry.grab_focus_without_selecting()
+                value_entry.set_position(position)
+
+            for label, code in model.BARCODE_CONTROL_CHARACTERS:
+                button = Gtk.Button(label=label)
+                button.set_name(f"insert_{label}")
+                button.connect('clicked', on_insert, code)
+                control_box.pack_start(button, False, False, 0)
+            control_row, _control_label = make_row("Insert:", control_box)
+
             height_spin = make_spin(element.bar_height, 20, 300)
             height_row, _height_label = make_row("Bar Height:", height_spin)
 
@@ -3949,7 +3973,8 @@ class ZPLViewerWindow(Gtk.Window):
             orientation_combo, orientation_codes = make_combo(
                 model.BARCODE_ORIENTATIONS,
                 (element.orientation or 'N').upper())
-            make_row("Orientation:", orientation_combo)
+            orientation_row, _orientation_label = make_row(
+                "Orientation:", orientation_combo)
 
             text_combo, text_codes = make_combo(
                 model.BARCODE_TEXT_CHOICES,
@@ -3999,6 +4024,10 @@ class ZPLViewerWindow(Gtk.Window):
                 if features['module_width'] is not None:
                     module_label.set_text(features['module_width'] + ":")
                 text_row.set_visible(bool(features['text']))
+                # A MaxiCode has no orientation to set, and a message built
+                # out of characters only the Insert buttons can write.
+                orientation_row.set_visible(features['orientation'])
+                control_row.set_visible(features['control_chars'])
                 text_height_row.set_visible(bool(features['text']))
                 wanted = [attribute for attribute, _l, _c
                           in model.BARCODE_PARAMETERS.get(chosen, ())]
@@ -4018,6 +4047,7 @@ class ZPLViewerWindow(Gtk.Window):
                 if response == Gtk.ResponseType.OK:
                     element.symbology = symbology_codes[symbology_combo.get_active()]
                     element.barcode_value = value_entry.get_text()
+                    element.hex_indicator = pending['indicator']
                     element.bar_height = int(height_spin.get_value())
                     element.module_width = int(module_spin.get_value())
                     element.ratio = ratio_spin.get_value()
