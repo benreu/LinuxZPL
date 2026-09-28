@@ -3863,14 +3863,64 @@ check("so ^A0N,40 and ^A0N,40,40 are the same element",
       (partial.width, partial.height) == (full.width, full.height),
       ((partial.width, partial.height), (full.width, full.height)))
 
-# A bitmap font is not proportional, so it inherits ^CF's width instead
-bitmap = zpl_parser.parse_zpl("^XA^PW812^LL1218^FO50,50^AFN,18^FDHg^FS^XZ")[0].elements[0]
-check("a bitmap font with no width inherits ^CF's",
-      bitmap.font_width == zpl_parser.DEFAULT_FONT['width'], bitmap.font_width)
-inherited = zpl_parser.parse_zpl(
-    "^XA^PW812^LL1218^CF0,40,20^FO50,50^A0N,40^FDHg^FS^XZ")[0].elements[0]
-check("and ^CF still wins when it set a width for a scalable font",
-      inherited.font_width == 20, inherited.font_width)
+# One size given decides the other, through the font's own cell - for a
+# bitmap font too, and whatever width ^CF last set. Printed on a 203 dpi
+# printer from the console, the ZPL as written: ^ADN,36 came out 90.7 dots
+# wide with an H every 24 (font D doubled both ways - the old reading, ^CF's
+# width of 5, is 46 wide with an H every 12, which is what this app then
+# sent); ^ADN,54 after ^CFD,36,20 came out 136 wide with an H every 36,
+# tripled both ways and not ^CF's 20; and a field under ^CF0,89 printed to
+# the dot as ^A0N,89,89 did, 203.7 x 65, where this wrote ^A0N,89,5.
+def _font_of(zpl):
+    """(height, width) of the first field `zpl` holds, and the ^A it saves."""
+    _doc = zpl_parser.parse_zpl("^XA^PW812^LL1218" + zpl + "^XZ")[0]
+    _el = _doc.elements[0]
+    return ((_el.font_height, _el.font_width),
+            next(l for l in _doc.to_zpl().splitlines() if l.startswith('^A')))
+
+for zpl, want, written, why in (
+        ("^FO50,50^ADN,36^FDHHHH^FS", (36, 20), "^ADN,36,20",
+         "a bitmap height alone magnifies the width as much - printed 90.7 wide"),
+        ("^CFD,36,20^FO50,150^ADN,54^FDHHHH^FS", (54, 30), "^ADN,54,30",
+         "and ^CF's width takes no part - printed 136 wide, not 91"),
+        ("^CF0,89^FO50,300^FDHHHH^FS", (89, 89), "^A0N,89,89",
+         "a ^CF naming only a height is square in font 0 - printed as ^A0N,89,89"),
+        ("^CFD,36,20^CF0,89^FO50,300^FDHHHH^FS", (89, 89), "^A0N,89,89",
+         "even after a ^CF that set a width, as on the printed label"),
+        ("^FO50,50^AFN,18^FDHg^FS", (18, 13), "^AFN,18,13",
+         "font F's 18 rounds to one cell, so the width is one cell's 13"),
+        ("^CFD,36^FO50,50^FDHg^FS", (36, 20), "^ADN,36,20",
+         "^CF follows the same rule for a bitmap font"),
+        ("^CF0,40,20^FO50,50^A0N,40^FDHg^FS", (40, 40), "^A0N,40,40",
+         "an ^A height alone after a ^CF width is square in font 0"),
+        ("^FO50,50^ADN,,20^FDHg^FS", (36, 20), "^ADN,36,20",
+         "a width alone decides the height the same way"),
+        ("^FO50,50^A0N,,89^FDHg^FS", (89, 89), "^A0N,89,89",
+         "and a scalable font given a width alone is square"),
+        ("^CF0,30,30^FO50,50^A0N^FDHg^FS", (30, 30), "^A0N,30,30",
+         "^A naming no size at all still takes both from ^CF"),
+        ("^CFD,36,20^CFE^FO50,50^FDHg^FS", (36, 20), "^AEN,36,20",
+         "a ^CF naming neither size keeps both, in its new font")):
+    got, saved = _font_of(zpl)
+    check(f"{zpl}: {why}", (got, saved) == (want, written), (got, saved))
+
+# The width a file leaves out is written back resolved, so it has to print
+# the same: the magnification it names is the one the height gave.
+for code, height in (('D', 36), ('D', 54), ('F', 18), ('E', 56), ('A', 30)):
+    _h, _w = zpl_fonts.other_size(code, height=height)
+    _given = zpl_fonts.bitmap_cell(code, height, _w)
+    check(f"^A{code},{height} resolved to width {_w} prints one magnification "
+          "both ways",
+          _given.height // zpl_fonts._bitmap_base(code)[0]
+          == _given.width // zpl_fonts._bitmap_base(code)[1],
+          _given)
+# At 300 dpi font E's cell is bigger, so the same height is a smaller
+# magnification - the resolution the file records has to reach the reader.
+_e300 = zpl_parser.parse_zpl("^XA^PW812^LL1218^FXDESIGNER_DPI:300\n"
+                             "^FO50,50^AEN,56^FDHg^FS^XZ")[0].elements[0]
+check("a 300 dpi label resolves font E against its 300 dpi cell",
+      (_e300.font_height, _e300.font_width) == (56, 20),
+      (_e300.font_height, _e300.font_width))
 sizeless = zpl_parser.parse_zpl(
     "^XA^PW812^LL1218^CF0,30,30^FO50,50^A0N^FDHg^FS^XZ")[0].elements[0]
 check("^A naming no size at all takes both from ^CF",
@@ -3944,11 +3994,16 @@ for _cw in (10, 40, 80):
     check(f"the preview draws ^A's character width of {_cw}",
           abs(_drawn - _modelled) <= _modelled * 0.06, (_drawn, _modelled))
 
-check("the preview reads a partial ^A against the ^CF in force",
+check("the preview reads a partial ^A as the model does, not against ^CF's width",
       _preview_ink("^XA^PW400^LL300^CF0,40,20^FO50,50^A0N,40^FDHg^FS^XZ", 400, 300)
-      == _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,20^FDHg^FS^XZ", 400, 300),
+      == _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,40^FDHg^FS^XZ", 400, 300),
       (_preview_ink("^XA^PW400^LL300^CF0,40,20^FO50,50^A0N,40^FDHg^FS^XZ", 400, 300),
-       _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,20^FDHg^FS^XZ", 400, 300)))
+       _preview_ink("^XA^PW400^LL300^FO50,50^A0N,40,40^FDHg^FS^XZ", 400, 300)))
+for _pair in (("^CFD,36,20^FO50,50^ADN,54^FDHHHH^FS", "^FO50,50^ADN,54,30^FDHHHH^FS"),
+              ("^CF0,89^FO50,50^FDHHHH^FS", "^FO50,50^A0N,89,89^FDHHHH^FS")):
+    _left, _right = (_preview_ink(f"^XA^PW800^LL300{z}^XZ", 800, 300) for z in _pair)
+    check(f"the preview draws {_pair[0]} as {_pair[1]}, as the printer did",
+          _left == _right, (_left, _right))
 
 # ^FW in the preview, each case against the command that spells the turn out
 # - the same comparison ^CF gets above, and for the same reason: ink that is
@@ -4618,7 +4673,7 @@ check("the manual's bare ^GS^FDC takes ^CF's height and width",
       and "^GSN,18,10\n^FDC^FS" in _manual_gs[2].to_zpl(),
       [(type(e).__name__, getattr(e, 'font_height', None),
         getattr(e, 'font_width', None)) for e in _manual_gs])
-for source, want in (("^GSN,40", (40, 40)), ("^GSN,,30", (9, 30)),
+for source, want in (("^GSN,40", (40, 40)), ("^GSN,,30", (30, 30)),
                      ("^GS,20,10", (20, 10))):
     _sized = _symbol(source + "^FDA")
     check(f"{source} is sized {want} under the default font",

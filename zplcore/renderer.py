@@ -873,7 +873,8 @@ class ZPLRenderer:
             # patterns here, which is what let the preview and the model
             # disagree about how wide ^A0N,40 is.
             font = parser.read_font(command[1], params, self.default_font,
-                                    self.default_orientation, self.named_font)
+                                    self.default_orientation, self.named_font,
+                                    self.dpi)
             if command[1] == '@' and font['spec']:
                 self.named_font = (font['name'], font['spec'])
             self.current_font_orientation = font['orientation']
@@ -966,7 +967,8 @@ class ZPLRenderer:
             # ^CFf,h,w - the font every later field prints in unless it names
             # its own. Ignoring it drew a default-font field at this class's
             # own 12 dots, whatever the file asked for.
-            self.default_font = parser._read_default_font(params, self.default_font)
+            self.default_font = parser._read_default_font(params, self.default_font,
+                                                          self.dpi)
             self._use_default_font()
         elif command == 'FW':
             # ^FWr - the orientation every later field turns to unless it names

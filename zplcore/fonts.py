@@ -42,8 +42,7 @@ _FONT_OBJECT_NAME = re.compile(r'([A-Za-z0-9_\-]{1,8})\.FNT', re.IGNORECASE)
 # Zebra's standard resident fonts - built into printer firmware, not objects
 # that can be uploaded or deleted. Matrix/kind are from the ZPL Programming
 # Guide's font table; unlike the TrueType fonts above, there is no local file
-# for these, so nothing here can be rendered - only reported. '0' matches
-# parser.SCALABLE_FONTS.
+# for these, so nothing here can be rendered - only reported.
 RESIDENT_FONTS = [
     {'code': '0', 'name': 'Font 0', 'matrix': 'Scalable',
      'kind': 'Scalable outline (CG Triplet)'},
@@ -88,6 +87,27 @@ class BitmapCell(NamedTuple):
     baseline: int
 
 
+def _bitmap_base(code: str, dpi: int = DEFAULT_DPI):
+    """A resident bitmap font's unmagnified (height, width, gap, baseline) at
+    this resolution, or None for a font that is not one."""
+    base = _BITMAP_203.get((code or '').upper())
+    if base is None:
+        return None
+    base_h, base_w, gap, baseline = base
+    if dpi >= 300 and code.upper() in _BITMAP_LARGER:
+        larger_h, larger_w = _BITMAP_LARGER[code.upper()]
+        gap = int(round(gap * larger_w / base_w))
+        baseline = int(round(baseline * larger_h / base_h))
+        base_h, base_w = larger_h, larger_w
+    return base_h, base_w, gap, baseline
+
+
+def _magnification(value, size) -> int:
+    """The whole-number magnification a bitmap font is printed at for a size
+    asked of it: the nearest, from 1 to 10."""
+    return max(1, min(MAX_MAGNIFICATION, int(max(0, value or 0) / size + 0.5)))
+
+
 def bitmap_cell(code: str, height: int, width: int,
                 dpi: int = DEFAULT_DPI) -> Optional[BitmapCell]:
     """The cell ^A<code>,<height>,<width> prints, or None for a font that
@@ -98,24 +118,45 @@ def bitmap_cell(code: str, height: int, width: int,
     and the same across, from 1 to 10 - so ^AF,36 is 26 dots tall, not 36,
     and ^AF,52 and ^AF,54 are the same 52.
     """
-    base = _BITMAP_203.get((code or '').upper())
+    base = _bitmap_base(code, dpi)
     if base is None:
         return None
     base_h, base_w, gap, baseline = base
-    if dpi >= 300 and code.upper() in _BITMAP_LARGER:
-        larger_h, larger_w = _BITMAP_LARGER[code.upper()]
-        gap = int(round(gap * larger_w / base_w))
-        baseline = int(round(baseline * larger_h / base_h))
-        base_h, base_w = larger_h, larger_w
-
-    def magnification(value, size):
-        return max(1, min(MAX_MAGNIFICATION,
-                          int(max(0, value or 0) / size + 0.5)))
-
-    down = magnification(height, base_h)
-    across = magnification(width, base_w)
+    down = _magnification(height, base_h)
+    across = _magnification(width, base_w)
     return BitmapCell(base_h * down, base_w * across, gap * across,
                       baseline * down)
+
+
+def other_size(code: str, height: Optional[int] = None,
+               width: Optional[int] = None,
+               dpi: int = DEFAULT_DPI) -> Tuple[int, int]:
+    """(height, width) for an ^A or ^CF that gave only one of the two.
+
+    "If you specify only the height or width value, the standard matrix for
+    that font automatically determines the other value" (^A), and "defining
+    only the height or width forces the magnification to be proportional to
+    the parameter defined" (^CF). So the size left out follows the one given,
+    not whatever ^CF last set: a bitmap font takes the same whole-number
+    magnification on both axes, and the scalable font 0 - and anything else
+    without a fixed cell - the same number.
+
+    Printed on a 203 dpi printer, against what this read before: ^ADN,36
+    came out 91 dots wide, font D doubled both ways, not 46; ^ADN,54 after
+    ^CFD,36,20 came out 136, tripled both ways - ^CF's width of 20 played no
+    part; and a field under ^CF0,89 printed exactly as ^A0N,89,89 did, where
+    this wrote ^A0N,89,5. The width a file leaves out is written back
+    resolved, and prints the same: font D's 20 is double its cell, as 36 is.
+    """
+    base = _bitmap_base(code, dpi)
+    if width is None:
+        if base is None:
+            return height, height
+        return height, base[1] * _magnification(height, base[0])
+    if base is None:
+        return width, width
+    return base[0] * _magnification(width, base[1]), width
+
 
 # Where fonts live when fc-list can't be asked - fontconfig missing, broken,
 # or just not installed on a minimal system. Module-level so tests can

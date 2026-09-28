@@ -131,10 +131,6 @@ DEFAULT_FONT = {'code': 'A', 'height': 9, 'width': 5, 'name': None,
 DEFAULT_ORIENTATION = 'N'
 _ORIENTATION_LETTERS = frozenset(code for _label, code in ORIENTATIONS)
 
-# The fonts whose glyphs are scaled rather than chosen from a bitmap, and so
-# the ones an omitted ^A width leaves proportional.
-SCALABLE_FONTS = ('0', '@')
-
 # ^BY's running defaults, which every later barcode inherits unless it is
 # followed by another ^BY. `height` is None rather than a number to record that
 # no ^BY has given one, which is a different thing from one having given 100.
@@ -757,7 +753,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             continue
 
         if cmd == '^CF':
-            default_font = _read_default_font(params, default_font)
+            default_font = _read_default_font(params, default_font,
+                                              loaded_dpi or doc.dpi)
             continue
 
         if cmd == '^FW':
@@ -818,7 +815,8 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
 
         if cmd.startswith('^A'):
             field['font'] = read_font(cmd[2], params, field['default_font'],
-                                      default_orientation, named_font)
+                                      default_orientation, named_font,
+                                      loaded_dpi or doc.dpi)
             if cmd == '^A@' and field['font']['spec']:
                 named_font = (field['font']['name'], field['font']['spec'])
         elif cmd == '^FB':
@@ -959,11 +957,17 @@ def _has_content(field) -> bool:
             or field['clock_format'])
 
 
-def _read_default_font(params: str, current: dict) -> dict:
+def _read_default_font(params: str, current: dict,
+                       dpi=zpl_fonts.DEFAULT_DPI) -> dict:
     """^CFf,h,w - the font every later field uses unless it names its own.
 
-    Each parameter is optional and keeps its previous value when omitted, which
-    is what makes a bare ^CF0 mean "font 0, sizes unchanged".
+    Each parameter is optional. A font left out, or both sizes, keep their
+    previous values, which is what makes a bare ^CF0 mean "font 0, sizes
+    unchanged". One size left out follows the one given, in the font ^CF now
+    names: "Defining only the height or width forces the magnification to be
+    proportional to the parameter defined." Keeping the old width instead
+    wrote the manual's own ^CF0,89 back as ^A0N,89,5 on every field - a
+    printer given the original prints them as ^A0N,89,89.
     """
     parts = [p.strip() for p in params.split(',')]
     font = dict(current)
@@ -971,13 +975,27 @@ def _read_default_font(params: str, current: dict) -> dict:
         font['code'] = parts[0][0].upper()
         font['name'] = None
         font['spec'] = None
+    given = {}
     for index, key in ((1, 'height'), (2, 'width')):
         if len(parts) > index and parts[index]:
             try:
-                font[key] = int(parts[index])
+                given[key] = int(parts[index])
             except ValueError:
                 pass
+    font['height'], font['width'] = _sizes(font['code'], given.get('height'),
+                                           given.get('width'), current, dpi)
     return font
+
+
+def _sizes(code: str, height, width, current: dict, dpi) -> tuple:
+    """The (height, width) an ^A or ^CF means by the sizes it gave, either of
+    which may be None: both given are taken as they are, neither is `current`'s
+    - ^CF's - and one alone decides the other through the font's own cell."""
+    if height is not None and width is not None:
+        return height, width
+    if height is None and width is None:
+        return current['height'], current['width']
+    return zpl_fonts.other_size(code, height, width, dpi)
 
 
 def read_encoding(params: str):
@@ -1111,16 +1129,18 @@ def _read_print_quantity(params: str) -> tuple:
 
 
 def read_font(code: str, params: str, default_font=None,
-              default_orientation=DEFAULT_ORIENTATION, named=None) -> dict:
+              default_orientation=DEFAULT_ORIENTATION, named=None,
+              dpi=zpl_fonts.DEFAULT_DPI) -> dict:
     """^A<code><orientation>,<h>,<w> - the font a field names for itself.
 
     The designator is the command's second character, so every built-in font
     is read the same way; ^A@ additionally names a font downloaded to the
     printer, e.g. ^A@N,53,19,E:DEJAVUSA.TTF.
 
-    Every parameter is optional, and an omitted one keeps the default for that
-    position: the sizes ^CF's, the same rule _read_default_font applies to ^CF
-    itself, and the orientation ^FW's. Demanding all three is what made ^A0N,40
+    Every parameter is optional. The orientation left out is ^FW's. Both
+    sizes left out are ^CF's; one left out follows the one given, through the
+    font's own cell (zplcore.fonts.other_size) - the rule _read_default_font
+    applies to ^CF itself. Demanding all three is what made ^A0N,40
     come back as ^A0N,36,20, losing the height it did give while the preview,
     which demanded nothing, drew it at 40.
 
@@ -1147,13 +1167,7 @@ def read_font(code: str, params: str, default_font=None,
         return fallback
 
     letter = re.match(r'\s*([A-Za-z])', parts[0]) if parts else None
-    height = number(1, current['height'])
-    # A scalable font given no width is proportional. ^CF still wins when it
-    # set one for a scalable font, but inheriting a bitmap font's width would
-    # squeeze ^A0N,40 into five dots rather than letting it keep its shape.
-    inherited = current['width']
-    if code in SCALABLE_FONTS and current['code'] not in SCALABLE_FONTS:
-        inherited = height
+    height, width = _sizes(code, number(1, None), number(2, None), current, dpi)
 
     name, spec = None, None
     if code == '@':
@@ -1176,7 +1190,7 @@ def read_font(code: str, params: str, default_font=None,
             spec = pieces[3].strip()
             bare = spec.split(':', 1)[1] if ':' in spec else spec
             name = bare.rsplit('.', 1)[0].upper() or None
-    return {'code': code, 'height': height, 'width': number(2, inherited),
+    return {'code': code, 'height': height, 'width': width,
             'name': name, 'spec': spec,
             'orientation': (letter.group(1).upper() if letter
                             else default_orientation)}
@@ -1186,24 +1200,19 @@ def read_graphic_symbol(params: str, default_font=None,
                         default_orientation=DEFAULT_ORIENTATION) -> dict:
     """^GSo,h,w - as {'orientation', 'height', 'width'}.
 
-    The same three parameters as an ^A, with the same defaults: the
-    orientation ^FW's, and each size ^CF's - which is what the manual's own
-    example relies on, a bare ^GS after ^CFD. The one exception is read as
-    font 0 is, because Table 33 lists GS beside it: a height given with no
-    width while ^CF names a bitmap font keeps the symbol square rather than
-    giving it that font's five dots, read_font's rule for the scalable font.
-    A letter that is not a quarter turn is ^FW's.
+    The same three parameters as an ^A, read as font 0's are, because Table 33
+    lists GS beside it: the orientation left out is ^FW's, both sizes left out
+    are ^CF's - which is what the manual's own example relies on, a bare ^GS
+    after ^CFD - and one size given alone keeps the symbol square. A letter
+    that is not a quarter turn is ^FW's.
     """
-    current = dict(default_font or DEFAULT_FONT)
-    font = read_font('0', params, current, default_orientation)
-    given = [p.strip() for p in params.split(',')]
-    height, width = font['height'], font['width']
-    if not any(len(given) > index and given[index] for index in (1, 2)):
-        height, width = current['height'], current['width']
+    font = read_font('0', params, dict(default_font or DEFAULT_FONT),
+                     default_orientation)
     orientation = font['orientation']
     if orientation not in _ORIENTATION_LETTERS:
         orientation = default_orientation
-    return {'orientation': orientation, 'height': height, 'width': width}
+    return {'orientation': orientation, 'height': font['height'],
+            'width': font['width']}
 
 
 def _read_frame(params: str):

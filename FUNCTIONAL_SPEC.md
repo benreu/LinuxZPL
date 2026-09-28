@@ -1158,8 +1158,9 @@ one the model holds:
 
 | Written | Means |
 |---|---|
-| `^A0N,40` | height 40, and a scalable font with no width is proportional - which this model spells as a width equal to the height |
-| `^AFN,18` | height 18, width from `^CF`, because a bitmap font is not proportional |
+| `^A0N,40` | height 40 and width 40: one size given decides the other, and font 0's two are equal |
+| `^AFN,18` | height 18 and width 13: font F's 18 rounds to one cell, so the width is one cell too. A bitmap font's missing size takes the same whole-number magnification as the one given, **whatever width `^CF` set** |
+| `^CF0,89` | every later field without sizes of its own is `^A0N,89,89`: a `^CF` naming one size resolves it the same way, in the font it names |
 | `^A0N` | both sizes from `^CF` |
 | `^GB300` | a 300 x 1 rule: `w` and `h` both default to the thickness |
 | `^GB300,0,4` | a 300 x 4 rule: `w` and `h` are also **clamped up** to the thickness, so neither can be thinner than the border drawing it |
@@ -1172,7 +1173,7 @@ one the model holds:
 | `^GE,,4` | a 4 x 4 ellipse, 4 dots thick - so solid |
 | `^GE5000,100,10` | 4095 wide: *"larger values are replaced with 4095"* |
 | `^CFD,18,10` … `^GS^FDC` | a ™ 18 dots high and 10 wide: with neither size given, `^GS` takes both of `^CF`'s - the manual's own example |
-| `^GSN,40^FDA` | a ® 40 × 40: a height with no width, while `^CF` names a bitmap font, keeps the symbol square, as `^A0` does (§18) |
+| `^GSN,40^FDA` | a ® 40 × 40: one size keeps the symbol square, as font 0's does (§18) |
 | `^GS,40,30^FDA` | turned the way `^FW` says, like any field that leaves its orientation out; a letter that is not `N`, `R`, `I` or `B` is `^FW`'s too |
 | `^GSN,40,40` with no `^FD` | no field, as a text field with no data is none |
 | `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
@@ -2670,12 +2671,22 @@ rather than requirements:
   on a printer. A single symbol - the usual case - is unaffected. A character
   that is not `A` to `E` keeps its cell and draws nothing, the manual's
   "default to a space".
-- **A `^GS` height given with no width, under a bitmap `^CF`, stays square.**
-  The manual says both sizes default to `^CF`'s; with neither given, both are
-  taken from it. With only the height given, the width follows it, the rule
-  `^A0` gets for the same reason - Table 33 groups GS with font 0, and a
-  50-dot symbol five dots wide is not what anyone asked for. If a printer takes
-  `^CF`'s width regardless, such a symbol prints narrower than the canvas shows.
+- **One size decides the other: printed for some cases, inferred for the
+  rest.** The manual: *"If you specify only the height or width value, the
+  standard matrix for that font automatically determines the other value"*,
+  and for `^CF`, *"defining only the height or width forces the magnification
+  to be proportional"*. On a 203 dpi printer, sent from the console as written:
+  `^ADN,36` printed 90.7 dots wide with an H every 24 - font D doubled both
+  ways, where reading `^CF`'s power-up width of 5 gives 46 and an H every 12;
+  `^ADN,54` after `^CFD,36,20` printed 136 wide, an H every 36, tripled both
+  ways with `^CF`'s 20 taking no part; and a field under `^CF0,89`, after that
+  same `^CFD,36,20`, printed to the dot as `^A0N,89,89` - 203.7 x 65. Before,
+  this read the first two at `^CF`'s width and wrote the third as
+  `^A0N,89,20`, so opening such a file and printing it changed the label.
+  Not printed, and read by the same rule: a width given with no height, an
+  `^A0` height after a `^CF` that set a width, and `^GS` - which Table 33 lists
+  beside font 0, so one size keeps a symbol square. A size of 0 is still taken
+  as given, although the manual says a 0 is left to the font's matrix too.
 - **A label made smaller can squash a group.** Shrinking the label (§7) clamps
   every element into the new bounds one by one, so two members that both hit
   the edge end up closer together than they were — the label changed, not the
