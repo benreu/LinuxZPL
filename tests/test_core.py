@@ -59,7 +59,7 @@ check("barcode width = (35 + len*11) * module_width",
       b.printed_width() == (35 + 6 * 11) * 3, b.printed_width())
 
 # --- ^GFA encoding ----------------------------------------------------------
-from PIL import Image
+from PIL import Image, ImageOps
 src = Image.new('L', (40, 12), 255)
 for x in range(40): src.putpixel((x, 0), 0)          # a black top row
 img_el = ImageElement(0, 0, 13, 4, _pil_image=src.convert('RGB'))
@@ -3921,6 +3921,18 @@ _e300 = zpl_parser.parse_zpl("^XA^PW812^LL1218^FXDESIGNER_DPI:300\n"
 check("a 300 dpi label resolves font E against its 300 dpi cell",
       (_e300.font_height, _e300.font_width) == (56, 20),
       (_e300.font_height, _e300.font_width))
+
+# The preview reads the same two commands with the resolution it has been
+# told, so a 300 dpi label's font E is drawn at its 300 dpi cell there too -
+# ^A and ^CF each against the ^A that spells the width out.
+def _e300_ink(zpl):
+    _image = ZPLRenderer(812, 300).render(
+        "^XA^PW812^LL300^FXDESIGNER_DPI:300" + zpl + "^XZ").convert('L')
+    return ImageOps.invert(_image).point(lambda v: 255 if v > 128 else 0).getbbox()
+for _given in ("^FO50,50^AEN,56^FDHHHH^FS", "^CFE,56^FO50,50^FDHHHH^FS"):
+    check(f"the preview draws {_given} at 300 dpi as ^AEN,56,20",
+          _e300_ink(_given) == _e300_ink("^FO50,50^AEN,56,20^FDHHHH^FS"),
+          (_e300_ink(_given), _e300_ink("^FO50,50^AEN,56,20^FDHHHH^FS")))
 sizeless = zpl_parser.parse_zpl(
     "^XA^PW812^LL1218^CF0,30,30^FO50,50^A0N^FDHg^FS^XZ")[0].elements[0]
 check("^A naming no size at all takes both from ^CF",
