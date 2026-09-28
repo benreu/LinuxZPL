@@ -3921,6 +3921,11 @@ _e300 = zpl_parser.parse_zpl("^XA^PW812^LL1218^FXDESIGNER_DPI:300\n"
 check("a 300 dpi label resolves font E against its 300 dpi cell",
       (_e300.font_height, _e300.font_width) == (56, 20),
       (_e300.font_height, _e300.font_width))
+_cf300 = zpl_parser.parse_zpl("^XA^PW812^LL1218^FXDESIGNER_DPI:300\n"
+                              "^CFE,56^FO50,50^FDHg^FS^XZ")[0].elements[0]
+check("and so does a ^CF naming only a height",
+      (_cf300.font_height, _cf300.font_width) == (56, 20),
+      (_cf300.font_height, _cf300.font_width))
 
 # The preview reads the same two commands with the resolution it has been
 # told, so a 300 dpi label's font E is drawn at its 300 dpi cell there too -
