@@ -2671,8 +2671,8 @@ rather than requirements:
   on a printer. A single symbol - the usual case - is unaffected. A character
   that is not `A` to `E` keeps its cell and draws nothing, the manual's
   "default to a space".
-- **One size decides the other: printed for some cases, inferred for the
-  rest.** The manual: *"If you specify only the height or width value, the
+- **One size decides the other, in every case a printer was given.** The
+  manual: *"If you specify only the height or width value, the
   standard matrix for that font automatically determines the other value"*,
   and for `^CF`, *"defining only the height or width forces the magnification
   to be proportional"*. On a 203 dpi printer, sent from the console as written:
@@ -2683,10 +2683,13 @@ rather than requirements:
   same `^CFD,36,20`, printed to the dot as `^A0N,89,89` - 203.7 x 65. Before,
   this read the first two at `^CF`'s width and wrote the third as
   `^A0N,89,20`, so opening such a file and printing it changed the label.
-  Not printed, and read by the same rule: a width given with no height, an
-  `^A0` height after a `^CF` that set a width, and `^GS` - which Table 33 lists
-  beside font 0, so one size keeps a symbol square. A size of 0 is still taken
-  as given, although the manual says a 0 is left to the font's matrix too.
+  A second label, each line against one spelling its sizes out, printed the
+  pairs within a dot of each other: `^A0N,40` after `^CF0,40,20` as
+  `^A0N,40,40` (90 wide - `^CF`'s 20 takes no part in font 0 either);
+  `^ADN,,20` as `^ADN,36,20`, a width alone deciding the height; and
+  `^GSN,,60` as `^GSN,60,60`, one size keeping a symbol square. A size of 0 is
+  still taken as given, although the manual says a 0 is left to the font's
+  matrix too - no label has tried it.
 - **A label made smaller can squash a group.** Shrinking the label (§7) clamps
   every element into the new bounds one by one, so two members that both hit
   the edge end up closer together than they were — the label changed, not the

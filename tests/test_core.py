@@ -3870,7 +3870,10 @@ check("so ^A0N,40 and ^A0N,40,40 are the same element",
 # width of 5, is 46 wide with an H every 12, which is what this app then
 # sent); ^ADN,54 after ^CFD,36,20 came out 136 wide with an H every 36,
 # tripled both ways and not ^CF's 20; and a field under ^CF0,89 printed to
-# the dot as ^A0N,89,89 did, 203.7 x 65, where this wrote ^A0N,89,5.
+# the dot as ^A0N,89,89 did, 203.7 x 65, where this wrote ^A0N,89,5. A
+# second label printed each remaining case within a dot of the one spelling
+# its sizes out: ^A0N,40 after ^CF0,40,20 as ^A0N,40,40, ^ADN,,20 as
+# ^ADN,36,20, and ^GSN,,60 as ^GSN,60,60.
 def _font_of(zpl):
     """(height, width) of the first field `zpl` holds, and the ^A it saves."""
     _doc = zpl_parser.parse_zpl("^XA^PW812^LL1218" + zpl + "^XZ")[0]
