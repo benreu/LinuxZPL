@@ -1146,7 +1146,7 @@ def _read_print_quantity(params: str) -> tuple:
 
 def read_font(code: str, params: str, default_font=None,
               default_orientation=DEFAULT_ORIENTATION, named=None,
-              dpi=zpl_fonts.DEFAULT_DPI) -> dict:
+              dpi=zpl_fonts.DEFAULT_DPI, zero_omits=True) -> dict:
     """^A<code><orientation>,<h>,<w> - the font a field names for itself.
 
     The designator is the command's second character, so every built-in font
@@ -1159,6 +1159,14 @@ def read_font(code: str, params: str, default_font=None,
     applies to ^CF itself. Demanding all three is what made ^A0N,40
     come back as ^A0N,36,20, losing the height it did give while the preview,
     which demanded nothing, drew it at 40.
+
+    A size of 0 is a size left out: "If the value is not given or a 0 (zero)
+    is entered, the height or width is determined by the standard font
+    matrix." Printed from the console after ^CF0,60,60, ^A0N,40,0 and
+    ^A0N,0,40 came out as ^A0N,40,40 did, ^ADN,36,0 and ^ADN,0,20 as
+    ^ADN,36,20, and ^A0N,0,0 and ^ADN,0,0 at ^CF's 60,60. Taking the 0 as
+    written drew ^A0N,40,0 in a box one dot wide and ^A0N,0,0 as nothing.
+    `zero_omits` is False only for ^GS, whose 0 no printer has been given.
 
     The orientation is the first parameter, and dropping it is why text was
     the one element that could not be turned: it loaded flat and saved flat.
@@ -1183,7 +1191,10 @@ def read_font(code: str, params: str, default_font=None,
         return fallback
 
     letter = re.match(r'\s*([A-Za-z])', parts[0]) if parts else None
-    height, width = _sizes(code, number(1, None), number(2, None), current, dpi)
+    height, width = number(1, None), number(2, None)
+    if zero_omits:
+        height, width = height or None, width or None
+    height, width = _sizes(code, height, width, current, dpi)
 
     name, spec = None, None
     if code == '@':
@@ -1223,7 +1234,7 @@ def read_graphic_symbol(params: str, default_font=None,
     that is not a quarter turn is ^FW's.
     """
     font = read_font('0', params, dict(default_font or DEFAULT_FONT),
-                     default_orientation)
+                     default_orientation, zero_omits=False)
     orientation = font['orientation']
     if orientation not in _ORIENTATION_LETTERS:
         orientation = default_orientation

@@ -3887,7 +3887,11 @@ check("so ^A0N,40 and ^A0N,40,40 are the same element",
 # the dot as ^A0N,89,89 did, 203.7 x 65, where this wrote ^A0N,89,5. A
 # second label printed each remaining case within a dot of the one spelling
 # its sizes out: ^A0N,40 after ^CF0,40,20 as ^A0N,40,40, ^ADN,,20 as
-# ^ADN,36,20, and ^GSN,,60 as ^GSN,60,60.
+# ^ADN,36,20, and ^GSN,,60 as ^GSN,60,60. A third printed a 0 as a size left
+# out, as the manual says it is: after ^CF0,60,60, ^A0N,40,0 and ^A0N,0,40
+# came out an H every 24 as ^A0N,40,40 did, ^ADN,36,0 and ^ADN,0,20 the same
+# as ^ADN,36,20, and ^A0N,0,0 and ^ADN,0,0 at ^CF's 60,60 - 140 x 45 with an
+# H every 37, and 275 wide with an H every 72.
 def _font_of(zpl):
     """(height, width) of the first field `zpl` holds, and the ^A it saves."""
     _doc = zpl_parser.parse_zpl("^XA^PW812^LL1218" + zpl + "^XZ")[0]
@@ -3917,9 +3921,35 @@ for zpl, want, written, why in (
         ("^CF0,30,30^FO50,50^A0N^FDHg^FS", (30, 30), "^A0N,30,30",
          "^A naming no size at all still takes both from ^CF"),
         ("^CFD,36,20^CFE^FO50,50^FDHg^FS", (36, 20), "^AEN,36,20",
-         "a ^CF naming neither size keeps both, in its new font")):
+         "a ^CF naming neither size keeps both, in its new font"),
+        ("^FO50,50^A0N,40,0^FDHHHH^FS", (40, 40), "^A0N,40,40",
+         "a width of 0 is one left out - printed as ^A0N,40,40"),
+        ("^FO50,50^A0N,0,40^FDHHHH^FS", (40, 40), "^A0N,40,40",
+         "and so is a height of 0"),
+        ("^FO50,50^ADN,36,0^FDHHHH^FS", (36, 20), "^ADN,36,20",
+         "in a bitmap font too - printed as ^ADN,36,20"),
+        ("^FO50,50^ADN,0,20^FDHHHH^FS", (36, 20), "^ADN,36,20",
+         "whichever of its sizes is 0"),
+        ("^CF0,60,60^FO50,50^A0N,0,0^FDHHHH^FS", (60, 60), "^A0N,60,60",
+         "both 0 are both ^CF's - printed as ^A0N,60,60"),
+        ("^CF0,60,60^FO50,50^ADN,0,0^FDHHHH^FS", (60, 60), "^ADN,60,60",
+         "in a bitmap font as well - six times as wide, three times as tall")):
     got, saved = _font_of(zpl)
     check(f"{zpl}: {why}", (got, saved) == (want, written), (got, saved))
+
+# The preview reads ^A through the same function, so it draws each 0 as the
+# size the printer printed it at - checked against the ^A spelling it out.
+def _ink_of(zpl):
+    _image = ZPLRenderer(812, 300).render(
+        "^XA^PW812^LL300" + zpl + "^XZ").convert('L')
+    return ImageOps.invert(_image).point(lambda v: 255 if v > 128 else 0).getbbox()
+for _given, _spelled in (("^A0N,0,40", "^A0N,40,40"), ("^ADN,36,0", "^ADN,36,20"),
+                         ("^ADN,0,20", "^ADN,36,20"),
+                         ("^CF0,60,60^A0N,0,0", "^A0N,60,60"),
+                         ("^CF0,60,60^ADN,0,0", "^ADN,60,60")):
+    _got = _ink_of(f"^FO50,50{_given}^FDHHHH^FS")
+    _want = _ink_of(f"^FO50,50{_spelled}^FDHHHH^FS")
+    check(f"the preview draws {_given} as {_spelled}", _got == _want, (_got, _want))
 
 # The width a file leaves out is written back resolved, so it has to print
 # the same: the magnification it names is the one the height gave.
@@ -4707,8 +4737,9 @@ check("the manual's bare ^GS^FDC takes ^CF's height and width",
       and "^GSN,18,10\n^FDC^FS" in _manual_gs[2].to_zpl(),
       [(type(e).__name__, getattr(e, 'font_height', None),
         getattr(e, 'font_width', None)) for e in _manual_gs])
+# A 0 in ^GS has not been printed, so it is not read as ^A's is.
 for source, want in (("^GSN,40", (40, 40)), ("^GSN,,30", (30, 30)),
-                     ("^GS,20,10", (20, 10))):
+                     ("^GS,20,10", (20, 10)), ("^GSN,0,40", (1, 40))):
     _sized = _symbol(source + "^FDA")
     check(f"{source} is sized {want} under the default font",
           (_sized.font_height, _sized.font_width) == want,

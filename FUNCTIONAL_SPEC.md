@@ -1187,6 +1187,8 @@ one the model holds:
 | `^A0N,40` | height 40 and width 40: one size given decides the other, and font 0's two are equal |
 | `^AFN,18` | height 18 and width 13: font F's 18 rounds to one cell, so the width is one cell too. A bitmap font's missing size takes the same whole-number magnification as the one given, **whatever width `^CF` set** |
 | `^CF0,89` | every later field without sizes of its own is `^A0N,89,89`: a `^CF` naming one size resolves it the same way, in the font it names |
+| `^A0N,40,0`, `^ADN,0,20` | `^A0N,40,40` and `^ADN,36,20`: an `^A` size of 0 is a size left out, resolved as above and written back resolved (§18) |
+| `^A0N,0,0` after `^CF0,60,60` | `^A0N,60,60`: both sizes 0 are both `^CF`'s, as both left out are |
 | `^A0N` | both sizes from `^CF` |
 | `^GB300` | a 300 x 1 rule: `w` and `h` both default to the thickness |
 | `^GB300,0,4` | a 300 x 4 rule: `w` and `h` are also **clamped up** to the thickness, so neither can be thinner than the border drawing it |
@@ -2780,9 +2782,16 @@ rather than requirements:
   pairs within a dot of each other: `^A0N,40` after `^CF0,40,20` as
   `^A0N,40,40` (90 wide - `^CF`'s 20 takes no part in font 0 either);
   `^ADN,,20` as `^ADN,36,20`, a width alone deciding the height; and
-  `^GSN,,60` as `^GSN,60,60`, one size keeping a symbol square. A size of 0 is
-  still taken as given, although the manual says a 0 is left to the font's
-  matrix too - no label has tried it.
+  `^GSN,,60` as `^GSN,60,60`, one size keeping a symbol square. A third
+  label printed an `^A` size of 0 as a size left out, as the manual says - *"If
+  the value is not given or a 0 (zero) is entered, the height or width is
+  determined by the standard font matrix"*. After `^CF0,60,60`, `^A0N,40,0`
+  and `^A0N,0,40` printed as `^A0N,40,40`, an H every 24; `^ADN,36,0` and
+  `^ADN,0,20` as `^ADN,36,20`; and `^A0N,0,0` and `^ADN,0,0` at `^CF`'s 60,60,
+  140 x 45 with an H every 37 and 275 wide with an H every 72. Before, this
+  took the 0 as written: `^A0N,40,0` was a box one dot wide and `^A0N,0,0`
+  drew nothing. A 0 in `^CF` itself or in `^GS` has not been printed, and is
+  still taken as given.
 - **A label made smaller can squash a group.** Shrinking the label (§7) clamps
   every element into the new bounds one by one, so two members that both hit
   the edge end up closer together than they were — the label changed, not the
