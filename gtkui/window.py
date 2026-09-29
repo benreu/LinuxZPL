@@ -660,6 +660,8 @@ class ZPLViewerWindow(Gtk.Window):
         printer_objects_item.connect("activate", self.on_printer_objects_clicked)
         printer_menu.append(printer_objects_item)
 
+        printer_menu.append(Gtk.SeparatorMenuItem())
+
         printer_console_item = Gtk.MenuItem(label="Console…")
         printer_console_item.connect("activate", self.on_printer_console_clicked)
         printer_menu.append(printer_console_item)

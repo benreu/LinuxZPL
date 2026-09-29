@@ -408,6 +408,7 @@ class ZPLDesignerWindow(QMainWindow):
         printer_menu.addAction(self.printer_graphics_action)
         printer_menu.addAction(self.printer_fonts_action)
         printer_menu.addAction(self.printer_objects_action)
+        printer_menu.addSeparator()
         printer_menu.addAction(self.printer_console_action)
         printer_menu.addAction(self.printer_status_action)
 
