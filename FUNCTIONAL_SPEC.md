@@ -2874,7 +2874,10 @@ rather than requirements:
   applied by the same rule: the same 24 dot cell at 300 and 600 dpi, as
   fonts A–D, F and G keep theirs; a 0 in `^GS` (below); and an `h` that is
   not a whole number of cells under `^FT`, taken to stand the magnified cell
-  on the baseline rather than `h`. A character that is not `A` to `E` keeps
+  on the baseline rather than `h`. `tests/fixtures/gs_turned_sizes.zpl` is a
+  label for the last two and for a `^GS` turned and placed by `^FT`, with the
+  field after it; the core tests say what this reads each as until it is
+  printed. It must go through the console, since a save writes a 0 as 1. A character that is not `A` to `E` keeps
   its cell and draws nothing, the manual's "default to a space".
 - **One size decides the other, in every case a printer was given.** The
   manual: *"If you specify only the height or width value, the

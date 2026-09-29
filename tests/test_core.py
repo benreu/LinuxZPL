@@ -5395,6 +5395,65 @@ check("and the third label saves its two bare ^FTs bare",
       and _chained(_label3_zpl).to_zpl() == _label3_zpl,
       _label3_zpl.replace('\n', ' '))
 
+# A label not yet printed, tests/fixtures/gs_turned_sizes.zpl: the ^GS cases
+# no printer has settled, with the third label's two rules and tick marks at
+# each turned ^FT's coordinates. Each check says what this app does now, so a
+# print either confirms it or replaces it with what printed. The UL mark is
+# used throughout because it fills its whole cell.
+_gs_open_src = (FIXTURES / 'gs_turned_sizes.zpl').read_text()
+_gs_open = _chained(_gs_open_src)
+_gs_marks = [e for e in _gs_open.elements if e.element_type == 'graphic_symbol']
+_gs_after = [e for e in _gs_open.elements if e.element_type == 'text']
+# Not printed: a ^GS turned by its own o and placed by ^FT. Its cell stands on
+# the ^FT line down the label at every turn, as the upright one printed, and
+# runs from the ^FT x - where turned text instead turns its frame about the
+# point. The upright one leads as a control.
+check("not printed: a turned ^FT^GS keeps its cell's bottom on the ^FT line "
+      "and its left at the ^FT x, at N, R, I and B",
+      [box_of(e) for e in _gs_marks[:4]]
+      == [(80, 102, 48, 48), (250, 102, 48, 48), (520, 152, 48, 48),
+          (700, 202, 48, 48)],
+      [box_of(e) for e in _gs_marks[:4]])
+# Not printed: the field after a turned ^GS, placed by a bare ^FT, carries on
+# the way the symbol runs, past its cell and the gap after it - down the
+# label at R, leftward at I, up at B - on the ^FT's own line.
+check("not printed: a bare ^FT after a turned ^GS starts 52 dots on along "
+      "its run, at N, R, I and B",
+      [geometry.typeset_point(e) for e in _gs_after]
+      == [(132, 150), (250, 202), (468, 200), (700, 198)],
+      [geometry.typeset_point(e) for e in _gs_after])
+# Not printed: a 0 in ^GS. ^A's 0 printed as a size left out, but ^GS's is
+# still taken as given - as 1, the least kept - so each of these prints a
+# cell the control beside it would not: ^GSN,0,48 and ^GSN,48,0 beside
+# ^GSN,48,48, and ^GSN,0,0 beside ^GSN,72,72, ^CF's sizes.
+check("not printed: ^GS's 0 is taken as given, so ^GSN,0,48, ^GSN,48,0 and "
+      "^GSN,0,0 draw cells their controls do not",
+      [(e.font_height, e.font_width, e.width, e.height) for e in _gs_marks[4:10]]
+      == [(1, 48, 48, 24), (48, 48, 48, 48), (48, 1, 24, 48),
+          (48, 48, 48, 48), (1, 1, 24, 24), (72, 72, 72, 72)],
+      [(e.font_height, e.font_width, e.width, e.height) for e in _gs_marks[4:10]])
+# Not printed: an h between two magnifications under ^FT. The magnified cell
+# stands on the line, so each pair - 40 beside 48, 30 beside 24, 60 beside 72
+# - tops out together, where standing h on it would not.
+check("not printed: ^FT stands the magnified cell on its line, not h, so "
+      "^GSN,40, ,30 and ,60 top out with ^GSN,48, ,24 and ,72",
+      [(e.y, e.y + e.height) for e in _gs_marks[10:]]
+      == [(512, 560), (512, 560), (536, 560), (536, 560), (488, 560),
+          (488, 560)],
+      [(e.y, e.y + e.height) for e in _gs_marks[10:]])
+_gs_open_zpl = _gs_open.to_zpl()
+check("and the label saves its four bare ^FTs bare",
+      _gs_open_zpl.count("^FT\n") == 4
+      and _chained(_gs_open_zpl).to_zpl() == _gs_open_zpl,
+      _gs_open_zpl.replace('\n', ' '))
+# Not printed, and not printable on the 203 dpi printer these labels go to:
+# at 300 dpi GS is taken to keep its 24 dot cell, as fonts A-D, F and G do.
+_gs_300 = ZPLRenderer(400, 300, dpi=300).render(
+    "^XA^FO50,50^GSN,48,48^FDD^FS^XZ").convert('L').point(
+    lambda v: 255 if v < 128 else 0).getbbox()
+check("not printed: at 300 dpi a ^GSN,48,48 UL is still a 48 dot cell",
+      _gs_300 == (50, 50, 98, 98), _gs_300)
+
 # One coordinate left out follows on that axis alone
 _axes = _chained("^XA^FT10,200^A0N,30,30^FDAB^FS^FT,300^A0N,30,30^FDCD^FS"
                  "^FT500^A0N,30,30^FDEF^FS^FT,,1^A0N,30,30^FDGH^FS^XZ")
