@@ -985,6 +985,12 @@ class GraphicSymbolElement(DesignElement):
         """Dots from the top down to the baseline an ^FT names."""
         return graphic_symbols.baseline_offset(self.font_height)
 
+    def advance(self) -> int:
+        """Dots the printer's pen moves on along the symbols, the gap after
+        the last one included (graphic_symbols.advance)."""
+        return graphic_symbols.advance(self.glyphs(), self.font_height,
+                                       self.font_width)
+
     def sync_box(self) -> None:
         """Resize the footprint to the symbols it holds, turned as they are."""
         was = self.width

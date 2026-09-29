@@ -97,7 +97,7 @@ def field_anchor(element) -> tuple:
 def typeset_depth(element, font_path, dpi) -> int:
     """Dots down an element to the line an ^FT names for it: the first
     baseline of text - down its own frame, which turns with it
-    (named_offset) - a ^GS symbol's own three quarters of the way down, and
+    (named_offset) - the bottom of a ^GS symbol's cell, and
     the bottom of everything else - the bottom-left corner the manual gives
     ^FT for boxes, bar codes and images.
 
@@ -204,7 +204,8 @@ def pen_after(element, depth, named) -> tuple:
     characters move it on. Page 199's table says the last formatted *text*
     field, and a 203 dpi printer agrees: `^FT` after `^FO300,120^GB60,60,4`
     put its baseline on the box's top edge at x = 300, not after the box nor
-    after the text before it. A ^GS symbol is characters, and moves it.
+    after the text before it. A ^GS symbol is characters, and moves it on
+    past the gap after its last cell, as a printer showed.
     FUNCTIONAL_SPEC.md section 18 says which of this has been printed.
     """
     kind = getattr(element, 'element_type', None)
@@ -218,8 +219,8 @@ def pen_after(element, depth, named) -> tuple:
         return (element.x + dx, element.y + dy)
     facing = (getattr(element, 'orientation', None) or 'N').upper()
     u, v = _TURNS.get(facing, _TURNS['N'])(1, 0)
-    return (element.x + u * element.width,
-            element.y + depth + v * element.height)
+    advance = element.advance()
+    return (element.x + u * advance, element.y + depth + v * advance)
 
 
 def following(element) -> tuple:

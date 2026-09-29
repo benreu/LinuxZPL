@@ -4763,11 +4763,22 @@ check("a ^GS with no data is no field, as a text field with none is not",
       _symbol("^GSN,40,40") == [], _symbol("^GSN,40,40"))
 _typed_gs = zpl_parser.parse_zpl(
     "^XA^PW812^LL1218^FT50,250^GSN,40,40^FDA^FS^XZ")[0].elements[0]
-check("^FT names the symbol's baseline, three quarters of the way down its "
-      "cell: 36 of ^GSN,40,40's 48",
-      (_typed_gs.y, _typed_gs.typeset) == (214, 36)
+check("^FT names the bottom of the symbol's cell, not Table 33's three "
+      "quarters: 48 below ^GSN,40,40's top",
+      (_typed_gs.y, _typed_gs.typeset) == (202, 48)
       and _typed_gs.to_zpl().startswith("^FT50,250\n"),
       (_typed_gs.y, _typed_gs.typeset, _typed_gs.to_zpl().replace('\n', ' ')))
+# The same label: ^FT50,250^GSN,48,48^FDA, then ^FT^A0N,40,40^FDX with both
+# coordinates left out. The (R)'s top printed at 203.2 and the X's bottom at
+# 250.4, so the whole 48 dot cell sits on the baseline; and the X's ink began
+# at 102.2, so the pen moved on past the cell and the 4 dot gap after it.
+_pen_gs = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FT50,250^GSN,48,48^FDA^FS^FT^A0N,40,40^FDX^FS^XZ")[0]
+check("a printed ^FT^GS: its cell's top 48 above the baseline, and the next "
+      "field's ^FT point past the cell and its gap",
+      (_pen_gs.elements[0].y, geometry.typeset_point(_pen_gs.elements[1]))
+      == (202, (102, 250)),
+      (_pen_gs.elements[0].y, geometry.typeset_point(_pen_gs.elements[1])))
 _fr_gs = _symbol("^GSN,40,40^FR^FDA")
 check("^FR reverses the symbol, and is written just before its data",
       _fr_gs.reverse_print and "^GSN,40,40\n^FR\n^FDA^FS" in _fr_gs.to_zpl(),
@@ -4816,6 +4827,19 @@ for _size, _times in ((30, 1), (60, 3), (90, 4)):
               and abs(_ink[2] - _want[0]) <= _times
               and abs(_ink[3] - _want[1]) <= _times,
               (_ink, _want))
+# A second label: ^GSN,24,72^FDABCDE printed each cell three times across and
+# once down - the (R) 44.7 x 14.9, the UL mark 71.7 x 23.7, each symbol 77.7
+# on from the last - so an h and a w that round to different magnifications
+# stretch the cell, as a bitmap font's are.
+_wide = graphic_symbols.raster('ABCDE', 24, 72).getchannel('A')
+_wide_inks = [_wide.crop((i * 78, 0, i * 78 + 72, 24)).point(
+    lambda v: 255 if v >= 128 else 0).getbbox() for i in range(5)]
+check("^GSN,24,72^FDABCDE prints 72 x 24 cells, 78 apart, the (R) 45 x 15 and "
+      "the UL 72 x 24 at their tops left",
+      _wide.size == (5 * 72 + 4 * 6, 24)
+      and abs(_wide_inks[0][2] - 45) <= 3 and abs(_wide_inks[0][3] - 15) <= 1
+      and _wide_inks[3] == (0, 0, 72, 24),
+      (_wide.size, _wide_inks))
 check("the magnification stops at x10, as the bitmap fonts' does",
       graphic_symbols.raster('A', 1000, 1000).size == (240, 240),
       graphic_symbols.raster('A', 1000, 1000).size)
@@ -5127,11 +5151,19 @@ def _chained(zpl=CHAIN):
     return zpl_parser.parse_zpl(zpl)[0]
 
 
+def _pen(element):
+    """How far an upright field moves the pen along: a line's width, and a
+    ^GS's run and the gap after its last symbol, as a printer showed."""
+    if isinstance(element, GraphicSymbolElement):
+        return element.advance()
+    return element.width
+
+
 def _ends(elements):
     """Where each element's ^FT point is, and where the one before it ends,
     for an upright line: its right end on its baseline."""
     return [(geometry.typeset_point(after),
-             (before.x + before.width, geometry.typeset_point(before)[1]))
+             (before.x + _pen(before), geometry.typeset_point(before)[1]))
             for before, after in zip(elements, elements[1:])]
 
 
@@ -5405,7 +5437,7 @@ _hidden = _chained(CHAIN.replace("^FT^A0N,30,20^FDSummer ^FS\n",
 check("a hidden field is not followed: the printer is never sent it",
       not _hidden.elements[2].print_enabled
       and geometry.typeset_point(_hidden.elements[3])
-      == (_hidden.elements[1].x + _hidden.elements[1].width, 200),
+      == (_hidden.elements[1].x + _pen(_hidden.elements[1]), 200),
       geometry.typeset_point(_hidden.elements[3]))
 
 # Editing and moving

@@ -39,7 +39,10 @@ SYMBOLS = (
 # dots. A symbol is drawn on this grid one unit to a dot, then magnified.
 GRID = 24
 GAP = 2
-BASELINE = 18           # three quarters of the cell, Table 33's figure for GS
+# The line ^FT names: the cell's bottom. Table 33 gives GS's baseline as three
+# quarters of the height, but a printer sent ^FT50,250^GSN,48,48 put the
+# symbol's top 47.3 dots above 250, a whole cell and not 36.
+BASELINE = GRID
 
 # Stroke weights, in grid units
 _RING = 2.0
@@ -134,9 +137,16 @@ def run(data: str, height: int, width: int) -> int:
     return count * size.width + (count - 1) * size.gap
 
 
+def advance(data: str, height: int, width: int) -> int:
+    """Dots the printer's pen moves on along the symbols: the run and the gap
+    after the last. An ^FT that leaves its x out after ^FT50,250^GSN,48,48^FDA
+    printed its X from 102.2 - the cell's 48 and a 4 dot gap on from 50."""
+    return run(data, height, width) + cell(height, width).gap
+
+
 def baseline_offset(height: int) -> int:
-    """Dots from the top of a cell down to its baseline - three quarters of
-    the cell, Table 33's figure for GS - which is where ^FT places it."""
+    """Dots from the top of a cell down to its baseline, which is where ^FT
+    places it: the cell's bottom, as printed (BASELINE)."""
     return BASELINE * zpl_fonts.magnification(height, GRID)
 
 

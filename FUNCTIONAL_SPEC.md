@@ -342,9 +342,10 @@ raster made from them, so none of them can draw a different symbol. A
 character that is not `A` to `E` is a blank cell: *"Unidentified characters
 should default to a space"*. Both points are recorded in §18.
 
-The baseline an `^FT` names is three quarters of the way down a cell, 18 dots
-of 24 at each step, Table 33's figure for GS. `^FR` inverts under the symbols' own ink, as it does under
-text's glyphs.
+The baseline an `^FT` names is the bottom of a cell, 24 dots down at each
+step. Table 33 gives GS's baseline as three quarters of the height, but a
+printer put the whole cell above it (§18). `^FR` inverts under the symbols'
+own ink, as it does under text's glyphs.
 
 **The resize handles ask for an `h` and a `w`.** The stack asks for the height
 and the run, shared among the cells and the gaps between them, the width, at a
@@ -1440,7 +1441,8 @@ there as `^FT0,0`.
 
 Only characters move the pen on. After a line of text or a `^GS` it is at the
 line's end: for an upright line, its right end on its baseline, whatever its
-justification. A line that runs another way - turned by `^A`, or top to bottom
+justification - and after a `^GS`, past the gap that follows its last
+symbol, as after every symbol before it. A line that runs another way - turned by `^A`, or top to bottom
 or right to left by `^FP` - carries on the way it runs. Anything else, a box, a
 bar code or an image, leaves the pen at the point its own `^FO` or `^FT` named,
 so a field after a box starts at the box's corner, not past it. Which of this
@@ -2763,14 +2765,21 @@ rather than requirements:
   - `^FT^A0R` after an `^FT^A0R` line carried on down the label, letter
     pitch unbroken.
 
+  A second label printed a `^GS`: after `^FT50,250^GSN,48,48^FDA`, an
+  `^FT^A0N,40,40^FDX` with both coordinates left out printed its X from
+  x = 102.2 on the same baseline - past the symbol's 48 dot cell and the 4 dot
+  gap after it, as after every symbol. It was drawn from 99 before, the pen
+  taken to stop at the cell's end.
+
   Not printed: a box placed by `^FT`, taken to leave the pen at its `^FT`
   point, its bottom-left; bar codes, images, `^GC`, `^GD` and `^GE`, taken
-  to leave it where they were put as the box does; a `^GS`, which moves it,
-  as the manual's own example shows; `^FP` V and R, which carry on the way
-  their characters run, to where a copy of the field would sit (exact for a
-  copy, close for a field of another size); a block, after which it starts
-  at the right end of the block's width, on its first baseline; and a right
-  justified field, taken to end where its characters do.
+  to leave it where they were put as the box does; a turned `^GS`, taken to
+  move it on the way it runs as an upright one does; `^FP` V and R, which
+  carry on the way their characters run, to where a copy of the field would
+  sit (exact for a copy, close for a field of another size); a block, after
+  which it starts at the right end of the block's width, on its first
+  baseline; and a right justified field, taken to end where its characters
+  do.
 - **Where a field turned by `^A` and placed by `^FT` goes has been printed
   at every turn.** `^FT100,500^A0R,40,40^FDROTATED^FS` printed its first
   character from y = 502.5 and its ink from x = 97.7 to 129.5, running down:
@@ -2853,12 +2862,19 @@ rather than requirements:
   CSA is 87 across where the print's was 87.3. Before, each symbol was a cell
   `w` by `h`, drawn across all of it: at `h` = 30 a ® was drawn 28 dots across
   where 15 printed, and at 90 the UL mark 83 where 96 printed, and two symbols
-  sat `w` apart - 60 at `w` = 60, where they printed 77.8. Not printed, and
-  applied by the same rule: an `h` and a `w` that round to different
-  magnifications, taken to stretch the cell as a bitmap font's is; the same
-  24 dot cell at 300 and 600 dpi, as fonts A–D, F and G keep theirs; a 0 in
-  `^GS` (below); and where the pen is after a `^GS` for an `^FT` that follows
-  it, taken to be the end of the last cell with no gap after it. A character that is not `A` to `E` keeps
+  sat `w` apart - 60 at `w` = 60, where they printed 77.8. A second label
+  printed `^GSN,24,72^FDABCDE` with each cell three times across and once
+  down, the ® 44.7 × 14.9 and each symbol 77.7 on from the last, so an `h`
+  and a `w` that round to different magnifications stretch the cell as a
+  bitmap font's are. The same label settled where `^FT` puts a symbol, and
+  it is not Table 33's *"3 x HEIGHT/4"*: `^FT50,250^GSN,48,48^FDA` printed
+  the ®'s top at y = 203.2 and the X after it on a baseline of 250.4, so the
+  whole 48 dot cell stands on the baseline - 47.3 measured - where three
+  quarters, which this read before, drew it 12 dots lower. Not printed, and
+  applied by the same rule: the same 24 dot cell at 300 and 600 dpi, as
+  fonts A–D, F and G keep theirs; a 0 in `^GS` (below); and an `h` that is
+  not a whole number of cells under `^FT`, taken to stand the magnified cell
+  on the baseline rather than `h`. A character that is not `A` to `E` keeps
   its cell and draws nothing, the manual's "default to a space".
 - **One size decides the other, in every case a printer was given.** The
   manual: *"If you specify only the height or width value, the
