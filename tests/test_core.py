@@ -5183,6 +5183,80 @@ check("and the preview puts every field where the model does",
       == ZPLRenderer(812, 1218).render(_rules.to_zpl()).tobytes(),
       _rules.to_zpl().replace('\n', ' '))
 
+# A field turned by ^A is placed from the baseline in its own frame, turned
+# with it. The same printer, sent ^FT100,500^A0R,40,40^FDROTATED^FS, put its
+# first character from y = 502.5 and its ink from x = 97.7 to 129.5, running
+# down the label: the baseline down the label at x, the run from y.
+_turned_src = "^XA^PW812^LL1218^FT100,500^A0R,40,40^FDROTATED^FS^XZ"
+_turned = zpl_parser.parse_zpl(_turned_src)[0]
+_rotated = _turned.elements[0]
+check("^FT at R puts the baseline down the label at x, and the run from y",
+      (_rotated.x, _rotated.y)
+      == (100 - (_rotated.width - _rotated.typeset), 500)
+      and geometry.typeset_point(_rotated) == (100, 500)
+      and "^FT100,500\n" in _turned.to_zpl(),
+      (_rotated.x, _rotated.y, _rotated.width, _rotated.typeset))
+_printed = ZPLRenderer(812, 1218).render(_turned_src).convert('L').point(
+    lambda v: 255 if v < 128 else 0).getbbox()
+check("and the preview draws it within 3 dots of where it printed",
+      _printed is not None and abs(_printed[0] - 97.7) <= 3
+      and abs(_printed[2] - 1 - 129.5) <= 3 and abs(_printed[1] - 502.5) <= 3,
+      _printed)
+_turned_canvas = qt_canvas.DesignCanvas(_turned)
+_turned_canvas.set_zoom(1.0)
+_turned_canvas.resize(812, 1218)
+_surface = QImage(812, 1218, QImage.Format_ARGB32); _surface.fill(Qt.white)
+_turned_canvas.render(_surface)
+_drawn = _ink_box(_surface, _rotated)
+# The canvas starts its ink a few dots along the run, as it does upright
+check("so does the canvas, across the label, and within 5 dots down it",
+      _drawn is not None and abs(_drawn[0] - 97.7) <= 3
+      and abs(_drawn[2] - 129.5) <= 3 and abs(_drawn[1] - 502.5) <= 5,
+      _drawn)
+
+# Tables 45-48 draw where ^FT names at each turn: where the first baseline
+# starts - its left end upright, its top at R, its right end at I, its
+# bottom at B - or where it ends when right justified
+_charted = {'N': (lambda e, b: (e.x, e.y + b),
+                  lambda e, b: (e.x + e.width, e.y + b)),
+            'R': (lambda e, b: (e.x + e.width - b, e.y),
+                  lambda e, b: (e.x + e.width - b, e.y + e.height)),
+            'I': (lambda e, b: (e.x + e.width, e.y + e.height - b),
+                  lambda e, b: (e.x, e.y + e.height - b)),
+            'B': (lambda e, b: (e.x + b, e.y + e.height),
+                  lambda e, b: (e.x + b, e.y))}
+for _facing, (_left_point, _right_point) in _charted.items():
+    _found = []
+    for _justify, _point in (('', _left_point), (',1', _right_point)):
+        _src = (f"^XA^PW812^LL1218^FT300,400{_justify}^A0{_facing},40,40"
+                "^FDTurned^FS^XZ")
+        _doc = zpl_parser.parse_zpl(_src)[0]
+        _el = _doc.elements[0]
+        _back = zpl_parser.parse_zpl(_doc.to_zpl())[0].elements[0]
+        _ink = ZPLRenderer(812, 1218).render(_src).convert('L').point(
+            lambda v: 255 if v < 128 else 0).getbbox()
+        _found.append(
+            _point(_el, _el.typeset) == (300, 400)
+            and geometry.typeset_point(_el) == (300, 400)
+            and (_back.x, _back.y, _back.width, _back.height)
+            == (_el.x, _el.y, _el.width, _el.height)
+            and _ink is not None and _ink[0] >= _el.x - 1
+            and _ink[1] >= _el.y - 1 and _ink[2] <= _el.x + _el.width + 1
+            and _ink[3] <= _el.y + _el.height + 1)
+    check(f"^FT at {_facing} names the charts' point, left and right "
+          "justified, saves back there, and the preview draws inside the box",
+          all(_found), _found)
+
+# At R the baseline gap lies across the label, so a stretch across it
+# stretches the gap with the font's height
+_stretched = zpl_parser.parse_zpl(_turned_src)[0]
+_wide = _stretched.elements[0]
+geometry.scale_element(_stretched, _wide, 0, 0, 2.0, 1.0)
+check("a field turned to R stretched across the label keeps its baseline "
+      "in proportion",
+      (_wide.font_height, _wide.typeset) == (80, 60),
+      (_wide.font_height, _wide.typeset))
+
 # One coordinate left out follows on that axis alone
 _axes = _chained("^XA^FT10,200^A0N,30,30^FDAB^FS^FT,300^A0N,30,30^FDCD^FS"
                  "^FT500^A0N,30,30^FDEF^FS^FT,,1^A0N,30,30^FDGH^FS^XZ")

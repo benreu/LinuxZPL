@@ -278,14 +278,18 @@ class ZPLRenderer:
         """
         element = TextElement(self.current_x, self.current_y,
                               orientation=self.current_font_orientation)
-        element.width, element.height = run, stack
+        element.width, element.height = ((stack, run) if element.rotated()
+                                         else (run, stack))
+        element.justify = self.current_justify
+        element.typeset = baseline if self.typeset else None
         angle = geometry.text_layout(element)['angle']
         if angle:
             panel = panel.rotate(-angle, expand=True)
-        pos = (self._left(run), self._top(baseline))
+        # The point the ^FO or ^FT named, placed by the rule the parser reads
+        # it with: a corner, or a point on the baseline, turned with the field
+        dx, dy = geometry.named_offset(element)
+        pos = (self.current_x - dx, self.current_y - dy)
         element.x, element.y = pos
-        if element.rotated():
-            element.width, element.height = stack, run
         self._advance(element, baseline)
         if self.current_reverse:
             self._invert_under(panel, pos)
@@ -374,11 +378,13 @@ class ZPLRenderer:
         element.width, element.height = ((stack, run) if element.rotated()
                                          else (run, stack))
         element.ends = ends
-        dx, dy = geometry.field_anchor(element)
+        baseline = self._text_baseline(element, cell)
+        element.typeset = baseline if self.typeset else None
+        dx, dy = geometry.named_offset(element)
         left = self.current_x - dx
-        top = self._top(self._text_baseline(element, cell)) - dy
+        top = self.current_y - dy
         element.x, element.y = left, top
-        self._advance(element, self._text_baseline(element, cell))
+        self._advance(element, baseline)
 
         # The ink alone, as the mask ^FR inverts under or black is pasted
         # through - so the padding covers nothing already on the label.

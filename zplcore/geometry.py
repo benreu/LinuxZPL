@@ -45,9 +45,10 @@ def justified_origin(x: int, width: int, justify) -> int:
 
 
 def field_anchor(element) -> tuple:
-    """Where the point a field's ^FO or ^FT names sits in its footprint, as
-    (dx, dy) from the footprint's top-left - before ^FT's baseline, which
-    `typeset` carries on its own.
+    """Where the point a field's ^FO names sits in its footprint, as (dx, dy)
+    from the footprint's top-left. An ^FT names a point on the field's
+    baseline instead, which named_offset finds by the same justification and
+    direction.
 
     The manual's Field Interactions charts (Tables 45-48) are the authority.
     Left to right (^FPH) and top to bottom (^FPV) the point is the footprint's
@@ -70,9 +71,9 @@ def field_anchor(element) -> tuple:
     say what ^FB does with the direction.
 
     The parser takes this off the point the file named and origin_zpl puts it
-    back, so the two are inverses by construction rather than by two places
-    agreeing about a sign - which is how ^LH's offset went wrong, fold and
-    unfold each doing their own arithmetic.
+    back, both through named_offset, so the two are inverses by construction
+    rather than by two places agreeing about a sign - which is how ^LH's
+    offset went wrong, fold and unfold each doing their own arithmetic.
     """
     width, height = element.width, element.height
     right = getattr(element, 'justify', None) == JUSTIFY_RIGHT
@@ -94,10 +95,11 @@ def field_anchor(element) -> tuple:
 
 
 def typeset_depth(element, font_path, dpi) -> int:
-    """Dots from an element's top down to the y an ^FT names for it: the
-    first baseline of text, a ^GS symbol's own three quarters of the way down,
-    and the bottom of everything else - the bottom-left corner the manual
-    gives ^FT for boxes, bar codes and images.
+    """Dots down an element to the line an ^FT names for it: the first
+    baseline of text - down its own frame, which turns with it
+    (named_offset) - a ^GS symbol's own three quarters of the way down, and
+    the bottom of everything else - the bottom-left corner the manual gives
+    ^FT for boxes, bar codes and images.
 
     What a field placed by ^FT keeps as `typeset`, and what one placed by ^FO
     is asked for when the field after it follows it: the printer's pen stops
@@ -113,10 +115,10 @@ def typeset_depth(element, font_path, dpi) -> int:
 
 
 def typeset_point(element) -> tuple:
-    """The point an element's ^FT names, in absolute dots: its anchor
-    (field_anchor) on the line `typeset` puts its baseline on."""
-    dx, dy = field_anchor(element)
-    return (element.x + dx, element.y + dy + (element.typeset or 0))
+    """The point an element's ^FO or ^FT names, in absolute dots
+    (named_offset)."""
+    dx, dy = named_offset(element)
+    return (element.x + dx, element.y + dy)
 
 
 # Which way a field's characters run in its own upright frame, by ^FP's
@@ -125,6 +127,60 @@ def typeset_point(element) -> tuple:
 _RUNS = {'H': (1, 0), 'V': (0, 1), 'R': (-1, 0)}
 _TURNS = {'N': lambda u, v: (u, v), 'R': lambda u, v: (-v, u),
           'I': lambda u, v: (-u, -v), 'B': lambda u, v: (v, -u)}
+
+
+def frame_size(element) -> tuple:
+    """(run, stack) of an element's own upright frame: its footprint, turned
+    back upright at a quarter turn."""
+    if element.rotated():
+        return element.height, element.width
+    return element.width, element.height
+
+
+def frame_point(element, u, v) -> tuple:
+    """Where the point (u, v) of an element's own upright frame lands in its
+    footprint, as (dx, dy) from the footprint's top-left.
+
+    Through the turn both canvases and the preview draw the frame with
+    (text_layout), so a point placed by this and the glyphs drawn there
+    cannot part company at a quarter turn.
+    """
+    facing = turn(element)
+    orientation = (getattr(element, 'orientation', None) or 'N').upper()
+    du, dv = _TURNS.get(orientation, _TURNS['N'])(u, v)
+    return (facing['offset'][0] + du, facing['offset'][1] + dv)
+
+
+def named_offset(element) -> tuple:
+    """Where the point a field's ^FO or ^FT names sits in its footprint, as
+    (dx, dy) from the footprint's top-left.
+
+    ^FO names field_anchor's corner. ^FT names a line `typeset` dots down
+    the field - the first baseline of text, the bottom of a box, bar code or
+    image - and for text that line is in the field's own frame, turning with
+    it, as the manual's Field Interactions charts (Tables 45-48) draw it: ^FT
+    names where the first baseline starts, which is its left end upright, its
+    top at R, its right end at I and its bottom at B; where it ends when
+    right justified; and where the first character's cell starts on it when
+    right to left. A 203 dpi printer agrees at R: ^FT100,500^A0R,40,40 put
+    its baseline down the label at x = 100, its first character from y =
+    502.5, where taking the offset down the label had drawn it 30 dots
+    higher. Upright this is field_anchor's corner with the baseline under
+    it; anything but text keeps its offset down the label.
+    """
+    dx, dy = field_anchor(element)
+    if element.typeset is None:
+        return dx, dy
+    if getattr(element, 'element_type', None) != 'text':
+        return dx, dy + element.typeset
+    run, _stack = frame_size(element)
+    right = getattr(element, 'justify', None) == JUSTIFY_RIGHT
+    if element.direction == 'R' and element.block is None:
+        first, last = getattr(element, 'ends', None) or (0, 0)
+        along = last if right else max(0, run - first)
+    else:
+        along = run if right else 0
+    return frame_point(element, along, element.typeset)
 
 
 def pen_after(element, depth, named) -> tuple:
@@ -137,10 +193,11 @@ def pen_after(element, depth, named) -> tuple:
     its justification, since the characters end there either way; the
     manual's own example strings five fields along one baseline that way.
     Every other line of text continues the same rule along the way its
-    characters run: down a column, or down a line turned to R. That is where
-    a copy of the field would sit if it carried straight on, which is exact
-    for a copy and only close for a field of another size. A block runs as
-    ^FPH, as it is drawn and placed.
+    characters run, in its own frame and turned with it (frame_point): down
+    a column, or down a line turned to R, on the baseline ^FT names there.
+    That is where a copy of the field would sit if it carried straight on,
+    which is exact for a copy and only close for a field of another size. A
+    block runs as ^FPH, as it is drawn and placed.
 
     Anything but text leaves the pen at `named`, the point its own ^FO or ^FT
     named, in absolute dots: the pen is where the field was put, and only
@@ -150,14 +207,17 @@ def pen_after(element, depth, named) -> tuple:
     after the text before it. A ^GS symbol is characters, and moves it.
     FUNCTIONAL_SPEC.md section 18 says which of this has been printed.
     """
-    if getattr(element, 'element_type', None) not in ('text', 'graphic_symbol'):
+    kind = getattr(element, 'element_type', None)
+    if kind not in ('text', 'graphic_symbol'):
         return named
-    direction = 'H'
-    if (getattr(element, 'element_type', None) == 'text'
-            and element.block is None):
-        direction = element.direction
-    turn = (getattr(element, 'orientation', None) or 'N').upper()
-    u, v = _TURNS.get(turn, _TURNS['N'])(*_RUNS.get(direction, (1, 0)))
+    if kind == 'text':
+        direction = 'H' if element.block is not None else element.direction
+        run, stack = frame_size(element)
+        du, dv = _RUNS.get(direction, (1, 0))
+        dx, dy = frame_point(element, du * run, depth + dv * stack)
+        return (element.x + dx, element.y + dy)
+    facing = (getattr(element, 'orientation', None) or 'N').upper()
+    u, v = _TURNS.get(facing, _TURNS['N'])(1, 0)
     return (element.x + u * element.width,
             element.y + depth + v * element.height)
 
@@ -537,13 +597,16 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
     element.y = ay + int(round((element.y - ay) * sy))
     element.width = _scaled(element.width, sx)
     element.height = _scaled(element.height, sy)
-    if element.typeset is not None:
-        # The gap to the ^FT baseline is in dots down the label
-        element.typeset = int(round(element.typeset * sy))
 
     kind = element.element_type
     if kind in ('text', 'barcode', 'graphic_symbol'):
         run, stack = (sy, sx) if element.rotated() else (sx, sy)
+    if element.typeset is not None:
+        # The gap to the ^FT baseline is in dots down a text field's own
+        # frame, which a quarter turn lays across the label, and down the
+        # label for anything else (named_offset)
+        element.typeset = int(round(
+            element.typeset * (stack if kind == 'text' else sy)))
     if kind == 'text':
         element.font_height = _scaled(element.font_height, stack)
         element.font_width = _scaled(element.font_width, run)

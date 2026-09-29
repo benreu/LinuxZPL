@@ -1472,30 +1472,32 @@ def _flush(field, doc, renderer, pending, comments) -> tuple:
 
 
 def _apply_typeset(element, doc) -> None:
-    """Move an element placed by ^FT, whose y is a baseline and not a top.
+    """Mark an element placed by ^FT, whose point is on a baseline and not a
+    corner, with how far down it that baseline runs; _apply_justification
+    then moves it by that.
 
     The offset is kept on the element rather than normalised away, so a save
-    writes the ^FT back at the y it came from. Our idea of a font's ascent is
-    an estimate, and converting to ^FO would bake that estimate into the file
-    every time such a label was opened and saved.
+    writes the ^FT back at the point it came from. Our idea of a font's ascent
+    is an estimate, and converting to ^FO would bake that estimate into the
+    file every time such a label was opened and saved.
     """
-    offset = geometry.typeset_depth(element, doc.font_path, doc.dpi)
-    element.typeset = offset
-    element.y -= offset
+    element.typeset = geometry.typeset_depth(element, doc.font_path, doc.dpi)
 
 
 def _apply_justification(element, justify) -> None:
-    """Move a field whose ^FO names something other than its top-left: its
-    right edge when right justified, its first character when right to left.
+    """Move a field whose ^FO or ^FT names something other than its
+    top-left: its right edge when right justified, its first character when
+    right to left, and a point on its baseline, turned with it, when placed
+    by ^FT (geometry.named_offset).
 
-    Applied here rather than when the ^FO is read, because the width it turns
+    Applied here rather than when the ^FO is read, because the size it turns
     on is not known until the element exists - the same reason ^FT's baseline
     offset waits for _apply_typeset. The element then holds its top-left like
-    any other, and origin_zpl puts the anchor back on the way out.
+    any other, and origin_zpl puts the point back on the way out.
     """
     if justify is not None:
         element.justify = justify
-    dx, dy = geometry.field_anchor(element)
+    dx, dy = geometry.named_offset(element)
     element.x -= dx
     element.y -= dy
 

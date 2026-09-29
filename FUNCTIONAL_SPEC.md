@@ -1356,6 +1356,14 @@ but drops it, so a label written by a tool that typesets its text opens
 completely empty. Its `y` is the baseline of the first line for text, and the
 bottom-left corner of everything else.
 
+For text that baseline is in the field's own frame, and turns with it. The
+manual's Field Interactions charts (Tables 45-48) put the point `^FT` names
+where the first baseline starts: its left end upright, its top at `R`, where
+the baseline runs down the label at `x`, its right end at `I` and its bottom
+at `B`. Right justified, it is where the baseline ends. So at `R` the field's
+box starts at `y`, not a baseline's depth above it, and left of `x` by as
+much of the cell as lies below the baseline. A printer agrees at `R` (§18).
+
 The gap between that point and the element's top is **kept on the element**, and
 a save writes the `^FT` back. Normalising it to an `^FO` would be simpler, but
 where a baseline sits inside a character cell is measured from the font file and
@@ -2721,9 +2729,10 @@ rather than requirements:
   the middle of the last character, so the rule used - the right edge of the
   cell at the left end - mirrors the left justified one rather than reading
   the drawing literally. The turned cells (Tables 46-48) follow the same rule
-  through the turn. `^FT` with a turned `^FPR` is placed as `^FO` is, with
-  the baseline offset taken down the label as every `^FT` text field's is,
-  though Table 46 draws its crosshair elsewhere.
+  through the turn. `^FT` with a turned `^FPR` names the point on the
+  baseline where the first character's cell starts, in the field's own frame
+  and turned with it, as every turned `^FT` text field does - which is where
+  Table 46 draws its crosshair.
 - **Where a field whose `^FT` leaves a coordinate out goes has been printed
   for upright text, an `^FO` box and a line turned to R; the rest is read off
   the manual.** A 203 dpi printer, sent `tests/fixtures/ft_chain_rules.zpl`
@@ -2750,13 +2759,25 @@ rather than requirements:
   copy, close for a field of another size); a block, after which it starts
   at the right end of the block's width, on its first baseline; and a right
   justified field, taken to end where its characters do.
-- **A field turned by `^A` and placed by `^FT` is drawn its baseline depth
-  up the label.** `^FT100,500^A0R,40,40^FDROTATED^FS` printed its first
-  character from y = 502.5 and its ink from x = 97.7 to 129.5, running down.
-  The preview and canvas take the baseline offset down the label as for
-  upright text, and draw the same ink from y = 473, 30 dots higher, the
-  font's baseline depth, with x within 2 dots. A field that follows such a
-  line is placed right relative to it. Only R has been printed.
+- **Where a field turned by `^A` and placed by `^FT` goes has been printed
+  at R; I and B are read off the manual's charts.**
+  `^FT100,500^A0R,40,40^FDROTATED^FS` printed its first character from
+  y = 502.5 and its ink from x = 97.7 to 129.5, running down: the baseline
+  runs down the label at `x`, and the run starts at `y` (§8). The preview
+  draws that ink at x = 98 to 129 from y = 503. The canvas draws it at
+  x = 96 to 127 from y = 507, starting a few dots along the run as it does
+  upright. Taking the baseline offset down the label as for upright text, as
+  both did before, drew it 30 dots higher. At I and B, Tables 47 and 48 are
+  followed: the right end and the bottom. A field that follows a turned line
+  carries on from where its baseline ends.
+
+  A turned field keeps its box's top-left, not its `^FT` point, when its
+  text is edited or it is turned, since both editors reset the box before it
+  is re-measured. At I and B the point sits at the far end of the run, so an
+  edit moves it, and any turn moves it. A field that was following the one
+  before it (§8) therefore stops following, and is written where it is
+  drawn, which prints the same. A `^GS` turned and placed by `^FT` keeps its
+  baseline offset down the label: the charts show text only.
 - **A direction inside a `^FB` is carried, not drawn.** The manual does not
   say what `^FB` does with `^FPV` or `^FPR`, so such a block round-trips its
   `^FP` but is wrapped, drawn and placed left to right. The gap is drawn: it

@@ -63,9 +63,10 @@ class DesignElement:
     # Class attributes, so every element inherits the default without each
     # __init__ having to set it.
     print_enabled = True
-    # Dots from this element's top down to the ^FT baseline it was placed by,
-    # or None when it was placed by ^FO. Kept rather than normalised away so a
-    # file written with ^FT is written back with ^FT, at the same y.
+    # Dots down this element to the ^FT baseline it was placed by - down a
+    # text field's own frame, which turns with it (geometry.named_offset) -
+    # or None when it was placed by ^FO. Kept rather than normalised away so
+    # a file written with ^FT is written back with ^FT, at the same point.
     typeset = None
 
     # ^FO/^FT's third parameter, or None when the field named none. An element
@@ -128,13 +129,14 @@ class DesignElement:
         trimmed when it is left, which is ZPL's default and what every file
         written before this was read as - so nothing already on disk moves.
         A reversed (^FPR) text field names its first character rather than a
-        corner, and geometry.field_anchor is where both rules live.
+        corner, and an ^FT names a point on its baseline, turned with the
+        field; geometry.named_offset is where every rule lives.
 
         A coordinate that still follows the field before it is left out, as
         the file left it: written in, it would pin the field wherever the
         designer's measure of that field's text says it ends.
         """
-        dx, dy = geometry.field_anchor(self)
+        dx, dy = geometry.named_offset(self)
         x = self.x - offset[0] + dx
         y = self.y - offset[1] + dy
         place = '' if self.justify in (None, geometry.JUSTIFY_LEFT) else f",{self.justify}"
@@ -143,11 +145,11 @@ class DesignElement:
         if self.follows:
             follow_x, follow_y = geometry.following(self)
             given = ['' if follow_x else str(x),
-                     '' if follow_y else str(y + self.typeset), place[1:]]
+                     '' if follow_y else str(y), place[1:]]
             while given and not given[-1]:
                 given.pop()
             return "^FT" + ",".join(given) + "\n"
-        return f"^FT{x},{y + self.typeset}{place}\n"
+        return f"^FT{x},{y}{place}\n"
 
     def reverse_zpl(self) -> str:
         """^FR, if this field reverses its own print."""
@@ -2937,7 +2939,12 @@ class Document:
         # ^FO the file named, which reads as the designer having shifted the
         # field. Clamped at the label edge like every other move: a string
         # long enough to push the left edge off the label would otherwise
-        # take the ^FO negative, which ZPL has no room for.
+        # take the ^FO negative, which ZPL has no room for. A field placed by
+        # ^FT keeps the same corner rather than its baseline point, which at
+        # I and B moves with the run: both editors set the box's height
+        # before this runs, and a turn changes where the point is, so the box
+        # as it was cannot say where its ^FT was. The point is written from
+        # wherever the corner puts it, which prints what the canvas shows.
         anchor = geometry.field_anchor(element)
         if anchor != pinned:
             element.x = max(0, element.x + pinned[0] - anchor[0])
