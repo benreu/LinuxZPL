@@ -21,8 +21,9 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QLabel, QLineEdit, QListWidget, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton,
                                QScrollArea,
-                               QSpinBox, QDoubleSpinBox, QTreeWidget,
-                               QTreeWidgetItem, QVBoxLayout, QWidget)
+                               QSpinBox, QDoubleSpinBox, QTableWidget,
+                               QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                               QWidget)
 
 from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
                      graphic_store, printer_io, printer_objects,
@@ -30,7 +31,8 @@ from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
                            BARCODE_MODES, BARCODE_ORIENTATIONS,
-                           BARCODE_PARAMETERS,
+                           BARCODE_PARAMETERS, BARCODE_SERIES,
+                           MAX_SERIES_ORIGINS,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
                            DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
@@ -1407,6 +1409,62 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     form.addRow("Reverse:", fr_check)
     _reverse_hint(form)
 
+    # ^FM: an origin for each symbol of a series, for the two symbologies it
+    # places, as label positions. No rows is a barcode placed by ^FO like any
+    # other; an origin not ticked is one ^FM excludes.
+    positions = QTableWidget(0, 3)
+    positions.setObjectName("positions")
+    positions.setHorizontalHeaderLabels(["X", "Y", "Print"])
+    positions.verticalHeader().setVisible(False)
+    positions.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+    def _add_position(x, y, prints):
+        row = positions.rowCount()
+        positions.insertRow(row)
+        for column, value in ((0, x), (1, y)):
+            spin = QSpinBox()
+            spin.setRange(0, 32000)
+            spin.setValue(value)
+            positions.setCellWidget(row, column, spin)
+        check = QCheckBox()
+        check.setChecked(prints)
+        positions.setCellWidget(row, 2, check)
+
+    def _position_rows():
+        return [(positions.cellWidget(row, 0).value(),
+                 positions.cellWidget(row, 1).value(),
+                 positions.cellWidget(row, 2).isChecked())
+                for row in range(positions.rowCount())]
+
+    for x, y, prints in element.series_positions():
+        _add_position(x, y, prints)
+
+    def _on_add_position():
+        if positions.rowCount() < MAX_SERIES_ORIGINS:
+            _add_position(*element.next_series_position(_position_rows()), True)
+
+    def _on_remove_position():
+        row = positions.currentRow()
+        positions.removeRow(row if row >= 0 else positions.rowCount() - 1)
+
+    positions_box = QWidget()
+    positions_layout = QVBoxLayout(positions_box)
+    positions_layout.setContentsMargins(0, 0, 0, 0)
+    positions_layout.addWidget(positions)
+    positions_buttons = QHBoxLayout()
+    for label, name, slot in (("Add", "add_position", _on_add_position),
+                              ("Remove", "remove_position",
+                               _on_remove_position)):
+        button = QPushButton(label)
+        button.setObjectName(name)
+        button.setAutoDefault(False)
+        button.clicked.connect(slot)
+        positions_buttons.addWidget(button)
+    positions_buttons.addStretch(1)
+    positions_layout.addLayout(positions_buttons)
+    form.addRow("Positions (^FM):", positions_box)
+    positions_label = form.labelForField(positions_box)
+
     apply_field_number = _field_number_rows(form, element)
 
     def _update_visible_rows():
@@ -1446,6 +1504,8 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
             widget.setVisible(features['orientation'])
         for widget in (control_row, control_label):
             widget.setVisible(features['control_chars'])
+        for widget in (positions_box, positions_label):
+            widget.setVisible(symbology_combo.currentData() in BARCODE_SERIES)
         _load_extra_rows()
 
     symbology_combo.currentIndexChanged.connect(_update_visible_rows)
@@ -1474,6 +1534,9 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         element.mode = mode_combo.currentData()
         element.reverse_print = fr_check.isChecked()
         apply_field_number(element)
+        element.set_series_positions(_position_rows()
+                                     if element.symbology in BARCODE_SERIES
+                                     else [])
         if element.show_text:
             # With the line switched on, name the font it prints in rather than
             # leaving it to whatever the printer happens to have selected.

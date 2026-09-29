@@ -356,6 +356,12 @@ MATRIX = frozenset(('qr', 'datamatrix', 'pdf417', 'aztec'))
 # 'stacked' kind of symbol.
 ROWS_IN_DOTS = frozenset(('micropdf417',))
 
+# The symbologies ^FM places at several origins, one symbol of a series at
+# each. The manual: ^FM "triggers multiple bar code printing on the same
+# label with ^B7 and ^BF only. When used with any other commands, it is
+# ignored."
+SERIES = frozenset(('pdf417', 'micropdf417'))
+
 # The symbologies drawn as bars of differing height rather than differing
 # width. Every bar is narrow and every gap the same; what carries the data is
 # how tall each bar is and where it sits, so ^BY's ratio means nothing to

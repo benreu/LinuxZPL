@@ -13,6 +13,8 @@ and the result is cut into rows, each with the indicators that say where in
 the symbol it sits.
 """
 
+import functools
+
 from .pdf417_patterns import CODEWORD, PATTERNS, START, STOP, STOP_WIDTH
 
 # ZPL's own limits for ^B7's c and r, and the number of codewords a symbol
@@ -241,7 +243,9 @@ def _shape(count: int, columns: int, rows: int):
     best = None
     for candidate in range(1, MAX_COLUMNS + 1):
         needed = max(MIN_ROWS, -(-count // candidate))
-        if needed > MAX_ROWS:
+        if needed > MAX_ROWS or candidate * needed >= MAX_CODEWORDS:
+            # Too tall, or over the codeword limit: 925 to 928 codewords
+            # came out 22 by 43, which is 946, when 29 by 32 holds them.
             continue
         score = abs(needed - candidate * ASPECT)
         if best is None or score < best[0]:
@@ -252,19 +256,21 @@ def _shape(count: int, columns: int, rows: int):
 
 
 def encode(data: str, columns: int = 0, rows: int = 0, security: int = 0,
-           truncate: bool = False) -> list:
+           truncate: bool = False, macro: tuple = ()) -> list:
     """The symbol as rows of booleans, one per module, dark where True.
 
     One row per row of codewords. ^B7 draws each of those several modules
     tall - its own h - which the caller applies, because it is the caller
     that has to work out an omitted h from how many rows there turned out to
-    be.
+    be. `macro` is the control block that makes this symbol one of an ^FM
+    series (control_block), if it is one.
     """
     security = max(0, min(8, security))
     checks = 2 ** (security + 1)
 
     payload = _compact(data)
-    columns, rows = _shape(len(payload) + 1 + checks, columns, rows)
+    columns, rows = _shape(len(payload) + 1 + len(macro) + checks,
+                           columns, rows)
     columns = max(1, min(MAX_COLUMNS, columns))
     rows = max(MIN_ROWS, min(MAX_ROWS, rows))
 
@@ -273,16 +279,19 @@ def encode(data: str, columns: int = 0, rows: int = 0, security: int = 0,
         raise ValueError(
             f"{columns} columns by {rows} rows is {capacity} codewords, and "
             f"PDF417 holds fewer than {MAX_CODEWORDS}")
-    if len(payload) + 1 + checks > capacity:
+    needed = len(payload) + 1 + len(macro) + checks
+    if needed > capacity:
         raise ValueError(
-            f"the data needs {len(payload) + 1 + checks} codewords, more than "
+            f"the data needs {needed} codewords, more than "
             f"the {capacity} a {columns} by {rows} symbol holds")
 
     # The first codeword is how many there are, itself included but not the
     # check codewords; the gap between that and the symbol's capacity is
-    # padded with the text-mode latch, which decodes to nothing.
+    # padded with the text-mode latch, which decodes to nothing. A series'
+    # control block comes after the padding, as zint puts it.
     body = [0] + payload
-    body += [_LATCH_TEXT] * (capacity - checks - len(body))
+    body += [_LATCH_TEXT] * (capacity - checks - len(macro) - len(body))
+    body += list(macro)
     body[0] = len(body)
     body += error_codewords(body, checks)
 
@@ -313,3 +322,93 @@ def encode(data: str, columns: int = 0, rows: int = 0, security: int = 0,
             bits += format(STOP, f'0{STOP_WIDTH}b')
         grid.append([bit == '1' for bit in bits])
     return grid
+
+
+# --- Macro PDF417: one message across several symbols -----------------------
+#
+# What ^FM prints: a message too long for one symbol, cut into pieces, each
+# its own symbol carrying a control block that says which piece it is and of
+# how many. A reader puts the pieces back together in order, wherever on the
+# label they were found. The control block is laid out as zint lays it out -
+# the marker, the piece's index, an optional field giving the count, and a
+# terminator on the last piece - which is what zxing-cpp reads back. What a
+# printer writes into it has not been seen; FUNCTIONAL_SPEC.md section 18.
+
+_MACRO = 928
+_MACRO_FIELD = 923
+_MACRO_COUNT = 1                # the optional field that is the piece count
+_MACRO_LAST = 922
+# The codewords a control block costs, and the one more on the last piece.
+MACRO_LENGTH = 7
+
+
+def _five_digits(number: int) -> tuple:
+    """A number up to 99999 in numeric compaction's two codewords, which is
+    how the control block spells a piece's index and the piece count."""
+    return ((100000 + number) // 900, (100000 + number) % 900)
+
+
+def control_block(index: int, count: int) -> tuple:
+    """The control block for piece `index`, from 0, of `count`."""
+    block = ((_MACRO,) + _five_digits(index)
+             + (_MACRO_FIELD, _MACRO_COUNT) + _five_digits(count))
+    return block + ((_MACRO_LAST,) if index == count - 1 else ())
+
+
+def split(data: str, fits) -> tuple:
+    """`data` cut into the pieces a series of symbols carries, greedily.
+
+    `fits(piece, last)` says whether a piece fits one symbol with its control
+    block, which is a codeword longer on the last piece. Each piece but the
+    last is the longest that fits, found by halving - compaction is not
+    strictly monotonic, so a piece may come out a character or two short of
+    the longest possible, which costs nothing but a little room. Whatever is
+    left always goes into the last piece, so no piece is empty.
+    """
+    pieces = []
+    rest = data
+    while not fits(rest, True):
+        low, high = 0, len(rest) - 1
+        while low < high:
+            middle = (low + high + 1) // 2
+            if fits(rest[:middle], False):
+                low = middle
+            else:
+                high = middle - 1
+        if not low:
+            raise ValueError("not one character of the data fits a symbol "
+                             "of this size with its control block")
+        pieces.append(rest[:low])
+        rest = rest[low:]
+    pieces.append(rest)
+    return tuple(pieces)
+
+
+def _largest(columns: int, rows: int) -> int:
+    """The most codewords a symbol of this ^B7 can hold: exactly what both
+    ask for when both are given, and otherwise as many as the one given and
+    the limits allow."""
+    if columns and rows:
+        return columns * rows
+    if columns:
+        return columns * min(MAX_ROWS, (MAX_CODEWORDS - 1) // columns)
+    if rows:
+        return min(MAX_COLUMNS, (MAX_CODEWORDS - 1) // rows) * rows
+    return MAX_CODEWORDS - 1
+
+
+@functools.lru_cache(maxsize=32)
+def series(data: str, columns: int = 0, rows: int = 0,
+           security: int = 0) -> tuple:
+    """The pieces an ^FM series of ^B7 symbols carries `data` in - just the
+    one, with no control block, when the whole of it fits a single symbol.
+
+    Every piece fills the largest symbol the command allows, and each is
+    compacted on its own, as a reader decodes each on its own.
+    """
+    checks = 2 ** (max(0, min(8, security)) + 1)
+    room = _largest(columns, rows) - checks - 1     # the length codeword
+    if len(_compact(data)) <= room:
+        return (data,)
+    return split(data, lambda piece, last:
+                 len(_compact(piece)) + MACRO_LENGTH + last <= room)

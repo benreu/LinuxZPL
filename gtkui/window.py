@@ -4004,6 +4004,71 @@ class ZPLViewerWindow(Gtk.Window):
             make_row("Reverse:", fr_check)
             make_row("", _reverse_hint())
 
+            # ^FM: an origin for each symbol of a series, for the two
+            # symbologies it places, as label positions. No rows is a barcode
+            # placed by ^FO like any other; an origin not ticked is one ^FM
+            # excludes.
+            positions = Gtk.ListStore(int, int, bool)
+            for position in element.series_positions():
+                positions.append(list(position))
+            positions_view = Gtk.TreeView(model=positions)
+            positions_view.set_name("positions")
+            for column, title in ((0, "X"), (1, "Y")):
+                spin = Gtk.CellRendererSpin(
+                    editable=True, digits=0,
+                    adjustment=Gtk.Adjustment(value=0, lower=0, upper=32000,
+                                              step_increment=1))
+
+                def on_edited(_renderer, path, text, column=column):
+                    try:
+                        positions[path][column] = max(0, min(32000, int(text)))
+                    except ValueError:
+                        pass
+
+                spin.connect('edited', on_edited)
+                positions_view.append_column(
+                    Gtk.TreeViewColumn(title, spin, text=column))
+            toggle = Gtk.CellRendererToggle(activatable=True)
+
+            def on_toggled(_renderer, path):
+                positions[path][2] = not positions[path][2]
+
+            toggle.connect('toggled', on_toggled)
+            positions_view.append_column(
+                Gtk.TreeViewColumn("Print", toggle, active=2))
+
+            def position_rows():
+                return [tuple(row) for row in positions]
+
+            def on_add_position(_button):
+                if len(positions) < model.MAX_SERIES_ORIGINS:
+                    x, y = element.next_series_position(position_rows())
+                    positions.append([x, y, True])
+
+            def on_remove_position(_button):
+                chosen = positions_view.get_selection().get_selected()[1]
+                if chosen is None and len(positions):
+                    chosen = positions.get_iter(len(positions) - 1)
+                if chosen is not None:
+                    positions.remove(chosen)
+
+            positions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                                    spacing=4)
+            positions_box.pack_start(positions_view, True, True, 0)
+            positions_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                                        spacing=4)
+            for label, name, handler in (("Add", "add_position",
+                                          on_add_position),
+                                         ("Remove", "remove_position",
+                                          on_remove_position)):
+                button = Gtk.Button(label=label)
+                button.set_name(name)
+                button.connect('clicked', handler)
+                positions_buttons.pack_start(button, False, False, 0)
+            positions_box.pack_start(positions_buttons, False, False, 0)
+            positions_row, _positions_label = make_row("Positions (^FM):",
+                                                       positions_box)
+
             apply_field_number = _make_field_number_rows(content, element)
 
             def on_symbology_changed(_combo):
@@ -4034,6 +4099,7 @@ class ZPLViewerWindow(Gtk.Window):
                 # out of characters only the Insert buttons can write.
                 orientation_row.set_visible(features['orientation'])
                 control_row.set_visible(features['control_chars'])
+                positions_row.set_visible(chosen in model.BARCODE_SERIES)
                 text_height_row.set_visible(bool(features['text']))
                 wanted = [attribute for attribute, _l, _c
                           in model.BARCODE_PARAMETERS.get(chosen, ())]
@@ -4070,6 +4136,9 @@ class ZPLViewerWindow(Gtk.Window):
                     element.check_digit = check_codes[check_combo.get_active()]
                     element.mode = mode_codes[mode_combo.get_active()]
                     element.reverse_print = fr_check.get_active()
+                    element.set_series_positions(
+                        position_rows()
+                        if element.symbology in model.BARCODE_SERIES else [])
                     if element.show_text:
                         # With the line switched on, name the font it prints in
                         # rather than leaving it to whatever the printer has

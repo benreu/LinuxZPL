@@ -442,6 +442,33 @@ check("OK makes it mode 18 and keeps its rows 4 dots tall, which a range "
       (micro.micro_mode, micro.bar_height))
 document.elements.remove(micro)
 
+# --- Edit Barcode: ^FM's Positions -------------------------------------------
+
+from zplcore import parser as zpl_parser
+series = zpl_parser.parse_zpl(
+    "^XA^PW1218^LL2436^FM100,100,e,e,100,1200^BY2^BFN,4,22"
+    f"^FD{'X' * 400}^FS^XZ")[0].elements[0]
+document.elements.append(series)
+window.on_element_double_clicked(None, series)
+series_dialog = window._editors[id(series)]
+series_content = series_dialog.get_content_area()
+positions_view = next(v for v in _find_all(series_content, Gtk.TreeView)
+                      if v.get_name() == 'positions')
+positions_store = positions_view.get_model()
+check("Edit Barcode lists a series' origins, the one excluded not printing",
+      _row_for(series_content, "Positions (^FM):").get_visible()
+      and [tuple(row) for row in positions_store]
+      == [(100, 100, True), (0, 0, False), (100, 1200, True)],
+      [tuple(row) for row in positions_store])
+_named_button(series_content, 'add_position').clicked()
+positions_store[1][0], positions_store[1][1], positions_store[1][2] = \
+    100, 700, True
+series_dialog.response(Gtk.ResponseType.OK)
+check("OK writes them back as ^FM, the added one under the last",
+      "^FM100,100,100,700,100,1200,100,1396\n" in series.to_zpl(),
+      series.to_zpl()[:60].replace('\n', ' '))
+document.elements.remove(series)
+
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen
 # over one would write its fields into a copy the document no longer has, and

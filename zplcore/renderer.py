@@ -7,7 +7,7 @@ Renders ZPL commands to PIL Image objects for display.
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 from types import SimpleNamespace
 from typing import List, Optional
-from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphic_symbols, graphics, parser, textraster, transforms
+from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphic_symbols, graphics, parser, symbology, textraster, transforms
 from .model import (BarcodeElement, CircleElement, DiagonalLineElement,
                     EllipseElement, FieldBlock, FrameElement,
                     GraphicSymbolElement, TextElement)
@@ -184,9 +184,16 @@ class ZPLRenderer:
             total_height=self.barcode_default_height,
             ratio=getattr(self, 'ratio', 3.0),
             dpi=self.dpi,
+            origins=(self.multi_origin
+                     if getattr(self, 'barcode_symbology', None)
+                     in symbology.SERIES else None),
             font=(('0', self.current_font_size,
                    self.current_font_width or self.current_font_size)
                   if self.current_font_size else None))
+        if element.in_series():
+            # Its origins were given on the label, so its box is wherever
+            # they put it, whatever ^FO or ^FT came before.
+            x, y = element.x, element.y
         layout = geometry.barcode_layout(element)
 
         # PIL cannot rotate what has not been drawn, so the symbol is drawn
@@ -220,7 +227,8 @@ class ZPLRenderer:
 
         if layout['angle']:
             panel = panel.rotate(-layout['angle'], expand=True)
-        pos = (x, y - element.height if self.typeset else y)
+        pos = (x, y - element.height if self.typeset and not element.in_series()
+               else y)
         element.x, element.y = pos
         self._advance(element, element.height)
         if self.current_reverse:
@@ -789,6 +797,9 @@ class ZPLRenderer:
         self.pending_symbol = None
         self.is_barcode_mode = False
         self.barcode_params = {}
+        # ^FM's origins, ^LH and ^LS already added in, or None for a field
+        # placed any other way - see parser.read_multiple_origins
+        self.multi_origin = None
         self.own_origin = False
         self.numbered = False
         # A field names its own font with ^A or inherits ^CF's, and a printer
@@ -920,6 +931,17 @@ class ZPLRenderer:
             self.current_justify = (justify if justify is not None
                                     else self.default_justify)
             self.typeset = (command == 'FT')
+            self.own_origin = True
+        elif command == 'FM':
+            # One origin for each symbol of a series, in place of an ^FO, as
+            # the parser reads it: it opens a field, and leaves the running
+            # origin where the last ^FO or ^FT put it.
+            if self._has_content():
+                self._end_field()
+            self.multi_origin = tuple(
+                None if p is None else (p[0] + self.origin[0],
+                                        p[1] + self.origin[1])
+                for p in parser.read_multiple_origins(params))
             self.own_origin = True
         elif command == 'FH':
             # Field hex indicator: ^FHa marks a-XX escapes in the ^FD that

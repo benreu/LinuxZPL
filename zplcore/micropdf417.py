@@ -165,23 +165,39 @@ def _rows(body: list, mode: int) -> tuple:
 
 
 @functools.lru_cache(maxsize=64)
-def encode(data: str, mode: int = 0) -> tuple:
+def encode(data: str, mode: int = 0, macro: tuple = ()) -> tuple:
     """The symbol as rows of booleans, one per module, dark where True.
 
     One row per row of codewords; ^BF's h is how many dots tall each is,
-    which the caller applies. Kept, because both canvases ask on every
-    paint.
+    which the caller applies. `macro` is the control block that makes this
+    symbol one of an ^FM series (pdf417.control_block), if it is one. Kept,
+    because both canvases ask on every paint.
     """
     if not 0 <= mode < MODES:
         raise ValueError(f"MicroPDF417 has no mode {mode}; ^BF's m is 0 to "
                          f"{MODES - 1}")
     payload = data_codewords(data)
     room = capacity(mode)
-    if len(payload) > room:
+    if len(payload) + len(macro) > room:
         columns, rows, _checks = size(mode)
         raise ValueError(
-            f"the data needs {len(payload)} codewords, more than the {room} "
-            f"a mode {mode} symbol ({columns} by {rows}) holds")
-    # The gap is padded with the text-mode latch, which decodes to nothing.
-    body = payload + [pdf417._LATCH_TEXT] * (room - len(payload))
+            f"the data needs {len(payload) + len(macro)} codewords, more than "
+            f"the {room} a mode {mode} symbol ({columns} by {rows}) holds")
+    # The gap is padded with the text-mode latch, which decodes to nothing,
+    # and a series' control block comes after it, as zint puts it.
+    body = (payload + [pdf417._LATCH_TEXT] * (room - len(payload) - len(macro))
+            + list(macro))
     return _rows(body, mode)
+
+
+@functools.lru_cache(maxsize=32)
+def series(data: str, mode: int = 0) -> tuple:
+    """The pieces an ^FM series of ^BF symbols carries `data` in, every one
+    the size the mode names - just the one, with no control block, when the
+    whole of it fits a single symbol."""
+    room = capacity(mode)
+    if len(data_codewords(data)) <= room:
+        return (data,)
+    return pdf417.split(data, lambda piece, last:
+                        len(data_codewords(piece)) + pdf417.MACRO_LENGTH
+                        + last <= room)

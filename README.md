@@ -216,6 +216,10 @@ Read when loading a file and written when saving:
   Interleaved 2 of 5 and UPC/EAN Extension barcodes, and their module width
 - `^BD` - UPS MaxiCode, the same size on paper at every resolution, with the
   GS, RS and EOT its message is built from written as `^FH` escapes
+- `^B7` / `^BF` - PDF417 and MicroPDF417, the latter in any of its 34 sizes
+- `^FM` - A PDF417 or MicroPDF417 message too long for one symbol, printed as
+  a series of symbols, one at each origin; one element on the canvas, moved as
+  a whole, with each origin edited in Edit Barcode
 - `^GF` - Graphic field (images, 1-bit, where a set bit is black)
 - `^DF` / `^XF` - Store / recall a format, with `^FN` / `^FV` variable fields
 - `^IM` / `^XG` - Recall a stored graphic into a field (Image Move / Recall Graphic)

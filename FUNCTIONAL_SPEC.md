@@ -414,6 +414,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `separator`, `segments` | `1`, `22` - `^BR`'s separator height and segments per line. Carried; nothing draws a composite yet |
 | `postal_type` | `0` - `^BZ`'s Postnet, `1` PLANET, `3` the USPS Intelligent Mail barcode. `2` is reserved and draws nothing |
 | `maxi_mode` | `2` - `^BD`'s mode: `2` a US parcel's sorting code (numeric postal code) ahead of the message, `3` an international one (alphanumeric postal code), `4` a plain message, `5` the same with more error correction, `6` reader programming |
+| `origins` | none - `^FM`'s origins for a PDF417 or MicroPDF417 series, one per symbol, as offsets from the element's top-left, or none for a symbol `^FM` excludes. None altogether for a barcode placed by `^FO` or `^FT` |
 | `symbol_number`, `symbol_count` | `1`, `1` - which of how many MaxiCodes, up to eight, carry one message between them |
 | `dpi` | the document's resolution - the head a barcode is drawn for. Only MaxiCode's size depends on it (below), and the document keeps it current |
 | `mode` | `N` - `A` lets Code 128 use subset C; no other symbology has a mode |
@@ -463,6 +464,29 @@ shorter - which is what lets mode 0 hold the eight digits Table 10 gives it.
 Every size, every correction share and both of Table 10's capacities are
 checked against the table; every size is drawn module for module as zint
 draws it, and read back by zxing-cpp.
+
+**An `^FM` series is one element.** `^FM` gives a PDF417 or MicroPDF417 whose
+message is too long for one symbol an origin for each symbol it needs - up to
+sixty, an `e` for one left out - and the printer cuts the message into pieces,
+one a symbol, each carrying a control block that says which piece it is and
+of how many, so a reader can put them back together. The designer holds the
+whole series as one barcode element: its box goes round every symbol that
+prints, the origins are held as offsets inside it, and so a drag, a nudge, a
+paste, a group move or a rescale carries every symbol without knowing it is
+one of several. Each symbol is the size the command asks for - `^B7` with both
+`c` and `r` gives every one that shape, and otherwise each piece fills the
+largest the command allows - and each is turned about its own origin, as
+`^FO` turns any field. A piece with no origin left for it is still counted in
+every control block but not drawn; data that fits one symbol draws one plain
+symbol, with no control block, at the first origin. A series offers no resize
+handles: Edit Barcode's **Positions** lists each origin as a label position
+with a Print tick, and Add puts a new one a symbol's height and a gap under
+the last. An empty list places the barcode by `^FO`, where its box was.
+`^FM` before any other symbology is ignored, as the printer ignores it, and
+not kept. Every piece of the manual's own example, and of series in both
+symbologies at every turn, reads back through zxing-cpp and joins to the
+message; the control block is laid out module for module as zint lays out its
+own structured append.
 
 **A MaxiCode is one size.** UPS's parcel symbol is 33 rows of 30 hexagons
 round a bullseye, about an inch across at every resolution: `^BD` carries no
@@ -1038,7 +1062,7 @@ file choosers and the prompts — are modal.
 | **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
 | **Edit Diagonal Line** | Width; Height; Thickness; Colour; Direction; Reverse | Width and height 3–32000, `^GD`'s own range, so a line from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to the width, the maximum updating live as the width changes. Direction is right-leaning ( / ) or left-leaning ( \ ) (§3.3). Colour and Reverse as Edit Frame's. |
 | **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
-| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots (1–30 modules for PDF417, 1–9999 dots for MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a 3-module PDF417 and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
+| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots (1–30 modules for PDF417, 1–9999 dots for MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a 3-module PDF417 and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
@@ -1080,6 +1104,8 @@ file choosers and the prompts — are modal.
 A field placed by `^FT` is written `^FT<x>,<y>` where the table says
 `^FO<x>,<y>` (§8.3), and a coordinate that still follows the field before it
 is left out: `^FT`, `^FT,<y>` or `^FT<x>`, a justification kept as `^FT,,1`.
+A PDF417 or MicroPDF417 series is written `^FM<x1>,<y1>,<x2>,<y2>,…` there
+instead, `e,e` for a symbol left out.
 
 Each command is on its own line. `^BY` must be emitted: without it the printer
 uses its own default module width of 2, which pins the barcode's physical size
@@ -1205,7 +1231,7 @@ does not know is not taken for a comment.
 
 ### 8.3 What is read
 
-`^PW`, `^LL`, `^FO`, `^FT`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
+`^PW`, `^LL`, `^FO`, `^FT`, `^FM`, `^A` in every form (`^A0`, `^AF`, any bitmap font,
 `^A@`), `^CF`, `^FW`, `^FB`, `^FP`, `^GB`, `^GC`, `^GD`, `^GE`, `^GS`, `^BC`, `^BY`, `^GFA` in every encoding of §8.1,
 the stored-format family (`^DF`, `^XF`, `^FN`, `^FV`), the stored-graphic
 family (`^IM`, `^XG`, `^IL`, `^IS`), the label transforms (`^LH`, `^LS`, `^LT`,
@@ -2625,6 +2651,14 @@ rather than requirements:
   own, with numeric runs as short as that makes worthwhile. Every reader
   returns the same text. Data too long for the mode `^BF` names draws nothing,
   as a printer is taken to print nothing - not yet printed either.
+- **An `^FM` series' control block is zint's, not yet a printer's.** The
+  marker, the piece's index, the optional count field and a terminator on
+  the last piece, after the padding - no file ID. Which of that a printer
+  writes, how it cuts the message, and whether data that fits one symbol
+  still carries a control block have not been printed; a reader returns the
+  same message either way. Nor has where the pen stops after a series -
+  taken to be its first origin that prints - nor what the printer does with
+  a pair that is neither two numbers nor `e`, which is read as `e`.
 - **`^BX` draws ECC 200 whatever quality it is asked for.** Levels 0 to 140
   use convolutional coding, were meant for closed systems where one party
   controls both the printing and the reading, and no reader made this century

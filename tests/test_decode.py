@@ -278,6 +278,53 @@ else:
         check(f"a MicroPDF417 drawn for a {dpi} dpi head reads back",
               found == [('MicroPDF417', f"RESOLUTION {dpi}")], found)
 
+# --- ^FM, a series of symbols -----------------------------------------------
+
+from zplcore import pdf417 as _pdf417
+
+# A reader gives each symbol of a series back on its own; put together in
+# order they are the message. zxing-cpp's Python binding does not say which
+# piece a symbol is, so the order is where each was put.
+_SERIES_TEXT = ("Zebra Technologies Corporation strives to be the expert "
+                "supplier. ") * 9
+
+
+def _series_read(zpl, width, height, formats):
+    image = ZPLRenderer(width, height, 203).render(zpl).convert('L')
+    return sorted(zxingcpp.read_barcodes(image, formats=formats),
+                  key=lambda r: (r.position.top_left.y, r.position.top_left.x))
+
+
+_pieces = _pdf417.series(_SERIES_TEXT, 6, 20, 2)
+found = _series_read("^XA^FM20,20,20,300,20,580,20,860^BY2^B7N,3,2,6,20"
+                     f"^FD{_SERIES_TEXT}^FS^XZ", 700, 1300,
+                     zxingcpp.BarcodeFormat.PDF417)
+check("^FM's four PDF417s each read back, and together are the message",
+      len(_pieces) == 4 and [r.text for r in found] == list(_pieces)
+      and ''.join(r.text for r in found) == _SERIES_TEXT,
+      [len(r.text) for r in found])
+found = _series_read("^XA^FM20,20,e,e,20,580,20,860^BY2^B7N,3,2,6,20"
+                     f"^FD{_SERIES_TEXT}^FS^XZ", 700, 1300,
+                     zxingcpp.BarcodeFormat.PDF417)
+check("with the second excluded, the other three read back as theirs",
+      [r.text for r in found] == [_pieces[0], _pieces[2], _pieces[3]],
+      [len(r.text) for r in found])
+found = _series_read("^XA^FM20,20,400,20,20,500,400,500^BY2^B7R,3,2,6,20"
+                     f"^FD{_SERIES_TEXT}^FS^XZ", 900, 1000,
+                     zxingcpp.BarcodeFormat.PDF417)
+check("and turned, each about its own origin, they still read back",
+      sorted(r.text for r in found) == sorted(_pieces),
+      [len(r.text) for r in found])
+if hasattr(zxingcpp.BarcodeFormat, 'MicroPDF417'):
+    _micro_pieces = _micro.series(_SERIES_TEXT[:300], 22)
+    found = _series_read("^XA^FM20,20,20,400,20,780^BY2^BFN,4,22"
+                         f"^FD{_SERIES_TEXT[:300]}^FS^XZ", 500, 1100,
+                         zxingcpp.BarcodeFormat.MicroPDF417)
+    check("a MicroPDF417 series reads back piece by piece too",
+          len(_micro_pieces) == 3
+          and [r.text for r in found] == list(_micro_pieces),
+          [len(r.text) for r in found])
+
 # --- ^B0, Aztec Code --------------------------------------------------------
 
 reads("^B0 carries its value, at the magnification its own command gives",

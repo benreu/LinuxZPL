@@ -2478,6 +2478,162 @@ check("a rescale scales the row height, which is in dots, and the module",
 check("^BF is no longer a command a save would drop",
       workflow.unsupported_commands("^XA^FO0,0^BFN,8,3^FDHI^FS^XZ") == [])
 
+# --- ^FM, a series of PDF417 or MicroPDF417 symbols -------------------------
+
+check("^FM reads one origin a symbol, and e as one excluded",
+      zpl_parser.read_multiple_origins("100,100,e,e,100,1200")
+      == ((100, 100), None, (100, 1200)),
+      zpl_parser.read_multiple_origins("100,100,e,e,100,1200"))
+check("a pair that is not two numbers excludes its symbol as e does, and "
+      "there are at most sixty",
+      zpl_parser.read_multiple_origins("5,x,7") == (None, None)
+      and len(zpl_parser.read_multiple_origins(",".join(["1"] * 130))) == 60
+      and zpl_parser.read_multiple_origins("") == ())
+
+check("the control block is zint's: the marker, the index, the count, and "
+      "a terminator on the last",
+      zpl_pdf417.control_block(0, 3) == (928, 111, 100, 923, 1, 111, 103)
+      and zpl_pdf417.control_block(2, 3)
+      == (928, 111, 102, 923, 1, 111, 103, 922))
+# Symbols zint drew with its own structured append, the last of three PDF417s
+# and the first of two MicroPDF417s: the control block, where it goes after
+# the padding, and what the length descriptor counts, all as zint has them.
+_zint_piece = zpl_pdf417.encode('LASTXPIECE', 3, 8, 2,
+                                macro=zpl_pdf417.control_block(2, 3))
+check("a PDF417 carrying the last piece of three is zint's module for module",
+      [format(int(''.join('1' if b else '0' for b in row), 2), 'x')
+       for row in _zint_piece]
+      == ['ff547d5f3acf1b082e6137d5f3fa29', 'ff547ea3b8dd19704afce7a903fa29',
+          'ff5454f031f258f92e3f5751fbfa29', 'ff546bcfa8411e85ec30a6bcfbfa29',
+          'ff5475c33f571a786d3d87ae73fa29', 'ff547d7b30fa915e0e7ae75f43fa29',
+          'ff5474efa30d1d3beafbe74efbfa29', 'ff547d2c268fdf9cac4e457ee3fa29'])
+_zint_micro_piece = zpl_micropdf417.encode('FIRST', 15,
+                                           zpl_pdf417.control_block(0, 2))
+check("and a MicroPDF417 carrying the first of two",
+      [format(int(''.join('1' if b else '0' for b in row), 2), 'x')
+       for row in _zint_micro_piece]
+      == ['312c7c94f5e5e2de83625', '392c2865f50c648632725',
+          '3d2bf585e53f26d3c37a5', '3d6a31f5ed87d2eafc7ad',
+          '3d4a1044ede85ebba07a9', '394afce4e9cdd0eef4729',
+          '3b4a09e4c99d38deb0769', '3a4ecce4cd3062dce6749',
+          '3a6e08d48de368ef7d74d', '3ae882f4857dd896f875d'])
+check("a PDF417 of 925 to 928 codewords is shaped inside the limit, as 22 by "
+      "43 was not",
+      all(c * r <= 928 for c, r in (zpl_pdf417._shape(n, 0, 0)
+                                    for n in range(925, 929))),
+      [zpl_pdf417._shape(n, 0, 0) for n in range(925, 929)])
+
+# The manual's own example, p.192: the paragraph seven times over is too
+# much for one 9 by 83 symbol, and prints as three.
+_MANUAL_PARAGRAPH = (
+    "Zebra Technologies Corporation strives to be the expert supplier of "
+    "innovative solutions to specialty demand labeling and ticketing problems "
+    "of business and government. We will attract and retain the best people "
+    "who will understand our customer's needs and provide them with systems, "
+    "hardware, software, consumables and service offering the best value, "
+    "high quality, and reliable performance, all delivered in a timely "
+    "manner") * 7
+_fm_doc = zpl_parser.parse_zpl(
+    "^XA^PW1218^LL2436^FM100,100,100,600,100,1200^BY2,3^B7N,5,5,9,83,N"
+    f"^FD{_MANUAL_PARAGRAPH}^FS^XZ")[0]
+_fm = _fm_doc.elements[0]
+check("^FM places the manual's three PDF417s, one at each origin",
+      len(_fm_doc.elements) == 1 and _fm.in_series()
+      and [(dx, dy) for dx, dy, _k, _p in _fm.series()]
+      == [(0, 0), (0, 500), (0, 1100)] and not _fm.symbol_error,
+      (_fm.origins, _fm.symbol_error))
+_one_symbol = _fm.payload_size(*_fm.series()[0][2:])
+check("its box is round all three: from the first origin to the last "
+      "symbol's far corner",
+      (_fm.x, _fm.y, _fm.width, _fm.height)
+      == (100, 100, _one_symbol[0], 1100 + _one_symbol[1]),
+      (_fm.x, _fm.y, _fm.width, _fm.height, _one_symbol))
+check("the three pieces put back together are the message",
+      ''.join(zpl_pdf417.series(_MANUAL_PARAGRAPH, 9, 83, 5))
+      == _MANUAL_PARAGRAPH
+      and len(zpl_pdf417.series(_MANUAL_PARAGRAPH, 9, 83, 5)) == 3)
+check("and it writes ^FM back in place of ^FO",
+      "^FM100,100,100,600,100,1200\n^BY2\n^B7N,5,5,9,83\n" in _fm.to_zpl()
+      and "^FO" not in _fm.to_zpl(), _fm.to_zpl()[:80].replace('\n', ' '))
+check("^FM is no longer a command a save would drop",
+      workflow.unsupported_commands(
+          "^XA^FM10,10,10,300^B7N,5,5^FDHI^FS^XZ") == [])
+
+_fm_skip = zpl_parser.parse_zpl(
+    "^XA^PW1218^LL2436^FM100,100,e,e,100,1200^BY2,3^B7N,5,5,9,83,N"
+    f"^FD{_MANUAL_PARAGRAPH}^FS^XZ")[0].elements[0]
+check("the manual's second example leaves the second symbol out",
+      [(dx, dy) for dx, dy, _k, _p in _fm_skip.series()]
+      == [(0, 0), (0, 1100)]
+      and "^FM100,100,e,e,100,1200\n" in _fm_skip.to_zpl(),
+      _fm_skip.origins)
+_fm_short = zpl_parser.parse_zpl(
+    "^XA^PW1218^LL2436^FM50,50,50,400^BY2^B7N,4,1,4,10"
+    f"^FD{'A' * 200}^FS^XZ")[0].elements[0]
+check("a piece with no origin left for it is encoded and counted, not drawn",
+      len(zpl_pdf417.series('A' * 200, 4, 10, 1)) > 2
+      and len(_fm_short.series()) == 2,
+      (len(zpl_pdf417.series('A' * 200, 4, 10, 1)), len(_fm_short.series())))
+_fm_fits = zpl_parser.parse_zpl(
+    "^XA^PW1218^LL2436^FM50,50,50,400^BY2^B7N,4,1,4,10^FDSHORT^FS^XZ"
+)[0].elements[0]
+check("data that fits one symbol draws one plain symbol, with no control "
+      "block, at the first origin",
+      len(_fm_fits.series()) == 1
+      and _fm_fits.series()[0][3] == BarcodeElement(
+          0, 0, 4, 'SHORT', module_width=2, symbology='pdf417',
+          params={'security': '1', 'columns': '4', 'rows': '10'}).symbol()[1])
+
+_fm_micro = zpl_parser.parse_zpl(
+    "^XA^PW1218^LL2436^LH10,20^FM30,30,30,400^BY2^BFR,4,22"
+    f"^FD{'MICRO' * 60}^FS^XZ")[0]
+_fmm = _fm_micro.elements[0]
+check("^FM places a MicroPDF417 too, ^LH added to every origin and taken "
+      "back out on the way",
+      _fmm.in_series() and (_fmm.x, _fmm.y) == (40, 50)
+      and len(_fmm.series()) == 2
+      and "^FM30,30,30,400\n" in _fm_micro.to_zpl(),
+      ((_fmm.x, _fmm.y), _fmm.origins))
+check("each turned about its own origin, so the box is two turned symbols "
+      "high",
+      _fmm.height == 370 + _fmm.payload_size(*_fmm.series()[1][2:])[0],
+      (_fmm.height, _fmm.payload_size(*_fmm.series()[1][2:])))
+
+_fm_ignored = zpl_parser.parse_zpl(
+    "^XA^FO50,60^FM100,100^BCN,50^FDIGNORED^FS^XZ")[0]
+check("^FM ahead of a Code 128 is ignored, as the printer ignores it",
+      not _fm_ignored.elements[0].origins
+      and (_fm_ignored.elements[0].x, _fm_ignored.elements[0].y) == (50, 60)
+      and "^FM" not in _fm_ignored.to_zpl()
+      and workflow.unsupported_commands(
+          "^XA^FO50,60^FM100,100^BCN,50^FDIGNORED^FS^XZ") == [])
+
+check("a series offers no resize handles", not _fm.resizable)
+geometry.move_element(_fm_doc, _fm, 20, 30)
+check("a drag moves the whole series",
+      "^FM120,130,120,630,120,1230\n" in _fm.to_zpl(),
+      _fm.to_zpl()[:40].replace('\n', ' '))
+_fm_doc.rescale(300 / 203)
+check("a rescale moves each origin as it moves the box",
+      _fm.origins == ((0, 0), (0, 739), (0, 1626)),
+      _fm.origins)
+
+_fm_chain = zpl_parser.parse_zpl(
+    "^XA^PW1218^LL2436^FM100,100,100,600^BY2^B7N,4,1,4,10"
+    f"^FD{'A' * 60}^FS^FT,^A0N,30,30^FDAFTER^FS^XZ")[0]
+check("a field following a series follows its first origin",
+      geometry.typeset_point(_fm_chain.elements[1]) == (100, 100),
+      geometry.typeset_point(_fm_chain.elements[1]))
+
+_fm_paste_doc = Document()
+_fm_paste_doc.paste_zpl(
+    "^XA^FXDESIGNER_DPI:203^FM20,20,20,300^BY2^B7N,4,1,4,10"
+    f"^FD{'A' * 60}^FS^XZ")
+check("a paste brings the series whole",
+      _fm_paste_doc.elements[0].in_series()
+      and "^FM20,20,20,300\n" in _fm_paste_doc.to_zpl(),
+      _fm_paste_doc.to_zpl()[:200].replace('\n', ' '))
+
 # --- ^B0, Aztec Code --------------------------------------------------------
 from zplcore import aztec as zpl_aztec
 
@@ -2875,6 +3031,53 @@ _qt_pdf_dialog = qt_dialogs.edit_barcode_dialog(None, _qt_pdf)
 _qt_pdf_dialog.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Ok).click()
 check("and a PDF417's row height of 3 modules survives an OK unchanged",
       _qt_pdf.bar_height == 3, _qt_pdf.bar_height)
+
+# Edit Barcode: ^FM's Positions, for the two symbologies it places.
+from PySide2.QtWidgets import QTableWidget as _QTableWidget
+_qt_series = zpl_parser.parse_zpl(
+    "^XA^PW1218^LL2436^FM100,100,e,e,100,1200^BY2^BFN,4,22"
+    f"^FD{'X' * 400}^FS^XZ")[0].elements[0]
+_qt_series_dialog = qt_dialogs.edit_barcode_dialog(None, _qt_series)
+_qt_positions = _qt_series_dialog.findChild(_QTableWidget, 'positions')
+
+
+def _qt_rows(table):
+    return [(table.cellWidget(row, 0).value(), table.cellWidget(row, 1).value(),
+             table.cellWidget(row, 2).isChecked())
+            for row in range(table.rowCount())]
+
+
+check("Edit Barcode lists a series' origins, the one excluded not printing",
+      _qt_positions.isVisibleTo(_qt_series_dialog)
+      and _qt_rows(_qt_positions)
+      == [(100, 100, True), (0, 0, False), (100, 1200, True)],
+      _qt_rows(_qt_positions))
+_qt_series_dialog.findChild(_QPushButton, 'add_position').click()
+check("Add puts an origin under the last, a symbol's height and a gap down",
+      _qt_rows(_qt_positions)[-1]
+      == (100, 1200 + 44 * 4 + BarcodeElement.SERIES_GAP, True),
+      _qt_rows(_qt_positions))
+_qt_positions.cellWidget(1, 2).setChecked(True)
+_qt_positions.cellWidget(1, 1).setValue(700)
+_qt_positions.cellWidget(1, 0).setValue(100)
+_qt_series_dialog.findChild(_QDialogButtonBox).button(
+    _QDialogButtonBox.Ok).click()
+check("OK writes the origins back as ^FM",
+      "^FM100,100,100,700,100,1200,100,1396\n" in _qt_series.to_zpl(),
+      _qt_series.to_zpl()[:60].replace('\n', ' '))
+_qt_series_dialog = qt_dialogs.edit_barcode_dialog(None, _qt_series)
+_qt_positions = _qt_series_dialog.findChild(_QTableWidget, 'positions')
+while _qt_positions.rowCount():
+    _qt_series_dialog.findChild(_QPushButton, 'remove_position').click()
+_qt_series_dialog.findChild(_QDialogButtonBox).button(
+    _QDialogButtonBox.Ok).click()
+check("and with every origin removed, it is placed by ^FO where its box was",
+      not _qt_series.origins and "^FO100,100\n" in _qt_series.to_zpl(),
+      _qt_series.to_zpl()[:40].replace('\n', ' '))
+_qt_plain = qt_dialogs.edit_barcode_dialog(None, BarcodeElement(0, 0, 80, 'AB'))
+check("a Code 128 offers no Positions",
+      not _qt_plain.findChild(_QTableWidget, 'positions').isVisibleTo(_qt_plain))
+_qt_plain.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Cancel).click()
 
 # --- ^BR, the GS1 DataBar family and its relations --------------------------
 from zplcore import databar as zpl_databar

@@ -19,10 +19,11 @@ from . import graphic_store
 from . import graphics
 from . import symbology as symbologies
 from . import transforms as zpl_transforms
-from .model import (ORIENTATIONS, BarcodeElement, CircleElement,
-                    DiagonalLineElement, Document, EllipseElement, FieldBlock,
-                    FrameElement, GraphicSymbolElement, ImageElement,
-                    StoredGraphicElement, TextElement)
+from .model import (MAX_SERIES_ORIGINS, ORIENTATIONS, BarcodeElement,
+                    CircleElement, DiagonalLineElement, Document,
+                    EllipseElement, FieldBlock, FrameElement,
+                    GraphicSymbolElement, ImageElement, StoredGraphicElement,
+                    TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
@@ -195,6 +196,29 @@ def read_field_origin(params: str) -> tuple:
     return number(0), number(1), number(2)
 
 
+def read_multiple_origins(params: str) -> tuple:
+    """^FMx1,y1,x2,y2,... - one (x, y) for each symbol of a series, or None
+    for one the file excludes with e.
+
+    A pair that is not two numbers excludes its symbol as e does: the manual
+    gives no default ("a value must be specified"), and a symbol with half an
+    origin has nowhere to print. An ^FM with nothing after it names no
+    origins at all, and places nothing.
+    """
+    if not params.strip():
+        return ()
+    parts = [part.strip() for part in params.split(',')]
+    origins = []
+    # At most sixty, as the manual says.
+    for index in range(0, min(len(parts), 2 * MAX_SERIES_ORIGINS), 2):
+        pair = (parts[index:index + 2] + [''])[:2]
+        try:
+            origins.append((int(pair[0]), int(pair[1])))
+        except ValueError:
+            origins.append(None)
+    return tuple(origins)
+
+
 def tokenise(zpl_content: str):
     """Every command in the source, as (name, parameters) pairs.
 
@@ -339,7 +363,7 @@ def canonicalise(zpl_content: str) -> tuple:
         end = parameters_end(i + 3)
         params = zpl_content[i + 3:end]
         i = end
-        if upper in ('FO', 'FT', 'FS'):
+        if upper in ('FO', 'FT', 'FM', 'FS'):
             indicator = None
         elif upper == 'FH':
             indicator = zpl_fields.read_hex_indicator(params)
@@ -518,7 +542,7 @@ def read_field_table(tokens):
         elif cmd in ('^FD', '^FV') and pending is not None:
             table.set_value(pending, params, variable=(cmd == '^FV'))
             pending = None
-        elif cmd in ('^FS', '^FO', '^FT', '^XA', '^XZ'):
+        elif cmd in ('^FS', '^FO', '^FT', '^FM', '^XA', '^XZ'):
             pending = None
     return table
 
@@ -807,6 +831,25 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 field = open_field(True)
             continue
 
+        if cmd == '^FM':
+            # One origin for each symbol of a series (read_multiple_origins),
+            # in place of an ^FO - the manual's examples give it none. It
+            # opens a field as ^FO does, and ^LH and ^LS land every origin
+            # where they land one. The running origin stays where the last
+            # ^FO or ^FT left it: ^FM names no single one, and is ignored for
+            # anything but a PDF417 or MicroPDF417 (_build_element).
+            origins = tuple(None if p is None else (p[0] + origin[0],
+                                                     p[1] + origin[1])
+                            for p in read_multiple_origins(params))
+            if field is not None and not _has_content(field):
+                field['origins'] = origins
+                field['own_origin'] = True
+            else:
+                pending = _flush(field, doc, renderer, pending, comments)
+                field = open_field(True)
+                field['origins'] = origins
+            continue
+
         if cmd == '^FS':
             pending = _flush(field, doc, renderer, pending, comments)
             field = None
@@ -929,7 +972,7 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'preview': None, 'path': None, 'typeset': False, 'justify': None,
             'symbology': None,
             'reverse': False, 'own_origin': True, 'follows': None,
-            'direction': 'H', 'char_gap': 0}
+            'direction': 'H', 'char_gap': 0, 'origins': None}
 
 
 # Where a field is placed when no ^FO/^FT has been read since ^XA
@@ -1587,6 +1630,15 @@ def _build_element(field, doc, renderer):
         # once it knows how many rows the data needs.
         module_width = (bc['magnification'] if bc['magnification'] is not None
                         else field['module_width'])
+        origins = None
+        if field['origins'] and bc['symbology'] in symbologies.SERIES:
+            # Placed by ^FM rather than by ^FO or ^FT: the element's box
+            # goes round the symbols wherever they are (BarcodeElement.
+            # sync_box), and an ^FO or ^FT the field also had places nothing.
+            origins = field['origins']
+            x = y = 0
+            field['typeset'], field['follows'], field['justify'] = \
+                False, None, None
         return BarcodeElement(x, y, height=bc['height'],
                               barcode_value=value,
                               module_width=module_width,
@@ -1607,6 +1659,7 @@ def _build_element(field, doc, renderer):
                               hex_indicator=field['hex_indicator'],
                               variable_data=field['variable_data'],
                               dpi=bc['dpi'],
+                              origins=origins,
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
 

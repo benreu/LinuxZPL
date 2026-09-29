@@ -312,7 +312,10 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # zplcore.graphic_symbols since there is no file for that font.
 # ^FP is a text field's direction and character gap. It formats font fields
 # only, so in any other field it has nothing to change and is not kept.
-MODELLED = {'^FO', '^FT', '^FD', '^FS', '^BY',
+# ^FM places a PDF417 or MicroPDF417 as a series of symbols, one at each of
+# its origins. Before any other barcode the printer ignores it, and so does
+# the designer - not kept, as ^FP is not.
+MODELLED = {'^FO', '^FT', '^FM', '^FD', '^FS', '^BY',
             '^GB', '^GC', '^GD', '^GE', '^GS', '^FB', '^FP', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF', '^FW',
             '^FN', '^FV', '^DF', '^XF',

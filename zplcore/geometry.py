@@ -215,6 +215,12 @@ def pen_after(element, depth, named) -> tuple:
     FUNCTIONAL_SPEC.md section 18 says which of this has been printed.
     """
     kind = getattr(element, 'element_type', None)
+    if kind == 'barcode' and element.in_series():
+        # An ^FM series names no one point but one for each symbol; the pen
+        # is taken to stay at the first that prints - not yet printed.
+        printed = element.series()
+        if printed:
+            return (element.x + printed[0][0], element.y + printed[0][1])
     if kind not in ('text', 'graphic_symbol'):
         return named
     if kind == 'text':
@@ -556,7 +562,7 @@ def resize_origin(element) -> dict:
 # The attributes a scale touches, on whichever element types have them.
 SCALED_ATTRIBUTES = ('x', 'y', 'width', 'height', 'typeset', 'font_height',
                      'font_width', 'thickness', 'diameter', 'module_width',
-                     'bar_height', 'font')
+                     'bar_height', 'font', 'origins')
 
 
 def scale_state(element) -> dict:
@@ -660,6 +666,13 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
         # A module is a whole number of dots, so 2 becomes 3 rather than
         # 2.96 going 203 -> 300 dpi. Positions and heights scale exactly; a
         # barcode's width cannot.
+        if element.origins:
+            # An ^FM series' origins are positions, and scale as the
+            # element's own does.
+            element.origins = tuple(
+                None if p is None
+                else (int(round(p[0] * sx)), int(round(p[1] * sy)))
+                for p in element.origins)
         element.module_width = _scaled(element.module_width, run)
         if symbology.HEIGHT_UNIT.get(element.symbology) != 'modules':
             # PDF417's row height is in modules, and the module it multiplies
@@ -999,8 +1012,13 @@ def barcode_rects(element) -> list:
     has. Turning the symbol into rectangles here is what lets a matrix
     symbology reach all three without any of them learning a second shape.
     """
-    kind, payload = element.symbol()
-    run, stack = element.symbol_size()
+    return symbol_rects(element, *element.symbol())
+
+
+def symbol_rects(element, kind: str, payload) -> list:
+    """barcode_rects for one symbol this barcode draws - the symbol, or one
+    symbol of an ^FM series."""
+    run, stack = element.payload_size(kind, payload)
 
     if kind == 'linear':
         # Bars are at the even indices, spaces at the odd ones, and every
@@ -1089,6 +1107,8 @@ def barcode_layout(element) -> dict:
     interpretation line leaves room for it - the one thing a canvas has to
     draw, whatever the symbology.
     """
+    if element.in_series():
+        return _series_layout(element)
     run, stack = element.symbol_size()
     text_h = element.text_height()
 
@@ -1109,5 +1129,41 @@ def barcode_layout(element) -> dict:
         'rects': [(x, y + bars_y, w, h) for x, y, w, h in barcode_rects(element)],
         'text': element.encoded_value() if element.show_text else None,
         'text_y': text_y,
+        'font': element.font or element.DEFAULT_FONT,
+    }
+
+
+def _turned_rects(rects, run: int, stack: int, orientation: str) -> list:
+    """Rectangles in a symbol's upright run x stack frame, turned into its
+    footprint the way turn() turns a whole element's frame."""
+    if orientation == 'R':
+        return [(stack - y - h, x, h, w) for x, y, w, h in rects]
+    if orientation == 'I':
+        return [(run - x - w, stack - y - h, w, h) for x, y, w, h in rects]
+    if orientation == 'B':
+        return [(y, run - x - w, h, w) for x, y, w, h in rects]
+    return list(rects)
+
+
+def _series_layout(element) -> dict:
+    """barcode_layout for an ^FM series: every symbol that prints, each
+    turned about its own origin as ^FO turns any field, in the one box round
+    them all. Already turned, so the frame itself is not - and a canvas draws
+    it as it draws any barcode, knowing nothing of series."""
+    orientation = (element.orientation or 'N').upper()
+    rects = []
+    for dx, dy, kind, payload in element.series():
+        run, stack = element.payload_size(kind, payload)
+        rects.extend((x + dx, y + dy, w, h) for x, y, w, h in _turned_rects(
+            symbol_rects(element, kind, payload), run, stack, orientation))
+    return {
+        'angle': 0,
+        'offset': (0, 0),
+        'run': element.width,
+        'stack': element.height,
+        'bars': (0, 0, element.width, element.height),
+        'rects': rects,
+        'text': None,
+        'text_y': 0,
         'font': element.font or element.DEFAULT_FONT,
     }

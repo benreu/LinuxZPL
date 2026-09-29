@@ -1097,9 +1097,17 @@ class BarcodeElement(DesignElement):
                  serial_leading_zero=False,
                  clock_format=False, clock_chars=None,
                  serial_field_raw=None, hex_indicator=None,
-                 variable_data=False, dpi: int = zpl_fonts.DEFAULT_DPI):
+                 variable_data=False, dpi: int = zpl_fonts.DEFAULT_DPI,
+                 origins=None):
         self.x = x
         self.y = y
+        # ^FM's origins, one for each symbol of a series, as (dx, dy) from
+        # this element's top-left - or None for a symbol ^FM excludes - or
+        # None altogether for a field placed by ^FO or ^FT. Offsets rather
+        # than label positions, so a drag, a nudge, a paste or a group move
+        # carries the whole series without knowing it is one; sync_box keeps
+        # the element's box round every symbol that prints.
+        self.origins = tuple(origins) if origins else None
         # The head resolution this barcode is drawn for. Only a symbology
         # printed at a fixed physical size needs it - its size in dots is the
         # resolution's - and the document keeps it current (see
@@ -1172,9 +1180,15 @@ class BarcodeElement(DesignElement):
 
     @property
     def resizable(self) -> bool:
-        """A MaxiCode is the size the printer fixes; everything else can be
-        asked for another module width or height."""
-        return self.symbology not in symbologies.FIXED_SIZE
+        """A MaxiCode is the size the printer fixes, and an ^FM series is
+        several symbols whose sizes come from the editor; everything else can
+        be asked for another module width or height."""
+        return (self.symbology not in symbologies.FIXED_SIZE
+                and not self.in_series())
+
+    def in_series(self) -> bool:
+        """Whether ^FM places this barcode as a series of symbols."""
+        return bool(self.origins) and self.symbology in symbologies.SERIES
 
     @property
     def DEFAULTS(self) -> tuple:
@@ -1295,16 +1309,12 @@ class BarcodeElement(DesignElement):
         every other field on it.
         """
         self.symbol_error = None
-        if self.symbology in symbologies.FIXED_SIZE:
-            kind = 'dots'
-        elif self.symbology in symbologies.POSTAL:
-            kind = 'postal'
-        elif self.symbology in symbologies.ROWS_IN_DOTS:
-            kind = 'stacked'
-        elif self.symbology in symbologies.MATRIX:
-            kind = 'grid'
-        else:
-            kind = 'linear'
+        kind = self._kind()
+        if self.in_series():
+            # The first symbol of the series stands for the whole of it
+            # wherever one symbol is asked for; series() has every one.
+            symbols = self.series_symbols()
+            return symbols[0] if symbols else (kind, [])
         try:
             if kind == 'dots':
                 return ('dots', maxicode.symbol(
@@ -1327,6 +1337,63 @@ class BarcodeElement(DesignElement):
             self.symbol_error = (
                 f"{symbologies.SYMBOLOGIES[self.symbology]}: {exc}")
         return (kind, [])
+
+    def _kind(self) -> str:
+        """Which kind of symbol this symbology is drawn as (symbol())."""
+        if self.symbology in symbologies.FIXED_SIZE:
+            return 'dots'
+        if self.symbology in symbologies.POSTAL:
+            return 'postal'
+        if self.symbology in symbologies.ROWS_IN_DOTS:
+            return 'stacked'
+        if self.symbology in symbologies.MATRIX:
+            return 'grid'
+        return 'linear'
+
+    def series_symbols(self) -> list:
+        """Every symbol of an ^FM series, in order, as (kind, payload).
+
+        The field data is cut into as many pieces as it needs, each filling
+        one symbol of the size the command asks for, and each symbol carries
+        a control block saying which piece it is and of how many - unless
+        the whole of it fits one symbol, which is then drawn plain. Empty
+        when a piece cannot be drawn, with the reason on `symbol_error`.
+        """
+        self.symbol_error = None
+        value = self._raw_value()
+        try:
+            if self.symbology == 'pdf417':
+                pieces = pdf417.series(value, self.columns, self.rows,
+                                       self.security)
+            else:
+                pieces = micropdf417.series(value, self.micro_mode)
+            count = len(pieces)
+            symbols = []
+            for index, piece in enumerate(pieces):
+                macro = pdf417.control_block(index, count) if count > 1 else ()
+                if self.symbology == 'pdf417':
+                    symbols.append(('grid', self._pdf417_grid(piece, macro)))
+                else:
+                    symbols.append(('stacked', micropdf417.encode(
+                        piece, self.micro_mode, macro)))
+            return symbols
+        except ValueError as exc:
+            self.symbol_error = (
+                f"{symbologies.SYMBOLOGIES[self.symbology]}: {exc}")
+            return []
+
+    def series(self) -> list:
+        """Where each symbol of an ^FM series prints, as (dx, dy, kind,
+        payload) from the element's top-left: every piece the data is cut
+        into that has an origin of its own and is not excluded. A piece with
+        no origin left for it is encoded, and counted in every control block,
+        but not drawn. Empty for a field ^FM does not place."""
+        if not self.in_series():
+            return []
+        return [(position[0], position[1], kind, payload)
+                for position, (kind, payload)
+                in zip(self.origins, self.series_symbols())
+                if position is not None]
 
     def _aztec_shape(self) -> tuple:
         """What ^B0's own d parameter asks for, as (layers, compact, percent).
@@ -1372,19 +1439,25 @@ class BarcodeElement(DesignElement):
             return aztec.encode(self._raw_value(), layers=layers,
                                 compact=compact, percent=percent)
         if self.symbology == 'pdf417':
-            base = pdf417.encode(self._raw_value(), columns=self.columns,
-                                 rows=self.rows, security=self.security,
-                                 truncate=self.truncate == 'Y')
-            # Each row of codewords is drawn this many modules tall. With no
-            # height of its own, ^B7 divides ^BY's whole-symbol height by
-            # however many rows the data turned out to need - which is not
-            # known until here, so it is worked out now and kept.
-            if self.bar_height < 1:
-                height = self.total_height or DESIGNER_BAR_HEIGHT
-                self.bar_height = max(
-                    1, round(height / len(base) / max(1, self.module_width)))
-            return [list(row) for row in base for _ in range(self.bar_height)]
+            return self._pdf417_grid(self._raw_value())
         raise ValueError(f"no encoder for {self.symbology!r}")
+
+    def _pdf417_grid(self, value: str, macro: tuple = ()) -> list:
+        """A PDF417 carrying `value` - and `macro`, the control block of one
+        symbol of an ^FM series - with each row drawn bar_height modules
+        tall."""
+        base = pdf417.encode(value, columns=self.columns, rows=self.rows,
+                             security=self.security,
+                             truncate=self.truncate == 'Y', macro=macro)
+        # Each row of codewords is drawn this many modules tall. With no
+        # height of its own, ^B7 divides ^BY's whole-symbol height by
+        # however many rows the data turned out to need - which is not
+        # known until here, so it is worked out now and kept.
+        if self.bar_height < 1:
+            height = self.total_height or DESIGNER_BAR_HEIGHT
+            self.bar_height = max(
+                1, round(height / len(base) / max(1, self.module_width)))
+        return [list(row) for row in base for _ in range(self.bar_height)]
 
     def modules(self) -> list:
         """The bar and space widths of the symbol, in modules.
@@ -1454,7 +1527,11 @@ class BarcodeElement(DesignElement):
         grid rather than `bar_height`, which is why this and not the height
         itself is what the footprint and every layout are measured from.
         """
-        kind, payload = self.symbol()
+        return self.payload_size(*self.symbol())
+
+    def payload_size(self, kind: str, payload) -> tuple:
+        """(run, stack) in dots of one symbol this barcode draws - the
+        symbol, or one symbol of an ^FM series (series())."""
         module = max(1, self.module_width)
         if kind == 'linear':
             # A symbol that could not be built keeps a footprint, so the
@@ -1529,9 +1606,86 @@ class BarcodeElement(DesignElement):
             self.orientation = ''
         if self.symbology in symbologies.NO_TEXT:
             self.show_text = self.text_above = False
+        if self.origins and self.symbology not in symbologies.SERIES:
+            # ^FM places a PDF417 or a MicroPDF417 and nothing else; the
+            # printer ignores it for any other symbology, so one switched to
+            # another is placed where its box already is.
+            self.origins = None
+        if self.origins:
+            self._sync_series_box()
+            return
         run, stack = self.symbol_size()
         stack += self.text_height()
         self.width, self.height = (stack, run) if self.rotated() else (run, stack)
+
+    def _sync_series_box(self) -> None:
+        """The box of an ^FM series: round every symbol that prints, each
+        the size one symbol is, turned about its own origin as ^FO turns any
+        field.
+
+        The box's top-left moves to wherever the printed symbols start, and
+        the origins move the other way, so each symbol stays exactly where it
+        was on the label. A series that prints nothing - every origin
+        excluded, or none given for the pieces - keeps one symbol's box at
+        its first origin, so it stays somewhere the user can select it.
+        """
+        boxes = []
+        for dx, dy, kind, payload in self.series():
+            run, stack = self.payload_size(kind, payload)
+            boxes.append((dx, dy) + ((stack, run) if self.rotated()
+                                     else (run, stack)))
+        if not boxes:
+            run, stack = self.symbol_size()
+            first = next((p for p in self.origins if p is not None), (0, 0))
+            boxes = [first + ((stack, run) if self.rotated() else (run, stack))]
+        left = min(box[0] for box in boxes)
+        top = min(box[1] for box in boxes)
+        if left or top:
+            self.x += left
+            self.y += top
+            self.origins = tuple(None if p is None else (p[0] - left, p[1] - top)
+                                 for p in self.origins)
+        self.width = max(box[0] + box[2] for box in boxes) - left
+        self.height = max(box[1] + box[3] for box in boxes) - top
+
+    # A symbol's gap to the next when the editors add an origin below it.
+    SERIES_GAP = 20
+
+    def series_positions(self) -> list:
+        """The ^FM origins as the editors show them, one row per symbol:
+        (x, y, prints) on the label - an excluded symbol at 0, 0, not
+        printing."""
+        return [(0, 0, False) if p is None
+                else (self.x + p[0], self.y + p[1], True)
+                for p in self.origins or ()]
+
+    def set_series_positions(self, rows) -> None:
+        """Take the editors' rows back - (x, y, prints) on the label, at most
+        ^FM's sixty. None at all places the barcode by ^FO again, where its
+        box already is. The box itself is set by sync_box."""
+        rows = list(rows)[:MAX_SERIES_ORIGINS]
+        self.origins = tuple((x - self.x, y - self.y) if prints else None
+                             for x, y, prints in rows) or None
+
+    def next_series_position(self, rows) -> tuple:
+        """Where the editors put an origin they add: under the last one given
+        by one symbol's height and a gap, or the barcode's own top-left for
+        the first."""
+        given = [(x, y) for x, y, prints in rows if prints]
+        if not given:
+            return (self.x, self.y)
+        run, stack = self.symbol_size()
+        down = run if self.rotated() else stack
+        return (given[-1][0], given[-1][1] + down + self.SERIES_GAP)
+
+    def series_zpl(self, offset=(0, 0)) -> str:
+        """The ^FM that places an ^FM series, in place of ^FO: each symbol's
+        origin as the file names it, ^LH and ^LS taken back out as
+        origin_zpl takes them, and e,e for a symbol excluded."""
+        pairs = ['e,e' if p is None else
+                 f"{self.x + p[0] - offset[0]},{self.y + p[1] - offset[1]}"
+                 for p in self.origins]
+        return "^FM" + ",".join(pairs) + "\n"
 
     # --- serialisation ------------------------------------------------------
 
@@ -1622,12 +1776,18 @@ class BarcodeElement(DesignElement):
         #
         # The height goes on the barcode command itself, which is why ^BY's
         # own h is read but never written: there is nowhere for it to disagree.
-        preamble = (self.origin_zpl(offset) + self._by_zpl() + self._font_zpl())
+        placed = (self.series_zpl(offset) if self.in_series()
+                  else self.origin_zpl(offset))
+        preamble = placed + self._by_zpl() + self._font_zpl()
         # ^FR immediately before the data it reverses, not right after ^FO -
         # the working convention, and the one place this differed from it.
         return (preamble + self._command_zpl() + self.reverse_zpl()
                 + self.data_zpl())
 
+
+# The most origins ^FM may give a series, as the manual says
+# (parser.read_multiple_origins).
+MAX_SERIES_ORIGINS = 60
 
 # The choices both frontends offer for a barcode, as (label, value). Here
 # rather than in either toolkit's dialog code, because a frontend offering a
@@ -1658,6 +1818,8 @@ BARCODE_SYMBOLOGIES = symbologies.BARCODE_SYMBOLOGIES
 BARCODE_FEATURES = symbologies.BARCODE_FEATURES
 BARCODE_PARAMETERS = symbologies.BARCODE_PARAMETERS
 BARCODE_CONTROL_CHARACTERS = symbologies.CONTROL_CHARACTERS
+# The symbologies whose editor offers ^FM's origins
+BARCODE_SERIES = symbologies.SERIES
 
 FRAME_COLOURS = (("Black", 'B'), ("White", 'W'))
 

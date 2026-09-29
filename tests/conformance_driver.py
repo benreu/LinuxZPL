@@ -1163,6 +1163,18 @@ def sequence(driver, record):
     driver.resize(micro, 'br', 60, 40)
     record('the MicroPDF417 resized: wider modules and taller rows')
 
+    # An ^FM series is one element drawing several symbols, each at its own
+    # origin: a drag through each frontend's own pointer handling has to
+    # carry every origin with it.
+    series = driver.add_barcode()
+    series.symbology, series.micro_mode, series.bar_height = 'micropdf417', 22, 4
+    series.barcode_value = 'SERIES ' * 60
+    series.origins = ((0, 0), None, (0, 400))
+    driver.resync_barcode(series)
+    record('an ^FM series of three MicroPDF417s, the second excluded')
+    driver.drag_pointer(series.x + 5, series.y + 5, 30, 40)
+    record('the series dragged by its first symbol')
+
     block = next((e for e in driver.elements if e.element_type == 'text'), None)
     if block is not None:
         block.text = 'Stainless Steel Hex Head Bolt 10mm'
