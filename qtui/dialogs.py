@@ -1307,7 +1307,10 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     control_label = form.labelForField(control_row)
 
     height_spin = QSpinBox()
-    height_spin.setRange(20, 300)
+    # Wide until the symbology's own range is known (_update_visible_rows),
+    # so a height below 20 - a PDF417 or MicroPDF417 row - is not clamped to
+    # 20 before that range can allow it, and written back on OK.
+    height_spin.setRange(1, 32000)
     height_spin.setValue(element.bar_height)
     form.addRow("Bar Height:", height_spin)
     height_label = form.labelForField(height_spin)
@@ -1329,6 +1332,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
             if attribute in extra_rows:
                 continue
             combo = QComboBox()
+            combo.setObjectName(attribute)
             for choice_label, value in choices:
                 combo.addItem(choice_label, value)
             form.addRow(label + ":", combo)

@@ -836,7 +836,7 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                                              default_orientation,
                                              loaded_dpi or doc.dpi)
         elif cmd.startswith('^B'):
-            # MaxiCode, Code 49 and the rest - a symbology this designer
+            # Code 49 and the rest - a symbology this designer
             # cannot draw. Recorded so the field is dropped, because falling
             # through to the text branch did not merely lose the barcode: it
             # put a text element holding the barcode's data on the label in
@@ -1390,7 +1390,11 @@ def _read_barcode(cmd: str, params: str, default_height=None,
     # command that starts with one: ^BD's first parameter is its mode.
     if names[0] == 'o' and len(parts[0]) > 1 and parts[0][:1].isalpha():
         parts[0:1] = [parts[0][:1], parts[0][1:].strip()]
-    fallback = DESIGNER_BAR_HEIGHT if default_height is None else default_height
+    symbology = symbologies.SYMBOLOGY_OF[cmd]
+    # With no ^BY in force either, the designer's own default height - except
+    # for a command whose manual entry names one of its own (^BF's 10).
+    fallback = (symbologies.UNSET_HEIGHT.get(symbology, DESIGNER_BAR_HEIGHT)
+                if default_height is None else default_height)
     fields = dict(zip(names, parts))
 
     # ^FW turns the fields that have an orientation to take its default. A
@@ -1400,7 +1404,6 @@ def _read_barcode(cmd: str, params: str, default_height=None,
     o = fields.get('o', '')
     if o[:1].isalpha():
         orientation = o[:1].upper()
-    symbology = symbologies.SYMBOLOGY_OF[cmd]
     try:
         height = int(fields['h']) if fields.get('h') else 0
     except ValueError:

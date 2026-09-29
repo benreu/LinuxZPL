@@ -1072,8 +1072,8 @@ class ZPLRenderer:
             self.barcode_magnification = bc['magnification']
             self.is_barcode_mode = True
         elif command[0] == 'B':
-            # Code 49, Codablock, MicroPDF417 and TLC39 - the symbologies
-            # this designer still cannot draw. ^BY and every
+            # Code 49, Codablock and TLC39 - the symbologies this designer
+            # still cannot draw. ^BY and every
             # other ^B command are matched above, so only those reach here.
             self.unsupported_field = True
     

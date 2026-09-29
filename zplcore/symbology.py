@@ -10,6 +10,8 @@ again, and ^B3 - the one command whose check digit comes before the height -
 was a special case in both.
 """
 
+from . import micropdf417
+
 # Every symbology this designer draws, keyed the way BarcodeElement.symbology
 # spells it, with the label both editors show for it.
 SYMBOLOGIES = {
@@ -33,6 +35,7 @@ SYMBOLOGIES = {
     'planet': "Planet Code",
     'datamatrix': "Data Matrix",
     'pdf417': "PDF417",
+    'micropdf417': "MicroPDF417",
     'aztec': "Aztec Code",
     'databar': "GS1 DataBar",
     'maxicode': "MaxiCode",
@@ -61,6 +64,7 @@ COMMAND = {
     'planet': '^B5',
     'datamatrix': '^BX',
     'pdf417': '^B7',
+    'micropdf417': '^BF',
     'aztec': '^B0',
     'databar': '^BR',
     'maxicode': '^BD',
@@ -79,6 +83,10 @@ COMMAND_PARAMS = {
     '^BX': ('o', 'w', 'quality_dm', 'columns', 'rows', 'format_id',
             'escape_char', 'aspect'),
     '^B7': ('o', 'h', 'security', 'columns', 'rows', 'truncate'),
+    # ^BF's h is each row's height in dots, not a multiple of the module as
+    # ^B7's is: the manual's own example, ^BY6^BFN,8, is drawn with rows 8
+    # dots tall and modules 6 wide.
+    '^BF': ('o', 'h', 'micro_mode'),
     '^B0': ('o', 'w', 'eci', 'aztec_size', 'menu', 'append_count',
             'append_id'),
     '^BR': ('o', 'databar_type', 'w', 'separator', 'h', 'segments'),
@@ -232,6 +240,10 @@ PARAMETERS = {
     # about a fifth narrower and worth having only where the label will not
     # be damaged.
     'truncate': Param(str, 'N', choices=('Y', 'N')),
+    # ^BF m - which of MicroPDF417's 34 sizes, by the manual's Table 10: one
+    # to four columns, four to 44 rows, each with its own error correction.
+    # The size is chosen here, not fitted to the data.
+    'micro_mode': Param(int, 0, choices=tuple(range(34))),
     # ^B0 c - whether the field data carries extended channel interpretation
     # codes, and ^B0 e, whether this is a reader-initialisation symbol.
     # Carried, neither simulated.
@@ -321,6 +333,7 @@ HEIGHT_UNIT = {
     # different head resolution would double-count, since the module width
     # it multiplies is scaled already.
     'pdf417': 'modules',
+    'aztec': None,
     'maxicode': None,
 }
 
@@ -335,6 +348,13 @@ FIXED_SIZE = frozenset(('maxicode',))
 # and spaces. Their size is the grid, so neither ^BY's height nor their own
 # command carries one.
 MATRIX = frozenset(('qr', 'datamatrix', 'pdf417', 'aztec'))
+
+# The stacked symbologies whose own h is each row's height in dots rather
+# than a multiple of the module. Their rows cannot be drawn as a grid of
+# square modules unless h happens to divide by the module width, so they
+# reach the canvases as rows of modules with a height of their own - the
+# 'stacked' kind of symbol.
+ROWS_IN_DOTS = frozenset(('micropdf417',))
 
 # The symbologies drawn as bars of differing height rather than differing
 # width. Every bar is narrow and every gap the same; what carries the data is
@@ -354,10 +374,16 @@ READS_BY = frozenset(key for key, command in COMMAND.items()
                      if 'w' not in COMMAND_PARAMS[command]
                      and key not in FIXED_SIZE)
 
-# Symbologies with no interpretation line at all - the matrix codes, whose
-# commands carry no f parameter. Everything else has one, on by default or
-# not as flag_defaults says.
-NO_TEXT = frozenset(('qr', 'datamatrix', 'pdf417', 'aztec', 'maxicode'))
+# Symbologies with no interpretation line at all - the matrix and stacked
+# codes, whose commands carry no f parameter. Everything else has one, on by
+# default or not as flag_defaults says.
+NO_TEXT = frozenset(('qr', 'datamatrix', 'pdf417', 'micropdf417', 'aztec',
+                     'maxicode'))
+
+# The height ^BF takes when neither its own h nor a ^BY gives one: the
+# manual's "value set by ^BY or 10 (if no ^BY value exists)". Every other
+# symbology falls back to the designer's own default instead.
+UNSET_HEIGHT = {'micropdf417': 10}
 
 
 # The matrix symbologies whose own command, with its size left out, means
@@ -396,6 +422,12 @@ def default_magnification(dpi: int) -> int:
 # rather than in either toolkit's dialog code, because a frontend offering a
 # different set would produce a different label from the same design.
 BARCODE_SYMBOLOGIES = tuple((label, key) for key, label in SYMBOLOGIES.items())
+
+# MicroPDF417's sizes as (columns, rows), in ^BF's mode order - read from the
+# encoder's own table so the editors cannot offer a size it would draw
+# differently.
+_MICRO_SIZES = tuple(micropdf417.size(mode)[:2]
+                     for mode in range(micropdf417.MODES))
 
 
 def _features(mode=False, ratio=False, check_digit=None, height=(20, 300),
@@ -443,6 +475,10 @@ BARCODE_FEATURES = {
                                   text=False),
     'pdf417':           _features(height=(1, 30), module_width="Module Width",
                                   text=False),
+    # ^BF's height row is each row's height in dots, 1 to 9999 as the manual
+    # allows; two modules is the least a reader is promised to cope with.
+    'micropdf417':      _features(height=(1, 9999), module_width="Module Width",
+                                  text=False),
     'aztec':            _features(height=None, module_width="Magnification",
                                   text=False),
     'qr':               _features(height=None, module_width="Magnification",
@@ -482,6 +518,13 @@ BARCODE_PARAMETERS = {
                 tuple((str(n) if n else "Fit the data", n)
                       for n in (0, 3, 5, 10, 15, 20, 30, 45, 60, 90))),
                ('truncate', "Truncated", (("No", 'N'), ("Yes", 'Y')))),
+    # Every size ^BF's m names, labelled by what it is rather than by its
+    # number alone, since Table 10's order is not quite the size order.
+    'micropdf417': (('micro_mode', "Size",
+                     tuple((f"{columns} column{'s' if columns > 1 else ''}"
+                            f" × {rows} rows (mode {mode})", mode)
+                           for mode, (columns, rows) in enumerate(
+                               _MICRO_SIZES))),),
     'aztec': (('aztec_size', "Size and Correction",
                (("Default (23%)", 0), ("Minimum (5%)", 5),
                 ("Low (10%)", 10), ("High (50%)", 50), ("Maximum (95%)", 95),

@@ -1152,6 +1152,17 @@ def sequence(driver, record):
     driver.resize(maxi, 'br', 40, 40)
     record('and a resize leaves it the size it prints at')
 
+    # MicroPDF417's rows are a height in dots rather than a grid of square
+    # modules, so a resize asks each frontend for a module width and a row
+    # height at once - the one symbol drawn that way.
+    micro = driver.add_barcode()
+    micro.symbology, micro.micro_mode = 'micropdf417', 18
+    micro.bar_height, micro.barcode_value = 4, 'MicroPDF417 conformance'
+    driver.resync_barcode(micro)
+    record('a MicroPDF417, three columns by twenty rows')
+    driver.resize(micro, 'br', 60, 40)
+    record('the MicroPDF417 resized: wider modules and taller rows')
+
     block = next((e for e in driver.elements if e.element_type == 'text'), None)
     if block is not None:
         block.text = 'Stainless Steel Hex Head Bolt 10mm'

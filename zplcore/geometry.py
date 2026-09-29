@@ -899,6 +899,15 @@ def _resize_barcode(element, run: int, stack: int) -> None:
         columns = len(payload[0]) if payload else 1
         element.module_width = max(1, round(min(run / columns, stack / rows)))
         return
+    if kind == 'stacked':
+        # Rows of modules each its own height in dots, so the two axes are
+        # free of each other as a linear symbol's are: the run asks for a
+        # module width and the stack for a row height.
+        columns = len(payload[0]) if payload else 1
+        rows = len(payload) or 1
+        element.module_width = max(1, round(run / columns))
+        element.bar_height = max(1, round(stack / rows))
+        return
     if kind == 'postal':
         bars = max(1, 2 * len(payload) - 1)
         element.module_width = max(1, round(run / bars))
@@ -1024,6 +1033,24 @@ def barcode_rects(element) -> list:
             if start is not None:
                 rects.append((start * module, index * module,
                               (len(row) - start) * module, module))
+        return rects
+
+    if kind == 'stacked':
+        # As a grid, but each row is the barcode's own height in dots rather
+        # than one module - MicroPDF417's h, which need not divide by the
+        # module width.
+        module = max(1, element.module_width)
+        pitch = max(1, element.bar_height)
+        rects = []
+        for index, row in enumerate(payload):
+            start = None
+            for column, dark in enumerate(tuple(row) + (False,)):
+                if dark and start is None:
+                    start = column
+                elif not dark and start is not None:
+                    rects.append((start * module, index * pitch,
+                                  (column - start) * module, pitch))
+                    start = None
         return rects
 
     if kind == 'postal':

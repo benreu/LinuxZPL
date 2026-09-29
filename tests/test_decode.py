@@ -230,6 +230,54 @@ for name, value in (("upper-case text", "ZEBRA TECHNOLOGIES"),
           f"^XA^PW800^LL600^FO60,60^BY2^B7N,4,3^FD{value}^FS^XZ",
           value, 'PDF417')
 
+# --- ^BF, MicroPDF417 -------------------------------------------------------
+
+from zplcore import micropdf417 as _micro
+
+# zxing-cpp reads MicroPDF417 from 3.0 on; the 2.x a distribution may
+# package has no such format at all, which is a missing tool rather than
+# a symbol drawn wrong.
+if not hasattr(zxingcpp.BarcodeFormat, 'MicroPDF417'):
+    print("SKIPPED: this zxing-cpp cannot read MicroPDF417 - pip install "
+          "zxing-cpp (3.0 or later) to check ^BF.")
+else:
+    reads("the manual's own ^BF example, six-dot modules and eight-dot rows",
+          "^XA^PW800^LL600^FO60,60^BY6^BFN,8,3^FDABCDEFGHIJKLMNOPQRSTUV^FS^XZ",
+          "ABCDEFGHIJKLMNOPQRSTUV", 'MicroPDF417')
+    # Every one of the 34 sizes, as full as the manual's Table 10 says it gets
+    # with letters - the mode picks the rows, the columns, the error correction
+    # and the address patterns each row starts on, and a reader checks all four.
+    _TABLE_10_LETTERS = (6, 12, 18, 22, 30, 38, 14, 24, 36, 46, 56, 64, 72, 10,
+                         18, 26, 34, 46, 66, 90, 114, 138, 162, 22, 34, 46, 58,
+                         76, 106, 142, 178, 214, 250, 14)
+    for _mode, _letters in enumerate(_TABLE_10_LETTERS):
+        _value = ("ZEBRA TECHNOLOGIES MICROPDF " * 10)[:_letters].replace(' ', 'X')
+        _rows = _micro.size(_mode)[1]
+        reads(f"^BF mode {_mode}, holding its {_letters} letters, reads back",
+              f"^XA^PW800^LL800^FO40,40^BY2^BFN,{max(4, 400 // _rows)},{_mode}"
+              f"^FD{_value}^FS^XZ",
+              _value, 'MicroPDF417')
+    for facing in "NRIB":
+        reads(f"a MicroPDF417 turned {facing} still reads",
+              f"^XA^PW600^LL600^FO60,60^BY3^BF{facing},9,18^FDTURN{facing}^FS^XZ",
+              f"TURN{facing}", 'MicroPDF417')
+    for name, value in (("lower case and punctuation", "micro pdf; a.b<c>"),
+                        ("the eight digits mode 0 holds, in numeric mode",
+                         "12345678"),
+                        ("a short run of digits among text", "LOT 4417 A"),
+                        ("bytes above ASCII, in byte mode", "café résumé"),
+                        ("digits first, so no text latch", "0123456789 PART")):
+        _mode = next(mode for mode in range(_micro.MODES)
+                     if len(_micro.data_codewords(value)) <= _micro.capacity(mode))
+        reads(f"^BF compacts {name}",
+              f"^XA^PW800^LL600^FO60,60^BY3^BFN,10,{_mode}^FD{value}^FS^XZ",
+              value, 'MicroPDF417')
+    for dpi, page in ((150, (500, 500)), (300, (900, 900)), (600, (1600, 1600))):
+        found = decoded(f"^XA^FO40,40^BY{max(2, dpi // 100)}^BFN,{dpi // 25},25"
+                        f"^FDRESOLUTION {dpi}^FS^XZ", *page, dpi=dpi)
+        check(f"a MicroPDF417 drawn for a {dpi} dpi head reads back",
+              found == [('MicroPDF417', f"RESOLUTION {dpi}")], found)
+
 # --- ^B0, Aztec Code --------------------------------------------------------
 
 reads("^B0 carries its value, at the magnification its own command gives",

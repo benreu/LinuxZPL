@@ -1791,14 +1791,19 @@ check("Codabar spells a check digit its own command fixes at N",
       and not zpl_symbology.varies('codabar', 'e')
       and BARCODE_FEATURES['codabar']['check_digit'] is None,
       "the manual gives it as a fixed value; Codabar has no checksum")
-check("and a matrix symbology, or one the printer fixes the size of, "
-      "offers neither a height nor a line",
+check("a symbology offers a line exactly when it has one to print",
+      [name for name, feat in BARCODE_FEATURES.items() if not feat['text']]
+      == [name for name in BARCODE_FEATURES if name in zpl_symbology.NO_TEXT],
+      [(n, f['text']) for n, f in BARCODE_FEATURES.items()
+       if (not f['text']) != (n in zpl_symbology.NO_TEXT)])
+check("and a height exactly when its size is not its grid alone",
       [name for name, feat in BARCODE_FEATURES.items()
-       if feat['height'] is None or not feat['text']]
-      == sorted(zpl_symbology.MATRIX | zpl_symbology.FIXED_SIZE,
-                key=list(BARCODE_FEATURES).index),
-      [(n, f['height'], f['text']) for n, f in BARCODE_FEATURES.items()
-       if f['height'] is None or not f['text']])
+       if feat['height'] is None]
+      == [name for name in BARCODE_FEATURES
+          if name in zpl_symbology.HEIGHT_UNIT
+          and zpl_symbology.HEIGHT_UNIT[name] is None],
+      [(n, f['height']) for n, f in BARCODE_FEATURES.items()
+       if f['height'] is None])
 check("a symbology offers an orientation row exactly when its command has an o",
       [name for name, feat in BARCODE_FEATURES.items() if feat['orientation']]
       == [name for name in BARCODE_FEATURES if zpl_symbology.varies(name, 'o')],
@@ -2308,6 +2313,171 @@ check("PDF417 writes a ^BY, whose module width it really is drawn at",
 check("^B7 is no longer a command a save would drop",
       workflow.unsupported_commands("^XA^FO0,0^B7N,3,5^FDHI^FS^XZ") == [])
 
+# --- ^BF, MicroPDF417 -------------------------------------------------------
+from zplcore import micropdf417 as zpl_micropdf417
+
+# The manual's Table 10, p.107: each mode's columns, rows, share of error
+# correction codewords, and the most upper-case letters and digits it holds.
+# Four figures a mode, all checked, because the table's order is the
+# standard's with one size moved - mode 33 is four by four - and because the
+# digits only fit if a short run of them goes into numeric mode.
+_TABLE_10 = (
+    (1, 11, 64, 6, 8), (1, 14, 50, 12, 17), (1, 17, 41, 18, 26),
+    (1, 20, 40, 22, 32), (1, 24, 33, 30, 44), (1, 28, 29, 38, 55),
+    (2, 8, 50, 14, 20), (2, 11, 41, 24, 35), (2, 14, 32, 36, 52),
+    (2, 17, 29, 46, 67), (2, 20, 28, 56, 82), (2, 23, 28, 64, 93),
+    (2, 26, 29, 72, 105), (3, 6, 67, 10, 14), (3, 8, 58, 18, 26),
+    (3, 10, 53, 26, 38), (3, 12, 50, 34, 49), (3, 15, 47, 46, 67),
+    (3, 20, 43, 66, 96), (3, 26, 41, 90, 132), (3, 32, 40, 114, 167),
+    (3, 38, 39, 138, 202), (3, 44, 38, 162, 237), (4, 6, 50, 22, 32),
+    (4, 8, 44, 34, 49), (4, 10, 40, 46, 67), (4, 12, 38, 58, 85),
+    (4, 15, 35, 76, 111), (4, 20, 33, 106, 155), (4, 26, 31, 142, 208),
+    (4, 32, 30, 178, 261), (4, 38, 29, 214, 313), (4, 44, 28, 250, 366),
+    (4, 4, 50, 14, 20))
+
+
+def _micro_fits(data, mode):
+    return (len(zpl_micropdf417.data_codewords(data))
+            <= zpl_micropdf417.capacity(mode))
+
+
+_table_wrong = []
+for _mode, (_c, _r, _pct, _alpha, _digits) in enumerate(_TABLE_10):
+    _cols, _rows, _ec = zpl_micropdf417.size(_mode)
+    _letters = ('ABCDEFGHIJKLMNOPQRSTUVWXYZ' * 10)[:_alpha + 1]
+    _numbers = ('1234567890' * 40)[:_digits + 1]
+    if not ((_cols, _rows) == (_c, _r)
+            and int(_ec * 100 / (_cols * _rows) + 0.5) == _pct
+            and _micro_fits(_letters[:-1], _mode)
+            and not _micro_fits(_letters, _mode)
+            and _micro_fits(_numbers[:-1], _mode)
+            and not _micro_fits(_numbers, _mode)):
+        _table_wrong.append(_mode)
+check("every ^BF mode is Table 10's size, correction and capacity exactly",
+      zpl_micropdf417.MODES == 34 and not _table_wrong, _table_wrong)
+
+# The row address patterns are ten modules, three bars and three spaces, a
+# bar first - checked against the standard's rule, as PDF417's are.
+_rap_wrong = [value for value in zpl_micropdf417._RAP_SIDE
+              + zpl_micropdf417._RAP_CENTRE
+              if len(_pattern_widths(value, 10)) != 6
+              or not format(value, '010b').startswith('1')]
+check("every one of the 104 row address patterns is three bars and three "
+      "spaces in ten modules",
+      len(zpl_micropdf417._RAP_SIDE) == len(zpl_micropdf417._RAP_CENTRE) == 52
+      and not _rap_wrong, [hex(v) for v in _rap_wrong])
+
+# Symbols zint drew (backend/pdf417.c, a separate implementation), one size of
+# each column count, as each row's modules in hexadecimal.
+_ZINT_MICRO = (
+    (0, 'HELLO', ('3228632735', '3a2f94c7b5', '3b2fcdd795', '332cc90715',
+                  '372f6d0615', '37a9e88635', '33ae391625', '3bab8be725',
+                  '39acf897a5', '3daa8207ad', '3caf58c7a9')),
+    (6, 'MICRO PDF', ('6450c648b60645', '745e902b0f9745', '7657046da0f765',
+                      '6650c648632665', '6e5c134ec396e5', '6f5afd08c176f5',
+                      '675b6c0b8f6675', '775c262fb21775')),
+    (13, 'ZEBRA 13', ('322863259d39ecd20c645', '3a2eb0249de08aa7ee745',
+                      '3b29e0a4dd2178df12765', '332f35c45dc34ce51c665',
+                      '372df2f44dfb6e81796e5', '37ade9846d1cce8f226f5')),
+    (33, 'LABEL', ('69d7eb093c14edd718f236691', '6998f92c7c94e98f92c7c96b1',
+                   '68938e4c44c4c90cc2b3206b9', '68dc9eef4244cdd32097906bd')))
+for _mode, _data, _rows_hex in _ZINT_MICRO:
+    _ours = zpl_micropdf417.encode(_data, _mode)
+    _width = zpl_micropdf417.dimensions(_mode)[0]
+    check(f"^BF mode {_mode} draws {_data!r} module for module as zint does",
+          [format(int(''.join('1' if b else '0' for b in row), 2), 'x')
+           for row in _ours] == list(_rows_hex)
+          and all(len(row) == _width for row in _ours),
+          len(_ours))
+
+# And every mode, filled to capacity with letters: a digest of zint's 34
+# symbols, since 34 symbols of up to 44 rows are too many to spell out.
+import hashlib as _hashlib
+_micro_digest = _hashlib.sha256()
+for _mode in range(zpl_micropdf417.MODES):
+    _data = ('ABCDEFGHIJKLMNOPQRSTUVWXYZ' * 20)[
+        :2 * (zpl_micropdf417.capacity(_mode) - 1)]
+    for _row in zpl_micropdf417.encode(_data, _mode):
+        _micro_digest.update(bytes(int(b) for b in _row) + b'\n')
+check("all 34 modes, each full, are the symbols zint draws for the same data",
+      _micro_digest.hexdigest()
+      == '25e5d05763a3c8cf8016ee154825a4a3e6715a9f7ef5947e537fb6ca48a2d59b')
+
+check("a message that opens with text latches into it: MicroPDF417 starts in "
+      "byte mode",
+      zpl_micropdf417.data_codewords('AB')[0] == 900
+      and zpl_micropdf417.data_codewords('12345678')[0] == 902,
+      (zpl_micropdf417.data_codewords('AB'),
+       zpl_micropdf417.data_codewords('12345678')))
+
+# The manual's own example: ^BY6^BFN,8,3. Its drawing has modules 6 dots
+# wide and rows 8 tall, so h is each row's height in dots, not a multiple of
+# the module as ^B7's is.
+_bf = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO100,100^BY6^BFN,8,3^FDABCDEFGHIJKLMNOPQRSTUV^FS^XZ"
+)[0].elements[0]
+_bf_kind, _bf_rows = _bf.symbol()
+check("^BF is read as a MicroPDF417: one column, twenty rows, for mode 3",
+      _bf.symbology == 'micropdf417' and _bf.micro_mode == 3
+      and _bf_kind == 'stacked' and len(_bf_rows) == 20
+      and len(_bf_rows[0]) == 38 and not _bf.symbol_error,
+      (_bf.symbology, _bf_kind, len(_bf_rows), _bf.symbol_error))
+check("each row is h dots tall and each module ^BY's w dots wide",
+      (_bf.width, _bf.height) == (38 * 6, 20 * 8)
+      and _bf.module_width == 6 and _bf.bar_height == 8,
+      (_bf.width, _bf.height))
+check("the rectangles fill the footprint: rows h dots apart",
+      max(y + h for _x, y, _w, h in geometry.barcode_rects(_bf)) == 160
+      and {y % 8 for _x, y, _w, _h in geometry.barcode_rects(_bf)} == {0})
+check("^BF writes itself back with the ^BY it is drawn at",
+      "^FO100,100\n^BY6\n^BFN,8,3\n^FDABCDEFGHIJKLMNOPQRSTUV^FS"
+      in _bf.to_zpl(), _bf.to_zpl().replace('\n', ' '))
+
+for _source, _height, _why in (
+        ("^BY2,3,30^BF", 30, "^BY's height, when ^BF leaves its own out"),
+        ("^BF", 10, "10, the manual's figure when there is no ^BY either"),
+        ("^BFN,,5", 10, "and the same with its mode given")):
+    _read = zpl_parser.parse_zpl(
+        f"^XA^PW812^LL1218^FO10,10{_source}^FDHELLO^FS^XZ")[0].elements[0]
+    check(f"an omitted ^BF height is {_why}",
+          _read.bar_height == _height, _read.bar_height)
+check("and an omitted mode is 0, left off when written back",
+      "^BF,30\n" in zpl_parser.parse_zpl(
+          "^XA^PW812^LL1218^FO10,10^BY2,3,30^BF^FDHELLO^FS^XZ"
+      )[0].elements[0].to_zpl())
+
+_bf_turned = BarcodeElement(0, 0, 4, 'HELLO', module_width=2,
+                            orientation='R', symbology='micropdf417',
+                            params={'micro_mode': '33'})
+check("a turned ^BF has its footprint turned",
+      (_bf_turned.width, _bf_turned.height) == (4 * 4, 99 * 2),
+      (_bf_turned.width, _bf_turned.height))
+
+_bf_full = BarcodeElement(0, 0, 4, 'X' * 7, module_width=2,
+                          symbology='micropdf417')
+check("data too long for the mode draws nothing, and keeps that size's "
+      "footprint",
+      _bf_full.symbol() == ('stacked', []) and _bf_full.symbol_error
+      and (_bf_full.width, _bf_full.height) == (38 * 2, 11 * 4),
+      (_bf_full.symbol_error, _bf_full.width, _bf_full.height))
+
+_bf_drag = BarcodeElement(0, 0, 4, 'HELLO', module_width=2,
+                          symbology='micropdf417')
+geometry._resize_barcode(_bf_drag, 38 * 3, 11 * 7)
+check("a drag asks for a module width and a row height separately",
+      (_bf_drag.module_width, _bf_drag.bar_height) == (3, 7),
+      (_bf_drag.module_width, _bf_drag.bar_height))
+
+_bf_doc = zpl_parser.parse_zpl(
+    "^XA^PW812^LL1218^FO20,20^BY2^BFN,4,0^FDHELLO^FS^XZ")[0]
+_bf_doc.rescale(300 / 203)
+check("a rescale scales the row height, which is in dots, and the module",
+      (_bf_doc.elements[0].module_width, _bf_doc.elements[0].bar_height)
+      == (3, 6),
+      (_bf_doc.elements[0].module_width, _bf_doc.elements[0].bar_height))
+check("^BF is no longer a command a save would drop",
+      workflow.unsupported_commands("^XA^FO0,0^BFN,8,3^FDHI^FS^XZ") == [])
+
 # --- ^B0, Aztec Code --------------------------------------------------------
 from zplcore import aztec as zpl_aztec
 
@@ -2682,6 +2852,29 @@ check("and a Code 128 keeps its Orientation row and has no Insert",
 # Closed, or the checks that drive the next dialog by finding whichever one is
 # on screen would find this one.
 _qt_code128.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Cancel).click()
+
+# Edit Barcode: MicroPDF417's Size row, and a row height under the 20 dots a
+# linear barcode's row starts at, which OK used to clamp up to 20.
+_qt_micro = BarcodeElement(40, 40, 4, 'HELLO', module_width=2,
+                           symbology='micropdf417',
+                           params={'micro_mode': '33'})
+_qt_micro_dialog = qt_dialogs.edit_barcode_dialog(None, _qt_micro)
+_qt_size = _qt_micro_dialog.findChild(_QComboBox, 'micro_mode')
+check("Edit Barcode offers a MicroPDF417 its Size, set to its own mode",
+      _qt_size.isVisibleTo(_qt_micro_dialog) and _qt_size.currentData() == 33
+      and _qt_size.count() == 34,
+      (_qt_size.currentData(), _qt_size.count()))
+_qt_size.setCurrentIndex(_qt_size.findData(18))
+_qt_micro_dialog.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Ok).click()
+check("OK makes it mode 18 and keeps its rows 4 dots tall",
+      (_qt_micro.micro_mode, _qt_micro.bar_height) == (18, 4)
+      and "^BY2\n^BFN,4,18\n" in _qt_micro.to_zpl(),
+      _qt_micro.to_zpl().replace('\n', ' '))
+_qt_pdf = BarcodeElement(40, 40, 3, 'HELLO', symbology='pdf417')
+_qt_pdf_dialog = qt_dialogs.edit_barcode_dialog(None, _qt_pdf)
+_qt_pdf_dialog.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Ok).click()
+check("and a PDF417's row height of 3 modules survives an OK unchanged",
+      _qt_pdf.bar_height == 3, _qt_pdf.bar_height)
 
 # --- ^BR, the GS1 DataBar family and its relations --------------------------
 from zplcore import databar as zpl_databar
@@ -5673,10 +5866,12 @@ check("the Qt canvas strings the followers along as it paints",
 
 # ^B3, ^BE and ^BQ are no longer in this list - they draw for real now, checked
 # below - and nor is ^GS, the symbol font, which is an element of its own now
-# (see "^GS, the graphic symbol"), and nor is ^BD, MaxiCode (see "^BD, UPS
-# MaxiCode"). ^B4 Code 49 and ^BF MicroPDF417 are two that still do not.
+# (see "^GS, the graphic symbol"), and nor are ^BD, MaxiCode (see "^BD, UPS
+# MaxiCode"), or ^BF, MicroPDF417. ^B4 Code 49 still does not, and ^BW is no
+# ZPL command at all - a ^B the printer has never heard of must not become
+# text either.
 for symbology, source in (("^B4", "^B4N,6,200^FDdata^FS"),
-                          ("^BF", "^BFN,8,3^FDdata^FS")):
+                          ("^BW", "^BWN,8,3^FDdata^FS")):
     page = f"^XA^PW812^LL1218^FO50,50{source}^XZ"
     read = zpl_parser.parse_zpl(page)[0]
     check(f"{symbology} is dropped, not turned into text",
@@ -5689,6 +5884,12 @@ check("the preview draws nothing for one still unsupported either",
       _preview_ink("^XA^PW400^LL300^FO50,50^B4N,6,200^FDdata^FS^XZ",
                    400, 300) is None,
       _preview_ink("^XA^PW400^LL300^FO50,50^B4N,6,200^FDdata^FS^XZ", 400, 300))
+
+check("the preview draws a MicroPDF417 for real, where the canvas does",
+      _preview_ink("^XA^PW400^LL400^FO50,50^BY2^BFN,4,33^FDHELLO^FS^XZ",
+                   400, 400) == (50, 50, 99 * 2, 4 * 4),
+      _preview_ink("^XA^PW400^LL400^FO50,50^BY2^BFN,4,33^FDHELLO^FS^XZ",
+                   400, 400))
 
 check("the preview draws a QR code for real, at the magnification the command gives",
       _preview_ink("^XA^PW400^LL400^FO50,50^BQ,2,4^FDMM,AAC-42^FS^XZ", 400, 400)

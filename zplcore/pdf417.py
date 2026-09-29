@@ -147,13 +147,14 @@ def _numeric(digits: str) -> list:
     return out
 
 
-def _compact(data: str) -> list:
+def _compact(data: str, numeric_from: int = 13) -> list:
     """The whole message as codewords, in whichever modes are shortest.
 
-    Runs of ten digits or more are worth the switch into numeric mode, which
-    packs about three of them into a codeword; anything the text mode cannot
-    hold goes into byte mode. The symbol starts in text mode, so the first
-    run of text needs no latch.
+    Runs of `numeric_from` digits or more are worth the switch into numeric
+    mode, which packs about three of them into a codeword; anything the text
+    mode cannot hold goes into byte mode. The symbol starts in text mode, so
+    the first run of text needs no latch. MicroPDF417, which starts in byte
+    mode and has a latch to pay either way, tries shorter runs as well.
     """
     runs = []
     index = 0
@@ -161,7 +162,7 @@ def _compact(data: str) -> list:
         digits = 0
         while index + digits < len(data) and data[index + digits].isdigit():
             digits += 1
-        if digits >= 13:
+        if digits >= numeric_from:
             runs.append(('numeric', data[index:index + digits]))
             index += digits
             continue
@@ -171,7 +172,7 @@ def _compact(data: str) -> list:
             run = 0
             while index + run < len(data) and data[index + run].isdigit():
                 run += 1
-            if run >= 13:
+            if run >= numeric_from:
                 break
             index += max(1, run)
         runs.append(('text', data[start:index]))

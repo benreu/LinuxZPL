@@ -362,16 +362,16 @@ its `h` and `w` (§7), and its box is the cell they round to.
 
 #### Barcode
 
-One element, twenty-four symbologies: Code 128 (`^BC`, subsets B and C), Code
+One element, twenty-five symbologies: Code 128 (`^BC`, subsets B and C), Code
 39 (`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`), a UPC/EAN Extension
 add-on (`^BS`), UPC-A (`^BU`), UPC-E (`^B9`), EAN-8 (`^B8`), Code 93
 (`^BA`), Codabar (`^BK`), Code 11 (`^B1`), MSI (`^BM`), Plessey (`^BP`),
 Industrial 2 of 5 (`^BI`), Standard 2 of 5 (`^BJ`), LOGMARS (`^BL`), the
 POSTAL family (`^BZ` - Postnet, PLANET and the USPS Intelligent Mail
-barcode), Planet Code (`^B5`), Data Matrix (`^BX`), PDF417 (`^B7`), Aztec
-(`^B0`, also spelled `^BO`), six of `^BR`'s twelve, UPS MaxiCode (`^BD`), and
-QR (`^BQ`). Code 49, Codablock, MicroPDF417, TLC39 and the GS1 DataBar family
-proper are still not offered - see §18.
+barcode), Planet Code (`^B5`), Data Matrix (`^BX`), PDF417 (`^B7`),
+MicroPDF417 (`^BF`), Aztec (`^B0`, also spelled `^BO`), six of `^BR`'s
+twelve, UPS MaxiCode (`^BD`), and QR (`^BQ`). Code 49, Codablock, TLC39 and
+the GS1 DataBar family proper are still not offered - see §18.
 
 **Which command spells which symbology, and what each of its parameters
 means, is one table** - `zplcore/symbology.py` - read by the model, the
@@ -380,7 +380,9 @@ five places that could disagree about where `^B3` spells its check digit.
 
 **The symbol reaches the canvas as rectangles.** `symbol()` says what kind of
 thing the printer will lay down - `linear` for bars and spaces, `grid` for a
-matrix of square modules, `postal` for bars of differing height, and `dots`
+matrix of square modules, `stacked` for rows of modules each its own height
+in dots (MicroPDF417, whose `h` need not divide by the module width),
+`postal` for bars of differing height, and `dots`
 for a symbol that is not squares at all and is drawn at the head's own
 resolution (MaxiCode's hexagons and rings) - and `geometry.barcode_rects()`
 turns each into `(x, y, w, h)` in dots. The preview and both canvases draw those and nothing
@@ -388,7 +390,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 
 | Property | Default |
 |---|---|
-| `symbology` | `code128` - which of the twenty-four |
+| `symbology` | `code128` - which of the twenty-five |
 | `barcode_value` | `"123456789"` |
 | `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots - and, for a matrix symbology, the magnification its own command carries instead of `^BY`'s w. An omitted one is the manual's default for the print resolution: 1 at 150 dpi, 2 at 200, 3 at 300, 6 at 600 |
@@ -405,6 +407,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `format_id`, `escape_char`, `aspect` | `6`, `_`, `1` - `^BX`'s format ID (carried; it applies to the quality levels that are not drawn), the character that introduces an escape sequence in the field data, and square or rectangular |
 | `security` | `0` - `^B7`'s error correction, 0 to 8. Level 0 detects errors without correcting any; each level up roughly doubles the codewords spent |
 | `truncate` | `N` - drop `^B7`'s right row indicator and stop pattern, about a fifth narrower and worth having only where the label will not be damaged |
+| `micro_mode` | `0` - which of MicroPDF417's 34 sizes `^BF` asks for, by the manual's Table 10: one to four columns, four to 44 rows, each with its own error correction. The mode fixes the size; data that does not fit it draws nothing |
 | `aztec_size` | `0` - `^B0`'s error control and symbol size in one number: `0` the default, `1`–`99` a percentage of correction, `101`–`104` a compact symbol of that many layers, `201`–`232` a full-range one, `300` a Rune |
 | `eci`, `menu`, `append_count`, `append_id` | `N`, `N`, `1`, none - `^B0`'s extended channel codes, reader-initialisation flag and structured append. All carried, none simulated |
 | `databar_type` | `1` - which of `^BR`'s twelve. `7`–`10` are UPC-A, UPC-E, EAN-13 and EAN-8, and `11`–`12` GS1-128; `1`–`6` are the DataBar family and are not drawn (§18) |
@@ -428,6 +431,7 @@ linear:  run = sum(module widths) × module_width,  stack = bar_height
 grid:    run = columns × module_width,             stack = rows × module_width
 postal:  run = (2 × bars - 1) × module_width,      stack = bar_height
 PDF417:  a grid, whose rows are each bar_height modules tall
+stacked: run = modules across × module_width,     stack = rows × bar_height
 dots:    MaxiCode's one size at the document's resolution - 28.14 mm across:
          225 × 213 dots at 203 dpi, 333 × 315 at 300, 665 × 630 at 600
 box      = (run, stack + text height) upright,  transposed rotated
@@ -443,6 +447,22 @@ Intelligent Mail barcode uses four such extents rather than two.
 A matrix symbology has no bar height at all - its size is its grid - so
 neither its own command nor `^BY` carries one, and the Bar Height row is not
 offered for it.
+
+**A MicroPDF417's rows are a height in dots.** `^BF`'s `h` is not a multiple
+of the module, as `^B7`'s is: the manual's own example, `^BY6^BFN,8,3`, is
+drawn with modules 6 dots wide and rows 8 dots tall. Its module width is
+`^BY`'s, so it writes a `^BY`; an omitted `h` is `^BY`'s height, or 10 when
+there is no `^BY` either, as the manual says. Its `m` names one of 34 fixed
+sizes rather than letting the data choose one, so the Size row offers all 34
+by columns and rows, and data too long for the size draws nothing and keeps
+that size's footprint. A drag asks for a module width across and a row height
+down, independently, as a linear barcode's does. The symbol starts in byte
+compaction, so a message that opens with text spends a codeword latching into
+it, and a run of digits goes into numeric compaction whenever that is
+shorter - which is what lets mode 0 hold the eight digits Table 10 gives it.
+Every size, every correction share and both of Table 10's capacities are
+checked against the table; every size is drawn module for module as zint
+draws it, and read back by zxing-cpp.
 
 **A MaxiCode is one size.** UPS's parcel symbol is 33 rows of 30 hexagons
 round a bullseye, about an inch across at every resolution: `^BD` carries no
@@ -1018,7 +1038,7 @@ file choosers and the prompts — are modal.
 | **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
 | **Edit Diagonal Line** | Width; Height; Thickness; Colour; Direction; Reverse | Width and height 3–32000, `^GD`'s own range, so a line from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to the width, the maximum updating live as the width changes. Direction is right-leaning ( / ) or left-leaning ( \ ) (§3.3). Colour and Reverse as Edit Frame's. |
 | **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
-| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots, module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
+| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots (1–30 modules for PDF417, 1–9999 dots for MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a 3-module PDF417 and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
@@ -1387,12 +1407,12 @@ where a baseline sits inside a character cell is measured from the font file and
 is only an estimate of what the printer will do - and normalising bakes that
 estimate into the file every time such a label is opened and saved.
 
-**A symbology that cannot be drawn is dropped, not redrawn as text.** `^B4`,
-`^BF` and the rest still reach the text branch's own trap otherwise, so a QR
+**A symbology that cannot be drawn is dropped, not redrawn as text.** `^B4`
+and the rest still reach the text branch's own trap otherwise, so a QR
 code sixty dots tall would arrive as nine-dot text holding its data, and save
 that way. The label gaining something that was never in it is worse than
 losing the barcode, which the load warning names either way. `^B3`, `^BE`,
-`^B2`, `^BS`, `^BQ` and `^BD` used to be dropped the same way; they are real
+`^B2`, `^BS`, `^BQ`, `^BD` and `^BF` used to be dropped the same way; they are real
 symbologies now (§3.3) and reach the barcode branch instead. Which commands
 those are is `zplcore/symbology.py`'s catalogue, which is also what the load
 warning's own list of modelled commands is built from - so a symbology cannot
@@ -2527,7 +2547,7 @@ rather than requirements:
   29% out on average. `^A0N,89,89` `HHHH` printed 203.7 × 65.0 dots, and is
   drawn 208 × 66. The letters' shapes differ from the print. Without the
   stand-in installed, font `0` keeps the `len(text) × font_width` estimate.
-- **Twenty-four symbologies** (§3.3). Code 49, Codablock, MicroPDF417, TLC39
+- **Twenty-five symbologies** (§3.3). Code 49, Codablock, TLC39
   and the GS1 DataBar family proper are still not offered, and no
   symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are
   given rather than rejecting it (§3.3), and Code 39 draws an out-of-set
@@ -2595,6 +2615,16 @@ rather than requirements:
   `zplcore/pdf417_patterns.py`). There is no other set of them, and no
   formula that generates them; the tests check every one against the
   standard's own structural rules rather than taking the table on trust.
+- **`^BF`'s `h` is taken to be each row's height in dots**, read off the
+  manual's drawing of its own example rather than from a printer: that
+  image has modules 6 dots wide and rows 8 dots tall for `^BY6^BFN,8`. The
+  text says only "bar code height (in dots)". Not yet printed.
+- **A MicroPDF417 carries the same message a printer's does, not necessarily
+  the same modules.** Which compaction modes a printer picks for a given
+  message is its own business; this designer picks the shortest of PDF417's
+  own, with numeric runs as short as that makes worthwhile. Every reader
+  returns the same text. Data too long for the mode `^BF` names draws nothing,
+  as a printer is taken to print nothing - not yet printed either.
 - **`^BX` draws ECC 200 whatever quality it is asked for.** Levels 0 to 140
   use convolutional coding, were meant for closed systems where one party
   controls both the printing and the reading, and no reader made this century

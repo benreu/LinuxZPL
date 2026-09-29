@@ -3949,7 +3949,11 @@ class ZPLViewerWindow(Gtk.Window):
                 control_box.pack_start(button, False, False, 0)
             control_row, _control_label = make_row("Insert:", control_box)
 
-            height_spin = make_spin(element.bar_height, 20, 300)
+            # Wide until the symbology's own range is known
+            # (on_symbology_changed), so a height below 20 - a PDF417 or
+            # MicroPDF417 row - is not clamped to 20 before that range can
+            # allow it, and written back on OK.
+            height_spin = make_spin(element.bar_height, 1, 32000)
             height_row, _height_label = make_row("Bar Height:", height_spin)
 
             module_spin = make_spin(element.module_width, 1, 20)
@@ -3966,6 +3970,7 @@ class ZPLViewerWindow(Gtk.Window):
                         continue
                     combo, codes = make_combo(choices,
                                               getattr(element, attribute, None))
+                    combo.set_name(attribute)
                     row, _label = make_row(row_label + ":", combo)
                     extra_rows[attribute] = (combo, codes, row)
 
@@ -4020,8 +4025,7 @@ class ZPLViewerWindow(Gtk.Window):
                 # that grid - and no interpretation line either.
                 height_row.set_visible(features['height'] is not None)
                 if features['height'] is not None:
-                    height_spin.get_adjustment().set_lower(features['height'][0])
-                    height_spin.get_adjustment().set_upper(features['height'][1])
+                    height_spin.set_range(*features['height'])
                 module_row.set_visible(features['module_width'] is not None)
                 if features['module_width'] is not None:
                     module_label.set_text(features['module_width'] + ":")

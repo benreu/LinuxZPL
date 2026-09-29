@@ -417,6 +417,31 @@ window._editors[id(plain)].response(Gtk.ResponseType.CANCEL)
 document.elements.remove(maxi)
 document.elements.remove(plain)
 
+# --- Edit Barcode: MicroPDF417's Size, and a row height under 20 ------------
+
+micro = document.add_barcode_element()
+micro.symbology, micro.micro_mode, micro.bar_height = 'micropdf417', 33, 4
+micro.barcode_value = 'HELLO'
+micro.sync_box()
+window.on_element_double_clicked(None, micro)
+micro_dialog = window._editors[id(micro)]
+micro_content = micro_dialog.get_content_area()
+micro_size = next(c for c in _find_all(micro_content, Gtk.ComboBoxText)
+                  if c.get_name() == 'micro_mode')
+check("Edit Barcode shows a MicroPDF417's Size row, set to its own mode, and "
+      "no line",
+      _row_for(micro_content, "Size:").get_visible()
+      and micro_size.get_active_text() == "4 columns × 4 rows (mode 33)"
+      and not _row_for(micro_content, "Value Text:").get_visible(),
+      micro_size.get_active_text())
+micro_size.set_active(18)
+micro_dialog.response(Gtk.ResponseType.OK)
+check("OK makes it mode 18 and keeps its rows 4 dots tall, which a range "
+      "starting at 20 used to clamp",
+      (micro.micro_mode, micro.bar_height) == (18, 4),
+      (micro.micro_mode, micro.bar_height))
+document.elements.remove(micro)
+
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen
 # over one would write its fields into a copy the document no longer has, and

@@ -32,6 +32,7 @@ from . import twoof5
 from . import postal
 from . import datamatrix
 from . import pdf417
+from . import micropdf417
 from . import aztec
 from . import maxicode
 from . import databar
@@ -1275,7 +1276,11 @@ class BarcodeElement(DesignElement):
         `('linear', modules)` is the bar and space widths of a
         one-dimensional symbol, alternating, starting with a bar.
         `('grid', rows)` is a matrix symbology, a list of rows of booleans,
-        dark where True. `('dots', (width, height, runs))` is a symbol drawn
+        dark where True. `('stacked', rows)` is rows of booleans too, but each
+        row is `bar_height` dots tall rather than one module: MicroPDF417's
+        h is a height in dots, which a grid of square modules cannot draw
+        unless it happens to divide by the module width. `('dots', (width,
+        height, runs))` is a symbol drawn
         at the head's own resolution because it is not squares at all - a
         MaxiCode's hexagons and rings - as runs of dark dots, (x, y, length).
         Every drawing path goes through
@@ -1294,6 +1299,8 @@ class BarcodeElement(DesignElement):
             kind = 'dots'
         elif self.symbology in symbologies.POSTAL:
             kind = 'postal'
+        elif self.symbology in symbologies.ROWS_IN_DOTS:
+            kind = 'stacked'
         elif self.symbology in symbologies.MATRIX:
             kind = 'grid'
         else:
@@ -1305,6 +1312,9 @@ class BarcodeElement(DesignElement):
                     self.symbol_count, self.dpi))
             if kind == 'grid':
                 return ('grid', self._grid())
+            if kind == 'stacked':
+                return ('stacked', micropdf417.encode(self._raw_value(),
+                                                      self.micro_mode))
             if kind == 'postal':
                 return ('postal', postal.encode(self._raw_value(),
                                                 self._postal_kind()))
@@ -1467,6 +1477,14 @@ class BarcodeElement(DesignElement):
                     1, round((self.total_height or DESIGNER_BAR_HEIGHT) / rows))
             module = max(1, self.module_width)
             return (columns * module, rows * module)
+        if kind == 'stacked':
+            # A symbol that could not be built keeps the footprint of the size
+            # its mode names, which is the size it will be once the data fits.
+            if payload:
+                modules, rows = len(payload[0]), len(payload)
+            else:
+                modules, rows = micropdf417.dimensions(self.micro_mode)
+            return (modules * module, rows * max(1, self.bar_height))
         if kind == 'postal':
             # Narrow bars at a one-to-one pitch: n bars and n - 1 gaps.
             bars = len(payload) or symbologies.PLACEHOLDER_MODULES
