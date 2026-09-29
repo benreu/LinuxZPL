@@ -5257,6 +5257,69 @@ check("a field turned to R stretched across the label keeps its baseline "
       (_wide.font_height, _wide.typeset) == (80, 60),
       (_wide.font_height, _wide.typeset))
 
+# The third label, tests/fixtures/ft_turned.zpl, printed from the console on
+# the same printer, with tick marks at each ^FT's own coordinates. Measured
+# in dots off a 300 ppi scan, registered on its two rules: each field's
+# baseline, and the end of its run its ^FT names, at every turn. The run's
+# end sits in from the ticks by the glyph's side bearing, as upright.
+_label3_src = (FIXTURES / 'ft_turned.zpl').read_text()
+_label3 = _chained(_label3_src)
+_words = {e.text: e for e in _label3.elements if e.element_type == 'text'}
+_label3_ink = ZPLRenderer(812, 1218).render(_label3_src).convert('L').point(
+    lambda v: 255 if v < 128 else 0)
+
+
+def _label3_edges(x0, y0, x1, y1):
+    """The preview's ink inside a window clear of the ticks, as absolute
+    left, top, right and bottom edges."""
+    box = _label3_ink.crop((x0, y0, x1, y1)).getbbox()
+    return (x0 + box[0], y0 + box[1], x0 + box[2], y0 + box[3])
+
+
+# word: (window, (edge, printed) for its baseline, and for the end its ^FT
+# names), edges numbered left, top, right, bottom
+_label3_printed = {
+    'LEFT': ((95, 80, 200, 126), (3, 120.9), (0, 103.6)),
+    'TILE': ((95, 245, 140, 340), (0, 100.5), (1, 251.7)),
+    'LIFE': ((340, 245, 405, 290), (1, 250.1), (2, 397.6)),
+    'FILE': ((610, 280, 655, 345), (2, 650.7), (3, 337.1)),
+    'HILT': ((95, 470, 140, 565), (0, 100.3), (3, 559.3)),
+    'FELT': ((295, 445, 400, 490), (1, 449.6), (0, 301.7)),
+    'HEFT': ((610, 445, 655, 550), (2, 651.1), (1, 450.8)),
+    'TELL': ((255, 245, 320, 290), (1, 250.4), None),
+    'HELL': ((610, 185, 655, 262), (2, 650.6), None),
+}
+_off = {}
+for _word, (_window, *_marks) in _label3_printed.items():
+    _edges = _label3_edges(*_window)
+    _off[_word] = [round(_edges[edge] - printed, 1)
+                   for edge, printed in filter(None, _marks)]
+check("the third label: at N, R, I and B, left and right justified, the "
+      "preview puts each baseline and each run's named end within 2 dots of "
+      "the print",
+      all(abs(miss) <= 2 for misses in _off.values() for miss in misses),
+      _off)
+# TELL carried on leftward from LIFE and HELL up the label from FILE, each on
+# its leader's baseline: the gap between the two words printed 2.7 and 3.4
+# dots, and the chain puts each follower's ^FT at its leader's end
+_life, _tell = _words['LIFE'], _words['TELL']
+_file, _hell = _words['FILE'], _words['HELL']
+_gaps = (_label3_edges(326, 245, 405, 290)[0]
+         - _label3_edges(240, 245, 326, 290)[2],
+         _label3_edges(610, 266, 655, 345)[1]
+         - _label3_edges(610, 170, 655, 266)[3])
+check("a line at I is followed leftward along its baseline, and one at B up "
+      "the label, as printed",
+      geometry.typeset_point(_tell) == (_life.x, 250)
+      and geometry.typeset_point(_hell) == (650, _file.y)
+      and abs(_gaps[0] - 2.7) <= 1.5 and abs(_gaps[1] - 3.4) <= 1.5,
+      (geometry.typeset_point(_tell), geometry.typeset_point(_hell), _gaps))
+_label3_zpl = _label3.to_zpl()
+check("and the third label saves its two bare ^FTs bare",
+      _label3_zpl.count("^FT\n") == 2
+      and _chained(_label3_zpl).to_zpl() == _label3_zpl,
+      _label3_zpl.replace('\n', ' '))
+
 # One coordinate left out follows on that axis alone
 _axes = _chained("^XA^FT10,200^A0N,30,30^FDAB^FS^FT,300^A0N,30,30^FDCD^FS"
                  "^FT500^A0N,30,30^FDEF^FS^FT,,1^A0N,30,30^FDGH^FS^XZ")

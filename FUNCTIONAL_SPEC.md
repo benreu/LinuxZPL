@@ -1362,7 +1362,7 @@ where the first baseline starts: its left end upright, its top at `R`, where
 the baseline runs down the label at `x`, its right end at `I` and its bottom
 at `B`. Right justified, it is where the baseline ends. So at `R` the field's
 box starts at `y`, not a baseline's depth above it, and left of `x` by as
-much of the cell as lies below the baseline. A printer agrees at `R` (§18).
+much of the cell as lies below the baseline. A printer agrees at all four (§18).
 
 The gap between that point and the element's top is **kept on the element**, and
 a save writes the `^FT` back. Normalising it to an `^FO` would be simpler, but
@@ -2760,16 +2760,24 @@ rather than requirements:
   at the right end of the block's width, on its first baseline; and a right
   justified field, taken to end where its characters do.
 - **Where a field turned by `^A` and placed by `^FT` goes has been printed
-  at R; I and B are read off the manual's charts.**
-  `^FT100,500^A0R,40,40^FDROTATED^FS` printed its first character from
-  y = 502.5 and its ink from x = 97.7 to 129.5, running down: the baseline
-  runs down the label at `x`, and the run starts at `y` (§8). The preview
-  draws that ink at x = 98 to 129 from y = 503. The canvas draws it at
-  x = 96 to 127 from y = 507, starting a few dots along the run as it does
-  upright. Taking the baseline offset down the label as for upright text, as
-  both did before, drew it 30 dots higher. At I and B, Tables 47 and 48 are
-  followed: the right end and the bottom. A field that follows a turned line
-  carries on from where its baseline ends.
+  at every turn.** `^FT100,500^A0R,40,40^FDROTATED^FS` printed its first
+  character from y = 502.5 and its ink from x = 97.7 to 129.5, running down:
+  the baseline runs down the label at `x`, and the run starts at `y` (§8).
+  The preview draws that ink at x = 98 to 129 from y = 503. The canvas draws
+  it at x = 96 to 127 from y = 507, starting a few dots along the run as it
+  does upright. Taking the baseline offset down the label as for upright
+  text, as both did before, drew it 30 dots higher.
+
+  `tests/fixtures/ft_turned.zpl` then went to the same 203 dpi printer, with
+  tick marks at each `^FT`'s own coordinates, and was measured off a 300 ppi
+  scan. At N, R, I and B, left and right justified, every baseline printed
+  within a dot of its ticks. Every run started, or ended when right
+  justified, at its ticks less the glyph's side bearing: about 3 dots for L
+  and F, 1 for T. So I starts at its right end and B at its bottom, as
+  Tables 47 and 48 draw. A field following a line at I carried on leftward
+  along its baseline, and one following a line at B up the label, 2.7 and
+  3.4 dots after it. The preview puts each of those baselines and ends within
+  2 dots of the print.
 
   A turned field keeps its box's top-left, not its `^FT` point, when its
   text is edited or it is turned, since both editors reset the box before it
