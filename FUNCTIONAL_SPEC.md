@@ -1420,9 +1420,9 @@ Where an upright line ends is its right end on its baseline, whatever its
 justification: the baseline an `^FT` names for text and `^GS`, and the bottom
 for everything else, as above. A field that runs another way - turned by `^A`,
 or top to bottom or right to left by `^FP` - carries on the way it runs (§18).
-The last field is the last one sent to the printer, so a hidden one (§6.6) is
-skipped, and before the first the pen is at the label home, `^LH` and `^LS`
-included. Each coordinate follows on its own: `^FT,300` takes x from the
+In the file, the last field is the last one sent to the printer, so a
+hidden one (§6.6) is skipped, and before the first the pen is at the label
+home, `^LH` and `^LS` included. Each coordinate follows on its own: `^FT,300` takes x from the
 chain and puts the baseline at 300. A field with no origin of its own after
 such an `^FT` follows too, since the running origin it opens at is that
 `^FT`.
@@ -1437,7 +1437,18 @@ this designer measures the text before it to end, which is an estimate (§3.3),
 and bake that into the file: the reason `^FT`'s baseline offset is kept rather
 than normalised, above. A coordinate stops following once the field is moved
 on its own (§5), and is written where it was put; moved with the field it
-follows, or rescaled with the label, it goes on following. Fitting `^LH` to
+follows, or rescaled with the label, it goes on following.
+
+**A field follows one field, not whichever comes before it.** Once the field
+it followed stops coming right before it among those sent to the printer -
+brought forward or to the front, sent back, deleted, cut, hidden, or with
+another put between them - it stays where it is and is written there, while
+every field after it goes on following its own. Following the new field
+moved it, and after a first field was brought to front, deleted or hidden,
+the four others in the manual's example followed the label home to a
+baseline at 0, above the top edge, and printed there too. Undo puts the
+chain back along with the field. A copy is not the field it was copied from,
+to anything that follows that one. Fitting `^LH` to
 the elements (§11) passes over a coordinate that follows, since it is not
 written: a first field that follows nothing sits on the home, its box above
 it, and fitting the home to that box moved where the next open found it.

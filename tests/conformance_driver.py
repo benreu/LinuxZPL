@@ -1495,6 +1495,12 @@ def sequence(driver, record):
     _clearance = driver.elements[3]
     driver.drag_pointer(_clearance.x + 5, _clearance.y + 20, 15, 0)
     record('drag one of them on its own, which is written where it lands')
+    # Brought forward past the ™, the first field no longer leads it, and
+    # it no longer leads Summer: both stay where they are, written there,
+    # rather than following a new field somewhere else.
+    driver.select(_lead)
+    driver.bring_forward()
+    record('bring the first field forward, which leaves the ones it led in place')
 
 
 def main():

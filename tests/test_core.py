@@ -5147,11 +5147,14 @@ check("a first field that follows nothing is on the label home",
 check("and a save does not pull the home up over its box",
       _chained(_home_zpl).to_zpl() == _home_zpl)
 
-_hidden = _chained()
-_hidden.elements[2].print_enabled = False
-_hidden.follow_chains()
+# A file whose Summer is hidden: the printer is never sent it, so Clearance
+# follows the ™ in front of it
+_blob = base64.b64encode(b"^FT\n^A0N,30,20\n^FDSummer ^FS\n").decode()
+_hidden = _chained(CHAIN.replace("^FT^A0N,30,20^FDSummer ^FS\n",
+                                 f"^FXDESIGNER_NOPRINT:{_blob}\n"))
 check("a hidden field is not followed: the printer is never sent it",
-      geometry.typeset_point(_hidden.elements[3])
+      not _hidden.elements[2].print_enabled
+      and geometry.typeset_point(_hidden.elements[3])
       == (_hidden.elements[1].x + _hidden.elements[1].width, 200),
       geometry.typeset_point(_hidden.elements[3]))
 
@@ -5193,6 +5196,48 @@ _moved.follow_chains()
 check("moved down as well, it is written with both coordinates",
       f"^FT{_was[0] + 5},205\n" in _moved.to_zpl(),
       _moved.to_zpl().replace('\n', ' '))
+
+# A follower follows one field, not whichever comes before it. Once that one
+# stops coming right before it, following the new one would move it - and
+# after a first field brought to front, deleted or hidden, the rest went to
+# the label home, above the top edge.
+def _stays_put(doc, before):
+    """Whether every field is still where it was, and the one that lost its
+    leader is written there."""
+    return ([geometry.typeset_point(e) for e in doc.elements if e in before]
+            == [before[e] for e in doc.elements if e in before])
+
+
+for _edit_name, _edit in (
+        ("brought to front", lambda d: (d.select(d.elements[0]),
+                                        d.bring_to_front())),
+        ("deleted", lambda d: (d.select(d.elements[0]), d.remove_selected())),
+        ("hidden", lambda d: setattr(d.elements[0], 'print_enabled', False))):
+    _lost = _chained()
+    _points = {e: geometry.typeset_point(e) for e in _lost.elements}
+    _tm = _lost.elements[1]
+    _before_edit = _lost.snapshot()
+    _edit(_lost)
+    _lost_zpl = _lost.to_zpl()
+    check(f"the field the others follow {_edit_name}, none of them moves",
+          _stays_put(_lost, _points),
+          [(getattr(e, 'text', '?'), geometry.typeset_point(e))
+           for e in _lost.elements])
+    check(f"and the one it led is written where it is, the rest still following",
+          _tm.follows is None and "^FT64,200\n" in _lost_zpl
+          and _lost_zpl.count("^FT\n") == 3, _lost_zpl.replace('\n', ' '))
+    _lost.restore(_before_edit)
+    _lost.follow_chains()
+    check(f"and an undo puts the chain back",
+          _lost.to_zpl() == _chain_zpl, _lost.to_zpl().replace('\n', ' '))
+
+_between = _chained()
+_wedge = _between.add_frame_element()
+_between.elements.insert(1, _between.elements.pop())
+_between_zpl = _between.to_zpl()
+check("a field put between a follower and its leader leaves it where it is",
+      _between.elements[2].follows is None and "^FT64,200\n" in _between_zpl
+      and _between_zpl.count("^FT\n") == 3, _between_zpl.replace('\n', ' '))
 
 _dragged = _chained()
 geometry.move_selection(_dragged, _dragged.elements, 30, 40)
@@ -5239,6 +5284,15 @@ _copied.duplicate_selected()
 check("and so is a duplicate, while the original goes on following",
       _copied.elements[-1].follows is None
       and _copied.to_zpl().count("^FT\n") == 4)
+_copied.select(_copied.elements[0])
+_copied.duplicate_selected()
+_copied.select(_copied.elements[0])
+_copied.remove_selected()
+_copied.follow_chains()
+check("a copy of the field the others follow is not that field to them",
+      _copied.elements[0].follows is None
+      and _copied.to_zpl().count("^FT\n") == 3,
+      _copied.to_zpl().replace('\n', ' '))
 
 # The canvas catches a follower up as it paints, whatever edited the field
 # before it

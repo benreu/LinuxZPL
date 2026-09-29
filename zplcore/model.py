@@ -10,6 +10,7 @@ in this module, so they can be exercised without a display.
 import base64 as _b64
 import copy
 import io as _io
+import itertools
 from typing import Dict, List, NamedTuple, Optional
 
 from PIL import Image as PILImage, ImageDraw as PILImageDraw
@@ -81,6 +82,15 @@ class DesignElement:
     # axis not placed yet): an element found anywhere else has been moved, and
     # is written where it now is - see geometry.following.
     followed_to = None
+    # Which field it follows: that field's `key`, LABEL_HOME for none, or
+    # None until the chain first places it. Where it sits says whether the
+    # user moved it; this says whether the field in front of it is still the
+    # one it followed (Document.follow_chains).
+    leader = None
+    # This element's identity, for a follower's `leader`: given the first
+    # time something follows it (element_key), carried by the shallow copies
+    # undo keeps, and never by a copy the user makes.
+    key = None
     # ^FR: this field prints in reverse - white where the label would
     # otherwise be black, and vice versa.
     reverse_print = False
@@ -340,6 +350,19 @@ def _trimmed_options(given, defaults) -> str:
         if value != defaults[index]:
             keep = index + 1
     return ''.join(f",{value}" for value in given[:keep])
+
+
+# What a follower's `leader` is when no field comes before it, and its pen
+# starts at the label home
+LABEL_HOME = 0
+_element_keys = itertools.count(LABEL_HOME + 1)
+
+
+def element_key(element) -> int:
+    """The element's identity for a follower's `leader`, given on first ask."""
+    if element.key is None:
+        element.key = next(_element_keys)
+    return element.key
 
 
 def _copy_element(element):
@@ -2401,8 +2424,11 @@ class Document:
                     break
             clone.group = path[keep:] or None
             # A copy lands where it is shown. It goes on top of the label,
-            # after fields it never followed, so following would move it.
-            clone.follows = clone.followed_to = None
+            # after fields it never followed, so following would move it -
+            # and it is not the field it was copied from, for anything that
+            # follows that one.
+            clone.follows = clone.followed_to = clone.leader = None
+            clone.key = None
             copies.append(clone)
         return copies
 
@@ -2748,11 +2774,18 @@ class Document:
         where it was put, written with the coordinate from then on. Nothing
         written changes for a field that still follows, so this runs as often
         as the canvases paint.
+
+        It follows one field, not whichever comes before it. Once the field
+        it followed stops coming right before it - brought to front, deleted,
+        hidden, or another put between them - it stays where it is and is
+        written there: following the new one moved it, and after a first
+        field brought to front the rest went to the label home, above the top
+        edge. Undo puts the chain back with the field.
         """
         before = None
         for element in self.elements:
             if element.follows and element.typeset is not None:
-                self._follow(element, self._pen_after(before))
+                self._follow(element, before)
             if element.print_enabled:
                 before = element
 
@@ -2766,10 +2799,15 @@ class Document:
                  else geometry.typeset_depth(element, self.font_path, self.dpi))
         return geometry.pen_after(element, depth)
 
-    @staticmethod
-    def _follow(element, pen) -> None:
-        """Move one follower's following coordinates to `pen`, or stop an
-        axis following once the element has been moved off it."""
+    def _follow(self, element, before) -> None:
+        """Move one follower's following coordinates to where `before` ends,
+        or stop an axis following once the element has been moved off it -
+        or stop it following at all where `before` is not its leader."""
+        leader = element_key(before) if before is not None else LABEL_HOME
+        if element.leader is not None and element.leader != leader:
+            element.follows = element.followed_to = element.leader = None
+            return
+        pen = self._pen_after(before)
         still = geometry.following(element)
         here = geometry.typeset_point(element)
         follows = list(element.follows)
@@ -2787,6 +2825,7 @@ class Document:
         element.y += shift[1]
         element.follows = tuple(follows) if any(follows) else None
         element.followed_to = tuple(placed) if element.follows else None
+        element.leader = leader if element.follows else None
 
     # --- fonts ---------------------------------------------------------------
 
