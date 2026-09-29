@@ -8228,7 +8228,7 @@ _cp_src.add_stored_graphic_element()
 _cp_src.select_all()
 _cp_clip = _cp_src.copy_zpl()
 _cp_into = Document(812, 1218)
-_cp_count, _cp_drawn = _cp_into.paste_zpl(_cp_clip)
+_cp_count, _cp_drawn = _cp_into.paste_zpl(_cp_clip)[:2]
 check("copy/paste: every element type pasted into an empty label writes the "
       "label it was copied from", _cp_into.to_zpl() == _cp_src.to_zpl(),
       [line for line in _cp_into.to_zpl().splitlines()
@@ -8391,6 +8391,57 @@ _cp_cw2.font_identifiers['Q'] = 'Q,E:BAR.TTF'
 _cp_cw2.paste_zpl("^XA^CWQ,E:FOO.TTF^FO10,10^AQN,30,30^FDHi^FS^XZ")
 check("paste: but a letter the label already assigns keeps its own assignment",
       _cp_cw2.font_identifiers['Q'] == 'Q,E:BAR.TTF', _cp_cw2.font_identifiers)
+
+# A pasted field meeting a font letter or a field number that means something
+# else here takes on this label's, and the status bar says so - before, it
+# said only "Pasted 1 element".
+def _clash(into, text):
+    _doc = zpl_parser.parse_zpl(into)[0]
+    return workflow.paste_zpl(_doc, text), _doc
+for _into, _text, _said, _why in (
+        ("^XA^CWZ,E:ARIAL.TTF^FO50,50^AZN,30,30^FDmine^FS^XZ",
+         "^XA^CWZ,E:TIMES.TTF^FO50,150^AZN,30,30^FDpasted^FS^XZ",
+         "Pasted 1 element - kept this label's font Z",
+         "a letter assigned another font here"),
+        ("^XA^FO50,50^AAN,18,10^FDmine^FS^XZ",
+         "^XA^CWA,E:ARIAL.TTF^FO50,150^AAN,18,10^FDpasted^FS^XZ",
+         "Pasted 1 element - kept this label's font A",
+         "a letter this label's fields call as the built-in font"),
+        ("^XA^CWA,E:ARIAL.TTF^FO50,50^AAN,18,10^FDmine^FS^XZ",
+         "^XA^FO50,150^AAN,18,10^FDbitmap^FS^XZ",
+         "Pasted 1 element - kept this label's font A",
+         "a built-in letter this label assigns a font"),
+        ("^XA^CWZ,E:ARIAL.TTF^FO50,50^AZN,30,30^FDmine^FS^XZ",
+         "^XA^CWZ,E:ARIAL.TTF^FO50,150^AZN,30,30^FDpasted^FS^XZ",
+         "Pasted 1 element", "but not a letter meaning the same font"),
+        ("^XA^FO50,50^FN1\"Name\"^FS^XZ", "^XA^FO50,150^FN1\"Price\"^FS^XZ",
+         "Pasted 1 element - shared field 1 with this label",
+         "a field number named otherwise here"),
+        ("^XA^FO50,50^FN1\"Name\"^FDBob^FS^XZ",
+         "^XA^FO50,150^FN1\"Name\"^FDAl^FS^XZ",
+         "Pasted 1 element - shared field 1 with this label",
+         "a field number given other data here"),
+        ("^XA^FO50,50^FN1\"Name\"^FS^XZ", "^XA^FO50,150^FN1\"Name\"^FS^XZ",
+         "Pasted 1 element", "but not the same field again, as a copy within "
+         "a label is"),
+        ("^XA^CWZ,E:A.TTF^CWY,E:B.TTF^FO5,5^AZN,30,30^FN1\"a\"^FS"
+         "^FO5,50^AYN,30,30^FN3\"c\"^FS^XZ",
+         "^XA^CWZ,E:C.TTF^CWY,E:D.TTF^FO5,90^AZN,30,30^FN1\"b\"^FS"
+         "^FO5,150^AYN,30,30^FN3\"d\"^FS^XZ",
+         "Pasted 2 elements - kept this label's fonts Y, Z - shared fields 1, 3 "
+         "with this label", "several, in order")):
+    _got, _ = _clash(_into, _text)
+    check(f"paste: names {_why}", _got == _said, _got)
+_got, _doc = _clash("^XA^FO50,50^AAN,18,10^FDmine^FS^XZ",
+                    "^XA^CWA,E:ARIAL.TTF^FO50,150^AAN,18,10^FDpasted^FS^XZ")
+check("paste: and a letter this label's fields call as the built-in font is "
+      "not reassigned under them", '^CW' not in _doc.to_zpl(), _doc.to_zpl())
+_got, _doc = _clash("^XA^FO50,50^AAN,18,10^FDmine^FS^XZ",
+                    "^XA^CWA,E:ARIAL.TTF^FO50,150^GB50,50,2^FS^XZ")
+check("paste: a ^CW letter no pasted field calls is not brought, since it could "
+      "reach only this label's own fields - a box once turned every ^AA here "
+      "into Arial", (_got, '^CW' in _doc.to_zpl()) == ("Pasted 1 element", False),
+      (_got, _doc.to_zpl()))
 
 # What the status bar is told.
 _cp_empty = Document(812, 1218)

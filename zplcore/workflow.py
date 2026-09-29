@@ -419,6 +419,11 @@ def elements_phrase(count: int) -> str:
     return f"{count} element{'' if count == 1 else 's'}"
 
 
+def _named(noun: str, names) -> str:
+    """'font Q', 'fields 1, 3'."""
+    return f"{noun}{'' if len(names) == 1 else 's'} {', '.join(map(str, names))}"
+
+
 def left_out_of_paste(zpl_content: str) -> list:
     """What a paste of this text leaves behind: the commands no save could
     keep either, then the ones that belong to a label rather than to the
@@ -436,12 +441,16 @@ def paste_zpl(document, text: str, renderer=None):
     """Paste ZPL into the document (Document.paste_zpl) and return the
     status-bar line for it, or None when the text held nothing to paste -
     in which case the document is untouched and there is nothing to undo."""
-    count, drawn_at = document.paste_zpl(text, renderer)
-    if not count:
+    pasted = document.paste_zpl(text, renderer)
+    if not pasted.count:
         return None
-    parts = [f"Pasted {elements_phrase(count)}"]
-    if drawn_at:
-        parts.append(f"rescaled from {drawn_at} to {document.dpi} dpi")
+    parts = [f"Pasted {elements_phrase(pasted.count)}"]
+    if pasted.drawn_at:
+        parts.append(f"rescaled from {pasted.drawn_at} to {document.dpi} dpi")
+    if pasted.fonts_kept:
+        parts.append(f"kept this label's {_named('font', pasted.fonts_kept)}")
+    if pasted.fields_shared:
+        parts.append(f"shared {_named('field', pasted.fields_shared)} with this label")
     left = left_out_of_paste(text)
     if left:
         parts.append("left out " + ", ".join(left))

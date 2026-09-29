@@ -1552,15 +1552,30 @@ copy is written against no home at all and lands at the same absolute place),
 the flips, `^PQ`, `^CV`, the printer's settings, a stored format and its
 recalls, and `^IL`/`^IS`.
 
-**Paste takes elements, and the font table, and nothing else.** A pasted `^CW`
-letter this label does not assign is added to it; one it already assigns keeps
-its own assignment, since the label's other fields print with it. Every other
-label-level command in the pasted text — `^DF`, `^XF`, `^IL`, `^IS`, `^PQ`,
-`^CV`, `^PR`, `^MD`, `^MM`, `^MN`, `^MT`, `^LT`, `^PO`, `^PM`, `^LR` — is left
-out, and the status bar names what was, after anything a save could not keep
-either (§8.3's list): *"Pasted 4 elements - left out ^PQ, ^B4"*. A status line
-rather than the load's dialog, because nothing is lost: the text is still on
-the clipboard.
+**Paste takes elements, and the font table, and nothing else.** A `^CW`
+letter a pasted field calls, and this label neither assigns nor calls itself,
+is added to it. The table is written once, at the top, so it reaches every
+field on the label: a letter this label already assigns keeps its own
+assignment, and one its fields call as a built-in font (`^AA`, say) is not
+reassigned under them, since the label's other fields print with it. A letter
+no pasted field calls is not brought at all — it could reach only this label's
+own fields, and a box copied from a label with `^CWA` once turned every `^AA`
+field here into that font. Every other label-level command in the pasted
+text — `^DF`, `^XF`, `^IL`, `^IS`, `^PQ`, `^CV`, `^PR`, `^MD`, `^MM`, `^MN`,
+`^MT`, `^LT`, `^PO`, `^PM`, `^LR` — is left out, and the status bar names what
+was, after anything a save could not keep either (§8.3's list): *"Pasted 4
+elements - left out ^PQ, ^B4"*. A status line rather than the load's dialog,
+because nothing is lost: the text is still on the clipboard.
+
+**A paste that meets a font letter or a field number meaning something else
+here says so.** A pasted field calling a letter this label kept prints in this
+label's font, not the one it was copied in: *"Pasted 1 element - kept this
+label's font Z"*. A pasted `^FN` field whose number a field here already
+carries under another name or other data now shares that field's data, which
+is ZPL's rule for a number: *"Pasted 1 element - shared field 1 with this
+label"*. It is not renumbered: the number is what the program recalling the
+format sends data to, and a field copied within one label shares it on
+purpose — so the same field pasted again, name and data alike, says nothing.
 
 **A paste keeps the physical size of what it pastes.** Text whose
 `^FXDESIGNER_DPI` differs from this label's is scaled by the ratio of the two,
@@ -2391,7 +2406,8 @@ A status bar reports the last significant action: `Ready`, `Loaded: <file>`,
 `Printing cancelled`, `Rescaled from <old> to <new> dpi`,
 `Label size set to <w>x<h>`, `Printer set to <address>:<port>`,
 `Copied <n> elements`, `Cut <n> elements`, `Duplicated <n> elements`,
-`Pasted <n> elements` with what the paste rescaled or left out (§8.4),
+`Pasted <n> elements` with what the paste rescaled, the fonts it kept and
+field numbers it shared, and what it left out (§8.4),
 `Nothing to paste`, and progress while uploading a font. The paste line and
 the element count in all four are worded in the core, so the two frontends
 say the same thing.

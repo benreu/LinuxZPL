@@ -1860,6 +1860,40 @@ class StoredGraphicElement(DesignElement):
 PASTE_STEP_INCHES = 0.1
 
 
+class Pasted(NamedTuple):
+    """What Document.paste_zpl did, for the status bar to say.
+
+    `drawn_at` is the resolution the pasted text was scaled from, or None.
+    `fonts_kept` are the ^CW letters a pasted field calls that print as this
+    label has them rather than as the pasted text had them, and
+    `fields_shared` the ^FN numbers a pasted field shares with a different
+    field already here - both in order, and both nothing a paste can put
+    right without changing a field that is not its own.
+    """
+    count: int
+    drawn_at: Optional[int] = None
+    fonts_kept: tuple = ()
+    fields_shared: tuple = ()
+
+
+def _font_letter(element):
+    """The ^A letter a field calls, upper case, or None for an element that
+    calls none."""
+    code = getattr(element, 'font_code', None)
+    return code.upper() if code else None
+
+
+def _cw_for(table, letter):
+    """The ^CW a font table gives `letter`, or None for the built-in font."""
+    return next((params for key, params in table.items()
+                 if key.upper() == letter), None)
+
+
+def _field_sense(element):
+    """What a numbered field means by its number: its name and its data."""
+    return element.field_prompt, element.data_literal()
+
+
 class Document:
     """The label being designed: its size, its elements, and its z-order.
 
@@ -2458,7 +2492,7 @@ class Document:
         fragment.elements = copies
         return fragment.to_zpl()
 
-    def paste_zpl(self, text: str, renderer=None):
+    def paste_zpl(self, text: str, renderer=None) -> Pasted:
         """Add the elements a piece of ZPL describes, on top, and select them.
 
         Returns how many were added, and the resolution the text was drawn
@@ -2469,13 +2503,15 @@ class Document:
         resolution is taken dot for dot, unlike a file, whose missing record
         is assumed to be 203: whoever pastes it knows what they are pasting
         into. Nothing but the elements and the font table is taken; the
-        label's own settings stay this label's.
+        label's own settings stay this label's. And the fonts and field
+        numbers a pasted field meets here in a different sense, which it
+        takes on - see Pasted.
         """
         from . import parser as zpl_parser
         source, drawn_at = zpl_parser.parse_zpl(text or '', renderer)
         pasted = source.elements
         if not pasted:
-            return 0, None
+            return Pasted(0)
         rescaled = None
         if drawn_at and drawn_at != self.dpi:
             # About the label's origin, as a rescale is, so a field an inch
@@ -2486,15 +2522,40 @@ class Document:
                 if element.element_type == 'image':
                     element.reload()
             rescaled = drawn_at
-        # A pasted field may call a ^CW letter or lean on an ^FL link. A
-        # letter this label already assigns keeps its own assignment: the
-        # label's other fields are printing with it.
-        for letter, params in source.font_identifiers.items():
-            self.font_identifiers.setdefault(letter, params)
+        # A pasted field may call a ^CW letter or lean on an ^FL link. The
+        # table is written once, at the top, so a letter reaches every field
+        # on the label: one this label assigns keeps its own assignment, and
+        # one its fields call as a built-in font is not taken over either -
+        # the label's other fields are printing with it. Only a letter a
+        # pasted field calls is brought: any other could reach nothing but
+        # this label's own fields, as a copy of a box from a label with
+        # ^CWA once turned every ^AA field here into that font.
+        mine = {_font_letter(el) for el in self.elements}
+        kept = []
+        for letter in sorted({_font_letter(el) for el in pasted} - {None}):
+            theirs = _cw_for(source.font_identifiers, letter)
+            ours = _cw_for(self.font_identifiers, letter)
+            if theirs == ours:
+                continue
+            if ours is None and letter not in mine:
+                self.font_identifiers[letter] = theirs
+            else:
+                kept.append(letter)
         self.font_links += [link for link in source.font_links
                             if link not in self.font_links]
+        # A field number is shared by every field carrying it - that is how a
+        # recall fills a format in - so a pasted ^FN that means something
+        # else here, by its name or its data, now prints what they print.
+        # It is not renumbered: the number is what the program recalling the
+        # format sends data to, and a copy within one label shares it on
+        # purpose.
+        shared = sorted({el.field_number for el in pasted
+                         if el.field_number is not None
+                         and any(other.field_number == el.field_number
+                                 and _field_sense(other) != _field_sense(el)
+                                 for other in self.elements)})
         self._place(pasted, first_step=0)
-        return len(pasted), rescaled
+        return Pasted(len(pasted), rescaled, tuple(kept), tuple(shared))
 
     def duplicate_selected(self) -> int:
         """Copy the selection in place, a step down and right, and select the
