@@ -911,10 +911,11 @@ class GraphicSymbolElement(DesignElement):
 
     The symbol is chosen by the field data, A to E, so the data goes through
     the same ^FD/^FV/^FH/^FN writing every other field's does. `font_height`
-    and `font_width` are ^GS's h and w: each character is one cell that size,
-    drawn by zplcore.graphic_symbols. Its own element rather than text in a
-    font called GS, because ^GS is not an ^A - it has no font file, no ^FB,
-    and nothing the font chooser could offer.
+    and `font_width` are ^GS's h and w, kept as written: each character prints
+    in the GS font's 24 dot cell at the whole magnification they round to
+    (graphic_symbols.cell), drawn by zplcore.graphic_symbols. Its own element
+    rather than text in a font called GS, because ^GS is not an ^A - it has no
+    font file, no ^FB, and nothing the font chooser could offer.
 
     `width` and `height` are the footprint, transposed at a quarter turn, as a
     text element's are - so the shared geometry only ever sees an upright box.
@@ -927,8 +928,11 @@ class GraphicSymbolElement(DesignElement):
     MIN_SIZE = 1
     MAX_SIZE = 32000
 
+    # A new symbol's h and w: the cell doubled, a size it prints at exactly.
+    DEFAULT_SIZE = 2 * graphic_symbols.GRID
+
     def __init__(self, x: int = 50, y: int = 50, text: str = 'A',
-                 font_height: int = 36, font_width: int = 36,
+                 font_height: int = DEFAULT_SIZE, font_width: int = DEFAULT_SIZE,
                  orientation: str = 'N',
                  field_number=None, field_prompt=None,
                  serial_start=None, serial_increment=None,
@@ -972,8 +976,10 @@ class GraphicSymbolElement(DesignElement):
         return zpl_fields.decode_hex(self.data_literal(), self.hex_indicator)
 
     def run(self) -> int:
-        """Dots along the symbols: one cell of `font_width` per character."""
-        return graphic_symbols.cells(self.glyphs()) * self.font_width
+        """Dots along the symbols: a magnified cell per character, with the
+        font's gap between them (graphic_symbols.run)."""
+        return graphic_symbols.run(self.glyphs(), self.font_height,
+                                   self.font_width)
 
     def baseline_offset(self) -> int:
         """Dots from the top down to the baseline an ^FT names."""
@@ -982,7 +988,8 @@ class GraphicSymbolElement(DesignElement):
     def sync_box(self) -> None:
         """Resize the footprint to the symbols it holds, turned as they are."""
         was = self.width
-        run, stack = self.run(), self.font_height
+        run = self.run()
+        stack = graphic_symbols.cell(self.font_height, self.font_width).height
         self.width, self.height = (stack, run) if self.rotated() else (run, stack)
         # A right justified field is pinned by its right edge, as text is in
         # Document.sync_text_width, so a symbol added to the data grows
@@ -993,16 +1000,25 @@ class GraphicSymbolElement(DesignElement):
     def fit(self, width: int, height: int) -> None:
         """Take a box as the size the symbols are to be drawn at.
 
-        The stack becomes h and the run, shared among the cells, w - the two
-        swapping at a quarter turn, as they do for text. What a resize and
-        every clamp that treats the two sides separately come back through,
-        so the box is always the one the symbols print in.
+        The stack asks for h and the run, shared among the cells and the gaps
+        between them, w - the two swapping at a quarter turn, as they do for
+        text. Each takes the largest whole magnification of the cell that
+        fits, from 1 to 10, written as that many cells' worth so the file
+        names the size it prints at. The largest that fits, not the nearest,
+        because every clamp that treats the two sides separately comes back
+        through here too, and a box rounded up would run off the label.
         """
         run, stack = (height, width) if self.rotated() else (width, height)
         count = graphic_symbols.cells(self.glyphs())
-        self.font_height = self._size(stack)
-        self.font_width = self._size(round(run / count))
+        grid, gap = graphic_symbols.GRID, graphic_symbols.GAP
+        self.font_height = grid * self._times(stack, grid)
+        self.font_width = grid * self._times(run, count * grid + (count - 1) * gap)
         self.sync_box()
+
+    @staticmethod
+    def _times(room: int, per: int) -> int:
+        """How many times `per` dots fit in `room`: 1 to 10."""
+        return max(1, min(zpl_fonts.MAX_MAGNIFICATION, int(room) // per))
 
     def to_zpl(self, offset=(0, 0)) -> str:
         """Convert to ZPL commands. All three of ^GS's parameters are always

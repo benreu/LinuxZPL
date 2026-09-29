@@ -317,33 +317,44 @@ line's own run and ignores its colour, as it does under a frame's border.
 | Property | Default |
 |---|---|
 | `text` | `A` - the field data, which picks the symbol: `A` ®, `B` ©, `C` ™, `D` the UL mark, `E` the CSA mark |
-| `font_height`, `font_width` | 36 × 36 dots - `^GS`'s `h` and `w`, 1 to 32000 each |
+| `font_height`, `font_width` | 48 × 48 dots - `^GS`'s `h` and `w`, 1 to 32000 each, kept as written. 48 is the cell doubled, so a new symbol's file names the size it prints at |
 | `orientation` | `N` - `^GS`'s `o`, the same four letters as `^A`'s. A letter the file leaves out is `^FW`'s (§8.3) |
 
 `^GS` prints from the printer's resident GS font, and it is its own element
 rather than text in a font called GS: it has no `^A`, no font file and no
-`^FB`. Each character of the data is one **cell** `font_width` dots wide and
-`font_height` tall, so the run is `cells × font_width` - one cell for empty
-data, so the element always has a box - and the stack is `font_height`. A
-quarter turn transposes the footprint, as it does for text, and the drawing
-turns about the element's origin.
+`^FB`. GS is a bitmap font, as fonts A–H are: each character of the data prints
+in a **cell** 24 dots square, magnified to the nearest whole multiple of
+`font_width` across and of `font_height` down, 1 to 10 each, as a bitmap font's
+cell is (§3.3, Text). `^GSN,60,60` is a 72 dot cell, `^GSN,90,90` a 96 dot
+one. The run is a cell per character with a 2 dot gap per step of `w`'s
+magnification between one and the next - one cell for empty data, so the
+element always has a box - and the stack is one cell. A quarter turn
+transposes the footprint, as it does for text, and the drawing turns about the
+element's origin.
 
 **The five symbols are drawn by the designer.** There is no file for the GS
-font, so each symbol is a set of strokes on the font's own 24 × 24 grid,
-scaled to `w` across and `h` down. Both canvases and the preview blit one
+font, so each symbol is a set of strokes on the cell's 24 × 24 grid, laid out
+to fill the box the printer's own symbol fills at the cell's top left: ® and ©
+15 × 15, ™ 19 × 10, the UL mark the whole 24 × 24 and the CSA mark 22 × 24.
+Each is drawn at the larger of its two magnifications and stretched to the
+cell, as a printer stretches its dots. Both canvases and the preview blit one
 raster made from them, so none of them can draw a different symbol. A
 character that is not `A` to `E` is a blank cell: *"Unidentified characters
 should default to a space"*. Both points are recorded in §18.
 
-The baseline an `^FT` names is three quarters of the way down a cell, Table
-33's figure for GS. `^FR` inverts under the symbols' own ink, as it does under
+The baseline an `^FT` names is three quarters of the way down a cell, 18 dots
+of 24 at each step, Table 33's figure for GS. `^FR` inverts under the symbols' own ink, as it does under
 text's glyphs.
 
-**The resize handles ask for an `h` and a `w`.** The stack becomes the height
-and the run, shared among the cells, the width, at a quarter turn the other way
-round; the box then snaps to the whole cells they make. A label shrunk under a
-symbol, and a group scaled with one, go through the same rule, so the box is
-always the one the symbols print in.
+**The resize handles ask for an `h` and a `w`.** The stack asks for the height
+and the run, shared among the cells and the gaps between them, the width, at a
+quarter turn the other way round. Each takes the **largest** whole magnification
+whose cells fit, 1 to 10, and is written as that many cells' worth - 24, 48, 72
+and so on - so the file names the size it prints at; the box then snaps to the
+cells. The largest that fits rather than the nearest, as a circle takes the
+largest circle, because a label shrunk under a symbol goes through the same
+rule and a box rounded up would run off it. A group scaled with a symbol scales
+its `h` and `w` (§7), and its box is the cell they round to.
 
 #### Barcode
 
@@ -663,9 +674,10 @@ pinned.
     thickness is clamped to the radius
   - ellipse: thickness clamped to `min(width, height) / 2`, as a frame's is
   - diagonal line: thickness clamped to the width
-  - graphic symbol: the stack becomes `font_height` and the run, divided among
-    the cells, `font_width` - transposed at a quarter turn - and the box snaps
-    to the whole cells they make (§3.3)
+  - graphic symbol: the stack and the run, divided among the cells and their
+    gaps, each take the largest whole magnification of the 24 dot cell that
+    fits, written as `font_height` and `font_width` - transposed at a quarter
+    turn - and the box snaps to the cells (§3.3)
   - text: `font_height` is set to the new height, `font_width` is solved so the
     text prints at the new width, and the box is then snapped to that printed
     width — the outline the user drags is the outline that prints. At a quarter
@@ -1200,8 +1212,8 @@ one the model holds:
 | `^GE` | a 3 x 3 ellipse, 1 dot thick: the thickness defaults to 1 and each side to it, raised to `^GE`'s minimum of 3 |
 | `^GE,,4` | a 4 x 4 ellipse, 4 dots thick - so solid |
 | `^GE5000,100,10` | 4095 wide: *"larger values are replaced with 4095"* |
-| `^CFD,18,10` … `^GS^FDC` | a ™ 18 dots high and 10 wide: with neither size given, `^GS` takes both of `^CF`'s - the manual's own example |
-| `^GSN,40^FDA` | a ® 40 × 40: one size keeps the symbol square, as font 0's does (§18) |
+| `^CFD,18,10` … `^GS^FDC` | a ™ with `h` 18 and `w` 10, printed in a 24 dot cell at ×1, 19 × 10: with neither size given, `^GS` takes both of `^CF`'s - the manual's own example |
+| `^GSN,40^FDA` | a ® with `h` and `w` 40, printed at ×2, 30 across in a 48 dot cell: one size keeps the symbol square, as font 0's does (§18) |
 | `^GS,40,30^FDA` | turned the way `^FW` says, like any field that leaves its orientation out; a letter that is not `N`, `R`, `I` or `B` is `^FW`'s too |
 | `^GSN,40,40` with no `^FD` | no field, as a text field with no data is none |
 | `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
@@ -2442,7 +2454,7 @@ message — never a swallowed exception or a placeholder.
 | Ellipse dialog limits | width and height 3–4095, thickness 1 to `min(w,h)/2` |
 | Diagonal line | 200 × 150 dots, 4 dot thickness, black, leaning right |
 | Diagonal line dialog limits | width and height 3–32000, thickness 1 to the width |
-| Graphic symbol | `A` (®), 36 × 36 dots, upright |
+| Graphic symbol | `A` (®), 48 × 48 dots, upright |
 | Graphic symbol dialog limits | height and width 1–32000 |
 | Barcode | Code 128, `"123456789"`, 100 dot bar height, module width 2, value printed below |
 | Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200, ratio 2.0–3.0 |
@@ -2825,18 +2837,29 @@ rather than requirements:
   elongated it is - an 8-dot border round a 300 x 40 one is under 5 dots deep
   at its thinnest. If a printer draws the constant-width border, only the one
   function that gives the hole would change.
-- **`^GS`'s five symbols are the designer's own drawings, not the printer's.**
-  There is no file for the resident GS font, so ®, ©, ™ and the UL and CSA
-  marks are strokes on its 24 × 24 grid, drawn to read as the manual's picture
-  of them (`zplcore/graphic_symbols.py`). Their weight and proportions are an
-  approximation; where each one sits and how big it is are not, since both come
-  from `^GS`'s own parameters.
-- **`^GS` gives every character a cell `w` dots wide.** Table 33 calls the GS
-  font proportional without saying what any symbol's advance is, so two
-  symbols in one field sit `w` apart here, and may sit closer or further apart
-  on a printer. A single symbol - the usual case - is unaffected. A character
-  that is not `A` to `E` keeps its cell and draws nothing, the manual's
-  "default to a space".
+- **`^GS`'s five symbols are the designer's own drawings, in the cells a
+  printer printed its own in.** There is no file for the resident GS font, so
+  ®, ©, ™ and the UL and CSA marks are strokes on its 24 × 24 grid, drawn to
+  read as the manual's picture of them (`zplcore/graphic_symbols.py`). Their
+  shapes and stroke weights are an approximation, and they are drawn smooth
+  where a printer prints whole dots. Their size and spacing are not: a
+  203 dpi printer, sent `^GSN,30,30`, `^GSN,60,60` and `^GSN,90,90` with
+  `^FDABCDE` from the console, printed a 24 dot cell at ×1, ×3 and ×4 - a
+  bitmap font, magnified in whole steps as fonts A–H are, with visible
+  staircases at ×4 - and each symbol started 26 dots per step on from the last,
+  104.2 apart at ×4. At the cell's top left, ® and © were 15 across, ™ 19 × 10,
+  the UL mark the full 24 and the CSA mark 22 across and 24 down, all per step.
+  The drawings fill those boxes to within a dot per step; at ×4 the preview's
+  CSA is 87 across where the print's was 87.3. Before, each symbol was a cell
+  `w` by `h`, drawn across all of it: at `h` = 30 a ® was drawn 28 dots across
+  where 15 printed, and at 90 the UL mark 83 where 96 printed, and two symbols
+  sat `w` apart - 60 at `w` = 60, where they printed 77.8. Not printed, and
+  applied by the same rule: an `h` and a `w` that round to different
+  magnifications, taken to stretch the cell as a bitmap font's is; the same
+  24 dot cell at 300 and 600 dpi, as fonts A–D, F and G keep theirs; a 0 in
+  `^GS` (below); and where the pen is after a `^GS` for an `^FT` that follows
+  it, taken to be the end of the last cell with no gap after it. A character that is not `A` to `E` keeps
+  its cell and draws nothing, the manual's "default to a space".
 - **One size decides the other, in every case a printer was given.** The
   manual: *"If you specify only the height or width value, the
   standard matrix for that font automatically determines the other value"*,

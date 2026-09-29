@@ -4706,17 +4706,20 @@ ew._close_element_editors()
 # --- ^GS, the graphic symbol ------------------------------------------------
 # A symbol from the printer's GS font, chosen by the field data: A (R), B (C),
 # C TM, D UL, E CSA. It used to be dropped by the parser - and drawn by the
-# preview as nine-dot text reading "A", the opposite mistake.
+# preview as nine-dot text reading "A", the opposite mistake. GS is a bitmap
+# font: h and w are kept as written, and print as the 24 dot cell at the whole
+# magnification each rounds to.
 
 def _symbol(source, header="^PW812^LL1218"):
     built = zpl_parser.parse_zpl(f"^XA{header}^FO50,50{source}^FS^XZ")[0].elements
     return built[0] if len(built) == 1 else built
 
 _gs = _symbol("^GSN,50,50^FDA")
-check("^GSN,50,50^FDA is a graphic symbol 50 dots square",
+check("^GSN,50,50^FDA is a graphic symbol in a 48 dot cell, the whole "
+      "magnification 50 rounds to",
       isinstance(_gs, GraphicSymbolElement)
       and (_gs.text, _gs.font_height, _gs.font_width, box_of(_gs))
-      == ('A', 50, 50, (50, 50, 50, 50)),
+      == ('A', 50, 50, (50, 50, 48, 48)),
       _gs if isinstance(_gs, list) else (_gs.text, box_of(_gs)))
 check("and is written back as it came",
       _gs.to_zpl() == "^FO50,50\n^GSN,50,50\n^FDA^FS\n",
@@ -4747,20 +4750,22 @@ for source, want in (("^GSN,40", (40, 40)), ("^GSN,,30", (30, 30)),
 _turned_gs = _symbol("^GS,40,30^FDAB", header="^PW812^LL1218^FWR")
 check("a ^GS that leaves its orientation out turns the way ^FW says, its box "
       "transposed",
-      (_turned_gs.orientation, box_of(_turned_gs)) == ('R', (50, 50, 40, 60))
+      (_turned_gs.orientation, box_of(_turned_gs)) == ('R', (50, 50, 48, 50))
       and "^GSR,40,30\n" in _turned_gs.to_zpl(),
       (_turned_gs.orientation, box_of(_turned_gs)))
 check("and a letter that is not a quarter turn is ^FW's too",
       _symbol("^GSX,40,40^FDA", header="^FWI").orientation == 'I',
       _symbol("^GSX,40,40^FDA", header="^FWI").orientation)
-check("one cell per character, so ^FDAB is twice as wide as ^FDA",
-      _symbol("^GSN,40,30^FDAB").width == 60, _symbol("^GSN,40,30^FDAB").width)
+check("a cell per character with the font's gap between, so ^FDAB at x1 is "
+      "two 24 dot cells and a 2 dot gap",
+      _symbol("^GSN,40,30^FDAB").width == 50, _symbol("^GSN,40,30^FDAB").width)
 check("a ^GS with no data is no field, as a text field with none is not",
       _symbol("^GSN,40,40") == [], _symbol("^GSN,40,40"))
 _typed_gs = zpl_parser.parse_zpl(
     "^XA^PW812^LL1218^FT50,250^GSN,40,40^FDA^FS^XZ")[0].elements[0]
-check("^FT names the symbol's baseline, three quarters of the way down",
-      (_typed_gs.y, _typed_gs.typeset) == (220, 30)
+check("^FT names the symbol's baseline, three quarters of the way down its "
+      "cell: 36 of ^GSN,40,40's 48",
+      (_typed_gs.y, _typed_gs.typeset) == (214, 36)
       and _typed_gs.to_zpl().startswith("^FT50,250\n"),
       (_typed_gs.y, _typed_gs.typeset, _typed_gs.to_zpl().replace('\n', ' ')))
 _fr_gs = _symbol("^GSN,40,40^FR^FDA")
@@ -4786,25 +4791,54 @@ check("a hidden, grouped symbol survives a round trip, still hidden and grouped"
       and not _kept_back[0].print_enabled and _kept_back[0].group == (1,),
       [(type(e).__name__, e.print_enabled, e.group) for e in _kept_back])
 
-# the raster every drawing path blits
-for code, _shown, _name in graphic_symbols.SYMBOLS:
-    drawn = graphic_symbols.raster(code, 48, 48)
-    check(f"{code} draws a symbol that fills its cell",
-          drawn.size == (48, 48) and drawn.getchannel('A').getbbox() is not None
-          and drawn.getchannel('A').getbbox()[2] > 40,
-          (drawn.size, drawn.getchannel('A').getbbox()))
+# the raster every drawing path blits, against a 203 dpi printer: ^GSN,30,30,
+# ^GSN,60,60 and ^GSN,90,90^FDABCDE printed at x1, x3 and x4 of a 24 dot cell,
+# each symbol 26 dots on from the last at each step - 104.2 apart at x4 - with
+# the (R) and (C) 15 across in the cell's top left, the TM 19 x 10 there too,
+# the UL mark the whole cell and the CSA mark 22 of its 24 across. The
+# strokes are this designer's own; the boxes they fill are the printer's, to
+# within one of its dots at each step.
+_PRINTED_GS = {'A': (15, 15), 'B': (15, 15), 'C': (19, 10), 'D': (24, 24),
+               'E': (22, 24)}
+for _size, _times in ((30, 1), (60, 3), (90, 4)):
+    _row = graphic_symbols.raster('ABCDE', _size, _size).getchannel('A')
+    check(f"^GSN,{_size},{_size}^FDABCDE prints five {24 * _times} dot cells, "
+          f"{26 * _times} apart",
+          _row.size == (5 * 24 * _times + 4 * 2 * _times, 24 * _times), _row.size)
+    for _index, _code in enumerate('ABCDE'):
+        _left = _index * 26 * _times
+        _ink = _row.crop((_left, 0, _left + 24 * _times, 24 * _times)).point(
+            lambda v: 255 if v >= 128 else 0).getbbox()
+        _want = tuple(side * _times for side in _PRINTED_GS[_code])
+        check(f"...its {_code} inks {_want[0]} x {_want[1]} at the cell's top "
+              f"left, as printed",
+              _ink is not None and _ink[:2] == (0, 0)
+              and abs(_ink[2] - _want[0]) <= _times
+              and abs(_ink[3] - _want[1]) <= _times,
+              (_ink, _want))
+check("the magnification stops at x10, as the bitmap fonts' does",
+      graphic_symbols.raster('A', 1000, 1000).size == (240, 240),
+      graphic_symbols.raster('A', 1000, 1000).size)
+_icon_ink = graphic_symbols.icon('A').getchannel('A').getbbox()
+check("a menu's (R) is centred in its icon, not left at the cell's top left",
+      graphic_symbols.icon('A').size == (24, 24)
+      and abs(_icon_ink[0] - (24 - _icon_ink[2])) <= 1
+      and abs(_icon_ink[1] - (24 - _icon_ink[3])) <= 1, _icon_ink)
 check("a character that is not A to E is a blank cell",
       graphic_symbols.raster('Z', 48, 48).getchannel('A').getbbox() is None
       and graphic_symbols.raster('AZ', 48, 48).getchannel('A').crop(
-          (48, 0, 96, 48)).getbbox() is None,
+          (52, 0, 100, 48)).getbbox() is None,
       graphic_symbols.raster('Z', 48, 48).getchannel('A').getbbox())
-check("an independent h and w stretch the symbol, as ^GS's do",
-      graphic_symbols.raster('A', 40, 80).size == (80, 40))
+check("an h and a w that round to different magnifications stretch the cell, "
+      "as ^GS's do",
+      graphic_symbols.raster('A', 40, 80).size == (72, 48),
+      graphic_symbols.raster('A', 40, 80).size)
 
 # the preview draws the symbol - not the letter as text - in every direction
-check("the preview draws ^GSN,50,50^FDA as a 50-dot symbol, not a nine-dot 'A'",
-      _preview_ink("^XA^PW400^LL300^FO50,50^GSN,50,50^FDA^FS^XZ", 400, 300)[2:]
-      >= (46, 46),
+check("the preview draws ^GSN,50,50^FDA as a symbol, not a nine-dot 'A': a (R) "
+      "30 across, 15 at x2",
+      _preview_ink("^XA^PW400^LL300^FO50,50^GSN,50,50^FDA^FS^XZ", 400, 300)
+      == (50, 50, 30, 30),
       _preview_ink("^XA^PW400^LL300^FO50,50^GSN,50,50^FDA^FS^XZ", 400, 300))
 for turn in 'NRIB':
     for code, _shown, _name in graphic_symbols.SYMBOLS:
@@ -4818,8 +4852,8 @@ _inverted_gs = ZPLRenderer(400, 300).render(
     "^FO50,50^GSN,100,100^FR^FDB^FS^XZ").convert('L')
 check("^FR inverts under the symbol's own ink: its ring is white over black, "
       "and the gap inside it stays black",
-      _inverted_gs.getpixel((56, 100)) > 200 and _inverted_gs.getpixel((70, 100)) < 100,
-      (_inverted_gs.getpixel((56, 100)), _inverted_gs.getpixel((70, 100))))
+      _inverted_gs.getpixel((54, 80)) > 200 and _inverted_gs.getpixel((62, 80)) < 100,
+      (_inverted_gs.getpixel((54, 80)), _inverted_gs.getpixel((62, 80))))
 
 # the canvas blits the same raster
 gw = qt_main.ZPLDesignerWindow()
@@ -4840,30 +4874,39 @@ check("the Qt canvas draws the symbol the raster holds",
 
 # a new one, and the sizes a drag or a scale asks for
 _made_gs = Document().add_graphic_symbol_element('D')
-check("+ Symbol's UL adds a ^GS 36 dots square",
-      _made_gs.to_zpl() == f"^FO{_made_gs.x},{_made_gs.y}\n^GSN,36,36\n^FDD^FS\n",
+check("+ Symbol's UL adds a ^GS 48 dots square, the cell doubled, so the file "
+      "names the size it prints",
+      _made_gs.to_zpl() == f"^FO{_made_gs.x},{_made_gs.y}\n^GSN,48,48\n^FDD^FS\n"
+      and box_of(_made_gs)[2:] == (48, 48),
       _made_gs.to_zpl().replace('\n', ' '))
 _dragged_gs = GraphicSymbolElement(100, 100, 'AB', 36, 36)
-geometry.resize_by_handle(Document(400, 400), _dragged_gs, 'br', 24, 14)
-check("dragging a corner asks for a height and a width per cell, then snaps",
+geometry.resize_by_handle(Document(400, 400), _dragged_gs, 'br', 40, 20)
+check("a drag short of the next magnification keeps the one there is",
       (_dragged_gs.font_height, _dragged_gs.font_width, box_of(_dragged_gs))
-      == (50, 48, (100, 100, 96, 50)),
+      == (48, 48, (100, 100, 100, 48)),
+      (_dragged_gs.font_height, _dragged_gs.font_width, box_of(_dragged_gs)))
+geometry.resize_by_handle(Document(400, 400), _dragged_gs, 'br', 60, 30)
+check("dragging a corner asks for the largest magnification whose cells fit, "
+      "and writes h and w as that many cells",
+      (_dragged_gs.font_height, _dragged_gs.font_width, box_of(_dragged_gs))
+      == (72, 72, (100, 100, 150, 72)),
       (_dragged_gs.font_height, _dragged_gs.font_width, box_of(_dragged_gs)))
 _dragged_up = GraphicSymbolElement(100, 100, 'A', 40, 30, orientation='R')
-geometry.resize_by_handle(Document(400, 400), _dragged_up, 'bm', 0, 20)
+geometry.resize_by_handle(Document(400, 400), _dragged_up, 'bm', 0, 30)
 check("a turned symbol's height is its run, so the bottom handle widens it",
       (_dragged_up.font_height, _dragged_up.font_width, box_of(_dragged_up))
-      == (40, 50, (100, 100, 40, 50)),
+      == (48, 48, (100, 100, 48, 48)),
       (_dragged_up.font_height, _dragged_up.font_width, box_of(_dragged_up)))
 _dragged_top = GraphicSymbolElement(100, 100, 'A', 40, 40)
-geometry.resize_by_handle(Document(400, 400), _dragged_top, 'tl', -20, -20)
+geometry.resize_by_handle(Document(400, 400), _dragged_top, 'tl', -30, -30)
 check("and a top-left drag grows it up and left, the far corner held",
-      box_of(_dragged_top) == (80, 80, 60, 60), box_of(_dragged_top))
+      box_of(_dragged_top) == (76, 76, 72, 72), box_of(_dragged_top))
 _rescaled_gs = Document()
 _rg = _rescaled_gs.add_graphic_symbol_element()
 _rescaled_gs.rescale(300 / 203)
-check("a change of resolution scales h and w",
-      (_rg.font_height, _rg.font_width, _rg.width, _rg.height) == (53, 53, 53, 53),
+check("a change of resolution scales h and w, and the box is the cell they "
+      "round to",
+      (_rg.font_height, _rg.font_width, _rg.width, _rg.height) == (71, 71, 72, 72),
       (_rg.font_height, _rg.font_width, _rg.width, _rg.height))
 _clamped = Document(400, 400)
 _cg = _clamped.add_graphic_symbol_element('A')
@@ -4898,7 +4941,7 @@ check("Edit Symbol writes the symbol, both sizes, the turn and ^FR",
       _gs_accepted
       and (_edited_gs.text, _edited_gs.font_height, _edited_gs.font_width,
            _edited_gs.orientation, _edited_gs.reverse_print, box_of(_edited_gs))
-      == ('C', 60, 30, 'R', True, (50, 50, 60, 30)),
+      == ('C', 60, 30, 'R', True, (50, 50, 72, 24)),
       (_edited_gs.text, _edited_gs.font_height, _edited_gs.font_width,
        _edited_gs.orientation, _edited_gs.reverse_print, box_of(_edited_gs)))
 check("and the symbol it leaves is written that way",

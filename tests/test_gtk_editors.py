@@ -286,7 +286,7 @@ mark_dialog.response(Gtk.ResponseType.OK)
 check("OK in Edit Symbol writes the symbol, both sizes and the turn, as one "
       "undo entry",
       (mark.text, mark.font_height, mark.font_width, mark.orientation,
-       mark.width, mark.height) == ('B', 60, 30, 'B', 60, 30)
+       mark.width, mark.height) == ('B', 60, 30, 'B', 72, 24)
       and len(window._undo_stack) == _before + 1,
       (mark.text, mark.font_height, mark.font_width, mark.orientation,
        mark.width, mark.height, len(window._undo_stack) - _before))
@@ -347,7 +347,7 @@ reversed_mark = GraphicSymbolElement(50, 50, 'B', 100, 100)
 reversed_mark.reverse_print = True
 dark = _painted_symbol(reversed_mark, under=(50, 50, 100, 100))
 check("and inverts under its own ink for ^FR",
-      not dark(56, 100) and dark(70, 100), (dark(56, 100), dark(70, 100)))
+      not dark(54, 80) and dark(62, 80), (dark(54, 80), dark(62, 80)))
 
 # --- Edit Barcode: MaxiCode's own rows, and the Insert buttons -------------
 

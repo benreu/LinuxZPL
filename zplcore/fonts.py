@@ -102,9 +102,10 @@ def _bitmap_base(code: str, dpi: int = DEFAULT_DPI):
     return base_h, base_w, gap, baseline
 
 
-def _magnification(value, size) -> int:
+def magnification(value, size) -> int:
     """The whole-number magnification a bitmap font is printed at for a size
-    asked of it: the nearest, from 1 to 10."""
+    asked of it: the nearest, from 1 to 10. ^GS's symbols take it too
+    (graphic_symbols.cell)."""
     return max(1, min(MAX_MAGNIFICATION, int(max(0, value or 0) / size + 0.5)))
 
 
@@ -122,8 +123,8 @@ def bitmap_cell(code: str, height: int, width: int,
     if base is None:
         return None
     base_h, base_w, gap, baseline = base
-    down = _magnification(height, base_h)
-    across = _magnification(width, base_w)
+    down = magnification(height, base_h)
+    across = magnification(width, base_w)
     return BitmapCell(base_h * down, base_w * across, gap * across,
                       baseline * down)
 
@@ -152,10 +153,10 @@ def other_size(code: str, height: Optional[int] = None,
     if width is None:
         if base is None:
             return height, height
-        return height, base[1] * _magnification(height, base[0])
+        return height, base[1] * magnification(height, base[0])
     if base is None:
         return width, width
-    return base[0] * _magnification(width, base[1]), width
+    return base[0] * magnification(width, base[1]), width
 
 
 # Where fonts live when fc-list can't be asked - fontconfig missing, broken,
@@ -499,8 +500,7 @@ def resident_baseline(font_path: Optional[str], height) -> Optional[int]:
 
     Table 33 gives font 0's baseline as 3 x height / 4, and it is what ^FT
     names. Measured from the stand-in instead it would be its ascent,
-    0.718 of the height, since its ascent is its cap height. Rounded down,
-    as graphic_symbols.baseline_offset rounds GS's same figure.
+    0.718 of the height, since its ascent is its cap height. Rounded down.
     """
     if not _is_standin(font_path):
         return None

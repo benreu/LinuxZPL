@@ -447,7 +447,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.symbol_actions = []
         for code, _shown, name in graphic_symbols.SYMBOLS:
             icon = QIcon(QPixmap.fromImage(
-                to_qimage(graphic_symbols.raster(code, 20, 20))))
+                to_qimage(graphic_symbols.icon(code))))
             action = symbol_popup.addAction(icon, name)
             action.triggered.connect(
                 lambda _checked=False, code=code: self.on_add_graphic_symbol(code))

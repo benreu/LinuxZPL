@@ -3272,7 +3272,7 @@ class ZPLViewerWindow(Gtk.Window):
         menu = Gtk.Menu()
         for code, _shown, name in graphic_symbols.SYMBOLS:
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            icon = to_pixbuf(graphic_symbols.raster(code, 20, 20))
+            icon = to_pixbuf(graphic_symbols.icon(code))
             if icon is not None:
                 row.pack_start(Gtk.Image.new_from_pixbuf(icon), False, False, 0)
             row.pack_start(Gtk.Label(label=name, xalign=0), True, True, 0)
