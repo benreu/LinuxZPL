@@ -593,9 +593,16 @@ class ZPLRenderer:
         angle = geometry.turn(element)['angle']
         if angle:
             mask = mask.rotate(-angle, expand=True)
-        pos = (self._left(element.width), self._top(element.baseline_offset()))
+        # The point the ^FO or ^FT named, placed by the rule the parser reads
+        # it with: a corner, or a point on the line the cell stands on,
+        # turned with the field as text's is
+        element.justify = self.current_justify
+        baseline = element.baseline_offset()
+        element.typeset = baseline if self.typeset else None
+        dx, dy = geometry.named_offset(element)
+        pos = (self.current_x - dx, self.current_y - dy)
         element.x, element.y = pos
-        self._advance(element, element.baseline_offset())
+        self._advance(element, baseline)
         if self.current_reverse:
             self._invert_under(mask, pos)
         else:

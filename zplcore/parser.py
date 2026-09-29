@@ -1146,7 +1146,7 @@ def _read_print_quantity(params: str) -> tuple:
 
 def read_font(code: str, params: str, default_font=None,
               default_orientation=DEFAULT_ORIENTATION, named=None,
-              dpi=zpl_fonts.DEFAULT_DPI, zero_omits=True) -> dict:
+              dpi=zpl_fonts.DEFAULT_DPI) -> dict:
     """^A<code><orientation>,<h>,<w> - the font a field names for itself.
 
     The designator is the command's second character, so every built-in font
@@ -1166,7 +1166,7 @@ def read_font(code: str, params: str, default_font=None,
     ^A0N,0,40 came out as ^A0N,40,40 did, ^ADN,36,0 and ^ADN,0,20 as
     ^ADN,36,20, and ^A0N,0,0 and ^ADN,0,0 at ^CF's 60,60. Taking the 0 as
     written drew ^A0N,40,0 in a box one dot wide and ^A0N,0,0 as nothing.
-    `zero_omits` is False only for ^GS, whose 0 no printer has been given.
+    ^GS, read through here, prints its 0 the same way.
 
     The orientation is the first parameter, and dropping it is why text was
     the one element that could not be turned: it loaded flat and saved flat.
@@ -1191,9 +1191,7 @@ def read_font(code: str, params: str, default_font=None,
         return fallback
 
     letter = re.match(r'\s*([A-Za-z])', parts[0]) if parts else None
-    height, width = number(1, None), number(2, None)
-    if zero_omits:
-        height, width = height or None, width or None
+    height, width = number(1, None) or None, number(2, None) or None
     height, width = _sizes(code, height, width, current, dpi)
 
     name, spec = None, None
@@ -1230,11 +1228,13 @@ def read_graphic_symbol(params: str, default_font=None,
     The same three parameters as an ^A, read as font 0's are, because Table 33
     lists GS beside it: the orientation left out is ^FW's, both sizes left out
     are ^CF's - which is what the manual's own example relies on, a bare ^GS
-    after ^CFD - and one size given alone keeps the symbol square. A letter
-    that is not a quarter turn is ^FW's.
+    after ^CFD - and one size given alone keeps the symbol square. A 0 is a
+    size left out, as ^A's is: printed after ^CF0,72,72, ^GSN,0,48 and
+    ^GSN,48,0 each came out as ^GSN,48,48 did, and ^GSN,0,0 as ^GSN,72,72. A
+    letter that is not a quarter turn is ^FW's.
     """
     font = read_font('0', params, dict(default_font or DEFAULT_FONT),
-                     default_orientation, zero_omits=False)
+                     default_orientation)
     orientation = font['orientation']
     if orientation not in _ORIENTATION_LETTERS:
         orientation = default_orientation

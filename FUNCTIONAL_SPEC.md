@@ -344,8 +344,11 @@ should default to a space"*. Both points are recorded in §18.
 
 The baseline an `^FT` names is the bottom of a cell, 24 dots down at each
 step. Table 33 gives GS's baseline as three quarters of the height, but a
-printer put the whole cell above it (§18). `^FR` inverts under the symbols'
-own ink, as it does under text's glyphs.
+printer put the whole cell above it (§18). That line is in the field's own
+frame and turns with it, as text's first baseline does (§8): at R the cell
+stands right of the `^FT` x and runs down from its y, at I it hangs below
+the line and runs left, and at B it stands left of the line and runs up.
+`^FR` inverts under the symbols' own ink, as it does under text's glyphs.
 
 **The resize handles ask for an `h` and a `w`.** The stack asks for the height
 and the run, shared among the cells and the gaps between them, the width, at a
@@ -1215,6 +1218,7 @@ one the model holds:
 | `^GE5000,100,10` | 4095 wide: *"larger values are replaced with 4095"* |
 | `^CFD,18,10` … `^GS^FDC` | a ™ with `h` 18 and `w` 10, printed in a 24 dot cell at ×1, 19 × 10: with neither size given, `^GS` takes both of `^CF`'s - the manual's own example |
 | `^GSN,40^FDA` | a ® with `h` and `w` 40, printed at ×2, 30 across in a 48 dot cell: one size keeps the symbol square, as font 0's does (§18) |
+| `^GSN,0,48^FDA`, `^GSN,0,0^FDA` | `^GSN,48,48` and `^CF`'s two sizes: a `^GS` size of 0 is a size left out, as `^A`'s is, and written back resolved (§18) |
 | `^GS,40,30^FDA` | turned the way `^FW` says, like any field that leaves its orientation out; a letter that is not `N`, `R`, `I` or `B` is `^FW`'s too |
 | `^GSN,40,40` with no `^FD` | no field, as a text field with no data is none |
 | `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
@@ -2769,12 +2773,14 @@ rather than requirements:
   `^FT^A0N,40,40^FDX` with both coordinates left out printed its X from
   x = 102.2 on the same baseline - past the symbol's 48 dot cell and the 4 dot
   gap after it, as after every symbol. It was drawn from 99 before, the pen
-  taken to stop at the cell's end.
+  taken to stop at the cell's end. A fourth label,
+  `tests/fixtures/gs_turned_sizes.zpl`, turned the symbol to R, I and B: the
+  X after each carried on along the symbol's run the same 52 dots, down the
+  label at R, leftward at I and up at B, within 2 dots of the preview.
 
   Not printed: a box placed by `^FT`, taken to leave the pen at its `^FT`
   point, its bottom-left; bar codes, images, `^GC`, `^GD` and `^GE`, taken
-  to leave it where they were put as the box does; a turned `^GS`, taken to
-  move it on the way it runs as an upright one does; `^FP` V and R, which
+  to leave it where they were put as the box does; `^FP` V and R, which
   carry on the way their characters run, to where a copy of the field would
   sit (exact for a copy, close for a field of another size); a block, after
   which it starts at the right end of the block's width, on its first
@@ -2805,8 +2811,12 @@ rather than requirements:
   is re-measured. At I and B the point sits at the far end of the run, so an
   edit moves it, and any turn moves it. A field that was following the one
   before it (§8) therefore stops following, and is written where it is
-  drawn, which prints the same. A `^GS` turned and placed by `^FT` keeps its
-  baseline offset down the label: the charts show text only.
+  drawn, which prints the same. A `^GS` turned and placed by `^FT` turns the
+  same way, though the charts show text only: the fourth label printed
+  `^FT250,150^GSR,48,48`'s cell from x = 249.6 and y = 149.6 down, and at I
+  and B the cell hung below the line and stood left of it, each within 2 dots
+  of the preview. Keeping the offset down the label, as this did before, drew
+  each 48 dots away.
 - **A direction inside a `^FB` is carried, not drawn.** The manual does not
   say what `^FB` does with `^FPV` or `^FPR`, so such a block round-trips its
   `^FP` but is wrapped, drawn and placed left to right. The gap is drawn: it
@@ -2870,15 +2880,14 @@ rather than requirements:
   it is not Table 33's *"3 x HEIGHT/4"*: `^FT50,250^GSN,48,48^FDA` printed
   the ®'s top at y = 203.2 and the X after it on a baseline of 250.4, so the
   whole 48 dot cell stands on the baseline - 47.3 measured - where three
-  quarters, which this read before, drew it 12 dots lower. Not printed, and
-  applied by the same rule: the same 24 dot cell at 300 and 600 dpi, as
-  fonts A–D, F and G keep theirs; a 0 in `^GS` (below); and an `h` that is
-  not a whole number of cells under `^FT`, taken to stand the magnified cell
-  on the baseline rather than `h`. `tests/fixtures/gs_turned_sizes.zpl` is a
-  label for the last two and for a `^GS` turned and placed by `^FT`, with the
-  field after it; the core tests say what this reads each as until it is
-  printed. It must go through the console, since a save writes a 0 as 1. A character that is not `A` to `E` keeps
-  its cell and draws nothing, the manual's "default to a space".
+  quarters, which this read before, drew it 12 dots lower. A fourth label,
+  `tests/fixtures/gs_turned_sizes.zpl`, showed it is the magnified cell that
+  stands there, not `h`: `^GSN,40,40`, `,30,30` and `,60,60` under `^FT`
+  each printed level with `^GSN,48,48`, `,24,24` and `,72,72` beside them,
+  to a dot. Not printed, and not printable on the 203 dpi printer these
+  labels go to: the same 24 dot cell at 300 and 600 dpi, as fonts A–D, F and
+  G keep theirs. A character that is not `A` to `E` keeps its cell and draws
+  nothing, the manual's "default to a space".
 - **One size decides the other, in every case a printer was given.** The
   manual: *"If you specify only the height or width value, the
   standard matrix for that font automatically determines the other value"*,
@@ -2903,8 +2912,11 @@ rather than requirements:
   `^ADN,0,20` as `^ADN,36,20`; and `^A0N,0,0` and `^ADN,0,0` at `^CF`'s 60,60,
   140 x 45 with an H every 37 and 275 wide with an H every 72. Before, this
   took the 0 as written: `^A0N,40,0` was a box one dot wide and `^A0N,0,0`
-  drew nothing. A 0 in `^CF` itself or in `^GS` has not been printed, and is
-  still taken as given.
+  drew nothing. A fourth label printed `^GS`'s 0 the same way: after
+  `^CF0,72,72`, `^GSN,0,48` and `^GSN,48,0` each came out as the
+  `^GSN,48,48` beside it, and `^GSN,0,0` as `^GSN,72,72`, where taking the 0
+  as given had drawn a squashed, a narrowed and a one-step symbol. A 0 in
+  `^CF` itself has not been printed, and is still taken as given.
 - **A label made smaller can squash a group.** Shrinking the label (§7) clamps
   every element into the new bounds one by one, so two members that both hit
   the edge end up closer together than they were — the label changed, not the

@@ -165,17 +165,22 @@ def named_offset(element) -> tuple:
     right to left. A 203 dpi printer agrees at R: ^FT100,500^A0R,40,40 put
     its baseline down the label at x = 100, its first character from y =
     502.5, where taking the offset down the label had drawn it 30 dots
-    higher. Upright this is field_anchor's corner with the baseline under
-    it; anything but text keeps its offset down the label.
+    higher. A ^GS symbol is characters in a font, and turns the same way:
+    ^FT250,150^GSR,48,48 printed its cell from x = 249.6 and y = 149.6 down,
+    and at I and B the cell hung below the line and stood left of it, where
+    keeping the offset down the label had drawn each 48 dots away. Upright
+    this is field_anchor's corner with the baseline under it; anything else
+    keeps its offset down the label.
     """
     dx, dy = field_anchor(element)
     if element.typeset is None:
         return dx, dy
-    if getattr(element, 'element_type', None) != 'text':
+    kind = getattr(element, 'element_type', None)
+    if kind not in ('text', 'graphic_symbol'):
         return dx, dy + element.typeset
     run, _stack = frame_size(element)
     right = getattr(element, 'justify', None) == JUSTIFY_RIGHT
-    if element.direction == 'R' and element.block is None:
+    if kind == 'text' and element.direction == 'R' and element.block is None:
         first, last = getattr(element, 'ends', None) or (0, 0)
         along = last if right else max(0, run - first)
     else:
@@ -205,7 +210,8 @@ def pen_after(element, depth, named) -> tuple:
     field, and a 203 dpi printer agrees: `^FT` after `^FO300,120^GB60,60,4`
     put its baseline on the box's top edge at x = 300, not after the box nor
     after the text before it. A ^GS symbol is characters, and moves it on
-    past the gap after its last cell, as a printer showed.
+    along its run, in its own frame as text's, past the gap after its last
+    cell - as a printer showed upright and at R, I and B.
     FUNCTIONAL_SPEC.md section 18 says which of this has been printed.
     """
     kind = getattr(element, 'element_type', None)
@@ -217,10 +223,8 @@ def pen_after(element, depth, named) -> tuple:
         du, dv = _RUNS.get(direction, (1, 0))
         dx, dy = frame_point(element, du * run, depth + dv * stack)
         return (element.x + dx, element.y + dy)
-    facing = (getattr(element, 'orientation', None) or 'N').upper()
-    u, v = _TURNS.get(facing, _TURNS['N'])(1, 0)
-    advance = element.advance()
-    return (element.x + u * advance, element.y + depth + v * advance)
+    dx, dy = frame_point(element, element.advance(), depth)
+    return (element.x + dx, element.y + dy)
 
 
 def following(element) -> tuple:
