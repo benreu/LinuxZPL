@@ -127,7 +127,7 @@ _TURNS = {'N': lambda u, v: (u, v), 'R': lambda u, v: (-v, u),
           'I': lambda u, v: (-u, -v), 'B': lambda u, v: (v, -u)}
 
 
-def pen_after(element, depth) -> tuple:
+def pen_after(element, depth, named) -> tuple:
     """Where the printer's pen stops after a field, which is where a field
     whose ^FT leaves a coordinate out takes it from.
 
@@ -136,13 +136,22 @@ def pen_after(element, depth) -> tuple:
     is its right end, on its baseline - `depth` dots below its top - whatever
     its justification, since the characters end there either way; the
     manual's own example strings five fields along one baseline that way.
-    Every other field continues the same rule along the way its characters
-    run: down a column, or down a line turned to R. That is where a copy of
-    the field would sit if it carried straight on, which is exact for a copy
-    and only close for a field of another size; none of those is printed yet,
-    and FUNCTIONAL_SPEC.md section 18 says so. A block runs as ^FPH, as it is
-    drawn and placed.
+    Every other line of text continues the same rule along the way its
+    characters run: down a column, or down a line turned to R. That is where
+    a copy of the field would sit if it carried straight on, which is exact
+    for a copy and only close for a field of another size. A block runs as
+    ^FPH, as it is drawn and placed.
+
+    Anything but text leaves the pen at `named`, the point its own ^FO or ^FT
+    named, in absolute dots: the pen is where the field was put, and only
+    characters move it on. Page 199's table says the last formatted *text*
+    field, and a 203 dpi printer agrees: `^FT` after `^FO300,120^GB60,60,4`
+    put its baseline on the box's top edge at x = 300, not after the box nor
+    after the text before it. A ^GS symbol is characters, and moves it.
+    FUNCTIONAL_SPEC.md section 18 says which of this has been printed.
     """
+    if getattr(element, 'element_type', None) not in ('text', 'graphic_symbol'):
+        return named
     direction = 'H'
     if (getattr(element, 'element_type', None) == 'text'
             and element.block is None):

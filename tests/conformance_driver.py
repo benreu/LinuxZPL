@@ -35,6 +35,7 @@ FIXTURE_TYPESET = ROOT / 'tests' / 'fixtures' / 'typeset.zpl'
 # The manual's own ^FT example (page 200): every field after the first leaves
 # its coordinates out, and so follows the one before it
 FIXTURE_CHAIN = ROOT / 'tests' / 'fixtures' / 'typeset_chain.zpl'
+FIXTURE_CHAIN_RULES = ROOT / 'tests' / 'fixtures' / 'ft_chain_rules.zpl'
 # ^GB rules, where the width or the height is left to default to the thickness
 FIXTURE_RULES = ROOT / 'tests' / 'fixtures' / 'rules.zpl'
 # ^GC as a file gives it: every parameter, none, white inside black, a circle
@@ -1501,6 +1502,16 @@ def sequence(driver, record):
     driver.select(_lead)
     driver.bring_forward()
     record('bring the first field forward, which leaves the ones it led in place')
+
+    # A box leaves the pen where it was put, as a printer showed, so the
+    # field after one follows the box's corner through a drag of the box.
+    driver.load(FIXTURE_CHAIN_RULES)
+    record('load the label printed to settle where each field leaves the pen')
+    driver.set_zoom(1.0)
+    driver.fresh_gesture()
+    _box = driver.elements[3]
+    driver.drag_pointer(_box.x + 2, _box.y + 30, 40, 20)
+    record('drag the box, which the field after it goes on following')
 
 
 def main():

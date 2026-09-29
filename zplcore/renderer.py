@@ -93,8 +93,8 @@ class ZPLRenderer:
         # own - see parser.read_field_origin. A coordinate an ^FT left out is
         # None, and taken from the pen.
         self.placed = (0, 0)
-        # Where the last field drawn ended, in absolute dots, or None for the
-        # label home before the first - geometry.pen_after
+        # Where the last field drawn left the pen, in absolute dots, or None
+        # for the label home before the first - geometry.pen_after
         self.pen = None
         # Whether the field being read had a ^FO/^FT of its own, and whether
         # it carries an ^FN - the two together decide whether it is a field
@@ -258,8 +258,10 @@ class ZPLRenderer:
         lands on the label, top-left and size, and `depth` how far below its
         top the line an ^FT names runs. Through geometry.pen_after, as the
         canvas's chain is (Document.follow_chains), so the preview and the
-        canvas cannot disagree about where a following field goes."""
-        self.pen = geometry.pen_after(footprint, depth)
+        canvas cannot disagree about where a following field goes. The point
+        the field's ^FO or ^FT named is where anything but text leaves it."""
+        self.pen = geometry.pen_after(footprint, depth,
+                                      (self.current_x, self.current_y))
 
     def _turned(self, panel, run: int, stack: int, baseline: int):
         """Paste a drawn panel onto the label, turned to face the right way.

@@ -5143,6 +5143,45 @@ _ef, _gh = _chained(_mixed).elements[4:]
 check("a line turned to R is followed down the label, not across it",
       (_gh.x, _gh.y) == (_ef.x, _ef.y + _ef.height),
       [(e.x, e.y, e.width, e.height) for e in (_ef, _gh)])
+_ab, _box, _cd = _chained(_mixed).elements[:3]
+check("a box leaves the pen where its ^FT put it, not after it",
+      geometry.typeset_point(_box) == (_ab.x + _ab.width, 100)
+      and geometry.typeset_point(_cd) == geometry.typeset_point(_box),
+      [geometry.typeset_point(e) for e in (_ab, _box, _cd)])
+
+# What a 203 dpi printer made of each thing the manual leaves open, printed
+# from the console as tests/fixtures/ft_chain_rules.zpl, in dots off the scan
+_rules = _chained((FIXTURES / 'ft_chain_rules.zpl').read_text())
+(_fo, _next, _text, _frame, _after, _xonly, _y, _yonly, _x, _rot,
+ _ated) = _rules.elements
+check("after ^FO text the pen is at its right end, on its baseline",
+      geometry.typeset_point(_next) == (_fo.x + _fo.width, 70),
+      geometry.typeset_point(_next))
+# "after" printed with its baseline on the box's top edge and its a 1.4 dots
+# right of the box's left edge: not after the box, nor after "text"
+check("after an ^FO box the pen is at the box's ^FO, as printed",
+      geometry.typeset_point(_after) == (300, 120),
+      geometry.typeset_point(_after))
+check("^FT400 took the baseline before it, and ^FT,420 the x it ended at",
+      geometry.typeset_point(_y) == (400, 260)
+      and geometry.typeset_point(_x) == (_yonly.x + _yonly.width, 420),
+      [geometry.typeset_point(e) for e in (_y, _x)])
+check("and ATED carried on down the label from the end of ROT",
+      (_ated.x, _ated.y) == (_rot.x, _rot.y + _rot.height),
+      [(e.x, e.y, e.width, e.height) for e in (_rot, _ated)])
+_rules_zpl = _rules.to_zpl()
+check("the label saves its bare ^FTs bare",
+      _rules_zpl.count("^FT\n") == 3 and "^FT400\n" in _rules_zpl
+      and "^FT,420\n" in _rules_zpl
+      and _chained(_rules_zpl).to_zpl() == _rules_zpl,
+      _rules_zpl.replace('\n', ' '))
+for _link in _rules.elements:
+    _link.follows = None
+check("and the preview puts every field where the model does",
+      ZPLRenderer(812, 1218).render(
+          (FIXTURES / 'ft_chain_rules.zpl').read_text()).tobytes()
+      == ZPLRenderer(812, 1218).render(_rules.to_zpl()).tobytes(),
+      _rules.to_zpl().replace('\n', ' '))
 
 # One coordinate left out follows on that axis alone
 _axes = _chained("^XA^FT10,200^A0N,30,30^FDAB^FS^FT,300^A0N,30,30^FDCD^FS"

@@ -2759,7 +2759,8 @@ class Document:
 
     def follow_chains(self) -> None:
         """Put every field whose ^FT left a coordinate out where the field
-        before it now ends (geometry.pen_after).
+        before it now leaves the pen (geometry.pen_after): where a line of
+        text ends, or where anything else was put.
 
         Such a field is written back without the coordinate (origin_zpl), so
         the printer goes on placing it after that field whatever it becomes,
@@ -2797,7 +2798,8 @@ class Document:
             return self.transform.field_offset()
         depth = (element.typeset if element.typeset is not None
                  else geometry.typeset_depth(element, self.font_path, self.dpi))
-        return geometry.pen_after(element, depth)
+        return geometry.pen_after(element, depth,
+                                  geometry.typeset_point(element))
 
     def _follow(self, element, before) -> None:
         """Move one follower's following coordinates to where `before` ends,

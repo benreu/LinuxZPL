@@ -1207,8 +1207,8 @@ one the model holds:
 | `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
 | `^BY3,3.0,150` | and a `^BC` that gives no height of its own is 150 dots tall |
 | `^FO,20,20` | x 0, y 20: both coordinates default to 0 (the manual's own spelling, page 127) |
-| `^FT` | both coordinates where the last field ended, written back as `^FT` (below) |
-| `^FT,300` | x where the last field ended, the baseline at 300: each coordinate left out follows on its own |
+| `^FT` | both coordinates where the last field left the pen, written back as `^FT` (below) |
+| `^FT,300` | x where the last field left the pen, the baseline at 300: each coordinate left out follows on its own |
 
 `^A0N,40` came back as `^A0N,36,20`, losing the height it did give, while the
 preview - which required nothing - drew it at 40. `^GB300` and `^GB,,4` were
@@ -1418,10 +1418,13 @@ along one baseline. Reading the missing coordinates as 0, as `^FO`'s are, put
 four of its five fields above the label's top edge, and a save wrote them
 there as `^FT0,0`.
 
-Where an upright line ends is its right end on its baseline, whatever its
-justification: the baseline an `^FT` names for text and `^GS`, and the bottom
-for everything else, as above. A field that runs another way - turned by `^A`,
-or top to bottom or right to left by `^FP` - carries on the way it runs (§18).
+Only characters move the pen on. After a line of text or a `^GS` it is at the
+line's end: for an upright line, its right end on its baseline, whatever its
+justification. A line that runs another way - turned by `^A`, or top to bottom
+or right to left by `^FP` - carries on the way it runs. Anything else, a box, a
+bar code or an image, leaves the pen at the point its own `^FO` or `^FT` named,
+so a field after a box starts at the box's corner, not past it. Which of this
+a printer has shown is in §18.
 In the file, the last field is the last one sent to the printer, so a
 hidden one (§6.6) is skipped, and before the first the pen is at the label
 home, `^LH` and `^LS` included. Each coordinate follows on its own: `^FT,300` takes x from the
@@ -2705,16 +2708,39 @@ rather than requirements:
   through the turn. `^FT` with a turned `^FPR` is placed as `^FO` is, with
   the baseline offset taken down the label as every `^FT` text field's is,
   though Table 46 draws its crosshair elsewhere.
-- **Where a field whose `^FT` leaves a coordinate out goes is read off the
-  manual, and none of it has been printed yet.** Page 200 says the position
-  following the last formatted field; the parameter table on page 199 says
-  the last formatted *text* field. Every field moves the pen here, a box and a
-  bar code included, which is page 200's reading. After a field turned by
-  `^A`, or run top to bottom or right to left by `^FP`, the next carries on
-  the way the characters run, to where a copy of that field would sit if it
-  carried straight on: exact for a copy, close for a field of another size.
-  After a block, it starts at the right end of the block's width, on its first
-  baseline.
+- **Where a field whose `^FT` leaves a coordinate out goes has been printed
+  for upright text, an `^FO` box and a line turned to R; the rest is read off
+  the manual.** A 203 dpi printer, sent `tests/fixtures/ft_chain_rules.zpl`
+  from the console, measured in dots off a 300 ppi scan:
+  - after `^FO50,40` text, `^FT` started at its right end on its baseline:
+    the next word's first letter at x = 97.0, on the same baseline to a dot;
+  - after `^FO300,120^GB60,60,4`, `^FT` put its baseline on the box's top
+    edge, its first letter at x = 301.4 - not past the box, and not after
+    the text before the box either. Page 200 says the position following the
+    last formatted field; page 199's table says the last formatted *text*
+    field, and the printer is page 199's: a box leaves the pen where it was
+    put;
+  - `^FT400` kept the baseline before it, and `^FT,420` took x from where the
+    line before it ended: its first letter at 139.0, that line's ink ending
+    at 138.3;
+  - `^FT^A0R` after an `^FT^A0R` line carried on down the label, letter
+    pitch unbroken.
+
+  Not printed: a box placed by `^FT`, taken to leave the pen at its `^FT`
+  point, its bottom-left; bar codes, images, `^GC`, `^GD` and `^GE`, taken
+  to leave it where they were put as the box does; a `^GS`, which moves it,
+  as the manual's own example shows; `^FP` V and R, which carry on the way
+  their characters run, to where a copy of the field would sit (exact for a
+  copy, close for a field of another size); a block, after which it starts
+  at the right end of the block's width, on its first baseline; and a right
+  justified field, taken to end where its characters do.
+- **A field turned by `^A` and placed by `^FT` is drawn its baseline depth
+  up the label.** `^FT100,500^A0R,40,40^FDROTATED^FS` printed its first
+  character from y = 502.5 and its ink from x = 97.7 to 129.5, running down.
+  The preview and canvas take the baseline offset down the label as for
+  upright text, and draw the same ink from y = 473, 30 dots higher, the
+  font's baseline depth, with x within 2 dots. A field that follows such a
+  line is placed right relative to it. Only R has been printed.
 - **A direction inside a `^FB` is carried, not drawn.** The manual does not
   say what `^FB` does with `^FPV` or `^FPR`, so such a block round-trips its
   `^FP` but is wrapped, drawn and placed left to right. The gap is drawn: it
