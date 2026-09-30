@@ -1464,9 +1464,9 @@ class BarcodeElement(DesignElement):
         one-dimensional symbol, alternating, starting with a bar.
         `('grid', rows)` is a matrix symbology, a list of rows of booleans,
         dark where True. `('stacked', rows)` is rows of booleans too, but each
-        row is `bar_height` dots tall rather than one module: MicroPDF417's
-        h is a height in dots, which a grid of square modules cannot draw
-        unless it happens to divide by the module width. `('dots', (width,
+        row is `bar_height` dots tall rather than one module: PDF417's and
+        MicroPDF417's h is a height in dots, which a grid of square modules
+        cannot draw unless it happens to divide by the module width. `('dots', (width,
         height, runs))` is a symbol drawn
         at the head's own resolution because it is not squares at all - a
         MaxiCode's hexagons and rings - as runs of dark dots, (x, y, length).
@@ -1500,8 +1500,7 @@ class BarcodeElement(DesignElement):
             if kind == 'grid':
                 return ('grid', self._grid())
             if kind == 'stacked':
-                return ('stacked', micropdf417.encode(self._raw_value(),
-                                                      self.micro_mode))
+                return ('stacked', self._stacked_rows(self._raw_value()))
             if kind == 'postal':
                 return ('postal', postal.encode(self._raw_value(),
                                                 self._postal_kind()))
@@ -1548,11 +1547,7 @@ class BarcodeElement(DesignElement):
             symbols = []
             for index, piece in enumerate(pieces):
                 macro = pdf417.control_block(index, count) if count > 1 else ()
-                if self.symbology == 'pdf417':
-                    symbols.append(('grid', self._pdf417_grid(piece, macro)))
-                else:
-                    symbols.append(('stacked', micropdf417.encode(
-                        piece, self.micro_mode, macro)))
+                symbols.append(('stacked', self._stacked_rows(piece, macro)))
             return symbols
         except ValueError as exc:
             self.symbol_error = (
@@ -1615,26 +1610,24 @@ class BarcodeElement(DesignElement):
             layers, compact, percent = self._aztec_shape()
             return aztec.encode(self._raw_value(), layers=layers,
                                 compact=compact, percent=percent)
-        if self.symbology == 'pdf417':
-            return self._pdf417_grid(self._raw_value())
         raise ValueError(f"no encoder for {self.symbology!r}")
 
-    def _pdf417_grid(self, value: str, macro: tuple = ()) -> list:
-        """A PDF417 carrying `value` - and `macro`, the control block of one
-        symbol of an ^FM series - with each row drawn bar_height modules
-        tall."""
-        base = pdf417.encode(value, columns=self.columns, rows=self.rows,
+    def _stacked_rows(self, value: str, macro: tuple = ()) -> tuple:
+        """A PDF417 or MicroPDF417 carrying `value` - and `macro`, the
+        control block of one symbol of an ^FM series - as its rows of
+        modules, each drawn bar_height dots tall."""
+        if self.symbology == 'micropdf417':
+            return micropdf417.encode(value, self.micro_mode, macro)
+        rows = pdf417.encode(value, columns=self.columns, rows=self.rows,
                              security=self.security,
                              truncate=self.truncate == 'Y', macro=macro)
-        # Each row of codewords is drawn this many modules tall. With no
-        # height of its own, ^B7 divides ^BY's whole-symbol height by
-        # however many rows the data turned out to need - which is not
+        # With no height of its own, ^B7 divides ^BY's whole-symbol height
+        # by however many rows the data turned out to need - which is not
         # known until here, so it is worked out now and kept.
         if self.bar_height < 1:
             height = self.total_height or DESIGNER_BAR_HEIGHT
-            self.bar_height = max(
-                1, round(height / len(base) / max(1, self.module_width)))
-        return [list(row) for row in base for _ in range(self.bar_height)]
+            self.bar_height = max(1, round(height / len(rows)))
+        return rows
 
     def modules(self) -> list:
         """The bar and space widths of the symbol, in modules.
@@ -1733,11 +1726,17 @@ class BarcodeElement(DesignElement):
             return (columns * module, rows * module)
         if kind == 'stacked':
             # A symbol that could not be built keeps the footprint of the size
-            # its mode names, which is the size it will be once the data fits.
+            # its command names - a MicroPDF417's mode, a PDF417's columns
+            # and rows, or the least it can have of either - which is the
+            # size it will be once the data fits.
             if payload:
                 modules, rows = len(payload[0]), len(payload)
-            else:
+            elif self.symbology == 'micropdf417':
                 modules, rows = micropdf417.dimensions(self.micro_mode)
+            else:
+                modules = pdf417.width(max(1, self.columns or 1),
+                                       self.truncate == 'Y')
+                rows = max(pdf417.MIN_ROWS, self.rows or 0)
             return (modules * module, rows * max(1, self.bar_height))
         if kind == 'postal':
             # Narrow bars at a one-to-one pitch: n bars and n - 1 gaps.

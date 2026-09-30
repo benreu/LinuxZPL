@@ -27,6 +27,14 @@ MAX_CODEWORDS = 929
 # manual's "1:2 row-to-column aspect ratio".
 ASPECT = 2
 
+
+def width(columns: int, truncate: bool = False) -> int:
+    """Modules across a symbol of this many columns: the start pattern and
+    the left row indicator, the codewords, then the right row indicator and
+    the stop pattern - or, truncated, the one bar that closes it (encode)."""
+    tail = 1 if truncate else 17 + STOP_WIDTH
+    return 17 + 17 + 17 * columns + tail
+
 # The codewords that switch compaction mode.
 _LATCH_TEXT = 900
 _LATCH_BYTE = 901

@@ -672,11 +672,7 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
                 else (int(round(p[0] * sx)), int(round(p[1] * sy)))
                 for p in element.origins)
         element.module_width = _scaled(element.module_width, run)
-        if symbology.HEIGHT_UNIT.get(element.symbology) != 'modules':
-            # PDF417's row height is in modules, and the module it multiplies
-            # has just been scaled - scaling both would square the factor and
-            # give rows half as tall again as the label asked for.
-            element.bar_height = _scaled(element.bar_height, stack)
+        element.bar_height = _scaled(element.bar_height, stack)
         # Any other length a command carries in dots - a TLC39's
         # MicroPDF417 module and row height - goes the same way.
         for name, along in symbology.SCALED_PARAMETERS.get(
@@ -1063,8 +1059,8 @@ def symbol_rects(element, kind: str, payload) -> list:
 
     if kind == 'stacked':
         # As a grid, but each row is the barcode's own height in dots rather
-        # than one module - MicroPDF417's h, which need not divide by the
-        # module width.
+        # than one module - PDF417's and MicroPDF417's h, which need not
+        # divide by the module width.
         module = max(1, element.module_width)
         pitch = max(1, element.bar_height)
         rects = []

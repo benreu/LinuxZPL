@@ -1475,13 +1475,11 @@ def _read_barcode(cmd: str, params: str, default_height=None,
     except ValueError:
         height = 0
     if not height:
-        # Left out. A height measured in modules rather than dots - PDF417's
-        # row height - means "divide ^BY's whole-symbol height by however
-        # many rows the data needs", which cannot be worked out until the
-        # data has been encoded, so it is left at zero for the element to
-        # resolve. Everything else takes ^BY's height as it stands.
-        height = 0 if symbologies.HEIGHT_UNIT.get(symbology) == 'modules' \
-            else fallback
+        # Left out. PDF417's row height means "divide ^BY's whole-symbol
+        # height by however many rows the data needs", which cannot be worked
+        # out until the data has been encoded, so it is left at zero for the
+        # element to resolve. Everything else takes ^BY's height as it stands.
+        height = 0 if symbology in symbologies.HEIGHT_FROM_ROWS else fallback
 
     magnification = None
     if 'w' in names:

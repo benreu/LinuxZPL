@@ -405,7 +405,8 @@ five places that could disagree about where `^B3` spells its check digit.
 **The symbol reaches the canvas as rectangles.** `symbol()` says what kind of
 thing the printer will lay down - `linear` for bars and spaces, `grid` for a
 matrix of square modules, `stacked` for rows of modules each its own height
-in dots (MicroPDF417, whose `h` need not divide by the module width),
+in dots (PDF417 and MicroPDF417, whose `h` need not divide by the module
+width),
 `postal` for bars of differing height, and `dots`
 for a symbol drawn at the head's own resolution because it is not squares at
 all (MaxiCode's hexagons and rings) or is two symbols each with a module of
@@ -457,7 +458,6 @@ rotated:
 linear:  run = sum(module widths) × module_width,  stack = bar_height
 grid:    run = columns × module_width,             stack = rows × module_width
 postal:  run = (2 × bars - 1) × module_width,      stack = bar_height
-PDF417:  a grid, whose rows are each bar_height modules tall
 stacked: run = modules across × module_width,     stack = rows × bar_height
 dots:    MaxiCode's one size at the document's resolution - 28.14 mm across:
          225 × 213 dots at 203 dpi, 333 × 315 at 300, 665 × 630 at 600
@@ -475,9 +475,13 @@ A matrix symbology has no bar height at all - its size is its grid - so
 neither its own command nor `^BY` carries one, and the Bar Height row is not
 offered for it.
 
-**A MicroPDF417's rows are a height in dots.** `^BF`'s `h` is not a multiple
-of the module, as `^B7`'s is: the manual's own example, `^BY6^BFN,8,3`, is
-drawn with modules 6 dots wide and rows 8 dots tall. Its module width is
+**A PDF417's and a MicroPDF417's rows are a height in dots.** Neither's `h`
+is a multiple of the module: the manual's own `^BF` example, `^BY6^BFN,8,3`,
+is drawn with modules 6 dots wide and rows 8 dots tall, and a printer drew
+both `^BY2^BFN,4` and `^BY2^B7N,4` in rows 4 dots tall. An omitted `^B7` `h`
+is `^BY`'s whole-symbol height divided by however many rows the data needs,
+which is not known until the data has been encoded - so it is worked out
+then and written back. Its module width is
 `^BY`'s, so it writes a `^BY`; an omitted `h` is `^BY`'s height, or 10 when
 there is no `^BY` either, as the manual says. Its `m` names one of 34 fixed
 sizes rather than letting the data choose one, so the Size row offers all 34
@@ -1106,7 +1110,7 @@ file choosers and the prompts — are modal.
 | **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
 | **Edit Diagonal Line** | Width; Height; Thickness; Colour; Direction; Reverse | Width and height 3–32000, `^GD`'s own range, so a line from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to the width, the maximum updating live as the width changes. Direction is right-leaning ( / ) or left-leaning ( \ ) (§3.3). Colour and Reverse as Edit Frame's. |
 | **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
-| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots (1–30 modules for PDF417, 1–9999 dots for MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a 3-module PDF417 and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
+| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots (1–9999 dots for PDF417 and MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a PDF417 with rows 3 dots tall and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
@@ -2676,14 +2680,14 @@ rather than requirements:
   opens its own message with a PAD and one codeword saying which it is, as
   the standard specifies. A symbol that is one of one says nothing of the
   kind.
-- **`^B7`'s `h` is a row height in modules, not dots**, which is what the
-  manual means by "this number multiplied by the module equals the height of
-  the individual rows". A rescale for another head resolution therefore
-  leaves it alone and scales only the module width it multiplies; scaling
-  both would square the factor. With `h` left out it is `^BY`'s whole-symbol
-  height divided by however many rows the data needs, which is not known
-  until the data has been encoded - so it is worked out then and written
-  back.
+- **`^B7`'s `h` is each row's height in dots, as printed.** The manual gives
+  it both as "bar code height for individual rows (in dots)" and as "this
+  number multiplied by the module equals the height of the individual rows".
+  This designer followed the second until a printer drew `^BY2^B7N,4,1,3`
+  in rows 4 dots tall, not 8 (`tests/fixtures/new_commands.zpl`) - which is
+  also the only reading under which the manual's own `^FM` example, rows 5
+  tall and 83 of them at `^BY2`, does not overlap itself. A rescale scales
+  it as any height.
 - **PDF417's low-level pattern table is ISO/IEC 15438's own** (2787 values,
   `zplcore/pdf417_patterns.py`). There is no other set of them, and no
   formula that generates them; the tests check every one against the

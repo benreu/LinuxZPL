@@ -2249,9 +2249,10 @@ check("and their last three values are switches, not characters",
 _pdf = BarcodeElement(0, 0, 3, 'PDF417 test', symbology='pdf417',
                       module_width=2)
 _kind, _grid = _pdf.symbol()
-check("PDF417 is a grid of rows, each drawn its own height in modules",
-      _kind == 'grid' and len(_grid) % _pdf.bar_height == 0,
-      (len(_grid), _pdf.bar_height))
+check("PDF417 is rows of modules, each drawn its own height in dots",
+      _kind == 'stacked'
+      and _pdf.symbol_size()[1] == len(_grid) * _pdf.bar_height,
+      (len(_grid), _pdf.bar_height, _pdf.symbol_size()))
 check("every row is the same width, and starts and ends on a bar",
       len({len(row) for row in _grid}) == 1
       and all(row[0] and row[-1] for row in _grid))
@@ -2283,24 +2284,25 @@ for params, why in (({'columns': '30', 'rows': '31'},
                      "one column and three rows holds almost nothing")):
     _over = BarcodeElement(0, 0, 3, 'x' * 300, symbology='pdf417', params=params)
     check(f"a symbol that cannot be built draws nothing - {why}",
-          _over.symbol() == ('grid', []) and _over.symbol_error,
+          _over.symbol() == ('stacked', []) and _over.symbol_error,
           _over.symbol_error)
 
-# ^B7's h is a row height in modules, not a length in dots - so ^BY's height
-# divided by the rows is what an omitted one means, and a rescale must leave
-# it alone or the module width it multiplies is counted twice.
+# ^B7's h is each row's height in dots - a printer drew ^BY2^B7N,4 in rows 4
+# dots tall, where the manual's "multiplied by the module" would make them 8
+# - so ^BY's height divided by the rows is what an omitted one means, and a
+# rescale scales it as it scales every other height.
 _row_sized = zpl_parser.parse_zpl(
     "^XA^PW700^LL500^FO20,20^BY2,3,100^B7N^FDPDF417 test^FS^XZ")[0].elements[0]
 check("^B7 with no row height divides ^BY's height by the rows it needs",
-      abs(_row_sized.height - 100) <= _row_sized.module_width * 2
+      abs(_row_sized.height - 100) <= len(_row_sized.symbol()[1]) / 2
       and _row_sized.bar_height > 1,
       (_row_sized.bar_height, _row_sized.height))
 _scaled_doc = zpl_parser.parse_zpl(
     "^XA^PW812^LL1218^FO20,20^BY2^B7N,4,3^FDPDF417^FS^XZ")[0]
 _before = _scaled_doc.elements[0].bar_height
 _scaled_doc.rescale(300 / 203)
-check("a rescale leaves a row height in modules alone, and scales the module",
-      _scaled_doc.elements[0].bar_height == _before
+check("a rescale scales the row height in dots, and the module",
+      _scaled_doc.elements[0].bar_height == round(_before * 300 / 203)
       and _scaled_doc.elements[0].module_width == 3,
       (_before, _scaled_doc.elements[0].bar_height,
        _scaled_doc.elements[0].module_width))
@@ -8649,9 +8651,9 @@ check("not printed: the MicroPDF417 is cut into two, both drawn",
 _nc_one = _nc_bars[7]
 check("not printed: data that fits one symbol has no control block - 4 rows, "
       "not 7",
-      box_of(_nc_one) == (440, 420, 240, 32)
-      and len(_nc_one._pdf417_grid(
-          _nc_one.barcode_value, zpl_pdf417.control_block(0, 1))) == 7 * 4,
+      box_of(_nc_one) == (440, 420, 240, 16)
+      and len(_nc_one._stacked_rows(
+          _nc_one.barcode_value, zpl_pdf417.control_block(0, 1))) == 7,
       box_of(_nc_one))
 # Not printed: the manual's TLC39 - the MicroPDF417 under the Code 39, in
 # byte compaction, twelve rows

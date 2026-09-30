@@ -357,21 +357,21 @@ def dpi_defaults(symbology: str, dpi: int) -> dict:
 SCALED_PARAMETERS = {'tlc39': (('micro_width', 'run'),
                                ('micro_height', 'stack'))}
 
-# What a symbology's `h` measures: dots for the 1-D family and the postal
-# codes, modules for PDF417's row height, and nothing for the matrix codes
-# whose size is their grid. Anything not here is dots.
+# What a symbology's `h` measures: nothing for the matrix codes whose size is
+# their grid. Anything not here is dots - PDF417's row height included, which
+# the manual gives both as "(in dots)" and as "multiplied by the module": a
+# printer drew ^BY2^B7N,4 in rows 4 dots tall.
 HEIGHT_UNIT = {
     'qr': None,
     'datamatrix': None,
-    # ^B7's h is how many modules tall each row of codewords is drawn, not
-    # how many dots: the manual says "this number multiplied by the module
-    # equals the height of the individual rows in dots". Scaling it for a
-    # different head resolution would double-count, since the module width
-    # it multiplies is scaled already.
-    'pdf417': 'modules',
     'aztec': None,
     'maxicode': None,
 }
+
+# The symbologies whose h, left out, is ^BY's whole-symbol height divided by
+# however many rows the data needs - which is not known until the data has
+# been encoded, so the parser leaves it at zero for the element to resolve.
+HEIGHT_FROM_ROWS = frozenset(('pdf417',))
 
 # The symbologies drawn at the one size the printer fixes. The manual says
 # ^BY "has no effect on the UPS MaxiCode", and ^BD carries no height or
@@ -388,14 +388,13 @@ DRAWN_IN_DOTS = FIXED_SIZE | frozenset(('tlc39',))
 # The symbologies whose symbol is a grid of square modules rather than bars
 # and spaces. Their size is the grid, so neither ^BY's height nor their own
 # command carries one.
-MATRIX = frozenset(('qr', 'datamatrix', 'pdf417', 'aztec'))
+MATRIX = frozenset(('qr', 'datamatrix', 'aztec'))
 
-# The stacked symbologies whose own h is each row's height in dots rather
-# than a multiple of the module. Their rows cannot be drawn as a grid of
-# square modules unless h happens to divide by the module width, so they
-# reach the canvases as rows of modules with a height of their own - the
-# 'stacked' kind of symbol.
-ROWS_IN_DOTS = frozenset(('micropdf417',))
+# The stacked symbologies, whose own h is each row's height in dots. Their
+# rows cannot be drawn as a grid of square modules unless h happens to divide
+# by the module width, so they reach the canvases as rows of modules with a
+# height of their own - the 'stacked' kind of symbol.
+ROWS_IN_DOTS = frozenset(('pdf417', 'micropdf417'))
 
 # The symbologies ^FM places at several origins, one symbol of a series at
 # each. The manual: ^FM "triggers multiple bar code printing on the same
@@ -528,10 +527,11 @@ BARCODE_FEATURES = {
     'planet':           _features(),
     'datamatrix':       _features(height=None, module_width="Module Size",
                                   text=False),
-    'pdf417':           _features(height=(1, 30), module_width="Module Width",
+    # ^B7's and ^BF's height rows are each row's height in dots, 1 to 9999 as
+    # the manual allows; two modules is the least a reader is promised to
+    # cope with.
+    'pdf417':           _features(height=(1, 9999), module_width="Module Width",
                                   text=False),
-    # ^BF's height row is each row's height in dots, 1 to 9999 as the manual
-    # allows; two modules is the least a reader is promised to cope with.
     'micropdf417':      _features(height=(1, 9999), module_width="Module Width",
                                   text=False),
     # The Code 39's own rows: its module width, ratio and height.
