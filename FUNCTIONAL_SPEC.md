@@ -551,17 +551,22 @@ printer errors out on the same field.
 
 **A TLC39 is two symbols.** `^BT`'s field data is a six-digit ECI number, and
 then, after a comma, a serial number and whatever else follows it; the Code
-39 carries the ECI number and a four-column MicroPDF417 the rest, commas and
-all. With no comma after the ECI number there is no MicroPDF417, only the Code
-39; an ECI number that is not six digits draws nothing and keeps the Code
-39's footprint, since the printer refuses it. The Code 39 is `^BT`'s w1, r1
-and h1 - module width, ratio and height, held where every barcode holds them
-- and the MicroPDF417 its w2 and h2, a module width and row height in dots,
-in the smallest four-column size that holds the data. The MicroPDF417 goes
-under the Code 39, left edges together, one of its own modules below it, and
-holds its data in byte compaction: that is how the manual draws its own
-example, whose MicroPDF417 is twelve rows - what that data needs in byte
-compaction and not otherwise (§18). Two module widths in one symbol cannot be
+39 carries the ECI number and a four-column MicroPDF417 the rest, its commas
+written as asterisks. With no comma after the ECI number there is no
+MicroPDF417, only the Code 39; an ECI number that is not six digits draws
+nothing and keeps the Code 39's footprint, since the printer refuses it. The
+Code 39 is `^BT`'s w1, r1 and h1 - module width, ratio and height, held
+where every barcode holds them - and the MicroPDF417 its w2 and h2, a module
+width and row height in dots. As a printer drew the manual's own example
+(§18): the MicroPDF417 on top, a module in from the origin and half of one
+down; the Code 39 a MicroPDF417 module below it, at the origin's left; and a
+lone Code 39 `T`, with no start or stop, ten of the Code 39's modules past
+its end and four past each of its ends up and down - 250 × 99 dots at a 203
+dpi head's defaults. The MicroPDF417 opens with ISO/IEC 15438's linkage flag,
+which zxing-cpp will not read, and holds the data in its shortest
+compaction, padded as `^BF` pads; its size is the smallest four-column one
+that would hold the flag and the data in byte compaction, which is how a
+printer sized it. Two module widths in one symbol cannot be
 a grid, so it is drawn in dots as a MaxiCode is, turns as one field, and
 offers no handles; Edit Barcode's Module Width, Ratio and Bar Height set the
 Code 39, and two number boxes the MicroPDF417. Every one of the five sizes
@@ -2726,17 +2731,19 @@ rather than requirements:
   derives it from the data, one label cannot say; a reader returns the same
   message whatever it is. What the printer does with a pair that is neither
   two numbers nor `e`, read here as `e`, has not been printed.
-- **A TLC39's arrangement is read off the manual's drawing** of its own
-  example (p.135), not yet off a print: the MicroPDF417 under the Code 39,
-  left edges together, a module apart, and twelve rows for that data - which
-  is what byte compaction needs for it, where the shortest compaction needs
-  ten, so the MicroPDF417 is written in byte compaction. The drawing also
-  shows a narrow piece of bars standing apart to the right, taller than the
-  Code 39, that nothing in the manual's text accounts for; it is not drawn.
-  Nor is anything but the six-digit ECI number put in the Code 39, nor
-  anything but the data after it, as written, in the MicroPDF417. The
-  drawing's Code 39 is taller than the 40 dots the manual gives as h1's
-  default at 200 dpi; the default is followed.
+- **A TLC39 is drawn as a printer drew the manual's own example, at its
+  default sizes only.** The manual's drawing (p.135) has the Code 39 on top
+  and the MicroPDF417 under it; a printer put the MicroPDF417 on top, and
+  beside the Code 39 the narrow piece the drawing shows and nothing in the
+  text accounts for: a lone Code 39 `T`. Its MicroPDF417 read back codeword
+  for codeword - the linkage flag, the data with asterisks for commas in
+  text, numeric and text compaction, and `^BF`'s padding - in twelve rows,
+  where the data needs ten; twelve is the size the data would need in byte
+  compaction. Only w1 2, r1 2.0, h1 40, w2 2 and h2 4 have been printed, so
+  which size each distance goes with is taken from the module it matched
+  there: the MicroPDF417 a w2 in and half a w2 down, a w2 above the Code 39,
+  and the `T` ten w1 past it and four w1 past each end. Whether a TLC39 with
+  no MicroPDF417 has its `T` has not been printed; it is drawn without.
 - **`tests/fixtures/new_commands.zpl` is a label for what the three entries
   above leave open, and for `^TB`'s (below)**, registered on a rule along
   its top and one down its left:

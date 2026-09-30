@@ -330,22 +330,20 @@ if hasattr(zxingcpp.BarcodeFormat, 'MicroPDF417'):
 # Two symbols from one field: a Code 39 carrying the ECI number and a
 # MicroPDF417 carrying the rest, which a reader returns separately.
 _TLC = "123456,ABCd12345678901234,5551212,88899"      # the manual's, p.135
-if hasattr(zxingcpp.BarcodeFormat, 'MicroPDF417'):
-    for facing in "NRIB":
-        found = sorted(decoded(f"^XA^PW600^LL600^FO100,100^BT{facing}"
-                               f"^FD{_TLC}^FS^XZ"))
-        check(f"the manual's TLC39, turned {facing}, reads back as its two "
-              "symbols",
-              found == [('Code39', '123456'),
-                        ('MicroPDF417', 'ABCd12345678901234,5551212,88899')],
-              found)
-    for dpi, page in ((300, (900, 900)), (600, (1500, 1500))):
-        found = sorted(decoded(f"^XA^FO100,100^BT^FD{_TLC}^FS^XZ", *page,
-                               dpi=dpi))
-        check(f"and at {dpi} dpi, drawn at that head's own defaults",
-              found == [('Code39', '123456'),
-                        ('MicroPDF417', 'ABCd12345678901234,5551212,88899')],
-              found)
+# Its MicroPDF417 opens with ISO/IEC 15438's linkage flag, as a printer's did,
+# and zxing-cpp reads no symbol that has one - it did not read the printed
+# one either. So only the Code 39 comes back; what the MicroPDF417 holds is
+# checked codeword by codeword against the print in test_core.
+for facing in "NRIB":
+    found = sorted(decoded(f"^XA^PW600^LL600^FO100,100^BT{facing}"
+                           f"^FD{_TLC}^FS^XZ"))
+    check(f"the manual's TLC39, turned {facing}, reads back as its Code 39",
+          found == [('Code39', '123456')], found)
+for dpi, page in ((300, (900, 900)), (600, (1500, 1500))):
+    found = sorted(decoded(f"^XA^FO100,100^BT^FD{_TLC}^FS^XZ", *page,
+                           dpi=dpi))
+    check(f"and at {dpi} dpi, drawn at that head's own defaults",
+          found == [('Code39', '123456')], found)
 reads("with no comma after the ECI, a TLC39 is its Code 39 alone",
       "^XA^PW600^LL600^FO100,100^BT^FD123456789^FS^XZ", "123456", 'Code39')
 

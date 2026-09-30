@@ -2686,8 +2686,8 @@ from zplcore import tlc39 as zpl_tlc39
 
 _TLC = "123456,ABCd12345678901234,5551212,88899"      # the manual's, p.135
 check("a TLC39's Code 39 carries the six-digit ECI, and its MicroPDF417 the "
-      "rest",
-      zpl_tlc39.split(_TLC) == ('123456', 'ABCd12345678901234,5551212,88899')
+      "rest, its commas asterisks as a printer wrote them",
+      zpl_tlc39.split(_TLC) == ('123456', 'ABCd12345678901234*5551212*88899')
       and zpl_tlc39.split("123456789") == ('123456', None)
       and zpl_tlc39.split("123456") == ('123456', None),
       zpl_tlc39.split(_TLC))
@@ -2698,12 +2698,22 @@ for _bad in ("12345", "ABCDEF,SERIAL"):
     except ValueError:
         _refused = True
     check(f"{_bad!r} is refused: the ECI is six digits", _refused)
-check("the MicroPDF417 is written in byte compaction, which is what gives the "
-      "manual's example its twelve rows",
-      zpl_tlc39.micro_mode('ABCd12345678901234,5551212,88899') == 26
+check("the MicroPDF417 is sized for its data in byte compaction, which gives "
+      "the manual's example the twelve rows it printed in",
+      zpl_tlc39.micro_mode('ABCd12345678901234*5551212*88899') == 26
       and zpl_micropdf417.size(26)[:2] == (4, 12)
       and zpl_micropdf417.byte_codewords('AB')[0] == 901,
-      zpl_tlc39.micro_mode('ABCd12345678901234,5551212,88899'))
+      zpl_tlc39.micro_mode('ABCd12345678901234*5551212*88899'))
+# Read back from the new_commands label: the linkage flag, then the data in
+# text, numeric and text compaction, then a printer's padding
+_TLC_PRINTED = [918, 900, 1, 87, 119, 902, 171, 209, 269, 12, 434, 900, 892,
+                845, 155, 32, 32, 668, 248, 279, 900, 838, 779, 867, 865, 898,
+                868, 839, 900, 838]
+check("but written as a printer wrote it: the linkage flag, then the shortest "
+      "compaction, module for module",
+      zpl_micropdf417.encode('ABCd12345678901234*5551212*88899', 26,
+                             linked=True)
+      == zpl_micropdf417._rows(_TLC_PRINTED, 26))
 check("and the smallest four-column size that holds it is chosen",
       zpl_tlc39.micro_mode('A1') == 33
       and zpl_tlc39.micro_mode('A' * 12) == 23,
@@ -2718,12 +2728,22 @@ check("^BT is read as a TLC39, at a 203 dpi head's defaults",
       (_bt.module_width, _bt.ratio, _bt.bar_height, _bt.micro_width,
        _bt.micro_height, _bt.symbol_error))
 _bt_width, _bt_height, _bt_runs = _bt.symbol()[1]
-check("the MicroPDF417 goes under the Code 39, left edges together, a module "
-      "below it",
-      (_bt.width, _bt.height) == (206, 40 + 2 + 12 * 4)
-      and min(y for _x, y, _l in _bt_runs if y >= 40) == 42
-      and min(x for x, y, _l in _bt_runs if y >= 42) == 0
-      and min(x for x, y, _l in _bt_runs if y < 40) == 0,
+# As printed: the MicroPDF417 a module in and half of one down, 198 x 48;
+# the Code 39 a module under it, 206 x 40, at the left; and the T a quiet
+# zone past it, 24 wide, four modules past each end - 250 x 99 in all
+_bt_at = lambda x0, x1, y0, y1: sorted({(x, y) for x, y, n in _bt_runs
+                                        if x0 <= x < x1 and y0 <= y < y1})
+check("the MicroPDF417 goes above the Code 39, and a T beside it, as a "
+      "printer drew them",
+      (_bt.width, _bt.height) == (250, 99)
+      and min(y for x, y, _l in _bt_runs if x >= 2 and y < 49) == 1
+      and min(x for x, y, _l in _bt_runs if y < 49) == 2
+      and min(y for x, y, _l in _bt_runs if y >= 50 and x < 206) == 51
+      and max(y for x, y, _l in _bt_runs if x < 206) == 90
+      and min(x for x, y, _l in _bt_runs if y >= 51) == 0
+      and (min(x for x, y, _l in _bt_runs if x >= 207),
+           min(y for x, y, _l in _bt_runs if x >= 207),
+           max(y for x, y, _l in _bt_runs if x >= 207)) == (226, 43, 98),
       (_bt.width, _bt.height))
 check("and ^BT writes every parameter back, and no ^BY",
       "^FO100,100\n^BT,2,2.0,40,2,4\n" in _bt.to_zpl()
@@ -8685,11 +8705,11 @@ check("printed: data that fits one symbol carries a control block of one - "
           'One symbol', 3, 0, 1, macro=zpl_pdf417.control_block(0, 1))
       and zpl_pdf417._compact('One symbol') == _NC_ONE_PRINTED[1:7],
       box_of(_nc_one))
-# Not printed: the manual's TLC39 - the MicroPDF417 under the Code 39, in
-# byte compaction, twelve rows
-check("not printed: the manual's TLC39 is a Code 39 over a 4 x 12 "
-      "MicroPDF417",
-      box_of(_nc_bars[8]) == (70, 560, 206, 90)
+# Printed: the manual's TLC39 - a 4 x 12 MicroPDF417 above the Code 39 and a
+# T beside it, 250 x 99; the MicroPDF417 is the printer's module for module
+check("printed: the manual's TLC39 is a 4 x 12 MicroPDF417 over its Code 39, "
+      "and a T",
+      box_of(_nc_bars[8]) == (70, 560, 250, 99)
       and zpl_tlc39.micro_mode(
           zpl_tlc39.split(_nc_bars[8].barcode_value)[1]) == 26,
       box_of(_nc_bars[8]))

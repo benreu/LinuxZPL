@@ -123,9 +123,16 @@ def capacity(mode: int) -> int:
     return columns * rows - checks
 
 
+# ISO/IEC 15438's linkage flag: the codeword that says a symbol goes with a
+# linear one other than a GS1 one. A printer put it first in a TLC39's
+# MicroPDF417, ahead of the data.
+LINKED = 918
+
+
 def byte_codewords(data: str) -> list:
     """The message in byte compaction alone, whatever it holds - which is
-    how a TLC39's MicroPDF417 is taken to be written (tlc39.py)."""
+    what a printer sizes a TLC39's MicroPDF417 by (tlc39.py), though it
+    writes the message in whichever modes are shortest."""
     raw = data.encode('utf-8')
     return ([pdf417._LATCH_BYTE_SIX if len(raw) % 6 == 0
              else pdf417._LATCH_BYTE] + pdf417._bytes(raw))
@@ -181,19 +188,19 @@ def _rows(body: list, mode: int) -> tuple:
 
 @functools.lru_cache(maxsize=64)
 def encode(data: str, mode: int = 0, macro: tuple = (),
-           bytes_only: bool = False) -> tuple:
+           linked: bool = False) -> tuple:
     """The symbol as rows of booleans, one per module, dark where True.
 
     One row per row of codewords; ^BF's h is how many dots tall each is,
     which the caller applies. `macro` is the control block that makes this
     symbol one of an ^FM series (pdf417.control_block), if it is one, and
-    `bytes_only` writes the message in byte compaction alone. Kept, because
-    both canvases ask on every paint.
+    `linked` puts the linkage flag ahead of the message, as a TLC39's
+    MicroPDF417 has it. Kept, because both canvases ask on every paint.
     """
     if not 0 <= mode < MODES:
         raise ValueError(f"MicroPDF417 has no mode {mode}; ^BF's m is 0 to "
                          f"{MODES - 1}")
-    payload = byte_codewords(data) if bytes_only else data_codewords(data)
+    payload = ([LINKED] if linked else []) + data_codewords(data)
     room = capacity(mode)
     if len(payload) + len(macro) > room:
         columns, rows, _checks = size(mode)
