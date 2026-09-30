@@ -8595,6 +8595,104 @@ check("both frontends are offered the same blocks",
 
 zpl_fonts._resident_cache['0'] = STANDIN
 
+# --- a label not yet printed: ^BF, ^FM, ^BT and ^TB --------------------------
+# tests/fixtures/new_commands.zpl holds each case the manual leaves open, with
+# a rule along the top and one down the left to register a scan on. Each
+# check says what this app does now, so a print either confirms it or
+# replaces it with what printed.
+_nc_src = (FIXTURES / 'new_commands.zpl').read_text(encoding='utf-8')
+_nc = zpl_parser.parse_zpl(_nc_src)[0]
+_nc_bars = [e for e in _nc.elements if e.element_type == 'barcode']
+_nc_blocks = [e for e in _nc.elements
+              if e.element_type == 'text' and e.block is not None]
+_nc_x = next(e for e in _nc.elements
+             if e.element_type == 'text' and e.block is None)
+check("the label holds nothing a save would drop, and saves byte-stable",
+      workflow.unsupported_commands(_nc_src) == []
+      and zpl_parser.parse_zpl(_nc.to_zpl())[0].to_zpl() == _nc.to_zpl())
+# Not printed: ^BF's h is each row's height. Read as the whole symbol's
+# height, each of these would be h dots tall.
+check("not printed: ^BF's h is each row's height - the manual's example 20 "
+      "rows of 8, and modes 0, 18 and 33 11 of 10, 20 of 4 and 4 of 12",
+      [box_of(e) for e in _nc_bars[:4]]
+      == [(70, 70, 76, 160), (190, 70, 114, 110), (350, 70, 164, 80),
+          (560, 70, 198, 48)],
+      [box_of(e) for e in _nc_bars[:4]])
+_nc_over = _nc_bars[4]
+check("not printed: data too long for its mode draws nothing at the ticks",
+      _nc_over.symbol_error is not None
+      and ZPLRenderer(812, 1218).render(_nc_src).convert('L').crop(
+          (_nc_over.x, _nc_over.y, _nc_over.x + _nc_over.width,
+           _nc_over.y + _nc_over.height)).point(
+          lambda v: 255 if v < 128 else 0).getbbox() is None,
+      _nc_over.symbol_error)
+# Not printed: how the PDF417 is cut and marked. Three pieces, each as much
+# as its own compaction fits beside zint's control block; the second is
+# excluded, and the field after the series starts at its first origin.
+_nc_series = _nc_bars[5]
+check("not printed: the PDF417 is cut into three, the second not drawn",
+      zpl_pdf417.series(_nc_series.barcode_value, 3, 10, 1)
+      == ('Macro PDF417: this message is c',
+          'ut into three symbols and the secon', 'd is not printed.')
+      and [(dx, dy) for dx, dy, _k, _p in _nc_series.series()]
+      == [(0, 0), (370, 0)],
+      _nc_series.origins)
+check("not printed: the X after the series stands on its first origin",
+      geometry.typeset_point(_nc_x) == (70, 300),
+      geometry.typeset_point(_nc_x))
+check("not printed: the MicroPDF417 is cut into two, both drawn",
+      zpl_micropdf417.series(_nc_bars[6].barcode_value, 10)
+      == ('A MicroPDF417 message too long for on', 'e symbol, in two.')
+      and box_of(_nc_bars[6]) == (70, 420, 290, 80), box_of(_nc_bars[6]))
+# Data that fits one symbol is drawn with no control block: 4 rows, where
+# one would make it 7, since the rows are left to the data
+_nc_one = _nc_bars[7]
+check("not printed: data that fits one symbol has no control block - 4 rows, "
+      "not 7",
+      box_of(_nc_one) == (440, 420, 240, 32)
+      and len(_nc_one._pdf417_grid(
+          _nc_one.barcode_value, zpl_pdf417.control_block(0, 1))) == 7 * 4,
+      box_of(_nc_one))
+# Not printed: the manual's TLC39 - the MicroPDF417 under the Code 39, in
+# byte compaction, twelve rows
+check("not printed: the manual's TLC39 is a Code 39 over a 4 x 12 "
+      "MicroPDF417",
+      box_of(_nc_bars[8]) == (70, 560, 206, 90)
+      and zpl_tlc39.micro_mode(
+          zpl_tlc39.split(_nc_bars[8].barcode_value)[1]) == 26,
+      box_of(_nc_bars[8]))
+# Not printed: ^TB's lines, in font 0's stand-in, which printed font 0
+# within 2%. Where each block breaks and what it keeps is what the print
+# decides.
+if STANDIN:
+    _nc_lines = [textraster.wrap(_nc.display_text(e), e.face(_nc.font_path),
+                                 e.font_height, e.font_width, e.block)
+                 for e in _nc_blocks]
+    check("not printed: a ^TB keeps its whole lines and drops the rest",
+          _nc_lines[0] == ['The quick brown fox', 'jumps over the lazy dog,',
+                           'and then over the fence']
+          and _nc_lines[2] == ['One line and a half is all'], _nc_lines[:3])
+    check("not printed: a right justified field's ^TB lines end at its "
+          "right edge, which its ^FO names",
+          _nc_blocks[1].block.justification == 'R'
+          and box_of(_nc_blocks[1]) == (460, 700, 300, 95)
+          and _nc_lines[1] == ['Right justified lines of a', 'text block'],
+          (_nc_blocks[1].block, box_of(_nc_blocks[1])))
+    check("not printed: <<> prints <, another <...> as written, and \\& "
+          "breaks the line",
+          _nc_lines[3] == ['a < b <x> c', 'after a forced break'],
+          _nc_lines[3])
+    check("not printed: a no-break space holds, and a soft hyphen is not a "
+          "place to break",
+          _nc_lines[4] == ['aaaa', 'bbbb cccc']
+          and _nc_lines[5] == ['xx', 'abcdef'], _nc_lines[4:6])
+    check("not printed: a word too long for its block is kept whole",
+          _nc_lines[6] == ['Supercalifragilistic', 'word'], _nc_lines[6])
+check("not printed: ^TBR turns a field whose ^A says N",
+      _nc_blocks[7].orientation == 'R'
+      and box_of(_nc_blocks[7]) == (560, 950, 95, 200),
+      (_nc_blocks[7].orientation, box_of(_nc_blocks[7])))
+
 # --- the resident bitmap fonts print in whole-number magnifications -------
 # A bitmap font can only be magnified by whole numbers, 1 to 10 on each axis,
 # with its own fixed gap after each character. The designer drew ^AFN,36,20

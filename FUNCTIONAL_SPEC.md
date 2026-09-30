@@ -2717,6 +2717,23 @@ rather than requirements:
   anything but the data after it, as written, in the MicroPDF417. The
   drawing's Code 39 is taller than the 40 dots the manual gives as h1's
   default at 200 dpi; the default is followed.
+- **`tests/fixtures/new_commands.zpl` is a label for what the three entries
+  above leave open, and for `^TB`'s (below)**, registered on a rule along
+  its top and one down its left:
+  - four MicroPDF417s at `h` 8, 10, 4 and 12: 160, 110, 80 and 48 dots
+    tall if `h` is a row's height, `h` itself if it is the symbol's - and
+    data too long for mode 0 at a pair of ticks
+  - a PDF417 cut into three with the second excluded, and an X placed by a
+    bare `^FT` after it
+  - a MicroPDF417 cut into two, and a PDF417 whose data fits one symbol,
+    its rows left to the data: 4 plain, 7 with a control block
+  - the manual's TLC39
+  - text blocks for each `^TB` case, each in a box 6 dots clear of it
+
+  The core tests say what this reads each as until it is printed. It must
+  be sent as it is, through the printer console: a save turns the `^TBR`
+  field's `^A` with it and spells out `^BT`'s defaults, which are two of the
+  things the print is to settle.
 - **`^BX` draws ECC 200 whatever quality it is asked for.** Levels 0 to 140
   use convolutional coding, were meant for closed systems where one party
   controls both the printing and the reading, and no reader made this century
@@ -2790,8 +2807,8 @@ rather than requirements:
     tall prints nothing
   - `\&` breaks a line, as in a `^FB`
   - any `<...>` but `<<>` is drawn as written
-  - a word too long for the block runs past its right edge on a line of its
-    own, as in a `^FB`
+  - a word too long for the block is kept whole on a line of its own and
+    cut off at the block's right edge, as a `^FB`'s is drawn
   - a right justified field's `^FO` names the block's right edge, as any
     field's does
   - a rotation in the `^TB` wins over the `^A`'s, whichever comes first
