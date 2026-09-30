@@ -36,6 +36,7 @@ SYMBOLOGIES = {
     'datamatrix': "Data Matrix",
     'pdf417': "PDF417",
     'micropdf417': "MicroPDF417",
+    'tlc39': "TLC39",
     'aztec': "Aztec Code",
     'databar': "GS1 DataBar",
     'maxicode': "MaxiCode",
@@ -65,17 +66,19 @@ COMMAND = {
     'datamatrix': '^BX',
     'pdf417': '^B7',
     'micropdf417': '^BF',
+    'tlc39': '^BT',
     'aztec': '^B0',
     'databar': '^BR',
     'maxicode': '^BD',
     'qr': '^BQ',
 }
 
-# The command's positional parameters, in the order ZPL spells them. Seven
+# The command's positional parameters, in the order ZPL spells them. Eight
 # names are shared and held on the element under their own attributes:
 # o (orientation), h (bar_height), w (module_width, which a matrix symbology
-# spells as its magnification), f (print the interpretation line), g (print
-# it above), e (check digit) and m (mode). Every other name is one of
+# spells as its magnification), r (ratio, which ^BT alone carries in its own
+# command rather than taking ^BY's), f (print the interpretation line), g
+# (print it above), e (check digit) and m (mode). Every other name is one of
 # PARAMETERS below, held on the element under that name.
 COMMAND_PARAMS = {
     '^BC': ('o', 'h', 'f', 'g', 'e', 'm'),
@@ -87,6 +90,10 @@ COMMAND_PARAMS = {
     # ^B7's is: the manual's own example, ^BY6^BFN,8, is drawn with rows 8
     # dots tall and modules 6 wide.
     '^BF': ('o', 'h', 'micro_mode'),
+    # ^BT is two symbols: a Code 39 at w1, r1 and h1 - the module width,
+    # ratio and height every Code 39 has, held where they always are - and a
+    # MicroPDF417 at w2 and h2, its own module width and row height in dots.
+    '^BT': ('o', 'w', 'r', 'h', 'micro_width', 'micro_height'),
     '^B0': ('o', 'w', 'eci', 'aztec_size', 'menu', 'append_count',
             'append_id'),
     '^BR': ('o', 'databar_type', 'w', 'separator', 'h', 'segments'),
@@ -114,7 +121,11 @@ COMMAND_PARAMS = {
     '^BS': ('o', 'h', 'f', 'g'),
 }
 
-SHARED_PARAMS = ('o', 'h', 'w', 'f', 'g', 'e', 'm')
+SHARED_PARAMS = ('o', 'h', 'w', 'r', 'f', 'g', 'e', 'm')
+
+# The ratio a command that carries its own takes when it leaves it out: ^BT's
+# r1, whose default is 2.0 where ^BY's is 3.0.
+OWN_RATIO_DEFAULT = 2.0
 # The shared parameters that are a Y/N flag, in the canonical order
 # BarcodeElement holds them in.
 FLAG_PARAMS = ('f', 'g', 'e', 'm')
@@ -244,6 +255,11 @@ PARAMETERS = {
     # to four columns, four to 44 rows, each with its own error correction.
     # The size is chosen here, not fitted to the data.
     'micro_mode': Param(int, 0, choices=tuple(range(34))),
+    # ^BT w2 and h2 - the MicroPDF417's module width and row height, in
+    # dots. What an omitted one means depends on the head (dpi_defaults);
+    # these are a 203 dpi head's, for a TLC39 made in the editor.
+    'micro_width': Param(int, 2),
+    'micro_height': Param(int, 4),
     # ^B0 c - whether the field data carries extended channel interpretation
     # codes, and ^B0 e, whether this is a reader-initialisation symbol.
     # Carried, neither simulated.
@@ -319,7 +335,27 @@ def varies(symbology: str, name: str) -> bool:
 # Parameters written even when they hold the default: the ones the printer
 # would otherwise resolve for itself, which a file this designer writes must
 # not leave to it. `h` is always among them, as it always was.
-ALWAYS_WRITTEN = frozenset(('h', 'w'))
+ALWAYS_WRITTEN = frozenset(('h', 'w', 'micro_width', 'micro_height'))
+
+
+def dpi_defaults(symbology: str, dpi: int) -> dict:
+    """What an omitted parameter means for a command whose manual entry
+    gives its defaults per print resolution, by parameter name - ^BT's, the
+    only one. Empty for every other symbology."""
+    if symbology != 'tlc39':
+        return {}
+    fine = dpi >= 600
+    return {'w': 4 if fine else 2,
+            'h': 120 if fine else 60 if dpi >= 300 else 40,
+            'micro_width': 4 if fine else 2,
+            'micro_height': 8 if fine else 4}
+
+
+# Parameters beyond the shared ones that are lengths in dots, and so scale
+# when a design is rescaled or a group resized - along the run or across the
+# stack of the barcode's own frame, as its module width and height do.
+SCALED_PARAMETERS = {'tlc39': (('micro_width', 'run'),
+                               ('micro_height', 'stack'))}
 
 # What a symbology's `h` measures: dots for the 1-D family and the postal
 # codes, modules for PDF417's row height, and nothing for the matrix codes
@@ -343,6 +379,11 @@ HEIGHT_UNIT = {
 # at every resolution - which makes its size in dots the resolution's - and
 # nothing resizes, scales or turns it.
 FIXED_SIZE = frozenset(('maxicode',))
+
+# The symbologies drawn in dots rather than modules - the 'dots' kind of
+# symbol: a MaxiCode's hexagons and rings, and a TLC39, whose two symbols
+# each have a module of their own. Neither offers resize handles.
+DRAWN_IN_DOTS = FIXED_SIZE | frozenset(('tlc39',))
 
 # The symbologies whose symbol is a grid of square modules rather than bars
 # and spaces. Their size is the grid, so neither ^BY's height nor their own
@@ -383,8 +424,8 @@ READS_BY = frozenset(key for key, command in COMMAND.items()
 # Symbologies with no interpretation line at all - the matrix and stacked
 # codes, whose commands carry no f parameter. Everything else has one, on by
 # default or not as flag_defaults says.
-NO_TEXT = frozenset(('qr', 'datamatrix', 'pdf417', 'micropdf417', 'aztec',
-                     'maxicode'))
+NO_TEXT = frozenset(('qr', 'datamatrix', 'pdf417', 'micropdf417', 'tlc39',
+                     'aztec', 'maxicode'))
 
 # The height ^BF takes when neither its own h nor a ^BY gives one: the
 # manual's "value set by ^BY or 10 (if no ^BY value exists)". Every other
@@ -436,6 +477,14 @@ _MICRO_SIZES = tuple(micropdf417.size(mode)[:2]
                      for mode in range(micropdf417.MODES))
 
 
+class Spin:
+    """An editor row that is a number rather than a choice - a spin button
+    from `lower` to `upper` - for a parameter with too many values to list."""
+
+    def __init__(self, lower: int, upper: int):
+        self.lower, self.upper = lower, upper
+
+
 def _features(mode=False, ratio=False, check_digit=None, height=(20, 300),
               module_width="Module Width", text=True, orientation=True,
               control_chars=False):
@@ -485,6 +534,8 @@ BARCODE_FEATURES = {
     # allows; two modules is the least a reader is promised to cope with.
     'micropdf417':      _features(height=(1, 9999), module_width="Module Width",
                                   text=False),
+    # The Code 39's own rows: its module width, ratio and height.
+    'tlc39':            _features(ratio=True, height=(1, 9999), text=False),
     'aztec':            _features(height=None, module_width="Magnification",
                                   text=False),
     'qr':               _features(height=None, module_width="Magnification",
@@ -494,7 +545,8 @@ BARCODE_FEATURES = {
 }
 
 # The rows a symbology adds to the dialog for its own parameters, as
-# (attribute, label, choices), where choices is a tuple of (label, value).
+# (attribute, label, choices), where choices is a tuple of (label, value), or
+# a Spin for a number with too many values to list.
 # Both editors build these rows from here and show them only while that
 # symbology is chosen, so a parameter cannot arrive with no way to set it.
 BARCODE_PARAMETERS = {
@@ -531,6 +583,8 @@ BARCODE_PARAMETERS = {
                             f" × {rows} rows (mode {mode})", mode)
                            for mode, (columns, rows) in enumerate(
                                _MICRO_SIZES))),),
+    'tlc39': (('micro_width', "MicroPDF417 Module", Spin(1, 10)),
+              ('micro_height', "MicroPDF417 Row Height", Spin(1, 255))),
     'aztec': (('aztec_size', "Size and Correction",
                (("Default (23%)", 0), ("Minimum (5%)", 5),
                 ("Low (10%)", 10), ("High (50%)", 50), ("Maximum (95%)", 95),

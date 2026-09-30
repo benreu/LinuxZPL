@@ -182,7 +182,9 @@ class ZPLRenderer:
             symbology=getattr(self, 'barcode_symbology', 'code128'),
             params=getattr(self, 'barcode_params', None),
             total_height=self.barcode_default_height,
-            ratio=getattr(self, 'ratio', 3.0),
+            ratio=(self.barcode_ratio
+                   if getattr(self, 'barcode_ratio', None) is not None
+                   else getattr(self, 'ratio', 3.0)),
             dpi=self.dpi,
             origins=(self.multi_origin
                      if getattr(self, 'barcode_symbology', None)
@@ -1092,10 +1094,11 @@ class ZPLRenderer:
             self.barcode_symbology = bc['symbology']
             self.barcode_params = bc['params']
             self.barcode_magnification = bc['magnification']
+            self.barcode_ratio = bc['ratio']
             self.is_barcode_mode = True
         elif command[0] == 'B':
-            # Code 49, Codablock and TLC39 - the symbologies this designer
-            # still cannot draw. ^BY and every
+            # Code 49 and Codablock - the symbologies this designer still
+            # cannot draw. ^BY and every
             # other ^B command are matched above, so only those reach here.
             self.unsupported_field = True
     

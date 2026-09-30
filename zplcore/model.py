@@ -33,6 +33,7 @@ from . import postal
 from . import datamatrix
 from . import pdf417
 from . import micropdf417
+from . import tlc39
 from . import aztec
 from . import maxicode
 from . import databar
@@ -1180,10 +1181,10 @@ class BarcodeElement(DesignElement):
 
     @property
     def resizable(self) -> bool:
-        """A MaxiCode is the size the printer fixes, and an ^FM series is
-        several symbols whose sizes come from the editor; everything else can
-        be asked for another module width or height."""
-        return (self.symbology not in symbologies.FIXED_SIZE
+        """A MaxiCode is the size the printer fixes, and a TLC39 and an ^FM
+        series are two or more symbols whose sizes come from the editor;
+        everything else can be asked for another module width or height."""
+        return (self.symbology not in symbologies.DRAWN_IN_DOTS
                 and not self.in_series())
 
     def in_series(self) -> bool:
@@ -1316,6 +1317,10 @@ class BarcodeElement(DesignElement):
             symbols = self.series_symbols()
             return symbols[0] if symbols else (kind, [])
         try:
+            if kind == 'dots' and self.symbology == 'tlc39':
+                return ('dots', tlc39.symbol(
+                    self._raw_value(), self.module_width, self.ratio,
+                    self.bar_height, self.micro_width, self.micro_height))
             if kind == 'dots':
                 return ('dots', maxicode.symbol(
                     self._raw_value(), self.maxi_mode, self.symbol_number,
@@ -1340,7 +1345,7 @@ class BarcodeElement(DesignElement):
 
     def _kind(self) -> str:
         """Which kind of symbol this symbology is drawn as (symbol())."""
-        if self.symbology in symbologies.FIXED_SIZE:
+        if self.symbology in symbologies.DRAWN_IN_DOTS:
             return 'dots'
         if self.symbology in symbologies.POSTAL:
             return 'postal'
@@ -1566,6 +1571,12 @@ class BarcodeElement(DesignElement):
             # Narrow bars at a one-to-one pitch: n bars and n - 1 gaps.
             bars = len(payload) or symbologies.PLACEHOLDER_MODULES
             return (max(1, 2 * bars - 1) * module, max(1, self.bar_height))
+        if kind == 'dots' and self.symbology == 'tlc39':
+            # A TLC39 that could not be built keeps its Code 39's ground.
+            if payload:
+                return payload[0], payload[1]
+            return tlc39.placeholder(self.module_width, self.ratio,
+                                     self.bar_height)
         if kind == 'dots':
             # The one size a MaxiCode prints at, whether or not this data
             # made one - so a symbol that could not be built still covers
@@ -1699,6 +1710,9 @@ class BarcodeElement(DesignElement):
             # A matrix symbology spells its module width in its own command,
             # as a magnification, rather than deferring to ^BY.
             return str(max(1, self.module_width))
+        if name == 'r':
+            # One decimal place, as ZPL spells a ratio: 2.0 to 3.0.
+            return f"{self.ratio:.1f}"
         if name == 'f':
             return 'Y' if self.show_text else 'N'
         if name == 'g':
@@ -1713,6 +1727,8 @@ class BarcodeElement(DesignElement):
         """What that parameter means when the command leaves it out."""
         if name == 'o':
             return ''
+        if name == 'r':
+            return f"{symbologies.OWN_RATIO_DEFAULT:.1f}"
         if name in symbologies.FLAG_PARAMS:
             return self.DEFAULTS[symbologies.FLAG_PARAMS.index(name)]
         return symbologies.PARAMETERS[name].default_zpl(self.symbology)
@@ -1820,6 +1836,8 @@ BARCODE_PARAMETERS = symbologies.BARCODE_PARAMETERS
 BARCODE_CONTROL_CHARACTERS = symbologies.CONTROL_CHARACTERS
 # The symbologies whose editor offers ^FM's origins
 BARCODE_SERIES = symbologies.SERIES
+# An extra row that is a spin button rather than a choice
+BarcodeSpin = symbologies.Spin
 
 FRAME_COLOURS = (("Black", 'B'), ("White", 'W'))
 

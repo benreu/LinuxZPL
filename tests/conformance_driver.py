@@ -1175,6 +1175,18 @@ def sequence(driver, record):
     driver.drag_pointer(series.x + 5, series.y + 5, 30, 40)
     record('the series dragged by its first symbol')
 
+    # A TLC39 is two symbols of two module widths, drawn in dots, and offers
+    # no handles: both frontends have to agree on its footprint.
+    tlc = driver.add_barcode()
+    tlc.symbology = 'tlc39'
+    tlc.barcode_value = '123456,ABCD12345678901234,5551212,888999'
+    tlc.module_width, tlc.ratio, tlc.bar_height = 2, 2.0, 40
+    driver.resync_barcode(tlc)
+    record("a TLC39, the manual's own example")
+    driver.select(tlc)
+    record('a selected TLC39 offers no handles',
+           repr((driver.resize_target(), tlc.width, tlc.height)))
+
     block = next((e for e in driver.elements if e.element_type == 'text'), None)
     if block is not None:
         block.text = 'Stainless Steel Hex Head Bolt 10mm'

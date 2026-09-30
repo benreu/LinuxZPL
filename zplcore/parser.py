@@ -1439,6 +1439,11 @@ def _read_barcode(cmd: str, params: str, default_height=None,
     fallback = (symbologies.UNSET_HEIGHT.get(symbology, DESIGNER_BAR_HEIGHT)
                 if default_height is None else default_height)
     fields = dict(zip(names, parts))
+    # A command whose manual entry gives its defaults per print resolution -
+    # ^BT's - takes them for whatever it leaves out, rather than ^BY's.
+    for name, value in symbologies.dpi_defaults(symbology, dpi).items():
+        if not fields.get(name):
+            fields[name] = str(value)
 
     # ^FW turns the fields that have an orientation to take its default. A
     # command with none - ^BD, a MaxiCode read at any angle - is not turned.
@@ -1474,10 +1479,21 @@ def _read_barcode(cmd: str, params: str, default_height=None,
             if symbology not in symbologies.SIZED_BY_HEIGHT:
                 magnification = symbologies.default_magnification(dpi)
 
+    # A ratio the command carries itself - ^BT's r1, 2.0 to 3.0 in tenths -
+    # rather than ^BY's; None for every command that has none.
+    ratio = None
+    if 'r' in names:
+        try:
+            ratio = float(fields.get('r') or symbologies.OWN_RATIO_DEFAULT)
+        except ValueError:
+            ratio = symbologies.OWN_RATIO_DEFAULT
+        ratio = round(max(2.0, min(3.0, ratio)), 1)
+
     return {'symbology': symbology,
             'orientation': orientation,
             'height': height,
             'magnification': magnification,
+            'ratio': ratio,
             'dpi': dpi,
             'options': (fields.get('f', ''), fields.get('g', ''),
                         fields.get('e', ''), fields.get('m', '')),
@@ -1644,7 +1660,8 @@ def _build_element(field, doc, renderer):
                               module_width=module_width,
                               params=bc['params'],
                               total_height=field['bar_height'],
-                              ratio=field['ratio'],
+                              ratio=(bc['ratio'] if bc['ratio'] is not None
+                                     else field['ratio']),
                               orientation=bc['orientation'],
                               options=bc['options'],
                               symbology=bc['symbology'],

@@ -2634,6 +2634,90 @@ check("a paste brings the series whole",
       and "^FM20,20,20,300\n" in _fm_paste_doc.to_zpl(),
       _fm_paste_doc.to_zpl()[:200].replace('\n', ' '))
 
+# --- ^BT, TLC39 --------------------------------------------------------------
+from zplcore import tlc39 as zpl_tlc39
+
+_TLC = "123456,ABCD12345678901234,5551212,888999"      # the manual's, p.135
+check("a TLC39's Code 39 carries the six-digit ECI, and its MicroPDF417 the "
+      "rest",
+      zpl_tlc39.split(_TLC) == ('123456', 'ABCD12345678901234,5551212,888999')
+      and zpl_tlc39.split("123456789") == ('123456', None)
+      and zpl_tlc39.split("123456") == ('123456', None),
+      zpl_tlc39.split(_TLC))
+for _bad in ("12345", "ABCDEF,SERIAL"):
+    try:
+        zpl_tlc39.split(_bad)
+        _refused = False
+    except ValueError:
+        _refused = True
+    check(f"{_bad!r} is refused: the ECI is six digits", _refused)
+check("the MicroPDF417 is written in byte compaction, which is what gives the "
+      "manual's example its twelve rows",
+      zpl_tlc39.micro_mode('ABCD12345678901234,5551212,888999') == 26
+      and zpl_micropdf417.size(26)[:2] == (4, 12)
+      and zpl_micropdf417.byte_codewords('AB')[0] == 901,
+      zpl_tlc39.micro_mode('ABCD12345678901234,5551212,888999'))
+check("and the smallest four-column size that holds it is chosen",
+      zpl_tlc39.micro_mode('A1') == 33
+      and zpl_tlc39.micro_mode('A' * 12) == 23,
+      (zpl_tlc39.micro_mode('A1'), zpl_tlc39.micro_mode('A' * 12)))
+
+_bt_doc = zpl_parser.parse_zpl(f"^XA^FO100,100^BT^FD{_TLC}^FS^XZ")[0]
+_bt = _bt_doc.elements[0]
+check("^BT is read as a TLC39, at a 203 dpi head's defaults",
+      _bt.symbology == 'tlc39' and not _bt.symbol_error
+      and (_bt.module_width, _bt.ratio, _bt.bar_height, _bt.micro_width,
+           _bt.micro_height) == (2, 2.0, 40, 2, 4),
+      (_bt.module_width, _bt.ratio, _bt.bar_height, _bt.micro_width,
+       _bt.micro_height, _bt.symbol_error))
+_bt_width, _bt_height, _bt_runs = _bt.symbol()[1]
+check("the MicroPDF417 goes under the Code 39, left edges together, a module "
+      "below it",
+      (_bt.width, _bt.height) == (206, 40 + 2 + 12 * 4)
+      and min(y for _x, y, _l in _bt_runs if y >= 40) == 42
+      and min(x for x, y, _l in _bt_runs if y >= 42) == 0
+      and min(x for x, y, _l in _bt_runs if y < 40) == 0,
+      (_bt.width, _bt.height))
+check("and ^BT writes every parameter back, and no ^BY",
+      "^FO100,100\n^BT,2,2.0,40,2,4\n" in _bt.to_zpl()
+      and "^BY" not in _bt.to_zpl(), _bt.to_zpl().replace('\n', ' '))
+for _dpi, _expect in ((300, (2, 60, 2, 4)), (600, (4, 120, 4, 8))):
+    _at = zpl_parser.parse_zpl(
+        f"^XA^FXDESIGNER_DPI:{_dpi}^FO10,10^BT^FD{_TLC}^FS^XZ")[0].elements[0]
+    check(f"^BT's defaults at {_dpi} dpi are the manual's for that head",
+          (_at.module_width, _at.bar_height, _at.micro_width, _at.micro_height)
+          == _expect,
+          (_at.module_width, _at.bar_height, _at.micro_width,
+           _at.micro_height))
+_bt_given = zpl_parser.parse_zpl(
+    f"^XA^FO10,10^BY4,3.0,90^BTR,3,2.5,50,3,6^FD{_TLC}^FS^XZ")[0].elements[0]
+check("its own ratio and sizes are its own, not ^BY's",
+      (_bt_given.module_width, _bt_given.ratio, _bt_given.bar_height,
+       _bt_given.micro_width, _bt_given.micro_height) == (3, 2.5, 50, 3, 6)
+      and "^BTR,3,2.5,50,3,6\n" in _bt_given.to_zpl(),
+      _bt_given.to_zpl().replace('\n', ' '))
+check("a turned TLC39 has its footprint turned",
+      (_bt_given.width, _bt_given.height)
+      == zpl_tlc39.symbol(_TLC, 3, 2.5, 50, 3, 6)[1::-1])
+check("a ratio outside 2.0 to 3.0 is held to it",
+      zpl_parser.parse_zpl(f"^XA^FO10,10^BTN,2,4.5^FD{_TLC}^FS^XZ"
+                           )[0].elements[0].ratio == 3.0)
+_bt_bad = zpl_parser.parse_zpl(
+    "^XA^FO10,10^BT^FD12AB56^FS^XZ")[0].elements[0]
+check("an ECI that is not six digits draws nothing and keeps the Code 39's "
+      "footprint",
+      _bt_bad.symbol() == ('dots', []) and 'ECI' in _bt_bad.symbol_error
+      and (_bt_bad.width, _bt_bad.height) == (206, 40),
+      (_bt_bad.symbol_error, _bt_bad.width, _bt_bad.height))
+check("a TLC39 offers no resize handles", not _bt.resizable)
+_bt_doc.rescale(300 / 203)
+check("a rescale scales both symbols' sizes",
+      (_bt.module_width, _bt.bar_height, _bt.micro_width, _bt.micro_height)
+      == (3, 59, 3, 6),
+      (_bt.module_width, _bt.bar_height, _bt.micro_width, _bt.micro_height))
+check("^BT is no longer a command a save would drop",
+      workflow.unsupported_commands(f"^XA^FO0,0^BT^FD{_TLC}^FS^XZ") == [])
+
 # --- ^B0, Aztec Code --------------------------------------------------------
 from zplcore import aztec as zpl_aztec
 
@@ -3078,6 +3162,24 @@ _qt_plain = qt_dialogs.edit_barcode_dialog(None, BarcodeElement(0, 0, 80, 'AB'))
 check("a Code 128 offers no Positions",
       not _qt_plain.findChild(_QTableWidget, 'positions').isVisibleTo(_qt_plain))
 _qt_plain.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Cancel).click()
+
+# Edit Barcode: a TLC39's MicroPDF417 sizes, as spin buttons.
+from PySide2.QtWidgets import QSpinBox as _QSpinBox
+_qt_tlc = zpl_parser.parse_zpl(
+    "^XA^FO10,10^BT^FD123456,ABCD12345678901234,5551212,888999^FS^XZ"
+)[0].elements[0]
+_qt_tlc_dialog = qt_dialogs.edit_barcode_dialog(None, _qt_tlc)
+_qt_row_height = _qt_tlc_dialog.findChild(_QSpinBox, 'micro_height')
+check("Edit Barcode offers a TLC39's MicroPDF417 row height as a number",
+      _qt_row_height.isVisibleTo(_qt_tlc_dialog)
+      and _qt_row_height.value() == 4
+      and _qt_tlc_dialog.findChild(_QSpinBox, 'micro_width').value() == 2)
+_qt_row_height.setValue(7)
+_qt_tlc_dialog.findChild(_QDialogButtonBox).button(
+    _QDialogButtonBox.Ok).click()
+check("and OK writes it back, the Code 39's own sizes kept",
+      "^BTN,2,2.0,40,2,7\n" in _qt_tlc.to_zpl(),
+      _qt_tlc.to_zpl().replace('\n', ' '))
 
 # --- ^BR, the GS1 DataBar family and its relations --------------------------
 from zplcore import databar as zpl_databar

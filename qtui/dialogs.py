@@ -31,7 +31,7 @@ from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
                            BARCODE_MODES, BARCODE_ORIENTATIONS,
-                           BARCODE_PARAMETERS, BARCODE_SERIES,
+                           BARCODE_PARAMETERS, BARCODE_SERIES, BarcodeSpin,
                            MAX_SERIES_ORIGINS,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
                            DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
@@ -1333,26 +1333,41 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         for attribute, label, choices in rows:
             if attribute in extra_rows:
                 continue
-            combo = QComboBox()
-            combo.setObjectName(attribute)
-            for choice_label, value in choices:
-                combo.addItem(choice_label, value)
-            form.addRow(label + ":", combo)
-            extra_rows[attribute] = (combo, form.labelForField(combo), choices)
+            if isinstance(choices, BarcodeSpin):
+                # A number with too many values to list - a TLC39's
+                # MicroPDF417 row height.
+                widget = QSpinBox()
+                widget.setRange(choices.lower, choices.upper)
+            else:
+                widget = QComboBox()
+                for choice_label, value in choices:
+                    widget.addItem(choice_label, value)
+            widget.setObjectName(attribute)
+            form.addRow(label + ":", widget)
+            extra_rows[attribute] = (widget, form.labelForField(widget), choices)
+
+    def _extra_value(attribute):
+        widget = extra_rows[attribute][0]
+        return (widget.value() if isinstance(widget, QSpinBox)
+                else widget.currentData())
 
     def _load_extra_rows():
         """Show each row the chosen symbology has, set to its value."""
         wanted = dict((attribute, True) for attribute, _l, _c
                       in BARCODE_PARAMETERS.get(symbology_combo.currentData(), ()))
-        for attribute, (combo, label, choices) in extra_rows.items():
+        for attribute, (widget, label, choices) in extra_rows.items():
             shown = attribute in wanted
-            combo.setVisible(shown)
+            widget.setVisible(shown)
             label.setVisible(shown)
             if not shown:
                 continue
             current = getattr(element, attribute, None)
+            if isinstance(widget, QSpinBox):
+                widget.setValue(current if current is not None
+                                else choices.lower)
+                continue
             values = [value for _l, value in choices]
-            combo.setCurrentIndex(values.index(current) if current in values else 0)
+            widget.setCurrentIndex(values.index(current) if current in values else 0)
 
     ratio_spin = QDoubleSpinBox()
     ratio_spin.setRange(2.0, 3.0)
@@ -1528,8 +1543,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         # change when the editor was driven rather than clicked.
         for attribute, _label, _choices in BARCODE_PARAMETERS.get(
                 element.symbology, ()):
-            combo = extra_rows[attribute][0]
-            setattr(element, attribute, combo.currentData())
+            setattr(element, attribute, _extra_value(attribute))
         element.check_digit = check_combo.currentData()
         element.mode = mode_combo.currentData()
         element.reverse_print = fr_check.isChecked()

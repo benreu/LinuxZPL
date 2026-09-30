@@ -3968,11 +3968,19 @@ class ZPLViewerWindow(Gtk.Window):
                 for attribute, row_label, choices in rows:
                     if attribute in extra_rows:
                         continue
-                    combo, codes = make_combo(choices,
-                                              getattr(element, attribute, None))
-                    combo.set_name(attribute)
-                    row, _label = make_row(row_label + ":", combo)
-                    extra_rows[attribute] = (combo, codes, row)
+                    if isinstance(choices, model.BarcodeSpin):
+                        # A number with too many values to list - a TLC39's
+                        # MicroPDF417 row height.
+                        widget, codes = make_spin(
+                            getattr(element, attribute, None)
+                            or choices.lower, choices.lower,
+                            choices.upper), None
+                    else:
+                        widget, codes = make_combo(
+                            choices, getattr(element, attribute, None))
+                    widget.set_name(attribute)
+                    row, _label = make_row(row_label + ":", widget)
+                    extra_rows[attribute] = (widget, codes, row)
 
             ratio_spin = _make_ratio_spin(element.ratio, 2.0, 3.0)
             ratio_row, _ratio_label = make_row("Ratio:", ratio_spin)
@@ -4103,12 +4111,17 @@ class ZPLViewerWindow(Gtk.Window):
                 text_height_row.set_visible(bool(features['text']))
                 wanted = [attribute for attribute, _l, _c
                           in model.BARCODE_PARAMETERS.get(chosen, ())]
-                for attribute, (combo, codes, row) in extra_rows.items():
+                for attribute, (widget, codes, row) in extra_rows.items():
                     row.set_visible(attribute in wanted)
-                    if attribute in wanted:
-                        current = getattr(element, attribute, None)
-                        combo.set_active(codes.index(current)
-                                         if current in codes else 0)
+                    if attribute not in wanted:
+                        continue
+                    current = getattr(element, attribute, None)
+                    if codes is None:
+                        if current is not None:
+                            widget.set_value(current)
+                    else:
+                        widget.set_active(codes.index(current)
+                                          if current in codes else 0)
                 # A dialog GTK already grew to fit more rows does not shrink
                 # back on its own just because some of them hid.
                 dialog.resize(1, 1)
@@ -4130,8 +4143,10 @@ class ZPLViewerWindow(Gtk.Window):
                     # visible widgets at all.
                     for attribute, _l, _c in model.BARCODE_PARAMETERS.get(
                             element.symbology, ()):
-                        combo, codes, _row = extra_rows[attribute]
-                        setattr(element, attribute, codes[combo.get_active()])
+                        widget, codes, _row = extra_rows[attribute]
+                        setattr(element, attribute,
+                                int(widget.get_value()) if codes is None
+                                else codes[widget.get_active()])
                     apply_field_number(element)
                     element.check_digit = check_codes[check_combo.get_active()]
                     element.mode = mode_codes[mode_combo.get_active()]

@@ -173,7 +173,8 @@ zplcore/    no GUI toolkit, runs headless
   code128.py, code39.py, ean13.py, i2of5.py, upcext.py, upca.py, upce.py,
   ean8.py, code93.py, codabar.py, code11.py, msi.py, plessey.py,
   twoof5.py, postal.py, qr.py, datamatrix.py, pdf417.py, micropdf417.py,
-  aztec.py, maxicode.py, databar.py, pdf417_patterns.py, maxicode_map.py
+  tlc39.py, aztec.py, maxicode.py, databar.py, pdf417_patterns.py,
+  maxicode_map.py
                  barcode encoding, one file per symbology
 gtkui/      GTK3 frontend: Cairo painting, dialogs, menus
 qtui/       PySide2/Qt5 frontend: QPainter painting, dialogs, menus
@@ -220,6 +221,8 @@ Read when loading a file and written when saving:
 - `^FM` - A PDF417 or MicroPDF417 message too long for one symbol, printed as
   a series of symbols, one at each origin; one element on the canvas, moved as
   a whole, with each origin edited in Edit Barcode
+- `^BT` - TLC39: a Code 39 carrying the ECI number and a MicroPDF417 under it
+  carrying the rest, each at its own module width and height
 - `^GF` - Graphic field (images, 1-bit, where a set bit is black)
 - `^DF` / `^XF` - Store / recall a format, with `^FN` / `^FV` variable fields
 - `^IM` / `^XG` - Recall a stored graphic into a field (Image Move / Recall Graphic)
@@ -285,9 +288,9 @@ Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
   extension, UPC-A, UPC-E, EAN-8, Code 93, Codabar, Code 11, MSI, Plessey,
   Industrial and Standard 2 of 5, LOGMARS, the POSTAL family (Postnet,
   PLANET and USPS Intelligent Mail), Data Matrix, PDF417, MicroPDF417,
-  Aztec, UPS MaxiCode, QR, and six of `^BR`'s twelve types - UPC-A, UPC-E,
-  EAN-13, EAN-8 and GS1-128. The GS1 DataBar family proper (`^BR` types 1-6),
-  Code 49, Codablock and TLC39 are not offered yet, and neither is `^BR`'s composite
+  TLC39, Aztec, UPS MaxiCode, QR, and six of `^BR`'s twelve types - UPC-A,
+  UPC-E, EAN-13, EAN-8 and GS1-128. The GS1 DataBar family proper (`^BR`
+  types 1-6), Code 49 and Codablock are not offered yet, and neither is `^BR`'s composite
   component, which round-trips undrawn. Data Matrix is drawn as ECC 200 whatever
   quality its command asks for. A QR code carries
   what its `^FD` switches say and no interpretation line, and is drawn as

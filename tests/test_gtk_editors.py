@@ -469,6 +469,26 @@ check("OK writes them back as ^FM, the added one under the last",
       series.to_zpl()[:60].replace('\n', ' '))
 document.elements.remove(series)
 
+# --- Edit Barcode: a TLC39's MicroPDF417 sizes, as spin buttons -------------
+
+tlc = zpl_parser.parse_zpl(
+    "^XA^FO10,10^BT^FD123456,ABCD12345678901234,5551212,888999^FS^XZ"
+)[0].elements[0]
+document.elements.append(tlc)
+window.on_element_double_clicked(None, tlc)
+tlc_dialog = window._editors[id(tlc)]
+tlc_content = tlc_dialog.get_content_area()
+row_height = next(s for s in _find_all(tlc_content, Gtk.SpinButton)
+                  if s.get_name() == 'micro_height')
+check("Edit Barcode offers a TLC39's MicroPDF417 row height as a number",
+      _row_for(tlc_content, "MicroPDF417 Row Height:").get_visible()
+      and row_height.get_value() == 4, row_height.get_value())
+row_height.set_value(7)
+tlc_dialog.response(Gtk.ResponseType.OK)
+check("and OK writes it back, the Code 39's own sizes kept",
+      "^BTN,2,2.0,40,2,7\n" in tlc.to_zpl(), tlc.to_zpl().replace('\n', ' '))
+document.elements.remove(tlc)
+
 # --- the editors must not outlive the elements they hold --------------------
 # Restoring a snapshot replaces every element object. An editor left on screen
 # over one would write its fields into a copy the document no longer has, and

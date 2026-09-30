@@ -362,16 +362,16 @@ its `h` and `w` (§7), and its box is the cell they round to.
 
 #### Barcode
 
-One element, twenty-five symbologies: Code 128 (`^BC`, subsets B and C), Code
+One element, twenty-six symbologies: Code 128 (`^BC`, subsets B and C), Code
 39 (`^B3`), EAN-13 (`^BE`), Interleaved 2 of 5 (`^B2`), a UPC/EAN Extension
 add-on (`^BS`), UPC-A (`^BU`), UPC-E (`^B9`), EAN-8 (`^B8`), Code 93
 (`^BA`), Codabar (`^BK`), Code 11 (`^B1`), MSI (`^BM`), Plessey (`^BP`),
 Industrial 2 of 5 (`^BI`), Standard 2 of 5 (`^BJ`), LOGMARS (`^BL`), the
 POSTAL family (`^BZ` - Postnet, PLANET and the USPS Intelligent Mail
 barcode), Planet Code (`^B5`), Data Matrix (`^BX`), PDF417 (`^B7`),
-MicroPDF417 (`^BF`), Aztec (`^B0`, also spelled `^BO`), six of `^BR`'s
-twelve, UPS MaxiCode (`^BD`), and QR (`^BQ`). Code 49, Codablock, TLC39 and
-the GS1 DataBar family proper are still not offered - see §18.
+MicroPDF417 (`^BF`), TLC39 (`^BT`), Aztec (`^B0`, also spelled `^BO`), six
+of `^BR`'s twelve, UPS MaxiCode (`^BD`), and QR (`^BQ`). Code 49, Codablock
+and the GS1 DataBar family proper are still not offered - see §18.
 
 **Which command spells which symbology, and what each of its parameters
 means, is one table** - `zplcore/symbology.py` - read by the model, the
@@ -383,18 +383,20 @@ thing the printer will lay down - `linear` for bars and spaces, `grid` for a
 matrix of square modules, `stacked` for rows of modules each its own height
 in dots (MicroPDF417, whose `h` need not divide by the module width),
 `postal` for bars of differing height, and `dots`
-for a symbol that is not squares at all and is drawn at the head's own
-resolution (MaxiCode's hexagons and rings) - and `geometry.barcode_rects()`
+for a symbol drawn at the head's own resolution because it is not squares at
+all (MaxiCode's hexagons and rings) or is two symbols each with a module of
+its own (TLC39) - and `geometry.barcode_rects()`
 turns each into `(x, y, w, h)` in dots. The preview and both canvases draw those and nothing
 else, so a symbology that is not bars and spaces needs nothing from them.
 
 | Property | Default |
 |---|---|
-| `symbology` | `code128` - which of the twenty-five |
+| `symbology` | `code128` - which of the twenty-six |
 | `barcode_value` | `"123456789"` |
 | `bar_height` | 100 dots - the bars themselves |
 | `module_width` | 2 dots - and, for a matrix symbology, the magnification its own command carries instead of `^BY`'s w. An omitted one is the manual's default for the print resolution: 1 at 150 dpi, 2 at 200, 3 at 300, 6 at 600 |
-| `ratio` | 3.0 - the wide-to-narrow ratio Code 39 and Interleaved 2 of 5 draw their wide elements at; the other three are fixed-ratio and ignore it |
+| `ratio` | 3.0 - the wide-to-narrow ratio Code 39 and Interleaved 2 of 5 draw their wide elements at; the other three are fixed-ratio and ignore it. A TLC39 carries its Code 39's in its own command, `^BT`'s r1, 2.0 when left out, and writes no `^BY` |
+| `micro_width`, `micro_height` | `2`, `4` - a TLC39's MicroPDF417 module width and row height in dots, `^BT`'s w2 and h2. What an omitted one means depends on the head - the manual's 2 and 4 up to 300 dpi, 4 and 8 at 600 - and they are always written |
 | `orientation` | none - `N` upright, `R` 90°, `I` 180°, `B` 270°. None is written as no letter; a letter the file leaves out is `^FW`'s (§8.3) |
 | `show_text` | true - whether the value prints as an interpretation line |
 | `text_above` | false for every symbology but the UPC/EAN extension, where it is true - the line goes above the bars instead of below |
@@ -503,6 +505,24 @@ separated by GS and RS and ended by EOT, written as `^FH` escapes. Modes 4, 5
 and 6 carry the whole field as the message. A high-priority message that does
 not fit its mode draws nothing, keeps the symbol's footprint and says why; a
 printer errors out on the same field.
+
+**A TLC39 is two symbols.** `^BT`'s field data is a six-digit ECI number, and
+then, after a comma, a serial number and whatever else follows it; the Code
+39 carries the ECI number and a four-column MicroPDF417 the rest, commas and
+all. With no comma after the ECI number there is no MicroPDF417, only the Code
+39; an ECI number that is not six digits draws nothing and keeps the Code
+39's footprint, since the printer refuses it. The Code 39 is `^BT`'s w1, r1
+and h1 - module width, ratio and height, held where every barcode holds them
+- and the MicroPDF417 its w2 and h2, a module width and row height in dots,
+in the smallest four-column size that holds the data. The MicroPDF417 goes
+under the Code 39, left edges together, one of its own modules below it, and
+holds its data in byte compaction: that is how the manual draws its own
+example, whose MicroPDF417 is twelve rows - what that data needs in byte
+compaction and not otherwise (§18). Two module widths in one symbol cannot be
+a grid, so it is drawn in dots as a MaxiCode is, turns as one field, and
+offers no handles; Edit Barcode's Module Width, Ratio and Bar Height set the
+Code 39, and two number boxes the MicroPDF417. Every one of the five sizes
+has a default per head, resolved on reading and always written back.
 
 Because a quarter turn leaves the box axis-aligned, rotation needs nothing from
 hit-testing, dragging or the resize handles - they only ever see the box.
@@ -1062,7 +1082,7 @@ file choosers and the prompts — are modal.
 | **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
 | **Edit Diagonal Line** | Width; Height; Thickness; Colour; Direction; Reverse | Width and height 3–32000, `^GD`'s own range, so a line from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to the width, the maximum updating live as the width changes. Direction is right-leaning ( / ) or left-leaning ( \ ) (§3.3). Colour and Reverse as Edit Frame's. |
 | **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
-| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots (1–30 modules for PDF417, 1–9999 dots for MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a 3-module PDF417 and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
+| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; and the chosen symbology's own rows | Bar height 20–300 dots (1–30 modules for PDF417, 1–9999 dots for MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a 3-module PDF417 and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
@@ -2573,7 +2593,7 @@ rather than requirements:
   29% out on average. `^A0N,89,89` `HHHH` printed 203.7 × 65.0 dots, and is
   drawn 208 × 66. The letters' shapes differ from the print. Without the
   stand-in installed, font `0` keeps the `len(text) × font_width` estimate.
-- **Twenty-five symbologies** (§3.3). Code 49, Codablock, TLC39
+- **Twenty-six symbologies** (§3.3). Code 49, Codablock
   and the GS1 DataBar family proper are still not offered, and no
   symbology's value is validated against its own character set or length - EAN-13 and the extension fit whatever they are
   given rather than rejecting it (§3.3), and Code 39 draws an out-of-set
@@ -2659,6 +2679,17 @@ rather than requirements:
   same message either way. Nor has where the pen stops after a series -
   taken to be its first origin that prints - nor what the printer does with
   a pair that is neither two numbers nor `e`, which is read as `e`.
+- **A TLC39's arrangement is read off the manual's drawing** of its own
+  example (p.135), not yet off a print: the MicroPDF417 under the Code 39,
+  left edges together, a module apart, and twelve rows for that data - which
+  is what byte compaction needs for it, where the shortest compaction needs
+  eight, so the MicroPDF417 is written in byte compaction. The drawing also
+  shows a narrow piece of bars standing apart to the right, taller than the
+  Code 39, that nothing in the manual's text accounts for; it is not drawn.
+  Nor is anything but the six-digit ECI number put in the Code 39, nor
+  anything but the data after it, as written, in the MicroPDF417. The
+  drawing's Code 39 is taller than the 40 dots the manual gives as h1's
+  default at 200 dpi; the default is followed.
 - **`^BX` draws ECC 200 whatever quality it is asked for.** Levels 0 to 140
   use convolutional coding, were meant for closed systems where one party
   controls both the printing and the reading, and no reader made this century

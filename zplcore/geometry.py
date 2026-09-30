@@ -679,6 +679,12 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
             # has just been scaled - scaling both would square the factor and
             # give rows half as tall again as the label asked for.
             element.bar_height = _scaled(element.bar_height, stack)
+        # Any other length a command carries in dots - a TLC39's
+        # MicroPDF417 module and row height - goes the same way.
+        for name, along in symbology.SCALED_PARAMETERS.get(
+                element.symbology, ()):
+            setattr(element, name, _scaled(getattr(element, name),
+                                           run if along == 'run' else stack))
         if element.font:
             code, fh, fw = element.font
             element.font = (code, _scaled(fh, stack), _scaled(fw, run))
