@@ -1183,7 +1183,7 @@ def sequence(driver, record):
     # no handles: both frontends have to agree on its footprint.
     tlc = driver.add_barcode()
     tlc.symbology = 'tlc39'
-    tlc.barcode_value = '123456,ABCD12345678901234,5551212,888999'
+    tlc.barcode_value = '123456,ABCd12345678901234,5551212,88899'
     tlc.module_width, tlc.ratio, tlc.bar_height = 2, 2.0, 40
     driver.resync_barcode(tlc)
     record("a TLC39, the manual's own example")

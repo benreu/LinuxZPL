@@ -329,7 +329,7 @@ if hasattr(zxingcpp.BarcodeFormat, 'MicroPDF417'):
 
 # Two symbols from one field: a Code 39 carrying the ECI number and a
 # MicroPDF417 carrying the rest, which a reader returns separately.
-_TLC = "123456,ABCD12345678901234,5551212,888999"      # the manual's, p.135
+_TLC = "123456,ABCd12345678901234,5551212,88899"      # the manual's, p.135
 if hasattr(zxingcpp.BarcodeFormat, 'MicroPDF417'):
     for facing in "NRIB":
         found = sorted(decoded(f"^XA^PW600^LL600^FO100,100^BT{facing}"
@@ -337,14 +337,14 @@ if hasattr(zxingcpp.BarcodeFormat, 'MicroPDF417'):
         check(f"the manual's TLC39, turned {facing}, reads back as its two "
               "symbols",
               found == [('Code39', '123456'),
-                        ('MicroPDF417', 'ABCD12345678901234,5551212,888999')],
+                        ('MicroPDF417', 'ABCd12345678901234,5551212,88899')],
               found)
     for dpi, page in ((300, (900, 900)), (600, (1500, 1500))):
         found = sorted(decoded(f"^XA^FO100,100^BT^FD{_TLC}^FS^XZ", *page,
                                dpi=dpi))
         check(f"and at {dpi} dpi, drawn at that head's own defaults",
               found == [('Code39', '123456'),
-                        ('MicroPDF417', 'ABCD12345678901234,5551212,888999')],
+                        ('MicroPDF417', 'ABCd12345678901234,5551212,88899')],
               found)
 reads("with no comma after the ECI, a TLC39 is its Code 39 alone",
       "^XA^PW600^LL600^FO100,100^BT^FD123456789^FS^XZ", "123456", 'Code39')

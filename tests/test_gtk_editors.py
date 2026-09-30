@@ -472,7 +472,7 @@ document.elements.remove(series)
 # --- Edit Barcode: a TLC39's MicroPDF417 sizes, as spin buttons -------------
 
 tlc = zpl_parser.parse_zpl(
-    "^XA^FO10,10^BT^FD123456,ABCD12345678901234,5551212,888999^FS^XZ"
+    "^XA^FO10,10^BT^FD123456,ABCd12345678901234,5551212,88899^FS^XZ"
 )[0].elements[0]
 document.elements.append(tlc)
 window.on_element_double_clicked(None, tlc)

@@ -2710,7 +2710,7 @@ rather than requirements:
   example (p.135), not yet off a print: the MicroPDF417 under the Code 39,
   left edges together, a module apart, and twelve rows for that data - which
   is what byte compaction needs for it, where the shortest compaction needs
-  eight, so the MicroPDF417 is written in byte compaction. The drawing also
+  ten, so the MicroPDF417 is written in byte compaction. The drawing also
   shows a narrow piece of bars standing apart to the right, taller than the
   Code 39, that nothing in the manual's text accounts for; it is not drawn.
   Nor is anything but the six-digit ECI number put in the Code 39, nor

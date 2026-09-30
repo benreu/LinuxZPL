@@ -3,7 +3,7 @@
 The telecommunications industry's can-tag symbol: a Code 39 carrying a part's
 six-digit ECI number, and a four-column MicroPDF417 carrying its serial
 number and whatever else follows. ^BT's field data is those, comma
-separated - `123456,ABCD12345678901234,5551212,888999` - and when the seventh
+separated - `123456,ABCd12345678901234,5551212,88899` - and when the seventh
 character is not a comma there is no MicroPDF417 at all, only the Code 39.
 
 The two parts have module widths and heights of their own (^BT's w1, r1 and

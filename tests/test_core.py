@@ -2637,10 +2637,10 @@ check("a paste brings the series whole",
 # --- ^BT, TLC39 --------------------------------------------------------------
 from zplcore import tlc39 as zpl_tlc39
 
-_TLC = "123456,ABCD12345678901234,5551212,888999"      # the manual's, p.135
+_TLC = "123456,ABCd12345678901234,5551212,88899"      # the manual's, p.135
 check("a TLC39's Code 39 carries the six-digit ECI, and its MicroPDF417 the "
       "rest",
-      zpl_tlc39.split(_TLC) == ('123456', 'ABCD12345678901234,5551212,888999')
+      zpl_tlc39.split(_TLC) == ('123456', 'ABCd12345678901234,5551212,88899')
       and zpl_tlc39.split("123456789") == ('123456', None)
       and zpl_tlc39.split("123456") == ('123456', None),
       zpl_tlc39.split(_TLC))
@@ -2653,10 +2653,10 @@ for _bad in ("12345", "ABCDEF,SERIAL"):
     check(f"{_bad!r} is refused: the ECI is six digits", _refused)
 check("the MicroPDF417 is written in byte compaction, which is what gives the "
       "manual's example its twelve rows",
-      zpl_tlc39.micro_mode('ABCD12345678901234,5551212,888999') == 26
+      zpl_tlc39.micro_mode('ABCd12345678901234,5551212,88899') == 26
       and zpl_micropdf417.size(26)[:2] == (4, 12)
       and zpl_micropdf417.byte_codewords('AB')[0] == 901,
-      zpl_tlc39.micro_mode('ABCD12345678901234,5551212,888999'))
+      zpl_tlc39.micro_mode('ABCd12345678901234,5551212,88899'))
 check("and the smallest four-column size that holds it is chosen",
       zpl_tlc39.micro_mode('A1') == 33
       and zpl_tlc39.micro_mode('A' * 12) == 23,
@@ -3166,7 +3166,7 @@ _qt_plain.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Cancel).click()
 # Edit Barcode: a TLC39's MicroPDF417 sizes, as spin buttons.
 from PySide2.QtWidgets import QSpinBox as _QSpinBox
 _qt_tlc = zpl_parser.parse_zpl(
-    "^XA^FO10,10^BT^FD123456,ABCD12345678901234,5551212,888999^FS^XZ"
+    "^XA^FO10,10^BT^FD123456,ABCd12345678901234,5551212,88899^FS^XZ"
 )[0].elements[0]
 _qt_tlc_dialog = qt_dialogs.edit_barcode_dialog(None, _qt_tlc)
 _qt_row_height = _qt_tlc_dialog.findChild(_QSpinBox, 'micro_height')
