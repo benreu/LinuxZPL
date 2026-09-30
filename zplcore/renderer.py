@@ -176,6 +176,15 @@ class ZPLRenderer:
         stops the preview and the canvas disagreeing about the width of a
         subset C symbol or whether the interpretation line prints at all.
         """
+        origins = (self.multi_origin
+                   if getattr(self, 'barcode_symbology', None)
+                   in symbology.SERIES else None)
+        if origins:
+            # ^FM's origins are on the label, ^LH and ^LS already in, and an
+            # element holds them from its own x and y - so it is built at
+            # 0,0, as the parser builds it. Built at the last ^FO instead, a
+            # series after any other field was drawn that far off.
+            x = y = 0
         element = BarcodeElement(
             x, y, height, barcode_value,
             module_width=(getattr(self, 'barcode_magnification', None)
@@ -189,9 +198,7 @@ class ZPLRenderer:
                    if getattr(self, 'barcode_ratio', None) is not None
                    else getattr(self, 'ratio', 3.0)),
             dpi=self.dpi,
-            origins=(self.multi_origin
-                     if getattr(self, 'barcode_symbology', None)
-                     in symbology.SERIES else None),
+            origins=origins,
             font=(('0', self.current_font_size,
                    self.current_font_width or self.current_font_size)
                   if self.current_font_size else None))

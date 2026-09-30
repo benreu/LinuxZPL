@@ -2625,6 +2625,28 @@ check("a field following a series follows its first origin",
       geometry.typeset_point(_fm_chain.elements[1]) == (100, 100),
       geometry.typeset_point(_fm_chain.elements[1]))
 
+# The preview draws a series where the model puts it - after another field,
+# whose ^FO it once added to every origin, and under ^LH, counted once
+_FM_PREVIEWED = ("^FM70,300,e,e,440,300^BY2^B7N,4,1,3,10^FDMacro PDF417: "
+                 "this message is cut into three symbols and the second is "
+                 "not printed.^FS")
+for _before, _how in (("", "on its own"),
+                      ("^FO560,600^GB20,20,20^FS", "after an ^FO field"),
+                      ("^LH50,40", "under ^LH"),
+                      ("^LH50,40^FO560,600^GB20,20,20^FS",
+                       "under ^LH, after an ^FO field")):
+    _fm_label = f"^XA^PW812^LL1218{_before}{_FM_PREVIEWED}^XZ"
+    _fm_series = [e for e in zpl_parser.parse_zpl(_fm_label)[0].elements
+                  if e.element_type == 'barcode'][0]
+    _fm_ink = ZPLRenderer(812, 1218).render(_fm_label).convert('L').crop(
+        (0, 0, 812, 590)).point(lambda v: 255 if v < 128 else 0).getbbox()
+    check(f"the preview draws a series in the box the canvas shows ({_how})",
+          _fm_ink == (_fm_series.x, _fm_series.y,
+                      _fm_series.x + _fm_series.width,
+                      _fm_series.y + _fm_series.height),
+          (_fm_ink, (_fm_series.x, _fm_series.y, _fm_series.width,
+                     _fm_series.height)))
+
 _fm_paste_doc = Document()
 _fm_paste_doc.paste_zpl(
     "^XA^FXDESIGNER_DPI:203^FM20,20,20,300^BY2^B7N,4,1,4,10"
