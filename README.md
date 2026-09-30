@@ -301,9 +301,8 @@ Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
   against its own character set or length - except UPC-E, whose zero
   suppression is a table, so a number it cannot shorten draws nothing rather
   than a readable barcode for a different product code.
-- A `^TB` text block is drawn from the manual's one page on it and not yet
-  from a print: only its whole lines, `font_height` apart, up to its height,
-  and `<<>` as the one escape it knows.
+- A `^TB` text block's line spacing is what font 0 printed at 30 dots, taken
+  to hold for every font and size.
 - Rescaling between resolutions cannot be exact for barcodes: a module is a
   whole number of dots, so 2 becomes 3 going from 203 to 300 dpi. Positions and
   heights scale exactly. A MaxiCode is not scaled at all: it is re-drawn at the

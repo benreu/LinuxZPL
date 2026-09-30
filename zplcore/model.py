@@ -11,6 +11,7 @@ import base64 as _b64
 import copy
 import io as _io
 import itertools
+import re
 from typing import Dict, List, NamedTuple, Optional
 
 from PIL import Image as PILImage, ImageDraw as PILImageDraw
@@ -331,6 +332,15 @@ class FieldBlock:
     # What wrapping asks of a block (textraster.wrap_marked), which a ^TB
     # answers differently - see TextBlock.
 
+    # \& breaks a line, and a word too long for the block stays whole
+    forced_breaks = True
+    breaks_words = False
+
+    def pitch(self, font_height: int) -> int:
+        """Dots from one line to the next: the font's height and the
+        spacing ^FB adds."""
+        return max(1, int(font_height) + self.line_spacing)
+
     def line_limit(self, pitch: int) -> int:
         """The most lines it prints, `pitch` dots apart."""
         return self.max_lines
@@ -380,9 +390,11 @@ class TextBlock:
 
     Where ^FB's height follows the lines the text wraps into, up to a count
     of them, ^TB's is a number of dots, and whatever does not fit in it is
-    cut off. The manual says it is truncated. Taken here to mean that only
-    whole lines print, as many as fit: a block less than one line tall
-    prints nothing. That is not yet printed (FUNCTIONAL_SPEC.md section 18).
+    cut off - at the height itself, a line straddling it printed as far as
+    it reaches. A printer put its lines 1.277 times the font's height apart,
+    broke a word too long for the block where it ran out of room, and printed
+    \\& as the characters it is rather than breaking the line
+    (FUNCTIONAL_SPEC.md section 18).
 
     It has no justification of its own. The manual gives it the field's,
     ^FO or ^FT's z: right when that is right, left otherwise - auto
@@ -390,9 +402,9 @@ class TextBlock:
     The element holds that z, and `justification` is kept in step with it
     (for_field), so the drawing reads a block as it reads a ^FB's.
 
-    Also from the manual: data between < and > is an escape sequence, of
-    which it gives one - <<> prints < - and a soft hyphen neither prints nor
-    breaks a line. Any other <...> is drawn as written.
+    Also from the manual, and as printed: data between < and > is an escape
+    sequence - <<> prints <, and one it does not know prints nothing - and a
+    soft hyphen neither prints nor breaks a line.
     """
 
     # What a ^FB has and a ^TB does not, at the values that do nothing
@@ -400,6 +412,11 @@ class TextBlock:
     indent = 0
     # Which ^TB drops from what it prints
     SOFT_HYPHEN = '\u00ad'
+    # Its lines' pitch as a multiple of the font's height: font 0 at 30 dots
+    # printed lines 38.3 dots apart
+    LINE_PITCH = 1.277
+    forced_breaks = False
+    breaks_words = True
 
     def __init__(self, width: int = 1, height: int = 1,
                  justification: str = 'L'):
@@ -434,9 +451,14 @@ class TextBlock:
         """An independent copy, for a snapshot that a later edit must not reach."""
         return TextBlock(self.width, self.height, self.justification)
 
+    def pitch(self, font_height: int) -> int:
+        """Dots from one line to the next, as a printer spaced them."""
+        return max(1, int(round(int(font_height) * self.LINE_PITCH)))
+
     def line_limit(self, pitch: int) -> int:
-        """As many whole lines as its height holds, `pitch` dots apart."""
-        return self.height // max(1, pitch)
+        """Every line that starts inside it, `pitch` dots apart - the last
+        cut off at its height."""
+        return -(-self.height // max(1, pitch))
 
     def depth(self, lines: int, pitch: int) -> int:
         """Its own height, however many lines it holds."""
@@ -456,13 +478,20 @@ class TextBlock:
     @staticmethod
     def words(paragraph: str) -> list:
         """The words a line may break between: at a space only, so a
-        no-break space holds its words together."""
-        return [word for word in paragraph.split(' ') if word]
+        no-break space holds its words together. Every space is its own, a
+        run of them kept as written inside a line, as a printer kept the two
+        either side of an escape it dropped - so an empty word is a space
+        more, which the wrap drops where a line breaks.
+        """
+        return paragraph.split(' ')
 
     @classmethod
     def printed(cls, text: str) -> str:
-        """The field data as it prints: <<> as <, and no soft hyphens."""
-        return text.replace('<<>', '<').replace(cls.SOFT_HYPHEN, '')
+        """The field data as it prints: <<> as <, any other <...> as
+        nothing, and no soft hyphens."""
+        return re.sub(r'<([^<>]*|<)>',
+                      lambda escape: '<' if escape.group(1) == '<' else '',
+                      text).replace(cls.SOFT_HYPHEN, '')
 
     def to_zpl(self, orientation: Optional[str] = None) -> str:
         """^TB, with the field's turn, since it has one of its own."""
@@ -821,17 +850,21 @@ class TextElement(DesignElement):
         """A ^TB block that holds this text as it is drawn now.
 
         As wide as the ^FB it wraps in, or as default_block when it has
-        none, and as tall as the lines it takes there - so switching to a
-        ^TB moves nothing. Any shorter would cut lines off, since a ^TB's
-        height is fixed rather than following its text.
+        none, and as tall as the lines the text takes at that width in a
+        ^TB - which breaks no line at \\&, so its breaks are joined - so
+        switching to a ^TB drops no line. Any shorter would cut lines off,
+        since a ^TB's height is fixed rather than following its text.
         """
         from . import textraster
         wrap = (self.block if isinstance(self.block, FieldBlock)
                 else self.default_block(default_font_path, dpi))
         cell = self.cell(default_font_path, dpi)
-        lines = textraster.wrap(self.text, self.face(default_font_path),
-                                cell.height, cell.width, wrap, cell.row_gap)
-        return TextBlock(wrap.width, max(1, len(lines)) * cell.height)
+        unbounded = TextBlock(wrap.width, 1 << 20)
+        lines = textraster.wrap(textraster.join_lines(self.text),
+                                self.face(default_font_path), cell.height,
+                                cell.width, unbounded, cell.row_gap)
+        return TextBlock(wrap.width,
+                         max(1, len(lines)) * unbounded.pitch(cell.height))
 
     def to_zpl(self, printer_font_name: Optional[str] = None,
                offset=(0, 0),

@@ -432,6 +432,12 @@ class DesignCanvas(QWidget):
         step = textraster.pitch(cell.height, block)
         marked = textraster.wrap_marked(self.document.display_text(element), font_path,
                                         cell.height, cell.width, block, gap)
+        # Inside the block's own box, as the raster is: a ^TB cuts off the
+        # line that runs past its height
+        painter.save()
+        painter.setClipRect(QRectF(0, 0, block.width,
+                                   block.depth(len(marked), step)),
+                            Qt.IntersectClip)
         for row, (line, last) in enumerate(marked):
             for piece, x in textraster.placements(line, measure, block, last):
                 if gap:
@@ -448,6 +454,7 @@ class DesignCanvas(QWidget):
                 painter.scale(max(1.0, measure(piece)) / drawn, 1.0)
                 painter.drawText(QPointF(0, 0), piece)
                 painter.restore()
+        painter.restore()
 
     def _draw_text_directed(self, painter, element, font_path, reverse=False):
         """A field laid out a character at a time, in a Qt face, when it

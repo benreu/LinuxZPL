@@ -8338,8 +8338,8 @@ zpl_fonts._resident_cache['0'] = STANDIN
 
 # --- ^TB: a text block of fixed width and height ----------------------------
 # Measured by the fixed-width estimate, as the ^FP section is: font 0 with no
-# stand-in is 20 dots a character at ^A0N,30,20, and a line 30 dots tall, so
-# where each line breaks is plain arithmetic.
+# stand-in is 20 dots a character at ^A0N,30,20, and a ^TB's lines are 38
+# dots apart at that height, so where each line breaks is plain arithmetic.
 zpl_fonts._resident_cache['0'] = None
 from zplcore.model import TextBlock
 
@@ -8369,22 +8369,28 @@ check("^TB is no longer named in the load warning",
 check("^TB opens a field, as ^FB does",
       len(_tb("^FO50,60^FS^A0N,30,20^TBN,150,75^FDab^FS").elements) == 1)
 
-# Cut off at the last whole line: the manual says only that text past the
-# height is truncated
-check("text past the height is cut off at the last whole line",
+# Cut off at the height, as printed: every line that starts inside it, the
+# last as far as the height reaches, 38 dots apart at a 30 dot font
+check("a ^TB's lines are 1.277 of the font's height apart, as printed",
+      TextBlock(150, 75).pitch(30) == 38 and FieldBlock(150, 3, 4).pitch(30)
+      == 34)
+check("text past the height is cut off there, a line straddling it kept",
       _tb_wrap(_tbe.text, _tbe.block) == ['aaa bbb', 'ccc ddd'],
       _tb_wrap(_tbe.text, _tbe.block))
 for _height, _want in ((90, ['aaa bbb', 'ccc ddd', 'eee']),
-                       (45, ['aaa bbb']), (29, [])):
-    check(f"a block {_height} dots tall holds {len(_want)} of the lines",
+                       (76, ['aaa bbb', 'ccc ddd']),
+                       (45, ['aaa bbb', 'ccc ddd']), (29, ['aaa bbb'])):
+    check(f"a block {_height} dots tall starts {len(_want)} of the lines",
           _tb_wrap(_tbe.text, TextBlock(150, _height)) == _want,
           _tb_wrap(_tbe.text, TextBlock(150, _height)))
-_tb_short = _tb("^FO50,60^A0N,30,20^TBN,150,29^FDaaa^FS").elements[0]
-check("a block less than a line tall keeps its box and prints nothing",
-      (_tb_short.width, _tb_short.height) == (150, 29)
-      and _preview_ink("^XA^PW400^LL300^FO50,60^A0N,30,20^TBN,150,29"
-                       "^FDaaa^FS^XZ", 400, 300) is None,
-      (_tb_short.width, _tb_short.height))
+_tb_short = _tb("^FO50,60^A0N,30,20^TBN,150,20^FDaaa^FS").elements[0]
+_tb_short_ink = _preview_ink("^XA^PW400^LL300^FO50,60^A0N,30,20^TBN,150,20"
+                             "^FDaaa^FS^XZ", 400, 300)
+check("a block less than a line tall prints the top of its line",
+      (_tb_short.width, _tb_short.height) == (150, 20)
+      and _tb_short_ink is not None
+      and _tb_short_ink[1] + _tb_short_ink[3] <= 60 + 20,
+      (_tb_short.width, _tb_short.height, _tb_short_ink))
 _tb_bare = _tb("^FO50,60^A0N,30,20^TB^FDaaa^FS").elements[0]
 check("^TB's width and height are 1 dot when left out",
       _tb_bare.block == TextBlock(1, 1) and (_tb_bare.width,
@@ -8394,17 +8400,22 @@ check("^TB's width and height are 1 dot when left out",
 # What the manual says of the data
 check("<<> prints <", _tb_wrap("a<<>b", TextBlock(400, 30)) == ['a<b'],
       _tb_wrap("a<<>b", TextBlock(400, 30)))
-check("and any other <...> is drawn as written",
-      _tb_wrap("a<x>b", TextBlock(400, 30)) == ['a<x>b'])
+check("and any other <...> prints nothing, the spaces round it kept",
+      _tb_wrap("a <x> b", TextBlock(400, 30)) == ['a  b'],
+      _tb_wrap("a <x> b", TextBlock(400, 30)))
 check("a soft hyphen neither prints nor breaks the line",
-      _tb_wrap("abc\u00addef ghi", TextBlock(80, 90)) == ['abcdef', 'ghi'],
-      _tb_wrap("abc\u00addef ghi", TextBlock(80, 90)))
+      _tb_wrap("xx abc\u00addef", TextBlock(130, 90)) == ['xx', 'abcdef'],
+      _tb_wrap("xx abc\u00addef", TextBlock(130, 90)))
 check("a line breaks at a space only, so a no-break space holds",
-      _tb_wrap("aaa\u00a0bbb ccc", TextBlock(100, 90))
+      _tb_wrap("aaa\u00a0bbb ccc", TextBlock(150, 90))
       == ['aaa\u00a0bbb', 'ccc'],
-      _tb_wrap("aaa\u00a0bbb ccc", TextBlock(100, 90)))
-check(r"and \& breaks it, as in a ^FB",
-      _tb_wrap(r"aaa\&bbb", TextBlock(400, 90)) == ['aaa', 'bbb'])
+      _tb_wrap("aaa\u00a0bbb ccc", TextBlock(150, 90)))
+check("a word too long for the block is broken where it runs out of room, "
+      "and the rest goes on with the next",
+      _tb_wrap("Supercali fr", TextBlock(150, 150)) == ['Superca', 'li fr'],
+      _tb_wrap("Supercali fr", TextBlock(150, 150)))
+check(r"and \& breaks no line: it is printed as written",
+      _tb_wrap(r"aaa\&bbb", TextBlock(400, 90)) == [r'aaa\&bbb'])
 check("a ^FB's data is not read as a ^TB's",
       _tb_wrap("a<<>b", FieldBlock(400, 1)) == ['a<<>b'])
 
@@ -8524,14 +8535,15 @@ _tbx.font_code, _tbx.font_height, _tbx.font_width = '0', 30, 20
 _tbx.block = FieldBlock(150, 4)
 _tbx_doc.sync_text_width(_tbx)
 _tbx_before = (_tbx.width, _tbx.height)
-check("a default ^TB holds the lines a ^FB wraps the text into",
-      _tbx.default_text_block(_tbx_doc.font_path) == TextBlock(150, 90)
+check("a default ^TB holds the lines a ^FB wraps the text into, at its own "
+      "pitch",
+      _tbx.default_text_block(_tbx_doc.font_path) == TextBlock(150, 3 * 38)
       and _tbx_before == (150, 90), (_tbx.default_text_block(), _tbx_before))
 _tbx.block = None
 _tbx_doc.sync_text_width(_tbx)
 check("and with no block, the text on the one line it is on",
       _tbx.default_text_block(_tbx_doc.font_path)
-      == TextBlock(_tbx.width + 1, 30),
+      == TextBlock(_tbx.width + 1, 38),
       (_tbx.default_text_block(_tbx_doc.font_path), _tbx.width))
 _tbx.x = 100
 _tbx.block = TextBlock(150, 90)
@@ -8560,8 +8572,9 @@ for _turn in 'NRIB':
           _inside(_ink, _e), (_ink, (_e.x, _e.y, _e.width, _e.height)))
 _ink = _preview_ink("^XA^PW500^LL500^FO200,100^A0N,30,20^TBN,150,95"
                     "^FDaaa bbb ccc ddd eee fff^FS^XZ", 500, 500)
-check("and cuts it off at the last whole line, as the canvas does",
-      _ink is not None and 30 < _ink[3] <= 90, _ink)
+check("and cuts it off at the block's height, as the canvas does",
+      _ink is not None and 76 < _ink[3] and _ink[1] + _ink[3] <= 100 + 95,
+      _ink)
 _src = "^FO350,100,1^A0N,30,20^TBN,150,95^FDaa bb^FS"
 _ink = _preview_ink(f"^XA^PW500^LL500{_src}^XZ", 500, 500)
 check("and a right justified one's lines end at its right edge",
@@ -8629,6 +8642,19 @@ check("which come back when the block is a ^FB again",
       not _tbq_dlg.findChild(QSpinBox, 'max_lines').isHidden()
       and _tbq_dlg.findChild(QSpinBox, 'block_height').isHidden())
 _tbq_dlg.reject()
+# A printer printed a ^TB's \& as the characters it is, so the dialog shows
+# them so, and a line break typed into a ^TB - which has none - is a space
+_tbq.text = r"aaa\&bbb"
+_tbq_dlg = qt_dialogs.edit_text_dialog(None, _tbq, _tbq_doc)
+check(r"a ^TB's \& is shown as written, since it breaks no line",
+      _tbq_dlg.findChild(QPlainTextEdit, 'text').toPlainText()
+      == r"aaa\&bbb")
+_tbq_dlg.reject()
+_drive_text_dialog(_tbq, _tbq_doc, lambda dialog: dialog.findChild(
+    QPlainTextEdit, 'text').setPlainText("top\nbottom"))
+check("and a line break typed into a ^TB is a space",
+      _tbq.text == "top bottom" and isinstance(_tbq.block, TextBlock),
+      _tbq.text)
 _drive_text_dialog(_tbq, _tbq_doc, lambda dialog: dialog.findChild(
     QComboBox, 'block_kind').setCurrentIndex(0))
 check("and choosing it makes the block a ^FB of the same width",
@@ -8713,34 +8739,36 @@ check("printed: the manual's TLC39 is a 4 x 12 MicroPDF417 over its Code 39, "
       and zpl_tlc39.micro_mode(
           zpl_tlc39.split(_nc_bars[8].barcode_value)[1]) == 26,
       box_of(_nc_bars[8]))
-# Not printed: ^TB's lines, in font 0's stand-in, which printed font 0
-# within 2%. Where each block breaks and what it keeps is what the print
-# decides.
+# Printed: ^TB's lines, in font 0's stand-in, which printed font 0 within
+# 2%. Each block broke where these do, 38 dots a line, the last cut off at
+# the block's height.
 if STANDIN:
     _nc_lines = [textraster.wrap(_nc.display_text(e), e.face(_nc.font_path),
                                  e.font_height, e.font_width, e.block)
                  for e in _nc_blocks]
-    check("not printed: a ^TB keeps its whole lines and drops the rest",
+    check("printed: a ^TB prints every line that starts inside it, cut off "
+          "at its height",
           _nc_lines[0] == ['The quick brown fox', 'jumps over the lazy dog,',
                            'and then over the fence']
-          and _nc_lines[2] == ['One line and a half is all'], _nc_lines[:3])
-    check("not printed: a right justified field's ^TB lines end at its "
-          "right edge, which its ^FO names",
+          and _nc_lines[2] == ['One line and a half is all',
+                               'this block holds'], _nc_lines[:3])
+    check("printed: a right justified field's ^TB lines end at its right "
+          "edge, which its ^FO names",
           _nc_blocks[1].block.justification == 'R'
           and box_of(_nc_blocks[1]) == (460, 700, 300, 95)
           and _nc_lines[1] == ['Right justified lines of a', 'text block'],
           (_nc_blocks[1].block, box_of(_nc_blocks[1])))
-    check("not printed: <<> prints <, another <...> as written, and \\& "
-          "breaks the line",
-          _nc_lines[3] == ['a < b <x> c', 'after a forced break'],
+    check("printed: <<> prints <, another <...> nothing, and \\& no break",
+          _nc_lines[3] == ['a < b  c\\&after a forced', 'break'],
           _nc_lines[3])
-    check("not printed: a no-break space holds, and a soft hyphen is not a "
+    check("printed: a no-break space holds, and a soft hyphen is not a "
           "place to break",
-          _nc_lines[4] == ['aaaa', 'bbbb cccc']
+          _nc_lines[4] == ['aaaa', 'bbbb\u00a0cccc']
           and _nc_lines[5] == ['xx', 'abcdef'], _nc_lines[4:6])
-    check("not printed: a word too long for its block is kept whole",
-          _nc_lines[6] == ['Supercalifragilistic', 'word'], _nc_lines[6])
-check("not printed: ^TBR turns a field whose ^A says N",
+    check("printed: a word too long for its block is broken where it runs "
+          "out of room",
+          _nc_lines[6] == ['Supercalifra', 'gilistic word'], _nc_lines[6])
+check("printed: ^TBR turns a field whose ^A says N",
       _nc_blocks[7].orientation == 'R'
       and box_of(_nc_blocks[7]) == (560, 950, 95, 200),
       (_nc_blocks[7].orientation, box_of(_nc_blocks[7])))

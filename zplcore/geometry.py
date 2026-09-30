@@ -811,8 +811,8 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
             # width set a turned block's width to its stack of lines.
             run, stack = ((element.height, element.width) if element.rotated()
                           else (element.width, element.height))
-            pitch = max(1, element.font_height + block.line_spacing)
-            block.fit(max(MIN_SIZE, run), stack, pitch)
+            block.fit(max(MIN_SIZE, run), stack,
+                      block.pitch(element.font_height))
             document.sync_text_width(element)
         else:
             # The run is along the text and the stack across it, so a quarter

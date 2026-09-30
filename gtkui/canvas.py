@@ -686,6 +686,11 @@ class DesignCanvas(Gtk.DrawingArea):
         step = textraster.pitch(cell.height, block)
         marked = textraster.wrap_marked(self.document.display_text(element), font_path,
                                         cell.height, cell.width, block, gap)
+        # Inside the block's own box, as the raster is: a ^TB cuts off the
+        # line that runs past its height
+        context.save()
+        context.rectangle(0, 0, block.width, block.depth(len(marked), step))
+        context.clip()
         for row, (line, last) in enumerate(marked):
             for piece, x in textraster.placements(line, measure, block, last):
                 if gap:
@@ -708,6 +713,7 @@ class DesignCanvas(Gtk.DrawingArea):
                 context.move_to(0, 0)
                 context.show_text(piece)
                 context.restore()
+        context.restore()
 
     def _draw_text_directed(self, context, element, font_path):
         """A field laid out a character at a time, in the Cairo toy font,

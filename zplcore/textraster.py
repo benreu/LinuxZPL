@@ -240,6 +240,13 @@ def from_editor(text: str) -> str:
         "\r", "\n").replace("\n", FORCED_BREAK)
 
 
+def from_editor_unbroken(text: str) -> str:
+    """A multi-line text box's contents as a ^TB's field data, which has no
+    line break to write a typed one as: each is a space."""
+    return " ".join((text or "").replace("\r\n", "\n").replace(
+        "\r", "\n").split("\n"))
+
+
 def join_lines(text: str) -> str:
     """The same text on one line, for when a block is switched off.
 
@@ -327,11 +334,12 @@ def wrap_marked(text, font_path, font_height, font_width, block, gap=0,
     """(line, ends_a_paragraph) for each line `text` breaks into in `block`.
 
     Greedy, like the printer: words are added until the next one would not
-    fit. A single word too long for the block is left on its own line rather
-    than being split, and lines past the block's limit are dropped - the
-    printer discards them too, instead of overflowing the block. The block
-    says where a line may break, what its data prints as, and how many lines
-    it holds: ^FB and ^TB differ in all three (model.TextBlock).
+    fit. A single word too long for the block is left on its own line - or,
+    in a ^TB, broken where it runs out of room, as a printer broke one - and
+    lines past the block's limit are dropped - the printer discards them
+    too, instead of overflowing the block. The block says where a line may
+    break, what its data prints as, whether \\& breaks it and how many lines
+    it holds: ^FB and ^TB differ in each (model.TextBlock).
 
     The flag is what justification needs: a line that ends a paragraph is
     short because the text ran out, not because the next word would not fit,
@@ -344,20 +352,32 @@ def wrap_marked(text, font_path, font_height, font_width, block, gap=0,
     if measure is None:
         measure, _font = measurer(font_path, font_height, font_width, gap)
     marked = []
-    for paragraph in block.printed(text or "").split(FORCED_BREAK):
+    printed = block.printed(text or "")
+    paragraphs = (printed.split(FORCED_BREAK) if block.forced_breaks
+                  else [printed])
+    for paragraph in paragraphs:
         words = block.words(paragraph)
         if not words:
             marked.append(("", True))
             continue
-        current = words[0]
-        for word in words[1:]:
-            candidate = f"{current} {word}"
+        current = None
+        for word in words:
+            if current is None and not word:
+                continue                # a space where a line broke
+            candidate = word if current is None else f"{current} {word}"
             if measure(candidate) <= block.width:
                 current = candidate
-            else:
-                marked.append((current, False))
-                current = word
-        marked.append((current, True))
+                continue
+            if current is not None:
+                # the spaces the line broke at go with the break
+                marked.append((current.rstrip(' '), False))
+            current = word or None
+            if block.breaks_words and current:
+                while measure(current) > block.width:
+                    piece = _longest_fit(current, measure, block.width)
+                    marked.append((piece, False))
+                    current = current[len(piece):]
+        marked.append(((current or "").rstrip(' '), True))
 
     kept = marked[:block.line_limit(pitch(font_height, block))]
     if kept:
@@ -365,6 +385,19 @@ def wrap_marked(text, font_path, font_height, font_width, block, gap=0,
         # not stretched either.
         kept[-1] = (kept[-1][0], True)
     return kept
+
+
+def _longest_fit(word, measure, width):
+    """The longest start of `word` that fits `width` - a character at the
+    least, so a block narrower than one still moves on."""
+    pieces = clusters(word)
+    fitting = pieces[0]
+    for count in range(2, len(pieces)):
+        start = ''.join(pieces[:count])
+        if measure(start) > width:
+            break
+        fitting = start
+    return fitting
 
 
 def wrap(text, font_path, font_height, font_width, block, gap=0,
@@ -383,8 +416,10 @@ def block_size(text, font_path, font_height, font_width, block, gap=0):
 
 
 def pitch(font_height, block) -> int:
-    """Dots from one baseline to the next inside a block."""
-    return max(1, int(font_height) + block.line_spacing)
+    """Dots from one baseline to the next inside a block - which the block
+    says, since a ^TB spaces its lines as a printer does and a ^FB by its
+    own spacing."""
+    return block.pitch(font_height)
 
 
 def raster_block(text, font_path, font_height, font_width, block,
@@ -406,7 +441,9 @@ def raster_block(text, font_path, font_height, font_width, block,
     marked = wrap_marked(text, font_path, font_height, font_width, block, gap,
                          measure)
     step = pitch(font_height, block)
-    height = max(1, len(marked) * step)
+    # The block's own depth: a ^FB's lines, or a ^TB's height, which cuts
+    # off the line that runs past it
+    height = block.depth(len(marked), step)
     image = PILImage.new('RGBA', (max(1, block.width), height), (0, 0, 0, 0))
 
     for row, (line, last) in enumerate(marked):

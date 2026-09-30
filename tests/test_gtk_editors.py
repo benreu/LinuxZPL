@@ -811,6 +811,20 @@ check("OK in Edit Text makes a ^TB, right justified by the field's z",
       and "^TBN,150,75" in tb_el.to_zpl(), (tb_el.block, tb_el.justify))
 check("and the box is the block",
       (tb_el.width, tb_el.height) == (150, 75), (tb_el.width, tb_el.height))
+# A ^TB breaks no line at \&, so the dialog shows it as written, and a line
+# break typed into one is a space
+tb_el.text = r"aaa\&bbb"
+window.on_element_double_clicked(None, tb_el)
+tb_dialog = window._editors[id(tb_el)]
+tb_buffer = _find_all(tb_dialog.get_content_area(), Gtk.TextView)[0].get_buffer()
+check(r"a ^TB's \& is shown as written",
+      tb_buffer.get_text(tb_buffer.get_start_iter(), tb_buffer.get_end_iter(),
+                         False) == r"aaa\&bbb")
+tb_buffer.set_text("top\nbottom")
+tb_dialog.response(Gtk.ResponseType.OK)
+check("and a line break typed into a ^TB is a space",
+      tb_el.text == "top bottom" and isinstance(tb_el.block, TextBlock),
+      tb_el.text)
 window.on_element_double_clicked(None, tb_el)
 tb_dialog = window._editors[id(tb_el)]
 tb_content = tb_dialog.get_content_area()

@@ -161,25 +161,30 @@ maximum number of lines, extra spacing between them, a justification
 A word too long for the block is left on its own line rather than split.
 
 **A text block (`^TB`) is a box of fixed width and height.** Its text wraps
-as a field block's does, with these differences - what the manual's one page
-on it says, and what is taken where it says nothing:
+as a field block's does, with these differences - from the manual's one page
+on it, and from a printed label (§18):
 
 - its `height` is the block's own, in dots, however many lines the text takes;
-  lines are `font_height` apart, and those past the height are dropped - only
-  whole lines print, so a block less than one line tall prints nothing
+  lines are 1.277 × `font_height` apart, rounded to a dot - 38 at 30 - and
+  every line that starts inside the height is drawn, the last cut off at it
 - it has no justification of its own: its lines align by the field's own
   (`^FO` or `^FT`'s `z`, §11) - right when that is right, left otherwise,
   auto included - and no spacing, maximum or indent
-- `<<>` in the data prints `<`; any other `<...>` is drawn as written
+- `<<>` in the data prints `<`, and any other `<...>` prints nothing - the
+  spaces either side of it kept, since a run of spaces inside a line is kept
+  as written
 - a soft hyphen (U+00AD) neither prints nor breaks a line, and a line breaks
-  at a space only, so a no-break space holds its words together
+  at a space only, so a no-break space holds its words together; a word too
+  long for the block breaks where it runs out of room, and the rest goes on
+  with the next word
+- `\&` breaks no line: it prints as the two characters it is
 - its rotation turns the whole field: a `^TB` that gives one sets the
   element's `orientation`, before or after the `^A`; one that gives none
   takes the `^A`'s, which is `^FW`'s where there is no `^A`
 
-`\&` breaks a line in a text block as in a field block. Of `^FB` and `^TB` in
-one field, the last is the field's block. What the printer does past the
-height, with `\&` and with a line's pitch is not yet printed (§18).
+Of `^FB` and `^TB` in one field, the last is the field's block. Since `\&`
+breaks no line in a text block, Edit Text shows a text block's data as it is
+written, and a line break typed into one is written as a space.
 
 **A quarter turn transposes the footprint.** `width` and `height` are the box
 the label occupies, so at `R` and `B` they are the run and the stack swapped -
@@ -1124,7 +1129,7 @@ file choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
-| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Direction; Character Gap; Reverse; Font (Choose… / Clear); Wrap; Block; Wrap Width; Block Height; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The wrap fields are the block (§3.3). Block is "Field block (^FB)" or "Text block (^TB)", the list both frontends share. A `^FB` shows Max Lines, Line Spacing, its Justification and Indent: 1–64 lines, −100–100 spacing, the justification list of §3.3 and 0–2000 indent. A `^TB` shows Block Height, 1–32000 dots, and a Justification of Left or Right, which is the field's own `z` (§11): Right makes it right justified, and Left makes a right justified field left, leaving a left or auto one as it was. The box does not move for it, but the edge the `^FO` names is then the one a change of size keeps still. Wrap Width, 10–2000 dots, is either's. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at, and Block Height at the lines it takes there. Direction and Character Gap are `^FP` (§3.3): the list of directions both frontends share, and 0–9999 dots. Direction is insensitive while Wrap is ticked, and keeps whatever the element has. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across every element editor that has one. |
+| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Direction; Character Gap; Reverse; Font (Choose… / Clear); Wrap; Block; Wrap Width; Block Height; Max Lines; Line Spacing; Justification; Indent | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The wrap fields are the block (§3.3). Block is "Field block (^FB)" or "Text block (^TB)", the list both frontends share. A `^FB` shows Max Lines, Line Spacing, its Justification and Indent: 1–64 lines, −100–100 spacing, the justification list of §3.3 and 0–2000 indent. A `^TB` shows Block Height, 1–32000 dots, and a Justification of Left or Right, which is the field's own `z` (§11): Right makes it right justified, and Left makes a right justified field left, leaving a left or auto one as it was. The box does not move for it, but the edge the `^FO` names is then the one a change of size keeps still. Wrap Width, 10–2000 dots, is either's. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at, and Block Height at the lines it takes there. A text block breaks no line at `\&`, so while one is chosen the text is shown as written and a line break typed into it is written as a space. Direction and Character Gap are `^FP` (§3.3): the list of directions both frontends share, and 0–9999 dots. Direction is insensitive while Wrap is ticked, and keeps whatever the element has. Reverse is `^FR` (§3.2), a checkbox shared in name and effect across every element editor that has one. |
 | **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) inverts whatever is already on the label, ignoring Colour (§18). |
 | **Edit Circle** | Diameter; Thickness; Colour; Reverse | Diameter 3–4095, `^GC`'s own range, so a small circle from a file is not enlarged by accepting an editor it was only looked at in. Thickness 1 to `diameter / 2`, the maximum updating live as the diameter changes. Colour and Reverse as Edit Frame's. |
 | **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
@@ -1336,7 +1341,7 @@ one the model holds:
 | `^GSN,0,48^FDA`, `^GSN,0,0^FDA` | `^GSN,48,48` and `^CF`'s two sizes: a `^GS` size of 0 is a size left out, as `^A`'s is, and written back resolved (§18) |
 | `^GS,40,30^FDA` | turned the way `^FW` says, like any field that leaves its orientation out; a letter that is not `N`, `R`, `I` or `B` is `^FW`'s too |
 | `^GSN,40,40` with no `^FD` | no field, as a text field with no data is none |
-| `^TB` | a text block 1 dot wide and 1 tall, the manual's two defaults, turned as the field's `^A` is: a block too short for a line, which prints nothing |
+| `^TB` | a text block 1 dot wide and 1 tall, the manual's two defaults, turned as the field's `^A` is: the top dot of its first line |
 | `^TB,300,100` after `^A0R,30,30` | turned `R`, as the `^A` is, and written back `^TBR,300,100` |
 | `^BY3` | module width 3, keeping the ratio and height the last `^BY` set |
 | `^BY3,3.0,150` | and a `^BC` that gives no height of its own is 150 dots tall |
@@ -2744,23 +2749,17 @@ rather than requirements:
   there: the MicroPDF417 a w2 in and half a w2 down, a w2 above the Code 39,
   and the `T` ten w1 past it and four w1 past each end. Whether a TLC39 with
   no MicroPDF417 has its `T` has not been printed; it is drawn without.
-- **`tests/fixtures/new_commands.zpl` is a label for what the three entries
-  above leave open, and for `^TB`'s (below)**, registered on a rule along
-  its top and one down its left:
-  - four MicroPDF417s at `h` 8, 10, 4 and 12: 160, 110, 80 and 48 dots
-    tall if `h` is a row's height, `h` itself if it is the symbol's - and
-    data too long for mode 0 at a pair of ticks
-  - a PDF417 cut into three with the second excluded, and an X placed by a
-    bare `^FT` after it
-  - a MicroPDF417 cut into two, and a PDF417 whose data fits one symbol,
-    its rows left to the data: 4 plain, 7 with a control block
-  - the manual's TLC39
-  - text blocks for each `^TB` case, each in a box 6 dots clear of it
-
-  The core tests say what this reads each as until it is printed. It must
-  be sent as it is, through the printer console: a save turns the `^TBR`
-  field's `^A` with it and spells out `^BT`'s defaults, which are two of the
-  things the print is to settle.
+- **`tests/fixtures/new_commands.zpl` is the label that settled the entries
+  above, and `^TB`'s (below).** Printed on a 203 dpi printer on 2026-09-29,
+  sent through the console as it is, and scanned at 300 ppi; every symbol on
+  it was read back codeword by codeword, each one's error correction checking
+  out, and measured against rules along its top and down its left. It holds
+  four MicroPDF417s at `h` 8, 10, 4 and 12 and data too long for mode 0; a
+  PDF417 cut into more pieces than its three origins, with an X placed by a
+  bare `^FT` after it; a MicroPDF417 cut into two; a PDF417 whose data fits
+  one symbol; the manual's TLC39; and a text block for each `^TB` case. The
+  core tests' "printed:" checks say what each printed as. It also showed
+  `^B7`'s rows `h` dots tall, not `h` modules (above).
 - **`^BX` draws ECC 200 whatever quality it is asked for.** Levels 0 to 140
   use convolutional coding, were meant for closed systems where one party
   controls both the printing and the reading, and no reader made this century
@@ -2825,20 +2824,16 @@ rather than requirements:
   two dots. ZPL does not document its own spacing.
 - **`^FB`'s indent is applied to every line**, where ZPL hangs it on the second
   and later ones. The parameter round-trips; only where it lands differs.
-- **A `^TB` is read off the manual's one page on it, not yet off a print.**
-  That page says the text is truncated past the block's height, that data
-  between `<` and `>` is an escape of which `<<>` is the one example, and
-  that a soft hyphen neither prints nor breaks a line. Taken here, and not
-  yet printed:
-  - only whole lines print, `font_height` apart, so a block less than a line
-    tall prints nothing
-  - `\&` breaks a line, as in a `^FB`
-  - any `<...>` but `<<>` is drawn as written
-  - a word too long for the block is kept whole on a line of its own and
-    cut off at the block's right edge, as a `^FB`'s is drawn
-  - a right justified field's `^FO` names the block's right edge, as any
-    field's does
-  - a rotation in the `^TB` wins over the `^A`'s, whichever comes first
+- **A `^TB` is drawn as a printer printed the new_commands label, in font 0
+  at 30 dots.** It printed lines 38.3 dots apart and cut the last one off at
+  the block's height rather than dropping it; broke a word too long for the
+  block where it ran out of room; printed `\&` as `¢&` - no break, and its
+  backslash, in font 0 under `^CI28`, as a cent sign, which this app draws as
+  a backslash; dropped an unknown `<...>` and kept the spaces either side of
+  it; and justified, turned and treated a soft hyphen and a no-break space as
+  §3.3 says. Only font 0 at 30 dots has been printed, so the pitch is that
+  size's ratio to the font's height, for every font and size; the font 0
+  stand-in's own line height at that size is 37.35.
 
   The manual also names `^FN` as a source of the justification, which has
   none; it is read from `^FO` and `^FT` only. It gives `^TB` only on firmware

@@ -3706,7 +3706,10 @@ class ZPLViewerWindow(Gtk.Window):
             # \& on the way out.
             text_view = Gtk.TextView()
             text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-            text_view.get_buffer().set_text(textraster.to_editor(element.text))
+            # A ^TB breaks no line at \&, so its data is shown as it is
+            text_view.get_buffer().set_text(
+                element.text if isinstance(element.block, TextBlock)
+                else textraster.to_editor(element.text))
             text_scroll = Gtk.ScrolledWindow()
             text_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
             text_scroll.set_shadow_type(Gtk.ShadowType.IN)
@@ -3881,8 +3884,16 @@ class ZPLViewerWindow(Gtk.Window):
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
                     buffer = text_view.get_buffer()
-                    element.text = textraster.from_editor(buffer.get_text(
-                        buffer.get_start_iter(), buffer.get_end_iter(), False))
+                    # A ^TB has no line break to write a typed one as, so it
+                    # is a space
+                    text_block_chosen = (
+                        wrap_check.get_active()
+                        and kind_codes[kind_combo.get_active()] == 'TB')
+                    element.text = (textraster.from_editor_unbroken
+                                    if text_block_chosen
+                                    else textraster.from_editor)(
+                        buffer.get_text(buffer.get_start_iter(),
+                                        buffer.get_end_iter(), False))
                     element.font_height = int(height_spin.get_value())
                     element.font_width = int(width_spin.get_value())
                     element.orientation = orientation_codes[
@@ -3892,8 +3903,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.char_gap = int(gap_spin.get_value())
                     element.reverse_print = fr_check.get_active()
 
-                    if (wrap_check.get_active()
-                            and kind_codes[kind_combo.get_active()] == 'TB'):
+                    if text_block_chosen:
                         element.set_text_block(
                             int(block_width_spin.get_value()),
                             int(block_height_spin.get_value()),

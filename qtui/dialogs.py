@@ -401,8 +401,11 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     layout.addLayout(form)
 
     # Multi-line, because ZPL's forced break is two characters a user should
-    # never have to spell: Enter here becomes \& on the way out.
-    text_edit = QPlainTextEdit(textraster.to_editor(element.text))
+    # never have to spell: Enter here becomes \& on the way out. A ^TB breaks
+    # no line at \&, so its data is shown as it is.
+    text_edit = QPlainTextEdit(
+        element.text if isinstance(element.block, TextBlock)
+        else textraster.to_editor(element.text))
     text_edit.setObjectName("text")
     text_edit.setMinimumHeight(4 * QFontMetrics(text_edit.font()).height())
     form.addRow("Text:", text_edit)
@@ -578,7 +581,12 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     layout.addWidget(_buttons(dialog))
 
     def _apply():
-        element.text = textraster.from_editor(text_edit.toPlainText())
+        # A ^TB has no line break to write a typed one as, so it is a space
+        text_block_chosen = (wrap_check.isChecked()
+                             and kind_combo.currentData() == 'TB')
+        element.text = (textraster.from_editor_unbroken
+                        if text_block_chosen
+                        else textraster.from_editor)(text_edit.toPlainText())
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
         element.orientation = orientation_combo.currentData()
@@ -587,7 +595,7 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
         element.height = element.font_height
         element.reverse_print = fr_check.isChecked()
 
-        if wrap_check.isChecked() and kind_combo.currentData() == 'TB':
+        if text_block_chosen:
             element.set_text_block(block_width.value(), block_height.value(),
                                    text_justify_combo.currentData())
         elif wrap_check.isChecked():
