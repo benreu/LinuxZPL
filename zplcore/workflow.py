@@ -316,7 +316,7 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
 # its origins. Before any other barcode the printer ignores it, and so does
 # the designer - not kept, as ^FP is not.
 MODELLED = {'^FO', '^FT', '^FM', '^FD', '^FS', '^BY',
-            '^GB', '^GC', '^GD', '^GE', '^GS', '^FB', '^FP', '^FR',
+            '^GB', '^GC', '^GD', '^GE', '^GS', '^FB', '^TB', '^FP', '^FR',
             '^PW', '^LL', '^XA', '^XZ', '^FX', '^CF', '^FW',
             '^FN', '^FV', '^DF', '^XF',
             '^SN', '^SF', '^FC', '^FH',

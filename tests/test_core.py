@@ -8269,6 +8269,310 @@ for _path in (FONT, None):
 
 zpl_fonts._resident_cache['0'] = STANDIN
 
+# --- ^TB: a text block of fixed width and height ----------------------------
+# Measured by the fixed-width estimate, as the ^FP section is: font 0 with no
+# stand-in is 20 dots a character at ^A0N,30,20, and a line 30 dots tall, so
+# where each line breaks is plain arithmetic.
+zpl_fonts._resident_cache['0'] = None
+from zplcore.model import TextBlock
+
+def _tb(fields):
+    return zpl_parser.parse_zpl("^XA^PW812^LL1218" + fields + "^XZ")[0]
+
+def _tb_wrap(text, block):
+    return textraster.wrap(text, None, 30, 20, block)
+
+_tbd = _tb("^FO50,60^A0N,30,20^TBN,150,75^FDaaa bbb ccc ddd eee^FS")
+_tbe = _tbd.elements[0]
+check("^TB is read as a text block of its width and height",
+      _tbe.block == TextBlock(150, 75, 'L'), _tbe.block)
+check("and its box is the block, however many lines the text takes",
+      (_tbe.x, _tbe.y, _tbe.width, _tbe.height) == (50, 60, 150, 75),
+      (_tbe.x, _tbe.y, _tbe.width, _tbe.height))
+check("^TB is written where ^FB is, with the field's turn",
+      "^A0N,30,20\n^TBN,150,75\n^FDaaa bbb ccc ddd eee^FS" in _tbd.to_zpl(),
+      _tbd.to_zpl().replace("\n", " "))
+_tbd2 = zpl_parser.parse_zpl(_tbd.to_zpl())[0]
+check("and a save reads back as the same block and the same file",
+      _tbd2.elements[0].block == _tbe.block
+      and _tbd2.to_zpl() == _tbd.to_zpl(), _tbd2.elements[0].block)
+check("^TB is no longer named in the load warning",
+      workflow.unsupported_commands(
+          "^XA^FO1,1^A0N,30,20^TBN,150,75^FDx^FS^XZ") == [])
+check("^TB opens a field, as ^FB does",
+      len(_tb("^FO50,60^FS^A0N,30,20^TBN,150,75^FDab^FS").elements) == 1)
+
+# Cut off at the last whole line: the manual says only that text past the
+# height is truncated
+check("text past the height is cut off at the last whole line",
+      _tb_wrap(_tbe.text, _tbe.block) == ['aaa bbb', 'ccc ddd'],
+      _tb_wrap(_tbe.text, _tbe.block))
+for _height, _want in ((90, ['aaa bbb', 'ccc ddd', 'eee']),
+                       (45, ['aaa bbb']), (29, [])):
+    check(f"a block {_height} dots tall holds {len(_want)} of the lines",
+          _tb_wrap(_tbe.text, TextBlock(150, _height)) == _want,
+          _tb_wrap(_tbe.text, TextBlock(150, _height)))
+_tb_short = _tb("^FO50,60^A0N,30,20^TBN,150,29^FDaaa^FS").elements[0]
+check("a block less than a line tall keeps its box and prints nothing",
+      (_tb_short.width, _tb_short.height) == (150, 29)
+      and _preview_ink("^XA^PW400^LL300^FO50,60^A0N,30,20^TBN,150,29"
+                       "^FDaaa^FS^XZ", 400, 300) is None,
+      (_tb_short.width, _tb_short.height))
+_tb_bare = _tb("^FO50,60^A0N,30,20^TB^FDaaa^FS").elements[0]
+check("^TB's width and height are 1 dot when left out",
+      _tb_bare.block == TextBlock(1, 1) and (_tb_bare.width,
+                                             _tb_bare.height) == (1, 1),
+      (_tb_bare.block, _tb_bare.width, _tb_bare.height))
+
+# What the manual says of the data
+check("<<> prints <", _tb_wrap("a<<>b", TextBlock(400, 30)) == ['a<b'],
+      _tb_wrap("a<<>b", TextBlock(400, 30)))
+check("and any other <...> is drawn as written",
+      _tb_wrap("a<x>b", TextBlock(400, 30)) == ['a<x>b'])
+check("a soft hyphen neither prints nor breaks the line",
+      _tb_wrap("abc\u00addef ghi", TextBlock(80, 90)) == ['abcdef', 'ghi'],
+      _tb_wrap("abc\u00addef ghi", TextBlock(80, 90)))
+check("a line breaks at a space only, so a no-break space holds",
+      _tb_wrap("aaa\u00a0bbb ccc", TextBlock(100, 90))
+      == ['aaa\u00a0bbb', 'ccc'],
+      _tb_wrap("aaa\u00a0bbb ccc", TextBlock(100, 90)))
+check(r"and \& breaks it, as in a ^FB",
+      _tb_wrap(r"aaa\&bbb", TextBlock(400, 90)) == ['aaa', 'bbb'])
+check("a ^FB's data is not read as a ^TB's",
+      _tb_wrap("a<<>b", FieldBlock(400, 1)) == ['a<<>b'])
+
+# Justification is the field's own z
+_tb_right = _tb("^FO400,60,1^A0N,30,20^TBN,150,75^FDaa bb^FS")
+_tbr = _tb_right.elements[0]
+check("a right justified field's ^TB is right justified",
+      _tbr.block.justification == 'R' and _tbr.x == 250,
+      (_tbr.block, _tbr.x))
+check("and its lines end at the block's right edge",
+      textraster.placements('aa bb', lambda t: len(t) * 20, _tbr.block, True)
+      == [('aa bb', 50)])
+check("and the ^FO still names that edge on the way out",
+      "^FO400,60,1\n" in _tb_right.to_zpl(), _tb_right.to_zpl())
+_tb_auto = _tb("^FO50,60,2^A0N,30,20^TBN,150,75^FDaa^FS")
+check("auto justification is left, and is written back as auto",
+      _tb_auto.elements[0].block.justification == 'L'
+      and "^FO50,60,2\n" in _tb_auto.to_zpl(), _tb_auto.elements[0].block)
+check("^FW's justification reaches a ^TB with none of its own",
+      _tb("^FWN,1^FO400,60^A0N,30,20^TBN,150,75^FDaa^FS")
+      .elements[0].block.justification == 'R')
+
+# The rotation turns the whole field, whatever the ^A says
+_tb_turned = _tb("^FO50,60^A0N,30,20^TBR,150,75^FDaa^FS")
+_tbt = _tb_turned.elements[0]
+check("^TB's rotation turns the field",
+      _tbt.orientation == 'R' and (_tbt.width, _tbt.height) == (75, 150),
+      (_tbt.orientation, _tbt.width, _tbt.height))
+check("and is written into the ^A as well as the ^TB",
+      "^A0R,30,20\n^TBR,150,75\n" in _tb_turned.to_zpl(), _tb_turned.to_zpl())
+check("a ^TB before the ^A still turns the field",
+      _tb("^FO50,60^TBB,150,75^A0N,30,20^FDaa^FS")
+      .elements[0].orientation == 'B')
+check("with none given, the ^A's turn is the block's - ^FW's with no ^A",
+      _tb("^FO50,60^A0I,30,20^TB,150,75^FDaa^FS").elements[0].orientation
+      == 'I'
+      and _tb("^FWR^FO50,60^A0,30,20^TB,150,75^FDaa^FS")
+      .elements[0].orientation == 'R')
+
+# The last of ^FB and ^TB is the field's block
+_tb_then_fb = _tb("^FO50,60^A0N,30,20^TBR,150,75^FB200,3^FDaa^FS").elements[0]
+check("a ^FB after a ^TB is the block, and the ^TB's turn goes with it",
+      _tb_then_fb.block == FieldBlock(200, 3)
+      and _tb_then_fb.orientation == 'N',
+      (_tb_then_fb.block, _tb_then_fb.orientation))
+check("a ^TB after a ^FB is the block",
+      _tb("^FO50,60^A0N,30,20^FB200,3^TB,150,75^FDaa^FS")
+      .elements[0].block == TextBlock(150, 75))
+
+# Handles: a side handle sets the width, a top or bottom one the height
+_tbh_doc = _tb("^FO50,60^A0N,30,20^TBN,150,75^FDaaa bbb ccc ddd eee^FS")
+_tbh = _tbh_doc.elements[0]
+geometry.resize_by_handle(_tbh_doc, _tbh, 'mr', -30, 0)
+geometry.resize_by_handle(_tbh_doc, _tbh, 'bm', 0, 15)
+check("a side handle sets a ^TB's width and a bottom one its height",
+      _tbh.block == TextBlock(120, 90) and (_tbh.width, _tbh.height)
+      == (120, 90), (_tbh.block, _tbh.width, _tbh.height))
+geometry.resize_by_handle(_tbh_doc, _tbh, 'tm', 0, 20)
+check("a top handle sets it from the bottom edge, which stays put",
+      _tbh.block.height == 70 and _tbh.y + _tbh.height == 150,
+      (_tbh.block, _tbh.y, _tbh.height))
+_tbhr_doc = _tb("^FO50,60^A0N,30,20^TBR,150,75^FDaaa bbb ccc^FS")
+_tbhr = _tbhr_doc.elements[0]
+geometry.resize_by_handle(_tbhr_doc, _tbhr, 'bm', 0, 20)
+geometry.resize_by_handle(_tbhr_doc, _tbhr, 'mr', 15, 0)
+check("turned R, the bottom handle is along the lines and the side across",
+      _tbhr.block == TextBlock(170, 90) and (_tbhr.width, _tbhr.height)
+      == (90, 170), (_tbhr.block, _tbhr.width, _tbhr.height))
+# The same fix reaches a ^FB, which used to take a turned box's width - its
+# stack of lines - as the wrap width
+_fbhr_doc = _tb("^FO50,60^A0R,30,20^FB150,2^FDaaa bbb ccc ddd^FS")
+_fbhr = _fbhr_doc.elements[0]
+geometry.resize_by_handle(_fbhr_doc, _fbhr, 'bm', 0, 20)
+check("a turned ^FB's handle along its lines sets the wrap width",
+      _fbhr.block.width == 170 and _fbhr.block.max_lines == 2,
+      _fbhr.block)
+geometry.resize_by_handle(_fbhr_doc, _fbhr, 'mr', 30, 0)
+check("and the one across them the line count",
+      _fbhr.block.width == 170 and _fbhr.block.max_lines == 3,
+      _fbhr.block)
+
+# Label Settings sets the label size, which clamps every element to it: a
+# turned block's box width is its stack of lines, and was once made its wrap
+# width - squashing every turned ^FB on OK
+_tbl_doc = _tb("^FO50,60^A0R,30,20^FB200,3^FDaaa bbb^FS"
+               "^FO300,60^A0N,30,20^TBB,150,75^FDaaa bbb^FS"
+               "^FO500,60^A0N,30,20^TBN,150,75^FDaaa bbb^FS")
+_tbl_doc.set_label_size(812, 1218)
+check("setting the label size leaves a turned ^FB and ^TB as they were",
+      _tbl_doc.elements[0].block == FieldBlock(200, 3)
+      and _tbl_doc.elements[1].block == TextBlock(150, 75),
+      (_tbl_doc.elements[0].block, _tbl_doc.elements[1].block))
+_tbl_doc.set_label_size(620, 110)
+check("and one it shrinks under a ^TB cuts the block to fit",
+      _tbl_doc.elements[2].block == TextBlock(120, 50)
+      and _tbl_doc.elements[1].block == TextBlock(50, 75),
+      (_tbl_doc.elements[2].block, _tbl_doc.elements[1].block))
+
+# Snapshots and rescale
+_tbs_doc = _tb("^FO50,60^A0N,30,20^TBN,150,75^FDaaa^FS")
+_tbs_snap = _tbs_doc.snapshot()
+_tbs_doc.elements[0].block.height = 20
+_tbs_doc.restore(_tbs_snap)
+check("undo restores the height a drag changed",
+      _tbs_doc.elements[0].block == TextBlock(150, 75),
+      _tbs_doc.elements[0].block)
+_tbs_doc.rescale(300 / 203)
+check("rescale carries the width and the height to the new resolution",
+      _tbs_doc.elements[0].block == TextBlock(round(150 * 300 / 203),
+                                              round(75 * 300 / 203)),
+      _tbs_doc.elements[0].block)
+
+# Switching to a ^TB moves nothing
+_tbx_doc = Document(812, 1218, dpi=203)
+_tbx = _tbx_doc.add_text_element('aaa bbb ccc ddd eee')
+_tbx.font_code, _tbx.font_height, _tbx.font_width = '0', 30, 20
+_tbx.block = FieldBlock(150, 4)
+_tbx_doc.sync_text_width(_tbx)
+_tbx_before = (_tbx.width, _tbx.height)
+check("a default ^TB holds the lines a ^FB wraps the text into",
+      _tbx.default_text_block(_tbx_doc.font_path) == TextBlock(150, 90)
+      and _tbx_before == (150, 90), (_tbx.default_text_block(), _tbx_before))
+_tbx.block = None
+_tbx_doc.sync_text_width(_tbx)
+check("and with no block, the text on the one line it is on",
+      _tbx.default_text_block(_tbx_doc.font_path)
+      == TextBlock(_tbx.width + 1, 30),
+      (_tbx.default_text_block(_tbx_doc.font_path), _tbx.width))
+_tbx.x = 100
+_tbx.block = TextBlock(150, 90)
+_tbx_doc.sync_text_width(_tbx)
+_tbx.set_text_block(150, 90, 'R')
+_tbx_doc.sync_text_width(_tbx)
+check("set right, the field is right justified and its box stays put",
+      _tbx.justify == geometry.JUSTIFY_RIGHT and _tbx.x == 100
+      and _tbx.block == TextBlock(150, 90, 'R')
+      and "^FO250," in _tbx.to_zpl(), (_tbx.justify, _tbx.x, _tbx.block))
+_tbx.set_text_block(150, 90, 'L')
+check("set left again, the ^FO names the left edge again",
+      _tbx.justify == geometry.JUSTIFY_LEFT and _tbx.block.justification == 'L'
+      and re.search(r"\^FO100,\d+\n", _tbx.to_zpl()) is not None,
+      _tbx.to_zpl())
+_tbx.justify = geometry.JUSTIFY_AUTO
+_tbx.set_text_block(150, 90, 'L')
+check("and left leaves an auto field auto", _tbx.justify == geometry.JUSTIFY_AUTO)
+
+# The preview draws inside the box the canvas shows, at every turn
+for _turn in 'NRIB':
+    _src = f"^FO200,100^A0{_turn},30,20^TB{_turn},150,95^FDaaa bbb ccc ddd^FS"
+    _e = _tb(_src).elements[0]
+    _ink = _preview_ink(f"^XA^PW500^LL500{_src}^XZ", 500, 500)
+    check(f"the preview draws a ^TB turned {_turn} inside the canvas's box",
+          _inside(_ink, _e), (_ink, (_e.x, _e.y, _e.width, _e.height)))
+_ink = _preview_ink("^XA^PW500^LL500^FO200,100^A0N,30,20^TBN,150,95"
+                    "^FDaaa bbb ccc ddd eee fff^FS^XZ", 500, 500)
+check("and cuts it off at the last whole line, as the canvas does",
+      _ink is not None and 30 < _ink[3] <= 90, _ink)
+_src = "^FO350,100,1^A0N,30,20^TBN,150,95^FDaa bb^FS"
+_ink = _preview_ink(f"^XA^PW500^LL500{_src}^XZ", 500, 500)
+check("and a right justified one's lines end at its right edge",
+      _ink is not None and 350 - 6 <= _ink[0] + _ink[2] <= 350 + 2
+      and _ink[0] > 200 + 20, _ink)
+
+# The Qt canvas draws the same lines in the same box
+_tbw = qt_main.ZPLDesignerWindow()
+_tbw.unsaved_changes = False
+_tbw.on_new()
+_tbw.document.set_label_size(812, 1218)
+_tbw.canvas.set_zoom(1.0)
+for _path in (FONT, None):
+    _te = _tbw.document.add_text_element(
+        'aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll')
+    _te.x, _te.y, _te.font_code, _te.font_height, _te.font_width = \
+        60, 60, '0', 30, 20
+    _te.font_path = _path
+    _te.block = TextBlock(150, 95)
+    _tbw.document.sync_text_width(_te)
+    _surface = QImage(812, 1218, QImage.Format_ARGB32); _surface.fill(Qt.white)
+    _tbw.canvas.render(_surface)
+    check(f"the Qt canvas draws a ^TB's whole lines and no more "
+          f"({'with' if _path else 'without'} a font file)",
+          _ink_bands(_surface, _te) == 3, _ink_bands(_surface, _te))
+    _tbw.document.elements.remove(_te)
+
+# The dialog
+_tbq_doc = Document(812, 1218, dpi=203)
+_tbq = _tbq_doc.add_text_element('aaa bbb ccc ddd')
+_tbq.font_code, _tbq.font_height, _tbq.font_width = '0', 30, 20
+_tbq_doc.sync_text_width(_tbq)
+
+def _fill_text_block(dialog):
+    dialog.findChild(QCheckBox, 'wrap').setChecked(True)
+    dialog.findChild(QComboBox, 'block_kind').setCurrentIndex(1)
+    dialog.findChild(QSpinBox, 'block_width').setValue(150)
+    dialog.findChild(QSpinBox, 'block_height').setValue(75)
+    dialog.findChild(QComboBox, 'text_justification').setCurrentIndex(1)
+
+_tbq_right = _tbq.x + _tbq.width
+check("the text dialog makes a ^TB",
+      _drive_text_dialog(_tbq, _tbq_doc, _fill_text_block)
+      and _tbq.block == TextBlock(150, 75, 'R')
+      and _tbq.justify == geometry.JUSTIFY_RIGHT,
+      (_tbq.block, _tbq.justify))
+check("and the box is the block, under the edge the ^FO now names",
+      (_tbq.x + _tbq.width, _tbq.width, _tbq.height) == (_tbq_right, 150, 75),
+      (_tbq.x, _tbq.width, _tbq.height, _tbq_right))
+check("written as ^TB with the ^FO naming the right edge",
+      "^TBN,150,75\n" in _tbq.to_zpl()
+      and f"^FO{_tbq_right},{_tbq.y},1\n" in _tbq.to_zpl(), _tbq.to_zpl())
+_tbq_dlg = qt_dialogs.edit_text_dialog(None, _tbq, _tbq_doc)
+check("reopened, it shows the ^TB and its fields",
+      _tbq_dlg.findChild(QComboBox, 'block_kind').currentIndex() == 1
+      and _tbq_dlg.findChild(QSpinBox, 'block_height').value() == 75
+      and _tbq_dlg.findChild(QComboBox, 'text_justification').currentIndex()
+      == 1)
+check("and hides the ^FB's own fields",
+      _tbq_dlg.findChild(QSpinBox, 'max_lines').isHidden()
+      and _tbq_dlg.findChild(QComboBox, 'justification').isHidden()
+      and not _tbq_dlg.findChild(QSpinBox, 'block_height').isHidden())
+_tbq_dlg.findChild(QComboBox, 'block_kind').setCurrentIndex(0)
+check("which come back when the block is a ^FB again",
+      not _tbq_dlg.findChild(QSpinBox, 'max_lines').isHidden()
+      and _tbq_dlg.findChild(QSpinBox, 'block_height').isHidden())
+_tbq_dlg.reject()
+_drive_text_dialog(_tbq, _tbq_doc, lambda dialog: dialog.findChild(
+    QComboBox, 'block_kind').setCurrentIndex(0))
+check("and choosing it makes the block a ^FB of the same width",
+      isinstance(_tbq.block, FieldBlock) and _tbq.block.width == 150,
+      _tbq.block)
+check("both frontends are offered the same blocks",
+      [c for _l, c in zpl_model.TEXT_BLOCKS] == ['FB', 'TB']
+      and [c for _l, c in zpl_model.TEXT_BLOCK_JUSTIFICATIONS] == ['L', 'R'])
+
+zpl_fonts._resident_cache['0'] = STANDIN
+
 # --- the resident bitmap fonts print in whole-number magnifications -------
 # A bitmap font can only be magnified by whole numbers, 1 to 10 on each axis,
 # with its own fixed gap after each character. The designer drew ^AFN,36,20

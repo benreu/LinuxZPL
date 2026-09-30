@@ -328,7 +328,43 @@ class FieldBlock:
         return FieldBlock(self.width, self.max_lines, self.line_spacing,
                           self.justification, self.indent)
 
-    def to_zpl(self) -> str:
+    # What wrapping asks of a block (textraster.wrap_marked), which a ^TB
+    # answers differently - see TextBlock.
+
+    def line_limit(self, pitch: int) -> int:
+        """The most lines it prints, `pitch` dots apart."""
+        return self.max_lines
+
+    def depth(self, lines: int, pitch: int) -> int:
+        """Dots it takes down the field, holding `lines` lines."""
+        return max(1, lines * pitch)
+
+    def fit(self, run: int, stack: int, pitch: int) -> None:
+        """Take a dragged box, along the lines and across them, as a wrap
+        width and a number of lines."""
+        self.width = max(1, int(run))
+        self.max_lines = max(1, int(round(stack / max(1, pitch))))
+
+    def scale(self, run: float, stack: float) -> None:
+        """Scale by `run` along the lines and `stack` across them. A block
+        keeps its line count: a scale is a scale, not a re-wrap."""
+        self.width = max(1, int(round(self.width * run)))
+        self.line_spacing = int(round(self.line_spacing * stack))
+        self.indent = int(round(self.indent * run))
+
+    @staticmethod
+    def words(paragraph: str) -> list:
+        """The words a line may break between: at any white space."""
+        return paragraph.split()
+
+    @staticmethod
+    def printed(text: str) -> str:
+        """The field data as it prints, which ^FB leaves as it is."""
+        return text
+
+    def to_zpl(self, orientation: Optional[str] = None) -> str:
+        """^FB. It has no turn of its own - the field's ^A turns it - so
+        `orientation` is only there to match TextBlock."""
         return (f"^FB{self.width},{self.max_lines},{self.line_spacing},"
                 f"{self.justification},{self.indent}")
 
@@ -337,6 +373,106 @@ class FieldBlock:
 
     def __repr__(self):
         return f"FieldBlock({self.to_zpl()[3:]})"
+
+
+class TextBlock:
+    """^TB - a text block: a box of fixed width and height the text wraps in.
+
+    Where ^FB's height follows the lines the text wraps into, up to a count
+    of them, ^TB's is a number of dots, and whatever does not fit in it is
+    cut off. The manual says it is truncated. Taken here to mean that only
+    whole lines print, as many as fit: a block less than one line tall
+    prints nothing. That is not yet printed (FUNCTIONAL_SPEC.md section 18).
+
+    It has no justification of its own. The manual gives it the field's,
+    ^FO or ^FT's z: right when that is right, left otherwise - auto
+    included, which for the Latin scripts a designer here writes is left.
+    The element holds that z, and `justification` is kept in step with it
+    (for_field), so the drawing reads a block as it reads a ^FB's.
+
+    Also from the manual: data between < and > is an escape sequence, of
+    which it gives one - <<> prints < - and a soft hyphen neither prints nor
+    breaks a line. Any other <...> is drawn as written.
+    """
+
+    # What a ^FB has and a ^TB does not, at the values that do nothing
+    line_spacing = 0
+    indent = 0
+    # Which ^TB drops from what it prints
+    SOFT_HYPHEN = '\u00ad'
+
+    def __init__(self, width: int = 1, height: int = 1,
+                 justification: str = 'L'):
+        self.width = max(1, int(width))
+        self.height = max(1, int(height))
+        self.justification = ('R' if (justification or 'L').upper() == 'R'
+                              else 'L')
+
+    @classmethod
+    def from_zpl(cls, params: str) -> 'TextBlock':
+        """^TBa,b,c's width and height, 1 dot each when left out.
+
+        The rotation, a, turns the whole field, so it is the element's
+        orientation rather than the block's (parser.read_block_turn).
+        """
+        parts = [p.strip() for p in params.split(',')]
+
+        def number(index):
+            try:
+                return int(parts[index])
+            except (IndexError, ValueError):
+                return 1
+
+        return cls(number(1), number(2))
+
+    def for_field(self, justify) -> 'TextBlock':
+        """This block, its lines aligned by the field justification `justify`."""
+        return TextBlock(self.width, self.height,
+                         'R' if justify == geometry.JUSTIFY_RIGHT else 'L')
+
+    def copy(self) -> 'TextBlock':
+        """An independent copy, for a snapshot that a later edit must not reach."""
+        return TextBlock(self.width, self.height, self.justification)
+
+    def line_limit(self, pitch: int) -> int:
+        """As many whole lines as its height holds, `pitch` dots apart."""
+        return self.height // max(1, pitch)
+
+    def depth(self, lines: int, pitch: int) -> int:
+        """Its own height, however many lines it holds."""
+        return self.height
+
+    def fit(self, run: int, stack: int, pitch: int) -> None:
+        """Take a dragged box, along the lines and across them, as its
+        width and height."""
+        self.width = max(1, int(run))
+        self.height = max(1, int(stack))
+
+    def scale(self, run: float, stack: float) -> None:
+        """Scale by `run` along the lines and `stack` across them."""
+        self.width = max(1, int(round(self.width * run)))
+        self.height = max(1, int(round(self.height * stack)))
+
+    @staticmethod
+    def words(paragraph: str) -> list:
+        """The words a line may break between: at a space only, so a
+        no-break space holds its words together."""
+        return [word for word in paragraph.split(' ') if word]
+
+    @classmethod
+    def printed(cls, text: str) -> str:
+        """The field data as it prints: <<> as <, and no soft hyphens."""
+        return text.replace('<<>', '<').replace(cls.SOFT_HYPHEN, '')
+
+    def to_zpl(self, orientation: Optional[str] = None) -> str:
+        """^TB, with the field's turn, since it has one of its own."""
+        return f"^TB{orientation or 'N'},{self.width},{self.height}"
+
+    def __eq__(self, other):
+        return isinstance(other, TextBlock) and vars(self) == vars(other)
+
+    def __repr__(self):
+        return f"TextBlock({self.width},{self.height},{self.justification})"
 
 
 def _comment_lines(comments) -> str:
@@ -447,8 +583,9 @@ class TextElement(DesignElement):
         # shared geometry only ever sees an axis-aligned box - which is why
         # rotating text needs nothing from hit-testing or dragging.
         self.orientation = (orientation or 'N').upper()
-        # ^FB, when the text is a wrapped block rather than a single line
-        self.block: Optional['FieldBlock'] = None
+        # ^FB or ^TB, when the text is a wrapped block rather than a single
+        # line
+        self.block = None
         # ^FP: which way the characters run inside the field's own frame -
         # left to right, top to bottom or right to left - and how many extra
         # dots go between them. The frame is then turned by `orientation` as
@@ -661,6 +798,41 @@ class TextElement(DesignElement):
         return FieldBlock(max(1, int(widest) + 1),
                           max(self.DEFAULT_MAX_LINES, len(lines)))
 
+    def set_text_block(self, width: int, height: int,
+                       justification: str) -> None:
+        """Wrap the text into a ^TB, its lines aligned `justification`.
+
+        That is the field's own z, which the element holds, so the block
+        takes it from there: right makes the field right justified, and
+        left makes a right justified one left - leaving a left or auto one
+        as the file wrote it. That moves nothing by itself, since the box
+        is held by its left edge whatever names it; it changes which edge
+        the ^FO names, and so which one a change of size keeps still
+        (Document.sync_text_width).
+        """
+        if justification == 'R':
+            self.justify = geometry.JUSTIFY_RIGHT
+        elif self.justify == geometry.JUSTIFY_RIGHT:
+            self.justify = geometry.JUSTIFY_LEFT
+        self.block = TextBlock(width, height).for_field(self.justify)
+
+    def default_text_block(self, default_font_path: Optional[str] = None,
+                           dpi: int = zpl_fonts.DEFAULT_DPI) -> 'TextBlock':
+        """A ^TB block that holds this text as it is drawn now.
+
+        As wide as the ^FB it wraps in, or as default_block when it has
+        none, and as tall as the lines it takes there - so switching to a
+        ^TB moves nothing. Any shorter would cut lines off, since a ^TB's
+        height is fixed rather than following its text.
+        """
+        from . import textraster
+        wrap = (self.block if isinstance(self.block, FieldBlock)
+                else self.default_block(default_font_path, dpi))
+        cell = self.cell(default_font_path, dpi)
+        lines = textraster.wrap(self.text, self.face(default_font_path),
+                                cell.height, cell.width, wrap, cell.row_gap)
+        return TextBlock(wrap.width, max(1, len(lines)) * cell.height)
+
     def to_zpl(self, printer_font_name: Optional[str] = None,
                offset=(0, 0),
                font_device: str = zpl_fonts.DEFAULT_FONT_DEVICE) -> str:
@@ -683,7 +855,7 @@ class TextElement(DesignElement):
         else:
             zpl += f"^A{self.font_code}{turn},{self.font_height},{self.font_width}\n"
         if self.block is not None:
-            zpl += self.block.to_zpl() + "\n"
+            zpl += self.block.to_zpl(turn) + "\n"
         zpl += self.parameter_zpl()
         # ^FR immediately before the data it reverses, not right after ^FO -
         # the working convention, and the one place this differed from it.
@@ -1871,6 +2043,11 @@ def graphic_symbol_choices(current: str) -> tuple:
 TEXT_JUSTIFICATIONS = (("Left", 'L'), ("Centred", 'C'),
                        ("Right", 'R'), ("Justified", 'J'))
 
+# The two blocks text wraps into, and the justifications a ^TB's lines can
+# have - the field's own z, which has no centre and no justified
+TEXT_BLOCKS = (("Field block (^FB)", 'FB'), ("Text block (^TB)", 'TB'))
+TEXT_BLOCK_JUSTIFICATIONS = (("Left", 'L'), ("Right", 'R'))
+
 # ^FP's direction, for the same reason
 TEXT_DIRECTIONS = (("Left to right", 'H'), ("Top to bottom", 'V'),
                    ("Right to left", 'R'))
@@ -3002,8 +3179,16 @@ class Document:
         if block is not None:
             # A wrapped element's box is its block, so a box clamped to the
             # label is a narrower wrap - not a box that merely claims to be
-            # narrower while the text still runs to the old width.
-            block.width = max(1, element.width)
+            # narrower while the text still runs to the old width - and a
+            # ^TB's a shorter one. Along the lines and across them, which a
+            # quarter turn swaps: the box's width is a turned block's stack
+            # of lines, which this once made its wrap width on every paste
+            # and every change of label size.
+            run, stack = ((element.height, element.width) if element.rotated()
+                          else (element.width, element.height))
+            block.width = max(1, run)
+            if isinstance(block, TextBlock):
+                block.height = max(1, stack)
             self.sync_text_width(element)
 
     def rescale(self, factor: float) -> None:

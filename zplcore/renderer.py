@@ -10,7 +10,7 @@ from typing import List, Optional
 from . import fields, fonts as zpl_fonts, geometry, graphic_store, graphic_symbols, graphics, parser, symbology, textraster, transforms
 from .model import (BarcodeElement, CircleElement, DiagonalLineElement,
                     EllipseElement, FieldBlock, FrameElement,
-                    GraphicSymbolElement, TextElement)
+                    GraphicSymbolElement, TextBlock, TextElement)
 
 
 class ZPLRenderer:
@@ -53,6 +53,9 @@ class ZPLRenderer:
         # magnifications of its cell, which the scalable 0 does not
         self.current_font_code = parser.DEFAULT_FONT['code']
         self.current_block = None
+        # ^TB's rotation, which turns the whole field whatever its ^A says,
+        # or None for none
+        self.current_block_turn = None
         # ^CF's font, for any field that names none of its own
         self.default_font = dict(parser.DEFAULT_FONT)
         # ^FW's orientation, for any field or barcode that names none of its
@@ -287,7 +290,7 @@ class ZPLRenderer:
         panel does.
         """
         element = TextElement(self.current_x, self.current_y,
-                              orientation=self.current_font_orientation)
+                              orientation=self._orientation())
         element.width, element.height = ((stack, run) if element.rotated()
                                          else (run, stack))
         element.justify = self.current_justify
@@ -349,12 +352,17 @@ class ZPLRenderer:
                               self.current_font_size,
                               self.current_font_width or self.current_font_size,
                               font_code=self.current_font_code,
-                              orientation=self.current_font_orientation,
+                              orientation=self._orientation(),
                               direction=self.current_direction,
                               char_gap=self.current_char_gap)
         element.font_path = self.current_field_font_path
         element.justify = self.current_justify
         return element
+
+    def _orientation(self) -> str:
+        """The way the text field turns: ^TB's, where it gives one, else
+        its ^A's - as parser._build_text reads it."""
+        return self.current_block_turn or self.current_font_orientation
 
     def _render_directed(self, element: TextElement):
         """A field laid out a character at a time - by ^FP, or in a bitmap
@@ -413,7 +421,7 @@ class ZPLRenderer:
             self.image.paste((0, 0, 0), pos, mask)
 
     def _render_block(self, text: str):
-        """Draw text wrapped into the ^FB block, so the preview matches.
+        """Draw text wrapped into the ^FB or ^TB block, so the preview matches.
 
         Through the same rasteriser both canvases use, rather than a second
         arrangement of the same lines: the preview is what a user checks a
@@ -421,6 +429,8 @@ class ZPLRenderer:
         rather than agreeing with it by coincidence.
         """
         block = self.current_block
+        if isinstance(block, TextBlock):
+            block = block.for_field(self.current_justify)
         element = self._text_element(text)
         font_path = self._text_face(element)
         # Wrapped by the metrics the parser sized the block by, as
@@ -441,9 +451,13 @@ class ZPLRenderer:
                                         cell.width, block, ink, cell.row_gap,
                                         measure)
         if drawn is not None:
-            panel = Image.new('L', drawn.size, bg)
+            # The block's own frame, which for a ^TB is taller than the lines
+            # it holds - and is what a turn turns about
+            step = textraster.pitch(cell.height, block)
+            panel = Image.new('L', (drawn.width, block.depth(
+                drawn.height // step, step)), bg)
             panel.paste(drawn.convert('L'), (0, 0), drawn)
-            self._turned(panel, drawn.width, drawn.height,
+            self._turned(panel, panel.width, panel.height,
                          self._text_baseline(element, cell))
             return
 
@@ -790,6 +804,7 @@ class ZPLRenderer:
         """
         self.field_data = None
         self.current_block = None
+        self.current_block_turn = None
         self.unsupported_field = False
         self.current_reverse = False
         self.current_direction = 'H'
@@ -1018,6 +1033,12 @@ class ZPLRenderer:
         elif command == 'FB':
             # Field block: the text that follows is wrapped into it
             self.current_block = FieldBlock.from_zpl(params)
+            self.current_block_turn = None
+        elif command == 'TB':
+            # Text block: the same, in a box of fixed height, read the
+            # parser's way - the last of the two is the field's
+            self.current_block = TextBlock.from_zpl(params)
+            self.current_block_turn = parser.read_block_turn(params)
         elif command == 'FP':
             # Field parameter: which way this field's characters run, and how
             # far apart - read the parser's way

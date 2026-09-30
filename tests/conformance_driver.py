@@ -61,6 +61,10 @@ FIXTURE_ORIENTED = ROOT / 'tests' / 'fixtures' / 'field_orientation.zpl'
 # gap on an ordinary line, right to left right justified and by ^FT, both
 # turned, a gapped block and a direction a block leaves undefined
 FIXTURE_DIRECTION = ROOT / 'tests' / 'fixtures' / 'field_direction.zpl'
+# ^TB as a file gives it: left and right justified, a block a line and a half
+# tall, the manual's <<> escape with a soft hyphen, a no-break space and a
+# forced break, and turned by its own rotation and by the ^A's
+FIXTURE_TEXT_BLOCKS = ROOT / 'tests' / 'fixtures' / 'text_blocks.zpl'
 # A logo in the encoding label software actually sends: :Z64: rather than the
 # uncompressed hex this designer writes
 FIXTURE_COMPRESSED = ROOT / 'tests' / 'fixtures' / 'compressed_logo.zpl'
@@ -1374,6 +1378,23 @@ def sequence(driver, record):
     column.text = 'reversed further'
     driver.resync(column)
     record('a right to left field given more text')
+    driver.load(FIXTURE_TEXT_BLOCKS)
+    record('load a file whose text wraps in ^TB blocks')
+    # A ^TB's handles set its width and its height in dots, and its lines
+    # align by the field's own justification
+    text_block = driver.elements[0]
+    driver.resize(text_block, 'mr', -60, 0)
+    record("a ^TB narrowed by its side handle")
+    driver.resize(text_block, 'bm', 0, 30)
+    record("a ^TB's height grown by its bottom handle")
+    text_block.set_text_block(text_block.block.width,
+                              text_block.block.height, 'R')
+    driver.resync(text_block)
+    record('a ^TB right justified')
+    turned_block = next(e for e in driver.elements
+                        if e.element_type == 'text' and e.orientation == 'R')
+    driver.resize(turned_block, 'bm', 0, 40)
+    record("a turned ^TB lengthened along its lines")
     driver.load(FIXTURE_COMPRESSED)
     record('load a file whose logo is :Z64: compressed')
 

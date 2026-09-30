@@ -23,7 +23,7 @@ from .model import (MAX_SERIES_ORIGINS, ORIENTATIONS, BarcodeElement,
                     CircleElement, DiagonalLineElement, Document,
                     EllipseElement, FieldBlock, FrameElement,
                     GraphicSymbolElement, ImageElement, StoredGraphicElement,
-                    TextElement)
+                    TextBlock, TextElement)
 
 NOPRINT_KEY = '^FXDESIGNER_NOPRINT:'
 NOPRINT_MARKER = '^FXDESIGNER_NOPRINT'
@@ -159,9 +159,9 @@ MEDIA_SETTINGS = ('^PR', '^MD', '^MM', '^MN', '^MT')
 # running field origin when no ^FO/^FT has opened it yet. The ^A fonts and the
 # ^B symbologies are matched by prefix in _belongs_to_field; ^BY is not a
 # field command, and is read before anything reaches that test.
-FIELD_COMMANDS = frozenset({'^FB', '^FP', '^FR', '^GS', '^GB', '^GC', '^GD',
-                            '^GE', '^GF', '^IM', '^XG', '^FN', '^SN', '^SF',
-                            '^FC', '^FH', '^FD', '^FV'})
+FIELD_COMMANDS = frozenset({'^FB', '^TB', '^FP', '^FR', '^GS', '^GB', '^GC',
+                            '^GD', '^GE', '^GF', '^IM', '^XG', '^FN', '^SN',
+                            '^SF', '^FC', '^FH', '^FD', '^FV'})
 
 
 def _belongs_to_field(cmd: str) -> bool:
@@ -869,7 +869,12 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
             if cmd == '^A@' and field['font']['spec']:
                 named_font = (field['font']['name'], field['font']['spec'])
         elif cmd == '^FB':
-            field['block'] = FieldBlock.from_zpl(params)
+            field['block'], field['block_turn'] = FieldBlock.from_zpl(params), None
+        elif cmd == '^TB':
+            # The last of ^FB and ^TB is the field's block, as the last ^A is
+            # its font
+            field['block'] = TextBlock.from_zpl(params)
+            field['block_turn'] = read_block_turn(params)
         elif cmd == '^FR':
             field['reverse'] = True
         elif cmd == '^FP':
@@ -972,7 +977,8 @@ def _new_field(x: int, y: int, default_font=None, default_barcode=None,
             'preview': None, 'path': None, 'typeset': False, 'justify': None,
             'symbology': None,
             'reverse': False, 'own_origin': True, 'follows': None,
-            'direction': 'H', 'char_gap': 0, 'origins': None}
+            'direction': 'H', 'char_gap': 0, 'origins': None,
+            'block_turn': None}
 
 
 # Where a field is placed when no ^FO/^FT has been read since ^XA
@@ -1091,6 +1097,18 @@ def read_field_orientation(params: str, current: str) -> str:
     """
     letter = params.strip()[:1].upper()
     return letter if letter in _ORIENTATION_LETTERS else current
+
+
+def read_block_turn(params: str):
+    """^TBa,b,c's rotation, a, or None where it gives none.
+
+    The manual's default is the last ^A's, and so ^FW's when the field has
+    none - which is what the field's own orientation already is. One that
+    is given turns the whole field, font and all, whether it comes before
+    the ^A or after it.
+    """
+    letter = params.strip()[:1].upper()
+    return letter if letter in _ORIENTATION_LETTERS else None
 
 
 def read_field_parameter(params: str) -> tuple:
@@ -1737,10 +1755,14 @@ def _build_text(x, y, field, doc, renderer):
     # at the ^A - and ^FW's own when it relies on ^CF, which carries none.
     element.orientation = (font['orientation'] if field['font']
                            else field['default_orientation'])
+    if field['block_turn']:
+        element.orientation = field['block_turn']
     element.height = font['height']
     element.printer_font_name = font['name']
     element.printer_font_spec = font['spec']
     element.block = field['block']
+    if isinstance(element.block, TextBlock):
+        element.block = element.block.for_field(field['justify'])
 
     # A .zpl records only the printer font name, but that name is derived from
     # the font file, so the installed .ttf can usually be found again - without

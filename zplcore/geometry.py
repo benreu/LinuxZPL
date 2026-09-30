@@ -634,9 +634,7 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
             # The wrap width is in dots like everything else, so a block
             # left unscaled would re-wrap at the old physical width -
             # narrower text in a box the same size on paper.
-            element.block.width = _scaled(element.block.width, run)
-            element.block.line_spacing = int(round(element.block.line_spacing * stack))
-            element.block.indent = int(round(element.block.indent * run))
+            element.block.scale(run, stack)
         # text width is derived from font metrics, not scaled directly
         document.sync_text_width(element)
     elif kind == 'graphic_symbol':
@@ -806,14 +804,18 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
         block = getattr(element, 'block', None)
         if block is not None:
             # A wrapped element's box is its block. The side handles ask for a
-            # wrap width and the top and bottom ones for a number of lines;
-            # the box is then whatever the text wraps into, never a rectangle
-            # the text is stretched to fill. Font size stays the dialog's
-            # business - a block's height is a consequence of its wrap, so
-            # scaling the font from the dragged height could not track it.
+            # wrap width, and the top and bottom ones for a number of lines -
+            # or, for a ^TB, a height in dots; the box is then whatever the
+            # block makes of that, never a rectangle the text is stretched to
+            # fill. Font size stays the dialog's business - a ^FB's height is
+            # a consequence of its wrap, so scaling the font from the dragged
+            # height could not track it. Along the lines and across them,
+            # which a quarter turn swaps: reading the box's width as the wrap
+            # width set a turned block's width to its stack of lines.
+            run, stack = ((element.height, element.width) if element.rotated()
+                          else (element.width, element.height))
             pitch = max(1, element.font_height + block.line_spacing)
-            block.width = max(MIN_SIZE, element.width)
-            block.max_lines = max(1, int(round(element.height / pitch)))
+            block.fit(max(MIN_SIZE, run), stack, pitch)
             document.sync_text_width(element)
         else:
             # The run is along the text and the stack across it, so a quarter

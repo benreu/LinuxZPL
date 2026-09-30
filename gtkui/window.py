@@ -14,6 +14,7 @@ import configparser
 from pathlib import Path
 from zplcore import fields as zpl_fields
 from zplcore import fonts as zpl_fonts
+from zplcore import geometry
 from zplcore import graphic_store
 from zplcore import printer_io
 from zplcore import printer_objects
@@ -26,12 +27,13 @@ from zplcore import textraster
 from zplcore import graphic_symbols
 from zplcore.model import (DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
+                           TEXT_BLOCK_JUSTIFICATIONS, TEXT_BLOCKS,
                            TEXT_DIRECTIONS, TEXT_JUSTIFICATIONS,
                            BarcodeElement,
                            CircleElement, DiagonalLineElement, Document,
                            EllipseElement, FieldBlock, FrameElement,
                            GraphicSymbolElement, ImageElement,
-                           StoredGraphicElement, TextElement,
+                           StoredGraphicElement, TextBlock, TextElement,
                            graphic_symbol_choices)
 from zplcore.renderer import ZPLRenderer
 
@@ -3697,7 +3699,7 @@ class ZPLViewerWindow(Gtk.Window):
             content.set_margin_bottom(8)
 
             def make_row(lbl_text, widget):
-                _make_row(content, lbl_text, widget)
+                return _make_row(content, lbl_text, widget)[0]
 
             # Text input. Multi-line, because ZPL's forced break is two
             # characters a user should never have to spell: Enter here becomes
@@ -3798,45 +3800,83 @@ class ZPLViewerWindow(Gtk.Window):
             choose_font_btn.connect("clicked", on_choose_font)
             clear_font_btn.connect("clicked", on_font_clear)
 
-            # Wrapping (^FB)
+            # Wrapping (^FB or ^TB). Each kind's fields start from the
+            # element's block when it is that kind, and otherwise from one
+            # that draws the text as it is now.
             document = self.design_canvas.document
-            block = element.block or element.default_block(
-                document.font_path, document.dpi)
+            block = (element.block if isinstance(element.block, FieldBlock)
+                     else element.default_block(document.font_path,
+                                                document.dpi))
+            text_block = (element.block
+                          if isinstance(element.block, TextBlock)
+                          else element.default_text_block(document.font_path,
+                                                          document.dpi))
 
             wrap_check = Gtk.CheckButton(label="Wrap the text into a block")
             wrap_check.set_active(element.block is not None)
             make_row("Wrap:", wrap_check)
 
-            block_width_spin = _make_spin(block.width, 10, 2000)
+            kind_combo, kind_codes = _make_combo(
+                TEXT_BLOCKS,
+                'TB' if isinstance(element.block, TextBlock) else 'FB')
+            kind_combo.set_name("block_kind")
+            make_row("Block:", kind_combo)
+
+            block_width_spin = _make_spin((element.block or block).width,
+                                          10, 2000)
             make_row("Wrap Width:", block_width_spin)
 
+            block_height_spin = _make_spin(text_block.height, 1, 32000)
+            block_height_spin.set_name("block_height")
+            height_row = make_row("Block Height:", block_height_spin)
+
             max_lines_spin = _make_spin(block.max_lines, 1, 64)
-            make_row("Max Lines:", max_lines_spin)
+            lines_row = make_row("Max Lines:", max_lines_spin)
 
             spacing_spin = _make_spin(block.line_spacing, -100, 100)
-            make_row("Line Spacing:", spacing_spin)
+            spacing_row = make_row("Line Spacing:", spacing_spin)
 
             justify_combo, justify_codes = _make_combo(TEXT_JUSTIFICATIONS,
                                                        block.justification)
-            make_row("Justification:", justify_combo)
+            justify_row = make_row("Justification:", justify_combo)
+
+            # A ^TB's lines align by the field's own justification, which
+            # has neither a centre nor a justified
+            text_justify_combo, text_justify_codes = _make_combo(
+                TEXT_BLOCK_JUSTIFICATIONS,
+                'R' if element.justify == geometry.JUSTIFY_RIGHT
+                else 'L')
+            text_justify_combo.set_name("text_justification")
+            text_justify_row = make_row("Justification:", text_justify_combo)
 
             indent_spin = _make_spin(block.indent, 0, 2000)
-            make_row("Indent:", indent_spin)
+            indent_row = make_row("Indent:", indent_spin)
 
-            block_fields = (block_width_spin, max_lines_spin, spacing_spin,
-                            justify_combo, indent_spin)
+            block_fields = (kind_combo, block_width_spin, block_height_spin,
+                            max_lines_spin, spacing_spin, justify_combo,
+                            text_justify_combo, indent_spin)
+            field_block_rows = (lines_row, spacing_row, justify_row,
+                                indent_row)
+            text_block_rows = (height_row, text_justify_row)
 
-            def on_wrap_toggled(btn):
+            def on_wrap_toggled(_widget):
                 for field in block_fields:
-                    field.set_sensitive(btn.get_active())
+                    field.set_sensitive(wrap_check.get_active())
+                text = kind_codes[kind_combo.get_active()] == 'TB'
+                for rows, shown in ((field_block_rows, not text),
+                                    (text_block_rows, text)):
+                    for row in rows:
+                        row.set_visible(shown)
                 # The manual does not say what ^FB does with a direction, so
                 # a block keeps whichever it has and offers no other.
-                direction_combo.set_sensitive(not btn.get_active())
+                direction_combo.set_sensitive(not wrap_check.get_active())
 
-            on_wrap_toggled(wrap_check)
             wrap_check.connect("toggled", on_wrap_toggled)
+            kind_combo.connect("changed", on_wrap_toggled)
 
             content.show_all()
+            # After show_all, which would show the rows this hides
+            on_wrap_toggled(wrap_check)
 
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
@@ -3852,7 +3892,14 @@ class ZPLViewerWindow(Gtk.Window):
                     element.char_gap = int(gap_spin.get_value())
                     element.reverse_print = fr_check.get_active()
 
-                    if wrap_check.get_active():
+                    if (wrap_check.get_active()
+                            and kind_codes[kind_combo.get_active()] == 'TB'):
+                        element.set_text_block(
+                            int(block_width_spin.get_value()),
+                            int(block_height_spin.get_value()),
+                            text_justify_codes[
+                                text_justify_combo.get_active()])
+                    elif wrap_check.get_active():
                         # Assigned rather than mutated: the block on the element
                         # may be the one an undo snapshot is holding.
                         element.block = FieldBlock(

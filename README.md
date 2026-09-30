@@ -210,6 +210,9 @@ Read when loading a file and written when saving:
 - `^FW` - Default field orientation, honoured when reading: an `^A`, a `^CF`
   field or a barcode that leaves its own orientation out turns with it, and
   is written back with its own letter instead
+- `^FB` / `^TB` - Field block and text block: text wrapped to a width, the
+  first to a number of lines, the second into a fixed height with its lines
+  aligned by the field's own justification
 - `^GB` / `^GC` / `^GD` / `^GE` - Draw box, circle, diagonal line, ellipse
 - `^GS` - Graphic symbol: ®, ©, ™ and the UL and CSA marks, chosen by the
   field data (`A` to `E`)
@@ -298,6 +301,9 @@ Recorded in `FUNCTIONAL_SPEC.md` section 18 as decisions rather than oversights:
   against its own character set or length - except UPC-E, whose zero
   suppression is a table, so a number it cannot shorten draws nothing rather
   than a readable barcode for a different product code.
+- A `^TB` text block is drawn from the manual's one page on it and not yet
+  from a print: only its whole lines, `font_height` apart, up to its height,
+  and `<<>` as the one escape it knows.
 - Rescaling between resolutions cannot be exact for barcodes: a module is a
   whole number of dots, so 2 becomes 3 going from 203 to 300 dpi. Positions and
   heights scale exactly. A MaxiCode is not scaled at all: it is re-drawn at the

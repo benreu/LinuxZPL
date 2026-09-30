@@ -217,7 +217,7 @@ def raster_directed(text, font_path, font_height, font_width, direction,
     return image
 
 
-# --- field blocks (^FB) -----------------------------------------------------
+# --- field blocks (^FB) and text blocks (^TB) ---------------------------------
 
 # A forced line break inside ^FD, which is how ZPL splits a block by hand
 FORCED_BREAK = '\\&'
@@ -227,8 +227,9 @@ def to_editor(text: str) -> str:
     """Field data as it appears in a multi-line text box.
 
     ZPL has no newline: a break inside ^FD is the two characters \\&, and only
-    inside a ^FB does the printer act on them. Here and in from_editor() is the
-    only place the two spellings meet, so neither dialog has to know the rule.
+    inside a ^FB - or, taken to be the same, a ^TB - does the printer act on
+    them. Here and in from_editor() is the only place the two spellings
+    meet, so neither dialog has to know the rule.
     """
     return (text or "").replace(FORCED_BREAK, "\n")
 
@@ -243,7 +244,7 @@ def join_lines(text: str) -> str:
     """The same text on one line, for when a block is switched off.
 
     Left in place, a forced break would print as the two characters it is
-    written with, since nothing outside a ^FB reads it as a break.
+    written with, since nothing outside a block reads it as a break.
     """
     return " ".join(part.strip() for part in
                     (text or "").split(FORCED_BREAK) if part.strip())
@@ -327,8 +328,10 @@ def wrap_marked(text, font_path, font_height, font_width, block, gap=0,
 
     Greedy, like the printer: words are added until the next one would not
     fit. A single word too long for the block is left on its own line rather
-    than being split, and lines past max_lines are dropped - the printer
-    discards them too, instead of overflowing the block.
+    than being split, and lines past the block's limit are dropped - the
+    printer discards them too, instead of overflowing the block. The block
+    says where a line may break, what its data prints as, and how many lines
+    it holds: ^FB and ^TB differ in all three (model.TextBlock).
 
     The flag is what justification needs: a line that ends a paragraph is
     short because the text ran out, not because the next word would not fit,
@@ -341,8 +344,8 @@ def wrap_marked(text, font_path, font_height, font_width, block, gap=0,
     if measure is None:
         measure, _font = measurer(font_path, font_height, font_width, gap)
     marked = []
-    for paragraph in (text or "").split(FORCED_BREAK):
-        words = paragraph.split()
+    for paragraph in block.printed(text or "").split(FORCED_BREAK):
+        words = block.words(paragraph)
         if not words:
             marked.append(("", True))
             continue
@@ -356,7 +359,7 @@ def wrap_marked(text, font_path, font_height, font_width, block, gap=0,
                 current = word
         marked.append((current, True))
 
-    kept = marked[:block.max_lines]
+    kept = marked[:block.line_limit(pitch(font_height, block))]
     if kept:
         # Whatever survives the truncation ends the text as printed, so it is
         # not stretched either.
@@ -373,9 +376,10 @@ def wrap(text, font_path, font_height, font_width, block, gap=0,
 
 
 def block_size(text, font_path, font_height, font_width, block, gap=0):
-    """The dots a wrapped block occupies: the block's width by its lines."""
+    """The dots a wrapped block occupies: the block's width by its lines -
+    or, for a ^TB, by its own height."""
     lines = wrap(text, font_path, font_height, font_width, block, gap)
-    return block.width, max(1, len(lines) * pitch(font_height, block))
+    return block.width, block.depth(len(lines), pitch(font_height, block))
 
 
 def pitch(font_height, block) -> int:

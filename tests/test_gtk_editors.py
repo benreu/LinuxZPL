@@ -771,6 +771,61 @@ for fp_path, fp_standin, fp_how in (
 zpl_fonts._resident_cache['0'] = STANDIN
 document.elements.remove(fp_el)
 
+# --- ^TB: the Block choice in Edit Text --------------------------------------
+# The Qt half is in test_core. The same element, the same choices, and the
+# same block on OK.
+
+from zplcore.model import FieldBlock, TextBlock
+zpl_fonts._resident_cache['0'] = None
+tb_el = document.add_text_element("aaa bbb ccc ddd")
+tb_el.font_code, tb_el.font_height, tb_el.font_width = '0', 30, 20
+document.sync_text_width(tb_el)
+window.on_element_double_clicked(None, tb_el)
+tb_dialog = window._editors[id(tb_el)]
+tb_content = tb_dialog.get_content_area()
+
+def _tb_named(kind, name):
+    return next(w for w in _find_all(tb_content, kind) if w.get_name() == name)
+
+tb_kind = _tb_named(Gtk.ComboBoxText, 'block_kind')
+tb_height = _tb_named(Gtk.SpinButton, 'block_height')
+tb_justify = _tb_named(Gtk.ComboBoxText, 'text_justification')
+tb_wrap = [b for b in _find_all(tb_content, Gtk.CheckButton)
+           if b.get_label() == "Wrap the text into a block"][0]
+tb_wrap.set_active(True)
+check("a ^FB's rows show while the block is a ^FB",
+      not tb_height.get_parent().get_visible()
+      and not tb_justify.get_parent().get_visible())
+tb_kind.set_active(1)
+check("and a ^TB's, height and justification, once it is a ^TB",
+      tb_height.get_parent().get_visible()
+      and tb_justify.get_parent().get_visible())
+# Wrap Width is the spin after the three above the wrap - Font Height, Font
+# Width and Character Gap
+[w for w in _find_all(tb_content, Gtk.SpinButton)][3].set_value(150)
+tb_height.set_value(75)
+tb_justify.set_active(1)
+tb_dialog.response(Gtk.ResponseType.OK)
+check("OK in Edit Text makes a ^TB, right justified by the field's z",
+      tb_el.block == TextBlock(150, 75, 'R') and tb_el.justify == 1
+      and "^TBN,150,75" in tb_el.to_zpl(), (tb_el.block, tb_el.justify))
+check("and the box is the block",
+      (tb_el.width, tb_el.height) == (150, 75), (tb_el.width, tb_el.height))
+window.on_element_double_clicked(None, tb_el)
+tb_dialog = window._editors[id(tb_el)]
+tb_content = tb_dialog.get_content_area()
+check("reopened, the dialog shows the ^TB it made",
+      _tb_named(Gtk.ComboBoxText, 'block_kind').get_active() == 1
+      and _tb_named(Gtk.SpinButton, 'block_height').get_value() == 75
+      and _tb_named(Gtk.ComboBoxText, 'text_justification').get_active() == 1)
+_tb_named(Gtk.ComboBoxText, 'block_kind').set_active(0)
+tb_dialog.response(Gtk.ResponseType.OK)
+check("and choosing a ^FB there makes it a ^FB of the same width",
+      isinstance(tb_el.block, FieldBlock) and tb_el.block.width == 150,
+      tb_el.block)
+zpl_fonts._resident_cache['0'] = STANDIN
+document.elements.remove(tb_el)
+
 # --- font 0 is drawn in its stand-in ----------------------------------------
 # The Qt half is in test_core. With the stand-in installed a font 0 field has
 # a face, so the canvas draws it with the shared raster, its H standing where

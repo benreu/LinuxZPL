@@ -26,7 +26,7 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QWidget)
 
 from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
-                     graphic_store, printer_io, printer_objects,
+                     geometry, graphic_store, printer_io, printer_objects,
                      printer_status, textraster, workflow)
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
@@ -36,11 +36,12 @@ from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_SYMBOLOGIES, BARCODE_TEXT_CHOICES,
                            DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
+                           TEXT_BLOCK_JUSTIFICATIONS, TEXT_BLOCKS,
                            TEXT_DIRECTIONS, TEXT_JUSTIFICATIONS,
                            CircleElement,
                            DiagonalLineElement, Document, EllipseElement,
                            FieldBlock, FrameElement, GraphicSymbolElement,
-                           TextElement, graphic_symbol_choices)
+                           TextBlock, TextElement, graphic_symbol_choices)
 
 from .busy import BusyBar
 from .canvas import to_qimage
@@ -481,20 +482,39 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     choose_btn.clicked.connect(on_choose)
     clear_btn.clicked.connect(on_clear)
 
-    # --- wrapping (^FB) ---
-    block = element.block or element.default_block(document.font_path,
-                                                   document.dpi)
+    # --- wrapping (^FB or ^TB) ---
+    # Each kind's fields start from the element's block when it is that
+    # kind, and otherwise from one that draws the text as it is now.
+    block = (element.block if isinstance(element.block, FieldBlock)
+             else element.default_block(document.font_path, document.dpi))
+    text_block = (element.block if isinstance(element.block, TextBlock)
+                  else element.default_text_block(document.font_path,
+                                                  document.dpi))
 
     wrap_check = QCheckBox("Wrap the text into a block")
     wrap_check.setObjectName("wrap")
     wrap_check.setChecked(element.block is not None)
     form.addRow("Wrap:", wrap_check)
 
+    kind_combo = QComboBox()
+    kind_combo.setObjectName("block_kind")
+    for label, code in TEXT_BLOCKS:
+        kind_combo.addItem(label, code)
+    kind_combo.setCurrentIndex(1 if isinstance(element.block, TextBlock)
+                               else 0)
+    form.addRow("Block:", kind_combo)
+
     block_width = QSpinBox()
     block_width.setRange(10, 2000)
     block_width.setObjectName("block_width")
-    block_width.setValue(block.width)
+    block_width.setValue((element.block or block).width)
     form.addRow("Wrap Width:", block_width)
+
+    block_height = QSpinBox()
+    block_height.setRange(1, 32000)
+    block_height.setObjectName("block_height")
+    block_height.setValue(text_block.height)
+    form.addRow("Block Height:", block_height)
 
     max_lines = QSpinBox()
     max_lines.setRange(1, 64)
@@ -517,24 +537,43 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
                                   if block.justification in codes else 0)
     form.addRow("Justification:", justify_combo)
 
+    # A ^TB's lines align by the field's own justification, which has
+    # neither a centre nor a justified
+    text_justify_combo = QComboBox()
+    text_justify_combo.setObjectName("text_justification")
+    for label, code in TEXT_BLOCK_JUSTIFICATIONS:
+        text_justify_combo.addItem(label, code)
+    text_justify_combo.setCurrentIndex(
+        1 if element.justify == geometry.JUSTIFY_RIGHT else 0)
+    form.addRow("Justification:", text_justify_combo)
+
     indent_spin = QSpinBox()
     indent_spin.setRange(0, 2000)
     indent_spin.setObjectName("indent")
     indent_spin.setValue(block.indent)
     form.addRow("Indent:", indent_spin)
 
-    block_fields = (block_width, max_lines, spacing_spin, justify_combo,
-                    indent_spin)
+    field_block_only = (max_lines, spacing_spin, justify_combo, indent_spin)
+    text_block_only = (block_height, text_justify_combo)
+    block_fields = ((kind_combo, block_width) + field_block_only
+                    + text_block_only)
 
     def sync_block_fields():
         for field in block_fields:
             field.setEnabled(wrap_check.isChecked())
+        text = kind_combo.currentData() == 'TB'
+        for fields, shown in ((field_block_only, not text),
+                              (text_block_only, text)):
+            for field in fields:
+                field.setVisible(shown)
+                form.labelForField(field).setVisible(shown)
         # The manual does not say what ^FB does with a direction, so a block
         # keeps whichever it has and offers no other.
         direction_combo.setEnabled(not wrap_check.isChecked())
 
     sync_block_fields()
     wrap_check.stateChanged.connect(sync_block_fields)
+    kind_combo.currentIndexChanged.connect(sync_block_fields)
 
     layout.addWidget(_buttons(dialog))
 
@@ -548,7 +587,10 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
         element.height = element.font_height
         element.reverse_print = fr_check.isChecked()
 
-        if wrap_check.isChecked():
+        if wrap_check.isChecked() and kind_combo.currentData() == 'TB':
+            element.set_text_block(block_width.value(), block_height.value(),
+                                   text_justify_combo.currentData())
+        elif wrap_check.isChecked():
             # Assigned rather than mutated: the block on the element may
             # be the one an undo snapshot is holding.
             element.block = FieldBlock(block_width.value(), max_lines.value(),
