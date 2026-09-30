@@ -790,6 +790,11 @@ def _tb_named(kind, name):
 tb_kind = _tb_named(Gtk.ComboBoxText, 'block_kind')
 tb_height = _tb_named(Gtk.SpinButton, 'block_height')
 tb_justify = _tb_named(Gtk.ComboBoxText, 'text_justification')
+# Freshly opened, before Wrap or Block is touched: _open_editor's show_all()
+# must not leave both kinds' rows visible at once.
+check("freshly opened, only the ^FB's rows show, not the ^TB's too",
+      not tb_height.get_parent().get_visible()
+      and not tb_justify.get_parent().get_visible())
 tb_wrap = [b for b in _find_all(tb_content, Gtk.CheckButton)
            if b.get_label() == "Wrap the text into a block"][0]
 tb_wrap.set_active(True)

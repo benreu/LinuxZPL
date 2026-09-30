@@ -3877,10 +3877,6 @@ class ZPLViewerWindow(Gtk.Window):
             wrap_check.connect("toggled", on_wrap_toggled)
             kind_combo.connect("changed", on_wrap_toggled)
 
-            content.show_all()
-            # After show_all, which would show the rows this hides
-            on_wrap_toggled(wrap_check)
-
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
                     buffer = text_view.get_buffer()
@@ -3955,7 +3951,11 @@ class ZPLViewerWindow(Gtk.Window):
                 _dialog.destroy()
 
             self._open_editor(element, dialog, on_response)
-        
+            # _open_editor's own show_all() would otherwise re-show every row
+            # this just hid - so the wrap-dependent ones only get their first
+            # visibility pass once it has already run.
+            on_wrap_toggled(wrap_check)
+
         elif isinstance(element, BarcodeElement):
             # Show barcode edit dialog
             dialog = Gtk.Dialog(title="Edit Barcode", parent=self, flags=0)
