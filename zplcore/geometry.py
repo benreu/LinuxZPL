@@ -217,10 +217,11 @@ def pen_after(element, depth, named) -> tuple:
     kind = getattr(element, 'element_type', None)
     if kind == 'barcode' and element.in_series():
         # An ^FM series names no one point but one for each symbol; the pen
-        # is taken to stay at the first that prints - not yet printed.
-        printed = element.series()
-        if printed:
-            return (element.x + printed[0][0], element.y + printed[0][1])
+        # stays at the first that is not excluded - where a printer left it
+        # after a series that printed nothing at all.
+        first = next((p for p in element.origins if p is not None), None)
+        if first is not None:
+            return (element.x + first[0], element.y + first[1])
     if kind not in ('text', 'graphic_symbol'):
         return named
     if kind == 'text':

@@ -491,24 +491,39 @@ down, independently, as a linear barcode's does. The symbol starts in byte
 compaction, so a message that opens with text spends a codeword latching into
 it, and a run of digits goes into numeric compaction whenever that is
 shorter - which is what lets mode 0 hold the eight digits Table 10 gives it.
-Every size, every correction share and both of Table 10's capacities are
-checked against the table; every size is drawn module for module as zint
-draws it, and read back by zxing-cpp.
+Text is written a character at a time, as a printer writes it: a capital
+among lower case, and punctuation anywhere, is shifted to rather than latched
+to, even where latching would be shorter. The room the data leaves is padded
+with the eight codewords a printer pads with, over and over - text
+compaction's switches between its submodes, which decode to nothing - where
+zint pads with a text latch. Every size, every correction share and both of
+Table 10's capacities are checked against the table; every size filled to
+its last codeword is drawn module for module as zint draws it, and read back
+by zxing-cpp. Seven symbols on a printed label - four `^BF` sizes, a series
+of two and a `^B7` - match it module for module, padding and all.
 
 **An `^FM` series is one element.** `^FM` gives a PDF417 or MicroPDF417 whose
 message is too long for one symbol an origin for each symbol it needs - up to
 sixty, an `e` for one left out - and the printer cuts the message into pieces,
 one a symbol, each carrying a control block that says which piece it is and
-of how many, so a reader can put them back together. The designer holds the
+of how many, so a reader can put them back together - as a printer writes
+it: the marker, the piece's index, a file ID of three codewords (`0, 0, 36`,
+which both series on one printed label carried), a field giving the count,
+and on the last piece a terminator, after the padding. Every piece leaves
+room for the whole of it, terminator and all, as a printer did. The designer
+holds the
 whole series as one barcode element: its box goes round every symbol that
 prints, the origins are held as offsets inside it, and so a drag, a nudge, a
 paste, a group move or a rescale carries every symbol without knowing it is
 one of several. Each symbol is the size the command asks for - `^B7` with both
 `c` and `r` gives every one that shape, and otherwise each piece fills the
 largest the command allows - and each is turned about its own origin, as
-`^FO` turns any field. A piece with no origin left for it is still counted in
-every control block but not drawn; data that fits one symbol draws one plain
-symbol, with no control block, at the first origin. A series offers no resize
+`^FO` turns any field. Data cut into more pieces than there are origins
+prints nothing at all - the manual's "if too few are designated, no symbols
+print", which a printer bore out - and keeps one symbol's footprint at the
+first origin, with the reason on `symbol_error`. Data that fits one symbol
+still draws a symbol with a control block, one of one. A field after a series
+follows its first origin, whether or not anything printed. A series offers no resize
 handles: Edit Barcode's **Positions** lists each origin as a label position
 with a Print tick, and Add puts a new one a symbol's height and a gap under
 the last. An empty list places the barcode by `^FO`, where its box was.
@@ -516,7 +531,7 @@ the last. An empty list places the barcode by `^FO`, where its box was.
 not kept. Every piece of the manual's own example, and of series in both
 symbologies at every turn, reads back through zxing-cpp and joins to the
 message; the control block is laid out module for module as zint lays out its
-own structured append.
+own structured append given the same file ID.
 
 **A MaxiCode is one size.** UPS's parcel symbol is 33 rows of 30 hexagons
 round a bullseye, about an inch across at every resolution: `^BD` carries no
@@ -2692,24 +2707,25 @@ rather than requirements:
   `zplcore/pdf417_patterns.py`). There is no other set of them, and no
   formula that generates them; the tests check every one against the
   standard's own structural rules rather than taking the table on trust.
-- **`^BF`'s `h` is taken to be each row's height in dots**, read off the
-  manual's drawing of its own example rather than from a printer: that
-  image has modules 6 dots wide and rows 8 dots tall for `^BY6^BFN,8`. The
-  text says only "bar code height (in dots)". Not yet printed.
-- **A MicroPDF417 carries the same message a printer's does, not necessarily
-  the same modules.** Which compaction modes a printer picks for a given
-  message is its own business; this designer picks the shortest of PDF417's
-  own, with numeric runs as short as that makes worthwhile. Every reader
-  returns the same text. Data too long for the mode `^BF` names draws nothing,
-  as a printer is taken to print nothing - not yet printed either.
-- **An `^FM` series' control block is zint's, not yet a printer's.** The
-  marker, the piece's index, the optional count field and a terminator on
-  the last piece, after the padding - no file ID. Which of that a printer
-  writes, how it cuts the message, and whether data that fits one symbol
-  still carries a control block have not been printed; a reader returns the
-  same message either way. Nor has where the pen stops after a series -
-  taken to be its first origin that prints - nor what the printer does with
-  a pair that is neither two numbers nor `e`, which is read as `e`.
+- **`^BF`'s `h` is each row's height in dots, as printed.** The manual's
+  drawing of its own example has modules 6 dots wide and rows 8 dots tall
+  for `^BY6^BFN,8`, and the new_commands label printed `h` 8, 10, 4 and 12
+  as rows that tall. Data too long for the mode `^BF` names printed nothing.
+- **PDF417 text is compacted as a printer compacts it, as far as one label
+  shows.** A character at a time: shifted to where a shift reaches it - a
+  capital from lower case, punctuation from anywhere - and latched to
+  otherwise, with no look ahead. The printer shifted each capital of a run
+  of three and a comma, asterisks and a full stop where looking ahead would
+  have latched; it has not been seen to meet a longer run of capitals, nor
+  a run of punctuation, where it may latch after all. It put a run of
+  fourteen digits into numeric compaction, as this does; where it stops
+  switching for a shorter run has not been seen.
+- **An `^FM` series' control block is a printer's, and its file ID is one
+  label's.** Both series on the new_commands label carried the file ID
+  `0, 0, 36`. Whether a printer always writes that one, or counts, or
+  derives it from the data, one label cannot say; a reader returns the same
+  message whatever it is. What the printer does with a pair that is neither
+  two numbers nor `e`, read here as `e`, has not been printed.
 - **A TLC39's arrangement is read off the manual's drawing** of its own
   example (p.135), not yet off a print: the MicroPDF417 under the Code 39,
   left edges together, a module apart, and twelve rows for that data - which

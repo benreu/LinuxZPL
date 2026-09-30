@@ -1531,9 +1531,10 @@ class BarcodeElement(DesignElement):
 
         The field data is cut into as many pieces as it needs, each filling
         one symbol of the size the command asks for, and each symbol carries
-        a control block saying which piece it is and of how many - unless
-        the whole of it fits one symbol, which is then drawn plain. Empty
-        when a piece cannot be drawn, with the reason on `symbol_error`.
+        a control block saying which piece it is and of how many - one of
+        one too, as a printed one did. Empty when a piece cannot be drawn,
+        with the reason on `symbol_error`, which also says when there are
+        more pieces than origins for them (series()).
         """
         self.symbol_error = None
         value = self._raw_value()
@@ -1544,10 +1545,14 @@ class BarcodeElement(DesignElement):
             else:
                 pieces = micropdf417.series(value, self.micro_mode)
             count = len(pieces)
-            symbols = []
-            for index, piece in enumerate(pieces):
-                macro = pdf417.control_block(index, count) if count > 1 else ()
-                symbols.append(('stacked', self._stacked_rows(piece, macro)))
+            symbols = [('stacked', self._stacked_rows(
+                piece, pdf417.control_block(index, count)))
+                for index, piece in enumerate(pieces)]
+            if count > len(self.origins):
+                self.symbol_error = (
+                    f"{symbologies.SYMBOLOGIES[self.symbology]}: the data "
+                    f"needs {count} symbols, more than the "
+                    f"{len(self.origins)} origins ^FM gives - so none prints")
             return symbols
         except ValueError as exc:
             self.symbol_error = (
@@ -1557,14 +1562,18 @@ class BarcodeElement(DesignElement):
     def series(self) -> list:
         """Where each symbol of an ^FM series prints, as (dx, dy, kind,
         payload) from the element's top-left: every piece the data is cut
-        into that has an origin of its own and is not excluded. A piece with
-        no origin left for it is encoded, and counted in every control block,
-        but not drawn. Empty for a field ^FM does not place."""
+        into, at its own origin, less those excluded. Empty for a field ^FM
+        does not place - and when the pieces outnumber the origins, since
+        then none prints: the manual says "if too few are designated, no
+        symbols print", and a printer printed none of a PDF417 cut into
+        more pieces than its three origins."""
         if not self.in_series():
             return []
+        symbols = self.series_symbols()
+        if len(symbols) > len(self.origins):
+            return []
         return [(position[0], position[1], kind, payload)
-                for position, (kind, payload)
-                in zip(self.origins, self.series_symbols())
+                for position, (kind, payload) in zip(self.origins, symbols)
                 if position is not None]
 
     def _aztec_shape(self) -> tuple:

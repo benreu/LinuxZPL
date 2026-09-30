@@ -94,6 +94,13 @@ _RAP_CENTRE = (
 )
 _RAP_WIDTH = 10
 
+# What a printer fills the room the data leaves with, before any control
+# block: these eight codewords over and over, read back from four symbols on
+# one label. Each is text compaction's switches between its submodes and
+# nothing else, so it decodes to nothing - as zint's plain text latches do,
+# which a printer does not write.
+PADDING = (900, 838, 779, 867, 865, 898, 868, 839)
+
 
 def size(mode: int) -> tuple:
     """(columns, rows, error-correction codewords) for ^BF's m."""
@@ -193,21 +200,19 @@ def encode(data: str, mode: int = 0, macro: tuple = (),
         raise ValueError(
             f"the data needs {len(payload) + len(macro)} codewords, more than "
             f"the {room} a mode {mode} symbol ({columns} by {rows}) holds")
-    # The gap is padded with the text-mode latch, which decodes to nothing,
-    # and a series' control block comes after it, as zint puts it.
-    body = (payload + [pdf417._LATCH_TEXT] * (room - len(payload) - len(macro))
-            + list(macro))
+    # The gap is padded as a printer pads it, and a series' control block
+    # comes after that, as zint puts it too.
+    gap = room - len(payload) - len(macro)
+    body = payload + [PADDING[i % len(PADDING)] for i in range(gap)] + list(macro)
     return _rows(body, mode)
 
 
 @functools.lru_cache(maxsize=32)
 def series(data: str, mode: int = 0) -> tuple:
     """The pieces an ^FM series of ^BF symbols carries `data` in, every one
-    the size the mode names - just the one, with no control block, when the
-    whole of it fits a single symbol."""
+    the size the mode names and each leaving room for a whole control block,
+    as pdf417.series does - just the one when the whole of it fits."""
     room = capacity(mode)
-    if len(data_codewords(data)) <= room:
-        return (data,)
-    return pdf417.split(data, lambda piece, last:
+    return pdf417.split(data, lambda piece:
                         len(data_codewords(piece)) + pdf417.MACRO_LENGTH
-                        + last <= room)
+                        + 1 <= room)

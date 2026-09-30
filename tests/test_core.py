@@ -2370,19 +2370,23 @@ check("every one of the 104 row address patterns is three bars and three "
       and not _rap_wrong, [hex(v) for v in _rap_wrong])
 
 # Symbols zint drew (backend/pdf417.c, a separate implementation), one size of
-# each column count, as each row's modules in hexadecimal.
+# each column count, as each row's modules in hexadecimal - each filled to
+# the last codeword, since zint pads with text latches and a printer does not
+# (below).
 _ZINT_MICRO = (
     (0, 'HELLO', ('3228632735', '3a2f94c7b5', '3b2fcdd795', '332cc90715',
                   '372f6d0615', '37a9e88635', '33ae391625', '3bab8be725',
                   '39acf897a5', '3daa8207ad', '3caf58c7a9')),
-    (6, 'MICRO PDF', ('6450c648b60645', '745e902b0f9745', '7657046da0f765',
-                      '6650c648632665', '6e5c134ec396e5', '6f5afd08c176f5',
-                      '675b6c0b8f6675', '775c262fb21775')),
+    (6, 'MICRO PDF MIC', ('6450c648b60645', '745e902b0f9745', '7657046b438765',
+                          '66516c0e8cf665', '6e5eb60875f6e5', '6f5ba0ecf856f5',
+                          '675e85e9108675', '775c4688ebe775')),
     (13, 'ZEBRA 13', ('322863259d39ecd20c645', '3a2eb0249de08aa7ee745',
                       '3b29e0a4dd2178df12765', '332f35c45dc34ce51c665',
                       '372df2f44dfb6e81796e5', '37ade9846d1cce8f226f5')),
-    (33, 'LABEL', ('69d7eb093c14edd718f236691', '6998f92c7c94e98f92c7c96b1',
-                   '68938e4c44c4c90cc2b3206b9', '68dc9eef4244cdd32097906bd')))
+    (33, 'LABEL LABEL L', ('69d7eb093c14edd718f221691',
+                           '699897cfaf34e9ba70dd1c6b1',
+                           '689638c82364c9ae78bb846b9',
+                           '68dd30497e74cdf666f4e76bd')))
 for _mode, _data, _rows_hex in _ZINT_MICRO:
     _ours = zpl_micropdf417.encode(_data, _mode)
     _width = zpl_micropdf417.dimensions(_mode)[0]
@@ -2391,6 +2395,16 @@ for _mode, _data, _rows_hex in _ZINT_MICRO:
            for row in _ours] == list(_rows_hex)
           and all(len(row) == _width for row in _ours),
           len(_ours))
+
+# The room the data leaves is padded as a printer padded it: eight codewords
+# of nothing but text compaction's switches, over and over. Read back from the
+# new_commands label's ^BF mode 33, which is these codewords module for module.
+_MODE33_PRINTED = [900, 387, 423, 146, 843, 119, 900, 838]
+check("^BF pads as a printer does - its mode 33 'Mode 33' module for module",
+      zpl_micropdf417.encode('Mode 33', 33)
+      == zpl_micropdf417._rows(_MODE33_PRINTED, 33)
+      and zpl_micropdf417.PADDING
+      == (900, 838, 779, 867, 865, 898, 868, 839))
 
 # And every mode, filled to capacity with letters: a digest of zint's 34
 # symbols, since 34 symbols of up to 44 rows are too many to spell out.
@@ -2492,33 +2506,39 @@ check("a pair that is not two numbers excludes its symbol as e does, and "
       and len(zpl_parser.read_multiple_origins(",".join(["1"] * 130))) == 60
       and zpl_parser.read_multiple_origins("") == ())
 
-check("the control block is zint's: the marker, the index, the count, and "
-      "a terminator on the last",
-      zpl_pdf417.control_block(0, 3) == (928, 111, 100, 923, 1, 111, 103)
-      and zpl_pdf417.control_block(2, 3)
-      == (928, 111, 102, 923, 1, 111, 103, 922))
-# Symbols zint drew with its own structured append, the last of three PDF417s
-# and the first of two MicroPDF417s: the control block, where it goes after
-# the padding, and what the length descriptor counts, all as zint has them.
-_zint_piece = zpl_pdf417.encode('LASTXPIECE', 3, 8, 2,
+# The control block a printer wrote into both symbols of the new_commands
+# label's MicroPDF417 series, read back from the scan: the marker, the index,
+# a file ID of three codewords, the count, and a terminator on the last.
+check("the control block is a printer's: the marker, the index, the file ID, "
+      "the count, and a terminator on the last",
+      zpl_pdf417.control_block(0, 2)
+      == (928, 111, 100, 0, 0, 36, 923, 1, 111, 102)
+      and zpl_pdf417.control_block(1, 2)
+      == (928, 111, 101, 0, 0, 36, 923, 1, 111, 102, 922))
+# Symbols zint drew with its own structured append, given the same file ID -
+# the last of three PDF417s and the first of two MicroPDF417s: where the
+# control block goes after the padding, and what the length descriptor
+# counts, as zint has them.
+_zint_piece = zpl_pdf417.encode('LASTXPIECE', 3, 0, 2,
                                 macro=zpl_pdf417.control_block(2, 3))
 check("a PDF417 carrying the last piece of three is zint's module for module",
       [format(int(''.join('1' if b else '0' for b in row), 2), 'x')
        for row in _zint_piece]
-      == ['ff547d5f3acf1b082e6137d5f3fa29', 'ff547ea3b8dd19704afce7a903fa29',
-          'ff5454f031f258f92e3f5751fbfa29', 'ff546bcfa8411e85ec30a6bcfbfa29',
-          'ff5475c33f571a786d3d87ae73fa29', 'ff547d7b30fa915e0e7ae75f43fa29',
-          'ff5474efa30d1d3beafbe74efbfa29', 'ff547d2c268fdf9cac4e457ee3fa29'])
-_zint_micro_piece = zpl_micropdf417.encode('FIRST', 15,
+      == ['ff547d5f358e1b082e6137d5f3fa29', 'ff547a8438dd19704afce7a903fa29',
+          'ff5454f031f258f92e3f5543c3fa29', 'ff546bcfa8411e85eeae06bcfbfa29',
+          'ff546b823eac1ae109fa67ae73fa29', 'ff547d7b3abf1a17cfa397afb3fa29',
+          'ff5474efbbee5ee4c9bb074efbfa29', 'ff547e97391d9f5b8813d57ee3fa29',
+          'ff547e9937e65213cf6f97d3a3fa29'],
+      len(_zint_piece))
+_zint_micro_piece = zpl_micropdf417.encode('FIR', 7,
                                            zpl_pdf417.control_block(0, 2))
 check("and a MicroPDF417 carrying the first of two",
       [format(int(''.join('1' if b else '0' for b in row), 2), 'x')
        for row in _zint_micro_piece]
-      == ['312c7c94f5e5e2de83625', '392c2865f50c648632725',
-          '3d2bf585e53f26d3c37a5', '3d6a31f5ed87d2eafc7ad',
-          '3d4a1044ede85ebba07a9', '394afce4e9cdd0eef4729',
-          '3b4a09e4c99d38deb0769', '3a4ecce4cd3062dce6749',
-          '3a6e08d48de368ef7d74d', '3ae882f4857dd896f875d'])
+      == ['6450c649660735', '74537c89f937b5', '765a17ca31f795',
+          '665d5c0eae0715', '6e5ae109fa6615', '6f5d5f8d0be635',
+          '675e85ecee6625', '775e828c87b725', '735b05ef13d7a5',
+          '7b5c742b9ec7ad', '795a78c9a7e7a9'])
 check("a PDF417 of 925 to 928 codewords is shaped inside the limit, as 22 by "
       "43 was not",
       all(c * r <= 928 for c, r in (zpl_pdf417._shape(n, 0, 0)
@@ -2572,23 +2592,26 @@ check("the manual's second example leaves the second symbol out",
 _fm_short = zpl_parser.parse_zpl(
     "^XA^PW1218^LL2436^FM50,50,50,400^BY2^B7N,4,1,4,10"
     f"^FD{'A' * 200}^FS^XZ")[0].elements[0]
-check("a piece with no origin left for it is encoded and counted, not drawn",
+# The manual: "if too few are designated, no symbols print" - and a printer
+# printed none of a PDF417 cut into four with three origins
+check("data cut into more pieces than there are origins prints none of them",
       len(zpl_pdf417.series('A' * 200, 4, 10, 1)) > 2
-      and len(_fm_short.series()) == 2,
-      (len(zpl_pdf417.series('A' * 200, 4, 10, 1)), len(_fm_short.series())))
+      and _fm_short.series() == [] and _fm_short.symbol_error
+      and (_fm_short.x, _fm_short.y) == (50, 50),
+      (len(zpl_pdf417.series('A' * 200, 4, 10, 1)), _fm_short.symbol_error))
 _fm_fits = zpl_parser.parse_zpl(
     "^XA^PW1218^LL2436^FM50,50,50,400^BY2^B7N,4,1,4,10^FDSHORT^FS^XZ"
 )[0].elements[0]
-check("data that fits one symbol draws one plain symbol, with no control "
-      "block, at the first origin",
+# A printer gave a ^FM symbol that holds all its data a control block of one
+check("data that fits one symbol draws one symbol, one of one, at the first "
+      "origin",
       len(_fm_fits.series()) == 1
-      and _fm_fits.series()[0][3] == BarcodeElement(
-          0, 0, 4, 'SHORT', module_width=2, symbology='pdf417',
-          params={'security': '1', 'columns': '4', 'rows': '10'}).symbol()[1])
+      and _fm_fits.series()[0][3] == zpl_pdf417.encode(
+          'SHORT', 4, 10, 1, macro=zpl_pdf417.control_block(0, 1)))
 
 _fm_micro = zpl_parser.parse_zpl(
     "^XA^PW1218^LL2436^LH10,20^FM30,30,30,400^BY2^BFR,4,22"
-    f"^FD{'MICRO' * 60}^FS^XZ")[0]
+    f"^FD{'MICRO' * 40}^FS^XZ")[0]
 _fmm = _fm_micro.elements[0]
 check("^FM places a MicroPDF417 too, ^LH added to every origin and taken "
       "back out on the way",
@@ -2629,9 +2652,9 @@ check("a field following a series follows its first origin",
 
 # The preview draws a series where the model puts it - after another field,
 # whose ^FO it once added to every origin, and under ^LH, counted once
-_FM_PREVIEWED = ("^FM70,300,e,e,440,300^BY2^B7N,4,1,3,10^FDMacro PDF417: "
-                 "this message is cut into three symbols and the second is "
-                 "not printed.^FS")
+_FM_PREVIEWED = ("^FM70,300,e,e,440,300,440,400^BY2^B7N,4,1,3,10^FDMacro "
+                 "PDF417: this message is cut into three symbols and the "
+                 "second is not printed.^FS")
 for _before, _how in (("", "on its own"),
                       ("^FO560,600^GB20,20,20^FS", "after an ^FO field"),
                       ("^LH50,40", "under ^LH"),
@@ -8612,48 +8635,55 @@ _nc_x = next(e for e in _nc.elements
 check("the label holds nothing a save would drop, and saves byte-stable",
       workflow.unsupported_commands(_nc_src) == []
       and zpl_parser.parse_zpl(_nc.to_zpl())[0].to_zpl() == _nc.to_zpl())
-# Not printed: ^BF's h is each row's height. Read as the whole symbol's
-# height, each of these would be h dots tall.
-check("not printed: ^BF's h is each row's height - the manual's example 20 "
-      "rows of 8, and modes 0, 18 and 33 11 of 10, 20 of 4 and 4 of 12",
+# Printed: ^BF's h is each row's height - each of these came out as tall as
+# this says, to within a dot, and not h dots
+check("printed: ^BF's h is each row's height - the manual's example 20 rows "
+      "of 8, and modes 0, 18 and 33 11 of 10, 20 of 4 and 4 of 12",
       [box_of(e) for e in _nc_bars[:4]]
       == [(70, 70, 76, 160), (190, 70, 114, 110), (350, 70, 164, 80),
           (560, 70, 198, 48)],
       [box_of(e) for e in _nc_bars[:4]])
 _nc_over = _nc_bars[4]
-check("not printed: data too long for its mode draws nothing at the ticks",
+check("printed: data too long for its mode draws nothing at the ticks",
       _nc_over.symbol_error is not None
       and ZPLRenderer(812, 1218).render(_nc_src).convert('L').crop(
           (_nc_over.x, _nc_over.y, _nc_over.x + _nc_over.width,
            _nc_over.y + _nc_over.height)).point(
           lambda v: 255 if v < 128 else 0).getbbox() is None,
       _nc_over.symbol_error)
-# Not printed: how the PDF417 is cut and marked. Three pieces, each as much
-# as its own compaction fits beside zint's control block; the second is
-# excluded, and the field after the series starts at its first origin.
+# Printed: the PDF417 needs four pieces, a printer's whole control block
+# taking room in each, and has three origins - so none printed. The field
+# after it still stood on its first origin.
 _nc_series = _nc_bars[5]
-check("not printed: the PDF417 is cut into three, the second not drawn",
-      zpl_pdf417.series(_nc_series.barcode_value, 3, 10, 1)
-      == ('Macro PDF417: this message is c',
-          'ut into three symbols and the secon', 'd is not printed.')
-      and [(dx, dy) for dx, dy, _k, _p in _nc_series.series()]
-      == [(0, 0), (370, 0)],
-      _nc_series.origins)
-check("not printed: the X after the series stands on its first origin",
+check("printed: a PDF417 cut into more pieces than its origins prints none",
+      len(zpl_pdf417.series(_nc_series.barcode_value, 3, 10, 1)) == 4
+      and _nc_series.series() == [] and _nc_series.symbol_error,
+      _nc_series.symbol_error)
+check("printed: the X after the series stands on its first origin",
       geometry.typeset_point(_nc_x) == (70, 300),
       geometry.typeset_point(_nc_x))
-check("not printed: the MicroPDF417 is cut into two, both drawn",
-      zpl_micropdf417.series(_nc_bars[6].barcode_value, 10)
-      == ('A MicroPDF417 message too long for on', 'e symbol, in two.')
+# Printed: the MicroPDF417 series, read back from the scan codeword by
+# codeword - each piece's data, padding and control block are these
+_NC_SERIES_PRINTED = (
+    [900, 26, 387, 242, 524, 825, 813, 815, 844, 37, 807, 364, 558, 6, 146,
+     584, 446, 344, 900, 928, 111, 100, 0, 0, 36, 923, 1, 111, 102],
+    [900, 823, 206, 164, 536, 433, 146, 564, 361, 431, 883, 788, 416, 592,
+     449, 539, 900, 838, 928, 111, 101, 0, 0, 36, 923, 1, 111, 102, 922])
+check("printed: the MicroPDF417 series is the printer's, module for module",
+      [payload for _dx, _dy, _k, payload in _nc_bars[6].series()]
+      == [zpl_micropdf417._rows(body, 10) for body in _NC_SERIES_PRINTED]
       and box_of(_nc_bars[6]) == (70, 420, 290, 80), box_of(_nc_bars[6]))
-# Data that fits one symbol is drawn with no control block: 4 rows, where
-# one would make it 7, since the rows are left to the data
+# Printed: data that fits one symbol still carries a control block, one of
+# one - 8 rows of 4 dots, where it would be 4 rows with none
 _nc_one = _nc_bars[7]
-check("not printed: data that fits one symbol has no control block - 4 rows, "
-      "not 7",
-      box_of(_nc_one) == (440, 420, 240, 16)
-      and len(_nc_one._stacked_rows(
-          _nc_one.barcode_value, zpl_pdf417.control_block(0, 1))) == 7,
+_NC_ONE_PRINTED = [20, 447, 394, 798, 732, 44, 359, 900, 900, 928, 111, 100,
+                   0, 0, 36, 923, 1, 111, 101, 922]
+check("printed: data that fits one symbol carries a control block of one - "
+      "8 rows, not 4",
+      box_of(_nc_one) == (440, 420, 240, 32)
+      and _nc_one.symbol()[1] == zpl_pdf417.encode(
+          'One symbol', 3, 0, 1, macro=zpl_pdf417.control_block(0, 1))
+      and zpl_pdf417._compact('One symbol') == _NC_ONE_PRINTED[1:7],
       box_of(_nc_one))
 # Not printed: the manual's TLC39 - the MicroPDF417 under the Code 39, in
 # byte compaction, twelve rows

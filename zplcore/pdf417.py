@@ -71,43 +71,40 @@ _LATCH = {
 _SHIFT = {('lower', 'upper'): 27, ('upper', 'punct'): 29,
           ('lower', 'punct'): 29, ('mixed', 'punct'): 29}
 
-
 def _text_values(text: str) -> list:
     """The text as submode values, with the switches between them.
 
-    At each character the cheapest way to reach a submode that holds it
-    wins: a shift where one exists and only one character needs it, a latch
-    otherwise. Going by runs rather than by character is what keeps a word
-    of capitals from paying a latch each way for every letter of it.
+    Chosen a character at a time, as a printer chooses them: a character the
+    current submode holds is written as it is; one a shift reaches - a
+    capital from lower case, or punctuation from any submode - is shifted,
+    even where a latch would be shorter for the characters after it; and
+    anything else latches to the first submode that holds it. Read back from
+    the codewords a printer wrote: it shifted each capital of "MicroPDF417",
+    and the comma, the asterisks and the full stop of "symbol, in two." and
+    "*5551212*88899", where looking ahead would have latched.
     """
     values = []
     current = 'upper'
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if _TABLES[current].find(char) >= 0 and char != '\0':
-            values.append(_TABLES[current].index(char))
-            index += 1
-            continue
-
-        wanted = next((name for name in _SUBMODES
-                       if char != '\0' and _TABLES[name].find(char) >= 0), None)
-        if wanted is None:
+    for char in text:
+        if char == '\0':
             return None                      # not text; another mode must take it
-
-        # A shift costs one value and covers one character. It is worth it
-        # only when the next character is back in this submode.
-        shift = _SHIFT.get((current, wanted))
-        nxt = text[index + 1:index + 2]
-        if shift is not None and (not nxt or (nxt != '\0'
-                                              and _TABLES[current].find(nxt) >= 0)):
-            values.append(shift)
-            values.append(_TABLES[wanted].index(char))
-            index += 1
+        if _TABLES[current].find(char) >= 0:
+            values.append(_TABLES[current].index(char))
             continue
-
+        shifted = next((wanted for (source, wanted) in _SHIFT
+                        if source == current
+                        and _TABLES[wanted].find(char) >= 0), None)
+        if shifted is not None:
+            values += [_SHIFT[(current, shifted)],
+                       _TABLES[shifted].index(char)]
+            continue
+        wanted = next((name for name in _SUBMODES
+                       if _TABLES[name].find(char) >= 0), None)
+        if wanted is None:
+            return None
         values.extend(_LATCH[(current, wanted)])
         current = wanted
+        values.append(_TABLES[current].index(char))
     return values
 
 
@@ -295,8 +292,9 @@ def encode(data: str, columns: int = 0, rows: int = 0, security: int = 0,
 
     # The first codeword is how many there are, itself included but not the
     # check codewords; the gap between that and the symbol's capacity is
-    # padded with the text-mode latch, which decodes to nothing. A series'
-    # control block comes after the padding, as zint puts it.
+    # padded with the text-mode latch, which decodes to nothing - as a
+    # printer padded a ^B7, where a MicroPDF417 pads otherwise. A series'
+    # control block comes after the padding, as a printer put it.
     body = [0] + payload
     body += [_LATCH_TEXT] * (capacity - checks - len(macro) - len(body))
     body += list(macro)
@@ -337,17 +335,21 @@ def encode(data: str, columns: int = 0, rows: int = 0, security: int = 0,
 # What ^FM prints: a message too long for one symbol, cut into pieces, each
 # its own symbol carrying a control block that says which piece it is and of
 # how many. A reader puts the pieces back together in order, wherever on the
-# label they were found. The control block is laid out as zint lays it out -
-# the marker, the piece's index, an optional field giving the count, and a
-# terminator on the last piece - which is what zxing-cpp reads back. What a
-# printer writes into it has not been seen; FUNCTIONAL_SPEC.md section 18.
+# label they were found. The control block is what a printer wrote, read back
+# from both series on one label (FUNCTIONAL_SPEC.md section 18): the marker,
+# the piece's index, a file ID, an optional field giving the count, and a
+# terminator on the last piece - after the padding, as zint puts it too.
 
 _MACRO = 928
 _MACRO_FIELD = 923
 _MACRO_COUNT = 1                # the optional field that is the piece count
 _MACRO_LAST = 922
-# The codewords a control block costs, and the one more on the last piece.
-MACRO_LENGTH = 7
+# The file ID both series on the printed label carried, three codewords:
+# 000 000 036. Whether a printer always writes this one is not known.
+FILE_ID = (0, 0, 36)
+# The codewords a control block costs, and the one more on the last piece -
+# which a printer leaves room for in every piece, not only the last.
+MACRO_LENGTH = 10
 
 
 def _five_digits(number: int) -> tuple:
@@ -358,7 +360,7 @@ def _five_digits(number: int) -> tuple:
 
 def control_block(index: int, count: int) -> tuple:
     """The control block for piece `index`, from 0, of `count`."""
-    block = ((_MACRO,) + _five_digits(index)
+    block = ((_MACRO,) + _five_digits(index) + FILE_ID
              + (_MACRO_FIELD, _MACRO_COUNT) + _five_digits(count))
     return block + ((_MACRO_LAST,) if index == count - 1 else ())
 
@@ -366,20 +368,20 @@ def control_block(index: int, count: int) -> tuple:
 def split(data: str, fits) -> tuple:
     """`data` cut into the pieces a series of symbols carries, greedily.
 
-    `fits(piece, last)` says whether a piece fits one symbol with its control
-    block, which is a codeword longer on the last piece. Each piece but the
-    last is the longest that fits, found by halving - compaction is not
-    strictly monotonic, so a piece may come out a character or two short of
-    the longest possible, which costs nothing but a little room. Whatever is
-    left always goes into the last piece, so no piece is empty.
+    `fits(piece)` says whether a piece fits one symbol with its control
+    block. Each piece but the last is the longest that fits, found by
+    halving - compaction is not strictly monotonic, so a piece may come out a
+    character or two short of the longest possible, which costs nothing but
+    a little room. Whatever is left always goes into the last piece, so no
+    piece is empty.
     """
     pieces = []
     rest = data
-    while not fits(rest, True):
+    while not fits(rest):
         low, high = 0, len(rest) - 1
         while low < high:
             middle = (low + high + 1) // 2
-            if fits(rest[:middle], False):
+            if fits(rest[:middle]):
                 low = middle
             else:
                 high = middle - 1
@@ -409,14 +411,15 @@ def _largest(columns: int, rows: int) -> int:
 def series(data: str, columns: int = 0, rows: int = 0,
            security: int = 0) -> tuple:
     """The pieces an ^FM series of ^B7 symbols carries `data` in - just the
-    one, with no control block, when the whole of it fits a single symbol.
+    one when the whole of it fits a single symbol, which still carries a
+    control block, as a printed one did.
 
-    Every piece fills the largest symbol the command allows, and each is
-    compacted on its own, as a reader decodes each on its own.
+    Every piece fills the largest symbol the command allows, less the whole
+    of a control block - the last piece's, terminator and all, which a
+    printer left room for in every piece - and each is compacted on its own,
+    as a reader decodes each on its own.
     """
     checks = 2 ** (max(0, min(8, security)) + 1)
     room = _largest(columns, rows) - checks - 1     # the length codeword
-    if len(_compact(data)) <= room:
-        return (data,)
-    return split(data, lambda piece, last:
-                 len(_compact(piece)) + MACRO_LENGTH + last <= room)
+    return split(data, lambda piece:
+                 len(_compact(piece)) + MACRO_LENGTH + 1 <= room)
