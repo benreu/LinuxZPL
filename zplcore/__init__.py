@@ -14,12 +14,13 @@ from .model import (BarcodeElement, CircleElement, DesignElement,
                     DiagonalLineElement, Document, EllipseElement, FieldBlock,
                     FrameElement, GraphicSymbolElement, ImageElement,
                     TextBlock, TextElement)
+from .label import Label
 from .parser import parse_label_size, parse_zpl
 
 __all__ = [
     'DesignElement', 'TextElement', 'FrameElement', 'CircleElement',
     'EllipseElement', 'DiagonalLineElement', 'GraphicSymbolElement',
     'BarcodeElement', 'ImageElement', 'FieldBlock', 'TextBlock', 'Document',
-    'parse_zpl',
+    'Label', 'parse_zpl',
     'parse_label_size',
 ]

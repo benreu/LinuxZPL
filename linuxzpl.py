@@ -12,7 +12,7 @@ import argparse
 import os
 import sys
 
-from zplcore import workflow
+from zplcore import Label, workflow  # noqa: F401 - Label is the Python API
 
 QT_INSTALL = ("python3-pyside2.qtcore python3-pyside2.qtgui "
               "python3-pyside2.qtwidgets  (or: pip install PySide2)")
@@ -38,17 +38,14 @@ def run(frontend: str, path: str = None, fields=None) -> int:
 
 def save_filled(path: str, out: str, pairs) -> int:
     """Write the template at `path`, filled in with `pairs`, to `out`."""
-    from zplcore import parser, renderer
+    from zplcore import Label
 
     try:
-        content, _ = parser.read_file(path)
-        document, _ = parser.parse_zpl(content, renderer.ZPLRenderer())
-        dropped = workflow.unsupported_commands(content)
-        if dropped:
-            print(f"Not kept in {out}: {', '.join(dropped)}", file=sys.stderr)
-        workflow.fill_template(document, pairs)
-        with open(workflow.save_filename(out), 'w', encoding='utf-8') as f:
-            f.write(document.to_zpl())
+        label = Label.load(path)
+        if label.dropped:
+            print(f"Not kept in {out}: {', '.join(label.dropped)}", file=sys.stderr)
+        label.fill(dict(pairs))
+        label.save(out)
     except (OSError, ValueError) as e:
         print(f"Cannot save {out}: {e}", file=sys.stderr)
         return 1

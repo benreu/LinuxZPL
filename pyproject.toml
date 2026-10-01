@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linuxzpl"
+version = "0.1.0"
+description = "A visual designer for Zebra thermal labels, and a Python API to fill ZPL templates"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "Pillow>=9.0.0",
+    "numpy>=1.20.0",
+    "qrcode>=7.0",
+    "reportlab>=3.6",
+]
+
+[project.optional-dependencies]
+qt = ["PySide2>=5.15.0"]
+gtk = ["PyGObject>=3.40.0"]
+
+[tool.setuptools]
+py-modules = ["linuxzpl"]
+
+[tool.setuptools.packages.find]
+include = ["zplcore*", "gtkui*", "qtui*"]

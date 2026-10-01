@@ -105,6 +105,31 @@ pip install -r requirements-gtk.txt    # or -qt.txt, if not using system package
 
 In VS Code, press **F5**; the default configuration is the flagless one.
 
+### From Python
+
+`pip install -e .` makes the core importable. No GUI toolkit is needed:
+
+```python
+from zplcore import Label           # also: from linuxzpl import Label
+
+label = Label.load("shipping.zpl")  # or Label.from_zpl(text)
+label[1] = "Hello"                  # ^FN1
+label.fill({2: "World"}, f3="123")  # several at once
+label.copies = 5                    # ^PQ
+label.set_data("OLD TEXT", "new")   # a field with no ^FN: by its data, or by element index
+label.serial(start=100, increment=2, leading_zeros=True)   # a ^SN field
+
+zpl = label.to_zpl()                # what --save-file writes
+image = label.render()              # a PIL image
+label.save("out.zpl"); label.save_image("out.png")
+```
+
+Nothing is changed in the template itself, so one `Label` can be filled again
+and again in a loop. `to_zpl(template=True)` keeps the `^FN`/`^DF` and writes
+any prompts set with `set_prompt`. Bad input raises `ValueError`, `KeyError` or
+`IndexError`; an unreadable file raises `OSError`. `label.dropped` lists what
+a save would not keep.
+
 ### Quick Start
 
 1. Add elements with the **+ Text**, **+ Frame**, **+ Circle**, **+ Ellipse**,
@@ -155,6 +180,7 @@ corrupt file never blocks startup; the defaults are `192.168.50.21:9100` at
 zplcore/    no GUI toolkit, runs headless
   model.py       elements and the Document, the ZPL written out
   parser.py      the ZPL read back in
+  label.py       Label, the public entry point for Python programs
   fonts.py       discovery, printer object naming, printer I/O
   graphic_store.py  the in-session ^IS/^XG memory, and real printer I/O for
                     Printer -> Graphics... (view/store/retrieve/delete)
