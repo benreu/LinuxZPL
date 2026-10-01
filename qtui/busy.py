@@ -29,6 +29,7 @@ from zplcore import printer_io
 class _Relay(QObject):
     done = Signal(object, object)
     progress = Signal(str)
+    fraction = Signal(float)
 
 
 class BusyBar(QWidget):
@@ -44,7 +45,7 @@ class BusyBar(QWidget):
     """
 
     def __init__(self, blocked: Sequence = (), message: Optional[Callable] = None,
-                 parent=None):
+                 parent=None, width: int = 90):
         super().__init__(parent)
         self._blocked = list(blocked)
         self._message = message
@@ -58,7 +59,7 @@ class BusyBar(QWidget):
         self._bar = QProgressBar()
         self._bar.setRange(0, 0)
         self._bar.setTextVisible(False)
-        self._bar.setFixedWidth(90)
+        self._bar.setFixedWidth(width)
         layout.addWidget(self._bar)
         self._cancel_btn = QPushButton("Cancel")
         layout.addWidget(self._cancel_btn)
@@ -67,6 +68,7 @@ class BusyBar(QWidget):
         self._relay = _Relay(self)
         self._relay.done.connect(self._finish)
         self._relay.progress.connect(self._show_message)
+        self._relay.fraction.connect(self._show_fraction)
         self.hide()
 
     @property
@@ -87,6 +89,8 @@ class BusyBar(QWidget):
         for w in self._blocked:
             w.setEnabled(False)
         self._cancel_btn.setEnabled(True)
+        self._bar.setRange(0, 0)
+        self._bar.setTextVisible(False)
         self.show()
         self._on_done = on_done
         token, relay = self._token, self._relay
@@ -109,6 +113,14 @@ class BusyBar(QWidget):
         """Thread-safe progress text, for a `fn` with more than one step."""
         try:
             self._relay.progress.emit(text)
+        except RuntimeError:
+            pass
+
+    def report_fraction(self, fraction: float) -> None:
+        """Thread-safe: turn the bar from "working" into a percentage, for a
+        call that knows how far along it is (a firmware upload)."""
+        try:
+            self._relay.fraction.emit(fraction)
         except RuntimeError:
             pass
 
@@ -136,3 +148,10 @@ class BusyBar(QWidget):
     def _show_message(self, text: str) -> None:
         if self._message is not None and not self._dead:
             self._message(text)
+
+    def _show_fraction(self, fraction: float) -> None:
+        if self._dead or self._token is None:
+            return
+        self._bar.setRange(0, 100)
+        self._bar.setTextVisible(True)
+        self._bar.setValue(int(max(0.0, min(1.0, fraction)) * 100))

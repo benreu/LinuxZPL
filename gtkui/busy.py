@@ -32,7 +32,7 @@ class BusyBar(Gtk.Box):
     """
 
     def __init__(self, blocked: Sequence[Gtk.Widget] = (),
-                 message: Optional[Callable] = None):
+                 message: Optional[Callable] = None, width: int = 160):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self._blocked = list(blocked)
         self._message = message
@@ -46,6 +46,9 @@ class BusyBar(Gtk.Box):
         self._cancel_btn = Gtk.Button(label="Cancel")
         self._cancel_btn.connect("clicked", lambda _b: self.cancel())
         self.pack_start(self._cancel_btn, False, False, 0)
+        self._bar = Gtk.ProgressBar(show_text=True, valign=Gtk.Align.CENTER)
+        self._bar.set_size_request(width, -1)
+        self.pack_start(self._bar, False, False, 0)
         self._spinner.show()
         self._cancel_btn.show()
         self.set_no_show_all(True)
@@ -70,6 +73,8 @@ class BusyBar(Gtk.Box):
             w.set_sensitive(False)
         self._cancel_btn.set_sensitive(True)
         self._spinner.start()
+        self._spinner.show()
+        self._bar.hide()
         self.show()
         self._on_done = on_done
         token = self._token
@@ -86,6 +91,11 @@ class BusyBar(Gtk.Box):
     def report(self, text: str) -> None:
         """Thread-safe progress text, for a `fn` with more than one step."""
         GLib.idle_add(self._show_message, text)
+
+    def report_fraction(self, fraction: float) -> None:
+        """Thread-safe: swap the spinner for a percentage bar, for a call that
+        knows how far along it is (a firmware upload)."""
+        GLib.idle_add(self._show_fraction, fraction)
 
     def cancel(self) -> None:
         if self._token is not None:
@@ -112,4 +122,14 @@ class BusyBar(Gtk.Box):
     def _show_message(self, text: str) -> bool:
         if self._message is not None and not self._dead:
             self._message(text)
+        return False
+
+    def _show_fraction(self, fraction: float) -> bool:
+        if not self._dead and self._token is not None:
+            fraction = max(0.0, min(1.0, fraction))
+            self._spinner.stop()
+            self._spinner.hide()
+            self._bar.set_fraction(fraction)
+            self._bar.set_text(f"{int(fraction * 100)}%")
+            self._bar.show()
         return False

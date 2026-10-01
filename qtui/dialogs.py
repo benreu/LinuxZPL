@@ -25,8 +25,8 @@ from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
-from zplcore import (fields as zpl_fields, fonts as zpl_fonts,
-                     geometry, graphic_store, printer_io, printer_objects,
+from zplcore import (fields as zpl_fields, firmware as zpl_firmware,
+                     fonts as zpl_fonts, geometry, graphic_store, printer_io, printer_objects,
                      printer_status, textraster, workflow)
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
@@ -2653,6 +2653,130 @@ class PrinterConsoleDialog(QDialog):
             address, port, text, cancel=cancel), done)
 
 
+class PrinterFirmwareDialog(QDialog):
+    """Show the firmware the printer runs now and send it a new file.
+
+    Modal, like the Fonts/Graphics/Objects managers: nothing else should
+    touch the printer while its flash is being written. The upload's bar is
+    the BusyBar's, switched to a percentage by report_fraction.
+    """
+
+    def __init__(self, parent, address: str, port: int):
+        super().__init__(parent)
+        self.setWindowTitle("Firmware Update")
+        self.resize(460, 200)
+        self._address = address
+        self._port = port
+        self._path = None
+        self._size = 0
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(f"Printer: {address}:{port}"))
+        row = QHBoxLayout()
+        self._current = QLabel("Current firmware: checking\u2026")
+        self._current.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        row.addWidget(self._current, 1)
+        self._refresh_btn = QPushButton("Refresh")
+        row.addWidget(self._refresh_btn)
+        layout.addLayout(row)
+
+        row = QHBoxLayout()
+        self._file = QLabel("No firmware file chosen.")
+        self._file.setWordWrap(True)
+        row.addWidget(self._file, 1)
+        self._browse_btn = QPushButton("Browse\u2026")
+        row.addWidget(self._browse_btn)
+        layout.addLayout(row)
+
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+        layout.addStretch(1)
+
+        row = QHBoxLayout()
+        self._update_btn = QPushButton("Update")
+        self._update_btn.setEnabled(False)
+        row.addWidget(self._update_btn)
+        row.addStretch(1)
+        self._close_btn = QPushButton("Close")
+        self._busy = BusyBar((self._refresh_btn, self._browse_btn,
+                              self._update_btn, self._close_btn),
+                             parent=self, width=200)
+        row.addWidget(self._busy)
+        row.addWidget(self._close_btn)
+        layout.addLayout(row)
+
+        self._refresh_btn.clicked.connect(self._on_refresh)
+        self._browse_btn.clicked.connect(self._on_browse)
+        self._update_btn.clicked.connect(self._on_update)
+        self._close_btn.clicked.connect(self.reject)
+        QTimer.singleShot(0, self._on_refresh)
+
+    def reject(self):
+        self._busy.abandon()
+        super().reject()
+
+    def _on_refresh(self):
+        self._current.setText("Current firmware: checking\u2026")
+
+        def done(version, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._current.setText("Current firmware: unknown (cancelled)")
+                return
+            self._current.setText(
+                f"Current firmware: {version}" if version and error is None
+                else "Current firmware: unavailable")
+
+        self._busy.run(lambda cancel: zpl_firmware.current_firmware(
+            self._address, self._port, cancel=cancel), done)
+
+    def _on_browse(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Choose Firmware File")
+        if not path:
+            return
+        try:
+            size = Path(path).stat().st_size
+        except OSError as e:
+            show_error(self, f"Could not read {path}: {e}")
+            return
+        if size == 0:
+            show_error(self, f"{Path(path).name} is empty.")
+            return
+        self._path, self._size = path, size
+        self._file.setText(f"{Path(path).name} ({size:,} bytes)")
+        self._status.clear()
+        self._update_btn.setEnabled(True)
+
+    def _on_update(self):
+        if self._path is None or not ask_firmware_update(
+                self, Path(self._path).name, self._size,
+                self._address, self._port):
+            return
+        path, name = self._path, Path(self._path).name
+        self._status.setText(f"Sending {name}\u2026")
+
+        def progress(sent, total):
+            self._busy.report_fraction(sent / total)
+
+        def done(_result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self._status.setText(
+                    "Cancelled. The printer may have received part of the "
+                    "file; check its firmware before relying on it.")
+                return
+            if error is not None:
+                self._status.setText("Firmware update failed.")
+                show_error(self, f"Could not send {name}: {error}")
+                return
+            self._status.setText(
+                "Firmware sent. The printer will flash it and restart; "
+                "press Refresh in a minute to see the new version.")
+
+        self._busy.run(lambda cancel: zpl_firmware.upload_firmware(
+            self._address, self._port, path, progress=progress,
+            cancel=cancel), done)
+
+
 class PrinterStatusDialog(QDialog):
     """What the printer says about its own state - faults, what it is working
     on, memory, and how its head is wearing.
@@ -2946,6 +3070,25 @@ def ask_delete_object(parent, spec: str, address: str, port: int) -> bool:
     box.setEscapeButton(cancel)
     box.exec_()
     return box.clickedButton() is delete
+
+
+def ask_firmware_update(parent, name: str, size: int, address: str, port: int) -> bool:
+    """Whether to really send firmware - the printer reboots and an
+    interrupted flash can leave it unusable, so it is asked every time."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Warning)
+    box.setWindowTitle("Update Firmware")
+    box.setText(f"Send {name} ({size:,} bytes) to {address}:{port}?")
+    box.setInformativeText(
+        "The printer will flash the file and restart. Do not switch it off "
+        "or cancel while it is being written: an interrupted update can "
+        "leave the printer unusable.")
+    update = box.addButton("Update", QMessageBox.AcceptRole)
+    cancel = box.addButton("Cancel", QMessageBox.RejectRole)
+    box.setDefaultButton(cancel)
+    box.setEscapeButton(cancel)
+    box.exec_()
+    return box.clickedButton() is update
 
 
 def ask_unsaved_changes(parent) -> str:

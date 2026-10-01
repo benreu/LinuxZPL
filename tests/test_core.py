@@ -9786,6 +9786,83 @@ check("Qt Edit menu: greys Copy out with nothing selected, and lets go of it "
       "once closed, so Ctrl+C works on whatever is picked next",
       _cw_greyed and _cw_win.copy_action.isEnabled())
 
+# Firmware: ~HI's version, and a file streamed to the raw port with progress.
+import socket as _fw_socket, threading as _fw_threading
+from zplcore import firmware as zpl_firmware, printer_io as _fw_pio
+_fw_real_send = _fw_pio.send
+try:
+    _fw_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: (
+        b'\x02ZD420-203dpi,V84.20.18Z,8,8176KB\x03' if payload == b'~HI' else b'')
+    check("current_firmware reads the version from ~HI",
+          zpl_firmware.current_firmware('x', 9100) == 'V84.20.18Z')
+    _fw_pio.send = lambda *a, **k: b'garbage'
+    check("current_firmware: an unreadable reply is None",
+          zpl_firmware.current_firmware('x', 9100) is None)
+    def _fw_refuse(*a, **k):
+        raise ConnectionRefusedError()
+    _fw_pio.send = _fw_refuse
+    check("current_firmware: an unreachable printer is None",
+          zpl_firmware.current_firmware('x', 9100) is None)
+finally:
+    _fw_pio.send = _fw_real_send
+
+def _fw_listener(received):
+    srv = _fw_socket.socket(); srv.bind(('127.0.0.1', 0)); srv.listen(1)
+    def serve():
+        conn, _ = srv.accept()
+        while True:
+            data = conn.recv(65536)
+            if not data:
+                break
+            received.append(data)
+        conn.close(); srv.close()
+    th = _fw_threading.Thread(target=serve, daemon=True); th.start()
+    return srv.getsockname()[1], th
+
+_fw_blob = bytes(range(256)) * 300  # 76,800 bytes: five chunks
+with tempfile.TemporaryDirectory() as _fw_dir:
+    _fw_file = Path(_fw_dir) / 'fw.zpl'; _fw_file.write_bytes(_fw_blob)
+    _fw_got = []; _fw_port, _fw_th = _fw_listener(_fw_got)
+    _fw_prog = []
+    _fw_sent = zpl_firmware.upload_firmware(
+        '127.0.0.1', _fw_port, _fw_file, progress=lambda a, b: _fw_prog.append((a, b)))
+    _fw_th.join(3)
+    check("upload_firmware sends the file byte for byte, unwrapped",
+          b''.join(_fw_got) == _fw_blob and _fw_sent == len(_fw_blob))
+    check("upload_firmware progress rises to the total",
+          len(_fw_prog) > 1 and _fw_prog[-1] == (len(_fw_blob), len(_fw_blob))
+          and [a for a, _ in _fw_prog] == sorted(a for a, _ in _fw_prog), _fw_prog[-1:])
+    _fw_empty = Path(_fw_dir) / 'empty.zpl'; _fw_empty.write_bytes(b'')
+    for _fw_bad, _fw_why in ((_fw_empty, "empty"), (Path(_fw_dir) / 'none', "missing")):
+        try:
+            zpl_firmware.upload_firmware('127.0.0.1', 1, _fw_bad); _fw_o = 'returned'
+        except ValueError:
+            _fw_o = 'ValueError'
+        check(f"upload_firmware refuses a {_fw_why} file", _fw_o == 'ValueError', _fw_o)
+    _fw_tok = _fw_pio.CancelToken(); _fw_got = []
+    _fw_port, _fw_th = _fw_listener(_fw_got)
+    def _fw_stop(a, b):
+        _fw_tok.cancel()
+    try:
+        zpl_firmware.upload_firmware('127.0.0.1', _fw_port, _fw_file,
+                                     progress=_fw_stop, cancel=_fw_tok)
+        _fw_o = 'returned'
+    except _fw_pio.Cancelled:
+        _fw_o = 'Cancelled'
+    _fw_th.join(3)
+    check("upload_firmware: cancel mid-send raises Cancelled and stops short",
+          _fw_o == 'Cancelled' and sum(map(len, _fw_got)) < len(_fw_blob),
+          (_fw_o, sum(map(len, _fw_got))))
+
+_fw_texts = None
+for _fw_act in _cw_win.menuBar().actions():
+    if _fw_act.text() == "&Printer":
+        _fw_texts = [a.text() for a in _fw_act.menu().actions() if not a.isSeparator()]
+check("Qt Printer menu: Firmware Update sits between Console and Status",
+      _fw_texts is not None and
+      _fw_texts[_fw_texts.index("Console…") + 1:_fw_texts.index("Console…") + 3]
+      == ["Firmware Update…", "Status…"], _fw_texts)
+
 # CONTRIBUTING rule 4: no module in zplcore may import a GUI toolkit. Checked
 # by reading the source, since this suite imports PySide2 itself for other
 # reasons and so sys.modules proves nothing.

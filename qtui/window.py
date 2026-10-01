@@ -344,6 +344,8 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_graphics_action = self._action("Graphics…", self.on_printer_graphics)
         self.printer_objects_action = self._action("Objects…", self.on_printer_objects)
         self.printer_console_action = self._action("Console…", self.on_printer_console)
+        self.printer_firmware_action = self._action(
+            "Firmware Update…", self.on_printer_firmware)
         self.printer_status_action = self._action("Status…", self.on_printer_status)
 
         self.session_printer_action = self._action(
@@ -410,6 +412,7 @@ class ZPLDesignerWindow(QMainWindow):
         printer_menu.addAction(self.printer_objects_action)
         printer_menu.addSeparator()
         printer_menu.addAction(self.printer_console_action)
+        printer_menu.addAction(self.printer_firmware_action)
         printer_menu.addAction(self.printer_status_action)
 
         settings_menu = menubar.addMenu("&Settings")
@@ -981,6 +984,10 @@ class ZPLDesignerWindow(QMainWindow):
             self, self.printer_address, self.printer_port,
             on_changed=lambda *_a: self.canvas.update())
         dialog.exec_()
+
+    def on_printer_firmware(self):
+        qt_dialogs.PrinterFirmwareDialog(
+            self, self.printer_address, self.printer_port).exec_()
 
     def on_printer_console(self):
         # Non-modal and a singleton, unlike the other printer dialogs: this

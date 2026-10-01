@@ -16,7 +16,7 @@ say) leaves the worker stuck inside one recv() until the timeout expires.
 import socket
 import threading
 import time
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 
 class Cancelled(Exception):
@@ -102,6 +102,50 @@ def send(address: str, port: int, payload: bytes, timeout: float,
     if cancel is not None and cancel.cancelled:
         raise Cancelled(f"Cancelled while talking to {address}:{port}")
     return reply
+
+
+def send_stream(address: str, port: int, chunks: Iterable[bytes], total: int,
+                timeout: float,
+                cancel: Optional[CancelToken] = None,
+                progress: Optional[Callable[[int, int], None]] = None) -> None:
+    """Send `chunks` one after another, reporting `progress(sent, total)` after
+    each - send() with a bar to fill.
+
+    No reply is read: the one caller, a firmware upload, is answered by the
+    printer going away to flash itself. A reset that arrives only after every
+    byte has gone out is therefore not an error; one that arrives earlier is.
+    Cancelled is raised exactly as send() does.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    if cancel is not None:
+        cancel._attach(sock)
+    sent = 0
+    try:
+        sock.connect((address, port))
+        for chunk in chunks:
+            sock.sendall(chunk)
+            sent += len(chunk)
+            if cancel is not None and cancel.cancelled:
+                break
+            if progress is not None:
+                progress(sent, total)
+        if sent >= total and (cancel is None or not cancel.cancelled):
+            try:
+                sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+    except OSError:
+        if cancel is not None and cancel.cancelled:
+            raise Cancelled(f"Cancelled while talking to {address}:{port}") from None
+        if sent < total:
+            raise
+    finally:
+        if cancel is not None:
+            cancel._detach()
+        sock.close()
+    if cancel is not None and cancel.cancelled:
+        raise Cancelled(f"Cancelled while talking to {address}:{port}")
 
 
 def _exchange(sock, address, port, payload, timeout, read_reply) -> bytes:

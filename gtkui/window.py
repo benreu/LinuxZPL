@@ -13,6 +13,7 @@ import base64
 import configparser
 from pathlib import Path
 from zplcore import fields as zpl_fields
+from zplcore import firmware as zpl_firmware
 from zplcore import fonts as zpl_fonts
 from zplcore import geometry
 from zplcore import graphic_store
@@ -667,6 +668,10 @@ class ZPLViewerWindow(Gtk.Window):
         printer_console_item = Gtk.MenuItem(label="Console…")
         printer_console_item.connect("activate", self.on_printer_console_clicked)
         printer_menu.append(printer_console_item)
+
+        printer_firmware_item = Gtk.MenuItem(label="Firmware Update…")
+        printer_firmware_item.connect("activate", self.on_printer_firmware_clicked)
+        printer_menu.append(printer_firmware_item)
 
         printer_status_item = Gtk.MenuItem(label="Status…")
         printer_status_item.connect("activate", self.on_printer_status_clicked)
@@ -1762,6 +1767,154 @@ class ZPLViewerWindow(Gtk.Window):
         response = dialog.run()
         dialog.destroy()
         return response == Gtk.ResponseType.ACCEPT
+
+    def _confirm_firmware_update(self, parent, name: str, size: int) -> bool:
+        """Whether to really send firmware - the printer reboots and an
+        interrupted flash can leave it unusable, so it is asked every time."""
+        dialog = Gtk.MessageDialog(
+            parent=parent, flags=0, message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"Send {name} ({size:,} bytes) to "
+                 f"{self.printer_address}:{self.printer_port}?")
+        dialog.format_secondary_text(
+            "The printer will flash the file and restart. Do not switch it "
+            "off or cancel while it is being written: an interrupted update "
+            "can leave the printer unusable.")
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           "Update", Gtk.ResponseType.ACCEPT)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        response = dialog.run()
+        dialog.destroy()
+        return response == Gtk.ResponseType.ACCEPT
+
+    def on_printer_firmware_clicked(self, widget):
+        """Show the firmware the printer runs now and send it a new file.
+
+        Modal, like the Fonts/Graphics/Objects managers: nothing else should
+        touch the printer while its flash is being written. The upload's bar
+        is the BusyBar's, switched to a percentage by report_fraction.
+        """
+        address, port = self.printer_address, self.printer_port
+        dialog = Gtk.Dialog(title="Firmware Update", parent=self, flags=0)
+        dialog.set_default_size(460, 200)
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        content.pack_start(Gtk.Label(label=f"Printer: {address}:{port}",
+                                     halign=Gtk.Align.START), False, False, 0)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        current = Gtk.Label(label="Current firmware: checking…",
+                            halign=Gtk.Align.START, selectable=True)
+        row.pack_start(current, True, True, 0)
+        refresh_btn = Gtk.Button(label="Refresh")
+        row.pack_start(refresh_btn, False, False, 0)
+        content.pack_start(row, False, False, 0)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        file_label = Gtk.Label(label="No firmware file chosen.",
+                               halign=Gtk.Align.START)
+        file_label.set_line_wrap(True)
+        row.pack_start(file_label, True, True, 0)
+        browse_btn = Gtk.Button(label="Browse…")
+        row.pack_start(browse_btn, False, False, 0)
+        content.pack_start(row, False, False, 0)
+
+        status = Gtk.Label(halign=Gtk.Align.START)
+        status.set_line_wrap(True)
+        content.pack_start(status, False, False, 0)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        update_btn = Gtk.Button(label="Update")
+        update_btn.set_sensitive(False)
+        row.pack_start(update_btn, False, False, 0)
+        close_btn = Gtk.Button(label="Close")
+        row.pack_end(close_btn, False, False, 0)
+        busy = BusyBar((refresh_btn, browse_btn, update_btn, close_btn), width=200)
+        row.pack_end(busy, False, False, 0)
+        content.pack_end(row, False, False, 0)
+
+        chosen = {'path': None, 'size': 0}
+
+        def on_refresh(_b=None):
+            current.set_text("Current firmware: checking…")
+
+            def done(version, error):
+                if isinstance(error, printer_io.Cancelled):
+                    current.set_text("Current firmware: unknown (cancelled)")
+                elif version and error is None:
+                    current.set_text(f"Current firmware: {version}")
+                else:
+                    current.set_text("Current firmware: unavailable")
+
+            busy.run(lambda cancel: zpl_firmware.current_firmware(
+                address, port, cancel=cancel), done)
+
+        def on_browse(_b):
+            chooser = Gtk.FileChooserDialog(
+                title="Choose Firmware File", parent=dialog,
+                action=Gtk.FileChooserAction.OPEN)
+            chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                                Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+            response = chooser.run()
+            path = chooser.get_filename()
+            chooser.destroy()
+            if response != Gtk.ResponseType.OK or not path:
+                return
+            try:
+                size = os.path.getsize(path)
+            except OSError as e:
+                self.show_error_dialog(f"Could not read {path}: {e}")
+                return
+            if size == 0:
+                self.show_error_dialog(f"{os.path.basename(path)} is empty.")
+                return
+            chosen['path'], chosen['size'] = path, size
+            file_label.set_text(f"{os.path.basename(path)} ({size:,} bytes)")
+            status.set_text("")
+            update_btn.set_sensitive(True)
+
+        def on_update(_b):
+            path = chosen['path']
+            if path is None:
+                return
+            name = os.path.basename(path)
+            if not self._confirm_firmware_update(dialog, name, chosen['size']):
+                return
+            status.set_text(f"Sending {name}…")
+
+            def progress(sent, total):
+                busy.report_fraction(sent / total)
+
+            def done(_result, error):
+                if isinstance(error, printer_io.Cancelled):
+                    status.set_text(
+                        "Cancelled. The printer may have received part of "
+                        "the file; check its firmware before relying on it.")
+                elif error is not None:
+                    status.set_text("Firmware update failed.")
+                    self.show_error_dialog(f"Could not send {name}: {error}")
+                else:
+                    status.set_text(
+                        "Firmware sent. The printer will flash it and "
+                        "restart; press Refresh in a minute to see the new "
+                        "version.")
+
+            busy.run(lambda cancel: zpl_firmware.upload_firmware(
+                address, port, path, progress=progress, cancel=cancel), done)
+
+        refresh_btn.connect("clicked", on_refresh)
+        browse_btn.connect("clicked", on_browse)
+        update_btn.connect("clicked", on_update)
+        close_btn.connect("clicked", lambda _b: dialog.response(Gtk.ResponseType.CLOSE))
+        dialog.show_all()
+        on_refresh()
+        dialog.run()
+        busy.abandon()
+        dialog.destroy()
 
     def on_printer_graphics_clicked(self, widget):
         """View, store, retrieve and delete graphics on the real printer -
