@@ -302,6 +302,60 @@ finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+# --- the extra font folder ---------------------------------------------------
+
+tmp = tempfile.mkdtemp()
+_real_dirs = zpl_fonts.FALLBACK_FONT_DIRS
+_real_root = zpl_fonts.FALLBACK_BUNDLED_ROOT
+try:
+    extra = Path(tmp) / "mine"
+    extra.mkdir()
+    shutil.copy(REAL_DEJAVU, extra / "Mine.ttf")
+    zpl_fonts.FALLBACK_FONT_DIRS = (str(Path(tmp) / "none"),)
+    zpl_fonts.FALLBACK_BUNDLED_ROOT = str(Path(tmp) / "no-opt")
+
+    subprocess.run = _no_fc_list
+    try:
+        _reset_caches()
+        before = zpl_fonts.list_ttf_families()
+        zpl_fonts.set_extra_font_dir(str(extra))
+        after = zpl_fonts.list_ttf_families()
+        report = zpl_fonts.scan_font_directories()
+        zpl_fonts.set_extra_font_dir(str(Path(tmp) / "missing"))
+        missing_ok = zpl_fonts.list_ttf_families() == {}
+        zpl_fonts.set_extra_font_dir("")
+        cleared = zpl_fonts.list_ttf_families()
+    finally:
+        subprocess.run = _real_run
+        zpl_fonts.set_extra_font_dir("")
+        zpl_fonts.FALLBACK_FONT_DIRS = _real_dirs
+        zpl_fonts.FALLBACK_BUNDLED_ROOT = _real_root
+        _reset_caches()
+
+    check("extra folder: nothing found before it is set", before == {}, before)
+    check("extra folder: its fonts are found once set, fc-list failing",
+          "DejaVu Sans" in after, after)
+    check("extra folder: listed in the scan report",
+          any(d.path == str(extra) and d.font_count == 1 for d in report.dirs))
+    check("extra folder: a missing folder is harmless", missing_ok)
+    check("extra folder: clearing it removes its fonts", cleared == {}, cleared)
+
+    # Only the fallback consults it: with fc-list working it changes nothing.
+    subprocess.run = _fake_fc_list_one_family
+    try:
+        zpl_fonts.set_extra_font_dir(str(extra))
+        _reset_caches()
+        with_fc = zpl_fonts.list_ttf_families()
+    finally:
+        subprocess.run = _real_run
+        zpl_fonts.set_extra_font_dir("")
+        _reset_caches()
+    check("extra folder: ignored while fc-list works",
+          with_fc == {"DejaVu Sans": str(REAL_DEJAVU)}, with_fc)
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

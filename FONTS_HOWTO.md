@@ -493,6 +493,12 @@ missing, broken, or reports nothing. Two sessions can therefore see different
 font sets on the same machine if one has fontconfig set up and the other does
 not — `fonts.font_discovery_status()` reports which path is in use.
 
+One more folder of your choosing can join that scan: Settings → Local Fonts… →
+Extra Font Folder… (stored as `extra_dir` under `[fonts]` in settings.ini), or
+`fonts.set_extra_font_dir(path)` from Python. It is only read on the fallback
+path, so it changes nothing while `fc-list` works, and it appears in the
+Local Fonts… dialog's list of scanned folders.
+
 ---
 
 ## 8. Operation reference

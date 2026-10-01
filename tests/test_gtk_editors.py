@@ -1106,6 +1106,23 @@ finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
 
+# --- the extra font folder is a persisted global setting -------------------
+extra_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: extra_path
+gtk_main._fallback_config_path = lambda: extra_path
+try:
+    gtk_main.zpl_fonts.set_extra_font_dir('/tmp/my-fonts')
+    window._save_settings()
+    gtk_main.zpl_fonts.set_extra_font_dir('')
+    window._load_settings()
+    check("the extra font folder round-trips through the settings file",
+          gtk_main.zpl_fonts.EXTRA_FONT_DIR == '/tmp/my-fonts',
+          gtk_main.zpl_fonts.EXTRA_FONT_DIR)
+finally:
+    gtk_main.zpl_fonts.set_extra_font_dir('')
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+
 # --- Set Printer for This Session never touches the persisted default ------
 # The DPI is held fixed across both dialogs below so neither one takes the
 # rescale-prompt path, which would otherwise open a real (blocking) dialog.

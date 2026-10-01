@@ -2821,6 +2821,8 @@ class ZPLViewerWindow(Gtk.Window):
                 fallback=self.printer_font_device).strip().upper()
             if font_device in zpl_fonts.DEVICES:
                 self.printer_font_device = font_device
+            zpl_fonts.set_extra_font_dir(
+                parser.get('fonts', 'extra_dir', fallback=''))
             if parser.has_section('window'):
                 self.saved_geometry = tuple(
                     parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
@@ -2863,6 +2865,9 @@ class ZPLViewerWindow(Gtk.Window):
                 parser.set('printer', 'port', str(self._default_printer[1]))
                 parser.set('printer', 'dpi', str(self._default_printer[2]))
                 parser.set('printer', 'font_device', self._default_printer[3])
+                if not parser.has_section('fonts'):
+                    parser.add_section('fonts')
+                parser.set('fonts', 'extra_dir', zpl_fonts.EXTRA_FONT_DIR)
                 if not parser.has_section('label'):
                     parser.add_section('label')
                 # Inches, not dots: dots only mean a size once a resolution is
@@ -2933,6 +2938,29 @@ class ZPLViewerWindow(Gtk.Window):
         if document is not None:
             document.font_device = device
 
+    def on_extra_font_folder_clicked(self, widget, parent=None):
+        """Pick the one extra folder the font fallback scan also covers."""
+        current = zpl_fonts.EXTRA_FONT_DIR
+        dialog = Gtk.FileChooserDialog(
+            title="Extra Font Folder", parent=parent or self,
+            action=Gtk.FileChooserAction.SELECT_FOLDER)
+        dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+        CLEAR = 1
+        clear = dialog.add_button("Clear", CLEAR)
+        clear.set_sensitive(bool(current))
+        dialog.add_button(Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        if current and Path(current).expanduser().is_dir():
+            dialog.set_current_folder(str(Path(current).expanduser()))
+        response = dialog.run()
+        folder = dialog.get_filename()
+        dialog.destroy()
+        if response == CLEAR:
+            folder = ''
+        elif response != Gtk.ResponseType.OK or not folder:
+            return
+        zpl_fonts.set_extra_font_dir(folder)
+        self._save_settings()
+
     def on_local_fonts_clicked(self, widget):
         """Show what the directory-scan font fallback sees, and whether it's
         in use.
@@ -2972,7 +3000,11 @@ class ZPLViewerWindow(Gtk.Window):
         content.pack_start(scroller, True, True, 0)
 
         rescan_btn = Gtk.Button(label="Rescan")
-        content.pack_start(rescan_btn, False, False, 0)
+        extra_btn = Gtk.Button(label="Extra Font Folder\u2026")
+        buttons = Gtk.Box(spacing=8)
+        buttons.pack_start(rescan_btn, False, False, 0)
+        buttons.pack_start(extra_btn, False, False, 0)
+        content.pack_start(buttons, False, False, 0)
 
         def refresh(rescan):
             fc_list_ok, report = zpl_fonts.font_discovery_status(refresh=rescan)
@@ -2995,6 +3027,11 @@ class ZPLViewerWindow(Gtk.Window):
             report_view.get_buffer().set_text("\n".join(lines))
 
         rescan_btn.connect("clicked", lambda _b: refresh(True))
+
+        def choose_extra(_b):
+            self.on_extra_font_folder_clicked(None, parent=dialog)
+            refresh(True)
+        extra_btn.connect("clicked", choose_extra)
 
         content.show_all()
         refresh(False)

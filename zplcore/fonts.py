@@ -166,6 +166,9 @@ FALLBACK_FONT_DIRS = ('/usr/share/fonts', '/usr/local/share/fonts',
                       '~/.fonts', '~/.local/share/fonts')
 FALLBACK_BUNDLED_ROOT = '/opt'
 FALLBACK_BUNDLED_GLOB = '*/usr/share/fonts'
+# One folder of the user's choosing (Settings > Extra Font Folder...), scanned
+# with the ones above. '' means none. Set through set_extra_font_dir().
+EXTRA_FONT_DIR = ''
 
 
 class ScannedDir(NamedTuple):
@@ -335,7 +338,27 @@ def _fallback_directories() -> List[str]:
     fixed = [str(Path(d).expanduser()) for d in FALLBACK_FONT_DIRS]
     bundled = sorted(str(p) for p in
                      Path(FALLBACK_BUNDLED_ROOT).glob(FALLBACK_BUNDLED_GLOB))
-    return fixed + bundled
+    extra = []
+    if EXTRA_FONT_DIR:
+        folder = str(Path(EXTRA_FONT_DIR).expanduser())
+        if folder not in fixed + bundled:
+            extra = [folder]
+    return fixed + bundled + extra
+
+
+def set_extra_font_dir(path: str):
+    """Choose the one extra folder the fallback scan covers ('' for none).
+
+    Only the fallback consults it, so with a working fc-list it changes
+    nothing. The scan and the lookups built on it are dropped, so the next
+    call sees the new folder.
+    """
+    global EXTRA_FONT_DIR, _families_cache, _paths_cache, _scan_cache
+    path = (path or '').strip()
+    if path == EXTRA_FONT_DIR:
+        return
+    EXTRA_FONT_DIR = path
+    _families_cache = _paths_cache = _scan_cache = None
 
 
 def scan_font_directories(refresh: bool = False) -> FontScanReport:

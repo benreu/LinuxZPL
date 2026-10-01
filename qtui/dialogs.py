@@ -299,6 +299,8 @@ class LocalFontsDialog(QDialog):
         row = QHBoxLayout()
         self._rescan_btn = QPushButton("Rescan")
         row.addWidget(self._rescan_btn)
+        self._extra_btn = QPushButton("Extra Font Folder…")
+        row.addWidget(self._extra_btn)
         row.addStretch(1)
         layout.addLayout(row)
 
@@ -307,7 +309,14 @@ class LocalFontsDialog(QDialog):
         layout.addWidget(close)
 
         self._rescan_btn.clicked.connect(lambda: self.refresh(rescan=True))
+        self._extra_btn.clicked.connect(self._choose_extra_folder)
         self.refresh(rescan=False)
+
+    def _choose_extra_folder(self):
+        # The window owns the choice and its persistence; this just rescans
+        # so the new folder shows up in the report.
+        self.parent().on_extra_font_folder()
+        self.refresh(rescan=True)
 
     def refresh(self, rescan: bool):
         fc_list_ok, report = zpl_fonts.font_discovery_status(refresh=rescan)

@@ -15,7 +15,7 @@ from pathlib import Path
 from PySide2.QtCore import QSize, Qt
 from PySide2.QtGui import QCursor, QIcon, QImage, QKeySequence, QPixmap
 from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QLabel,
-                               QMainWindow, QMenu, QScrollArea, QSizePolicy,
+                               QMainWindow, QMenu, QMessageBox, QScrollArea, QSizePolicy,
                                QToolBar, QToolButton, QWidget)
 
 from zplcore import fonts as zpl_fonts
@@ -939,6 +939,31 @@ class ZPLDesignerWindow(QMainWindow):
     def on_local_fonts(self):
         qt_dialogs.LocalFontsDialog(self).exec_()
 
+    def on_extra_font_folder(self):
+        """Pick the one extra folder the font fallback scan also covers."""
+        current = zpl_fonts.EXTRA_FONT_DIR
+        box = QMessageBox(self)
+        box.setWindowTitle("Extra Font Folder")
+        box.setText("Folder scanned with the other font folders when the "
+                    "system font list can't be read:\n"
+                    + (current or "(none)"))
+        choose = box.addButton("Choose…", QMessageBox.AcceptRole)
+        clear = box.addButton("Clear", QMessageBox.DestructiveRole)
+        clear.setEnabled(bool(current))
+        box.addButton(QMessageBox.Cancel)
+        box.exec_()
+        if box.clickedButton() is choose:
+            folder = QFileDialog.getExistingDirectory(
+                self, "Extra Font Folder", current or str(Path.home()))
+            if not folder:
+                return
+        elif box.clickedButton() is clear:
+            folder = ''
+        else:
+            return
+        zpl_fonts.set_extra_font_dir(folder)
+        self._save_settings()
+
     def on_session_printer(self):
         """Print To this session's printer, without touching the persisted default."""
         result = qt_dialogs.printer_settings_dialog(
@@ -1305,6 +1330,8 @@ class ZPLDesignerWindow(QMainWindow):
                                      fallback=self.printer_font_device).strip().upper()
             if font_device in zpl_fonts.DEVICES:
                 self.printer_font_device = font_device
+            zpl_fonts.set_extra_font_dir(
+                parser.get('fonts', 'extra_dir', fallback=''))
             if parser.has_section('window'):
                 self.saved_geometry = tuple(
                     parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
@@ -1346,6 +1373,9 @@ class ZPLDesignerWindow(QMainWindow):
                 parser.set('printer', 'port', str(self._default_printer[1]))
                 parser.set('printer', 'dpi', str(self._default_printer[2]))
                 parser.set('printer', 'font_device', self._default_printer[3])
+                if not parser.has_section('fonts'):
+                    parser.add_section('fonts')
+                parser.set('fonts', 'extra_dir', zpl_fonts.EXTRA_FONT_DIR)
                 if not parser.has_section('label'):
                     parser.add_section('label')
                 # Inches, not dots: dots only mean a size once a resolution is
