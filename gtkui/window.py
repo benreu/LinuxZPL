@@ -4694,10 +4694,12 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.destroy()
 
 
-def main():
+def main(filepath=None):
     """Main entry point for the application."""
     app = ZPLViewerWindow()
     app.connect('destroy', Gtk.main_quit)
+    if filepath:
+        app.load_zpl_file(filepath)
     # Ask for the front. Started from an editor running full screen, a new
     # window can otherwise map behind it and look as though nothing happened.
     app.present()

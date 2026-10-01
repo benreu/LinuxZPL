@@ -98,6 +98,7 @@ pip install -r requirements-gtk.txt    # or -qt.txt, if not using system package
 ./linuxzpl.py           # GTK if it is installed, otherwise Qt
 ./linuxzpl.py --gtk     # force the GTK frontend
 ./linuxzpl.py --qt      # force the Qt frontend
+./linuxzpl.py --load-file sample.zpl   # open a template on start (works with --gtk / --qt)
 ```
 
 In VS Code, press **F5**; the default configuration is the flagless one.

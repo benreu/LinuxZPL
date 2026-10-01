@@ -9,6 +9,7 @@ when it is available and Qt when it is not.
 """
 
 import argparse
+import os
 import sys
 
 QT_INSTALL = ("python3-pyside2.qtcore python3-pyside2.qtgui "
@@ -25,12 +26,12 @@ def _have(module: str) -> bool:
         return False
 
 
-def run(frontend: str) -> int:
+def run(frontend: str, path: str = None) -> int:
     if frontend == 'qt':
         from qtui import main
     else:
         from gtkui import main
-    return main() or 0
+    return main(path) or 0
 
 
 def main() -> int:
@@ -40,7 +41,14 @@ def main() -> int:
                        help='use the PySide2/Qt5 frontend')
     group.add_argument('--gtk', dest='frontend', action='store_const', const='gtk',
                        help='use the GTK3 frontend')
+    parser.add_argument('--load-file', dest='load_file', metavar='FILE',
+                        help='ZPL template to open on start')
     args = parser.parse_args()
+
+    path = args.load_file
+    if path and not os.path.isfile(path):
+        print(f"Cannot open {path}: no such file", file=sys.stderr)
+        return 1
 
     if args.frontend:
         wanted = args.frontend
@@ -50,15 +58,15 @@ def main() -> int:
             print(f"The {wanted} frontend needs {module}, which is not installed.\n"
                   f"  install: {install}", file=sys.stderr)
             return 1
-        return run(wanted)
+        return run(wanted, path)
 
     # Nothing asked for, so use what is here. GTK is the default because it is
     # the frontend this project shipped first; Qt takes over only when GTK is
     # not installed.
     if _have('gi'):
-        return run('gtk')
+        return run('gtk', path)
     if _have('PySide2'):
-        return run('qt')
+        return run('qt', path)
     print("No supported GUI toolkit found. Install one of:\n"
           f"  Qt:  {QT_INSTALL}\n"
           f"  GTK: {GTK_INSTALL}", file=sys.stderr)
