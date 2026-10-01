@@ -100,6 +100,7 @@ pip install -r requirements-gtk.txt    # or -qt.txt, if not using system package
 ./linuxzpl.py --qt      # force the Qt frontend
 ./linuxzpl.py --load-file sample.zpl   # open a template on start (works with --gtk / --qt)
 ./linuxzpl.py --load-file label.zpl --field 1=Hello --field 2=World   # fill ^FN1, ^FN2 (needs --load-file)
+./linuxzpl.py --load-file label.zpl --field 1=Hello --save-file out.zpl   # write the filled label and exit, no window
 ```
 
 In VS Code, press **F5**; the default configuration is the flagless one.

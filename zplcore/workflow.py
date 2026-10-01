@@ -47,6 +47,29 @@ def apply_field_data(document, pairs) -> None:
         document.fields.set_value(number, data)
 
 
+def fill_template(document, pairs) -> None:
+    """Turn a template into the label it prints once `pairs` are applied.
+
+    Writing a numbered field back gives ^FN with no ^FD (Document.to_zpl only
+    writes the table for a recall document), so the data would be lost. Each
+    numbered field is made an ordinary one holding its data instead, and the
+    ^DF is dropped, since a stored format is kept by the printer, not printed.
+
+    A field no pair or table entry reaches keeps whatever literal it had.
+    """
+    apply_field_data(document, pairs)
+    for element in document.elements:
+        number = getattr(element, 'field_number', None)
+        if number is None:
+            continue
+        value = document.fields.value(number)
+        if value is not None and element.data_attribute:
+            setattr(element, element.data_attribute, value)
+        element.field_number = None
+        element.field_prompt = None
+    document.stored_format = None
+
+
 def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):
     """Settle a design against a printer resolution it was not drawn for.
 

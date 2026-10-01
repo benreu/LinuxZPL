@@ -36,6 +36,25 @@ def run(frontend: str, path: str = None, fields=None) -> int:
     return main(path, fields) or 0
 
 
+def save_filled(path: str, out: str, pairs) -> int:
+    """Write the template at `path`, filled in with `pairs`, to `out`."""
+    from zplcore import parser, renderer
+
+    try:
+        content, _ = parser.read_file(path)
+        document, _ = parser.parse_zpl(content, renderer.ZPLRenderer())
+        dropped = workflow.unsupported_commands(content)
+        if dropped:
+            print(f"Not kept in {out}: {', '.join(dropped)}", file=sys.stderr)
+        workflow.fill_template(document, pairs)
+        with open(workflow.save_filename(out), 'w', encoding='utf-8') as f:
+            f.write(document.to_zpl())
+    except (OSError, ValueError) as e:
+        print(f"Cannot save {out}: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.strip().split('\n')[0])
     group = parser.add_mutually_exclusive_group()
@@ -47,6 +66,10 @@ def main() -> int:
                         help='ZPL template to open on start')
     parser.add_argument('--field', dest='fields', action='append', metavar='N=DATA',
                         help='data for ^FN field N in the template; may be repeated '
+                             '(needs --load-file)')
+    parser.add_argument('--save-file', dest='save_file', metavar='FILE',
+                        help='write the template, with any --field data filled in, '
+                             'to FILE and exit without opening a window '
                              '(needs --load-file)')
     args = parser.parse_args()
 
@@ -66,6 +89,17 @@ def main() -> int:
         except ValueError as e:
             print(e, file=sys.stderr)
             return 1
+
+    if args.save_file:
+        if not path:
+            print("--save-file needs --load-file: there is no template to save",
+                  file=sys.stderr)
+            return 1
+        if args.frontend:
+            print("--save-file opens no window, so --qt and --gtk do not apply",
+                  file=sys.stderr)
+            return 1
+        return save_filled(path, args.save_file, fields or [])
 
     if args.frontend:
         wanted = args.frontend
