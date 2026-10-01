@@ -63,4 +63,18 @@ with tempfile.TemporaryDirectory() as tmp:
     sys.argv = ['linuxzpl.py', '--load-file', src, '--gtk', '--save-file', out]
     check("--save-file with a frontend flag is refused", linuxzpl.main() == 1)
 
+import contextlib
+import io
+sys.argv = ['linuxzpl.py', '-h']
+help_out = io.StringIO()
+try:
+    with contextlib.redirect_stdout(help_out):
+        linuxzpl.main()
+    code = None
+except SystemExit as e:
+    code = e.code
+check("-h prints the help and exits 0", code == 0
+      and '--save-file' in help_out.getvalue()
+      and 'examples:' in help_out.getvalue())
+
 sys.exit(1 if failures else 0)

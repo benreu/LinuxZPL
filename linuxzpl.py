@@ -56,7 +56,14 @@ def save_filled(path: str, out: str, pairs) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.strip().split('\n')[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.strip().split('\n')[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="examples:\n"
+               "  linuxzpl.py --load-file label.zpl\n"
+               "      open a template in the designer\n"
+               "  linuxzpl.py --load-file label.zpl --field 1=Hello --save-file out.zpl\n"
+               "      fill ^FN1 and write the label to out.zpl, with no window")
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--qt', dest='frontend', action='store_const', const='qt',
                        help='use the PySide2/Qt5 frontend')
@@ -69,8 +76,8 @@ def main() -> int:
                              '(needs --load-file)')
     parser.add_argument('--save-file', dest='save_file', metavar='FILE',
                         help='write the template, with any --field data filled in, '
-                             'to FILE and exit without opening a window '
-                             '(needs --load-file)')
+                             'to FILE and exit without opening a window or needing a GUI '
+                             'toolkit (needs --load-file)')
     args = parser.parse_args()
 
     path = args.load_file
