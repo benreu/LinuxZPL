@@ -4871,12 +4871,16 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.destroy()
 
 
-def main(filepath=None):
+def main(filepath=None, fields=None):
     """Main entry point for the application."""
     app = ZPLViewerWindow()
     app.connect('destroy', Gtk.main_quit)
     if filepath:
         app.load_zpl_file(filepath)
+        if fields:
+            workflow.apply_field_data(app.design_canvas.document, fields)
+            app.design_canvas.queue_draw()
+            app._reset_history()
     # Ask for the front. Started from an editor running full screen, a new
     # window can otherwise map behind it and look as though nothing happened.
     app.present()

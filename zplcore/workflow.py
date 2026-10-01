@@ -10,12 +10,41 @@ than being written twice.
 
 import os.path
 
+from . import fields as zpl_fields
 from . import fonts, printer_io, symbology
 
 # Distinguishes "the printer's resolution changed under an open document" from
 # "a file was opened that recorded no resolution", which are answered
 # differently: the first knows the document's dpi, the second has to assume.
 _FROM_DOCUMENT = object()
+
+
+def parse_field_args(args) -> list:
+    """The (number, data) pairs `N=DATA` strings give, or ValueError.
+
+    Split on the first '=' only, so the data may contain one. The message names
+    the argument at fault, since it is shown to someone at a command line.
+    """
+    pairs = []
+    for arg in args or []:
+        number, equals, data = arg.partition('=')
+        if not equals or not number.strip().isdigit() \
+                or not 1 <= int(number) <= zpl_fields.MAX_NUMBER:
+            raise ValueError(
+                f"--field {arg!r}: expected N=DATA, with N from 1 to "
+                f"{zpl_fields.MAX_NUMBER}")
+        pairs.append((int(number), data))
+    return pairs
+
+
+def apply_field_data(document, pairs) -> None:
+    """Give the numbered fields of `document` the data in `pairs`.
+
+    A later pair for the same number wins. Numbers the template does not use
+    are kept in the table and ignored, as a recall call's would be.
+    """
+    for number, data in pairs:
+        document.fields.set_value(number, data)
 
 
 def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):

@@ -1386,7 +1386,7 @@ class ZPLDesignerWindow(QMainWindow):
         event.accept()
 
 
-def main(filepath=None):
+def main(filepath=None, fields=None):
     # The template path is ours, not Qt's, so Qt is not shown it.
     app = QApplication(sys.argv[:1])
     app.setApplicationName(workflow.APP_TITLE)
@@ -1394,6 +1394,10 @@ def main(filepath=None):
     window.show()
     if filepath:
         window.load_zpl_file(filepath)
+        if fields:
+            workflow.apply_field_data(window.document, fields)
+            window.canvas.update()
+            window._reset_history()
     # Ask for the front. Started from an editor running full screen, a new
     # window can otherwise map behind it and look as though nothing happened.
     window.raise_()

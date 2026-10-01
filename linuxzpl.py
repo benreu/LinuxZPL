@@ -12,6 +12,8 @@ import argparse
 import os
 import sys
 
+from zplcore import workflow
+
 QT_INSTALL = ("python3-pyside2.qtcore python3-pyside2.qtgui "
               "python3-pyside2.qtwidgets  (or: pip install PySide2)")
 GTK_INSTALL = "python3-gi python3-gi-cairo gir1.2-gtk-3.0"
@@ -26,12 +28,12 @@ def _have(module: str) -> bool:
         return False
 
 
-def run(frontend: str, path: str = None) -> int:
+def run(frontend: str, path: str = None, fields=None) -> int:
     if frontend == 'qt':
         from qtui import main
     else:
         from gtkui import main
-    return main(path) or 0
+    return main(path, fields) or 0
 
 
 def main() -> int:
@@ -43,12 +45,27 @@ def main() -> int:
                        help='use the GTK3 frontend')
     parser.add_argument('--load-file', dest='load_file', metavar='FILE',
                         help='ZPL template to open on start')
+    parser.add_argument('--field', dest='fields', action='append', metavar='N=DATA',
+                        help='data for ^FN field N in the template; may be repeated '
+                             '(needs --load-file)')
     args = parser.parse_args()
 
     path = args.load_file
     if path and not os.path.isfile(path):
         print(f"Cannot open {path}: no such file", file=sys.stderr)
         return 1
+
+    fields = None
+    if args.fields:
+        if not path:
+            print("--field needs --load-file: there is no template to fill in",
+                  file=sys.stderr)
+            return 1
+        try:
+            fields = workflow.parse_field_args(args.fields)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 1
 
     if args.frontend:
         wanted = args.frontend
@@ -58,15 +75,15 @@ def main() -> int:
             print(f"The {wanted} frontend needs {module}, which is not installed.\n"
                   f"  install: {install}", file=sys.stderr)
             return 1
-        return run(wanted, path)
+        return run(wanted, path, fields)
 
     # Nothing asked for, so use what is here. GTK is the default because it is
     # the frontend this project shipped first; Qt takes over only when GTK is
     # not installed.
     if _have('gi'):
-        return run('gtk', path)
+        return run('gtk', path, fields)
     if _have('PySide2'):
-        return run('qt', path)
+        return run('qt', path, fields)
     print("No supported GUI toolkit found. Install one of:\n"
           f"  Qt:  {QT_INSTALL}\n"
           f"  GTK: {GTK_INSTALL}", file=sys.stderr)
