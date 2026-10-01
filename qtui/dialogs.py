@@ -741,9 +741,9 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
                        on_accept=None) -> QDialog:
     """Edit a serialized field (^SN). `on_accept` runs once OK has changed it.
 
-    Deliberately smaller than edit_text_dialog: no wrap/block section (a
-    serial number is one short line, not a paragraph) and no Data Source
-    selector - this dialog *is* the ^SN source. edit_text_dialog carries no
+    Takes the same font, direction and wrap rows as edit_text_dialog, through
+    _text_format_rows - a serial number is styled like any other text. It has
+    no Data Source selector: this dialog *is* the ^SN source. edit_text_dialog carries no
     field-source mechanism of its own at all any more: ^FN, ^SN and ^FC each
     moved out to their own dialog. The one on/off control here is the
     checkbox at the bottom: unticking it turns the element back into a plain
@@ -791,11 +791,7 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fr_check = QCheckBox("Reverse print (^FR)")
-    fr_check.setObjectName("reverse_print")
-    fr_check.setChecked(element.reverse_print)
-    form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    fmt = _text_format_rows(dialog, form, element, document)
 
     serial_check = QCheckBox("Auto-increments each print (^SN)")
     serial_check.setObjectName("serial_format")
@@ -810,7 +806,7 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
         element.font_width = width_spin.value()
         element.orientation = orientation_combo.currentData()
         element.height = element.font_height
-        element.reverse_print = fr_check.isChecked()
+        fmt.apply()
         if serial_check.isChecked():
             element.serial_start = element.text
             element.serial_increment = increment.value()

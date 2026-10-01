@@ -3596,6 +3596,7 @@ class ZPLViewerWindow(Gtk.Window):
         make_row("Direction:", direction_combo)
 
         gap_spin = _make_spin(element.char_gap, 0, TextElement.MAX_CHAR_GAP)
+        gap_spin.set_name("char_gap")
         make_row("Character Gap:", gap_spin)
 
         fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
@@ -3885,14 +3886,15 @@ class ZPLViewerWindow(Gtk.Window):
             fmt.sync()
 
         elif isinstance(element, TextElement) and element.serial_increment is not None:
-            # Show serial (^SN) edit dialog - deliberately smaller than the
-            # text editor below: no wrap/block section, no Data Source
-            # selector, since this dialog *is* the ^SN source. The plain
-            # text editor carries no field-source mechanism of its own at
-            # all any more: ^FN, ^SN and ^FC each moved out to their own
-            # dialog. Unticking the serial checkbox turns the element back
-            # into a plain static text field, and the next double-click then
-            # falls through to the regular text editor instead of here.
+            # Show serial (^SN) edit dialog. It takes the same font,
+            # direction and wrap rows as the text editor below, through
+            # _text_format_rows, but no Data Source selector, since this
+            # dialog *is* the ^SN source. The plain text editor carries no
+            # field-source mechanism of its own at all any more: ^FN, ^SN and
+            # ^FC each moved out to their own dialog. Unticking the serial
+            # checkbox turns the element back into a plain static text
+            # field, and the next double-click then falls through to the
+            # regular text editor instead of here.
             dialog = Gtk.Dialog(title="Edit Serial Field", parent=self, flags=0)
             dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                               Gtk.STOCK_OK, Gtk.ResponseType.OK)
@@ -3930,10 +3932,7 @@ class ZPLViewerWindow(Gtk.Window):
                 ORIENTATIONS, element.orientation)
             make_row("Orientation:", orientation_combo)
 
-            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
-            fr_check.set_active(element.reverse_print)
-            make_row("Reverse:", fr_check)
-            make_row("", _reverse_hint())
+            fmt = self._text_format_rows(dialog, content, element)
 
             serial_check = Gtk.CheckButton(
                 label="Auto-increments each print (^SN)")
@@ -3950,7 +3949,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.orientation = orientation_codes[
                         orientation_combo.get_active()]
                     element.height = element.font_height
-                    element.reverse_print = fr_check.get_active()
+                    fmt.apply()
                     if serial_check.get_active():
                         element.serial_start = element.text
                         element.serial_increment = int(increment_spin.get_value())
@@ -3970,6 +3969,7 @@ class ZPLViewerWindow(Gtk.Window):
                 _dialog.destroy()
 
             self._open_editor(element, dialog, on_response)
+            fmt.sync()
 
         elif isinstance(element, TextElement) and element.field_number is not None:
             # Show numbered (^FN) edit dialog - deliberately smaller than the

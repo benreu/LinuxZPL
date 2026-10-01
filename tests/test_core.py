@@ -7439,6 +7439,21 @@ check("its box is measured from the wrapped marker, not the bare start value",
       _serial_el.width > _serial_el.printed_width(None, _serial_el.text),
       (_serial_el.width, _serial_el.printed_width(None, _serial_el.text)))
 
+# The serial editor takes the same font, direction and wrap rows as Edit Text.
+_sr_dlg = qt_dialogs.edit_serial_dialog(None, _serial_el, _serial_doc)
+check("the serial editor offers font, direction, gap and wrap fields",
+      all(_sr_dlg.findChild(w, n) is not None for w, n in (
+          (QComboBox, 'direction'), (QSpinBox, 'char_gap'),
+          (QCheckBox, 'wrap'), (QComboBox, 'block_kind'))))
+_sr_dlg.reject()
+_sr_dlg = qt_dialogs.edit_serial_dialog(None, _serial_el, _serial_doc)
+_sr_dlg.findChild(QSpinBox, 'char_gap').setValue(7)
+_sr_dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+_sr_zpl = _serial_el.to_zpl()
+check("OK writes the gap as ^FP and keeps the ^SN",
+      _serial_el.char_gap == 7 and '^FPH,7' in _sr_zpl
+      and '^SN1,1,N' in _sr_zpl, _sr_zpl)
+
 # And add_numbered_element is its own creation path too now - the
 # "+ Numbered" button - rather than a mode of add_text_element. No literal
 # by default: inventing one would be the same trap a newly-created ^FN

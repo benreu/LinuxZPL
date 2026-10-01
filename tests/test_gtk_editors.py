@@ -893,6 +893,28 @@ check("unticking wrap removes the block and keeps the clock field",
       tf_el.block is None and tf_el.clock_format and tf_el.text == '%m/%d/%y')
 document.elements.remove(tf_el)
 
+# --- Edit Serial Field: the same font, direction and wrap rows --------------
+
+sf_el = document.add_serial_element()
+window.on_element_double_clicked(None, sf_el)
+sf_dialog = window._editors[id(sf_el)]
+sf_content = sf_dialog.get_content_area()
+sf_wrap = [b for b in _find_all(sf_content, Gtk.CheckButton)
+           if b.get_label() == "Wrap the text into a block"]
+sf_font = [b for b in _find_all(sf_content, Gtk.Button)
+           if b.get_label() == "Choose\u2026"]
+check("the serial editor offers a font chooser and a wrap checkbox",
+      len(sf_wrap) == 1 and len(sf_font) == 1)
+sf_gap = next(w for w in _find_all(sf_content, Gtk.SpinButton)
+              if w.get_name() == 'char_gap')
+sf_gap.set_value(7)
+sf_dialog.response(Gtk.ResponseType.OK)
+sf_zpl = sf_el.to_zpl()
+check("OK writes the gap as ^FP and keeps the ^SN",
+      sf_el.char_gap == 7 and '^FPH,7' in sf_zpl and '^SN1,1,N' in sf_zpl,
+      sf_zpl)
+document.elements.remove(sf_el)
+
 # --- font 0 is drawn in its stand-in ----------------------------------------
 # The Qt half is in test_core. With the stand-in installed a font 0 field has
 # a face, so the canvas draws it with the shared raster, its H standing where
