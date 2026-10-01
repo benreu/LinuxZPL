@@ -3972,10 +3972,9 @@ class ZPLViewerWindow(Gtk.Window):
             fmt.sync()
 
         elif isinstance(element, TextElement) and element.field_number is not None:
-            # Show numbered (^FN) edit dialog - deliberately smaller than the
-            # text editor below: no wrap/block section (a numbered field's
-            # own literal, when it has one, is short in every fixture this
-            # designer ships with) and no Data Source selector, since this
+            # Show numbered (^FN) edit dialog. The font, direction, wrap and
+            # reverse rows are the ones Edit Text has (_text_format_rows); the
+            # one thing it leaves out is a Data Source selector, since this
             # dialog *is* the ^FN source. Unticking the variable checkbox
             # turns the element back into a plain static text field, and the
             # next double-click then falls through to the regular text
@@ -4024,10 +4023,7 @@ class ZPLViewerWindow(Gtk.Window):
                 ORIENTATIONS, element.orientation)
             make_row("Orientation:", orientation_combo)
 
-            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
-            fr_check.set_active(element.reverse_print)
-            make_row("Reverse:", fr_check)
-            make_row("", _reverse_hint())
+            fmt = self._text_format_rows(dialog, content, element)
 
             variable_check = Gtk.CheckButton(
                 label="Data comes from a numbered field (^FN)")
@@ -4044,7 +4040,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.orientation = orientation_codes[
                         orientation_combo.get_active()]
                     element.height = element.font_height
-                    element.reverse_print = fr_check.get_active()
+                    fmt.apply()
                     if variable_check.get_active():
                         element.field_number = int(number_spin.get_value())
                         element.field_prompt = prompt_entry.get_text() or None
@@ -4060,6 +4056,7 @@ class ZPLViewerWindow(Gtk.Window):
                 _dialog.destroy()
 
             self._open_editor(element, dialog, on_response)
+            fmt.sync()
 
         elif isinstance(element, TextElement):
             # Show text edit dialog

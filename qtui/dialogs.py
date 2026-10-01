@@ -829,11 +829,9 @@ def edit_numbered_dialog(parent, element: TextElement, document: Document,
                          on_accept=None) -> QDialog:
     """Edit a numbered field (^FN). `on_accept` runs once OK has changed it.
 
-    Deliberately smaller than edit_text_dialog: no wrap/block section - a
-    numbered field's own literal, when it has one, is short in every fixture
-    this designer ships with (the manual's own stored_format.zpl example
-    included) - and no Data Source selector, since this dialog *is* the ^FN
-    source. The one on/off control is the checkbox at the bottom: unticking
+    The font, direction, wrap and reverse rows are the ones edit_text_dialog
+    has (_text_format_rows); the one thing it leaves out is a Data Source
+    selector, since this dialog *is* the ^FN source. The one on/off control is the checkbox at the bottom: unticking
     it turns the element back into a plain static text field, and the next
     double-click opens the regular Text editor instead of this one.
 
@@ -884,11 +882,7 @@ def edit_numbered_dialog(parent, element: TextElement, document: Document,
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fr_check = QCheckBox("Reverse print (^FR)")
-    fr_check.setObjectName("reverse_print")
-    fr_check.setChecked(element.reverse_print)
-    form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    fmt = _text_format_rows(dialog, form, element, document)
 
     variable_check = QCheckBox("Data comes from a numbered field (^FN)")
     variable_check.setObjectName("variable")
@@ -903,7 +897,7 @@ def edit_numbered_dialog(parent, element: TextElement, document: Document,
         element.font_width = width_spin.value()
         element.orientation = orientation_combo.currentData()
         element.height = element.font_height
-        element.reverse_print = fr_check.isChecked()
+        fmt.apply()
         if variable_check.isChecked():
             element.field_number = number.value()
             element.field_prompt = prompt.text() or None

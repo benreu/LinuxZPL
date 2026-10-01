@@ -915,6 +915,28 @@ check("OK writes the gap as ^FP and keeps the ^SN",
       sf_zpl)
 document.elements.remove(sf_el)
 
+# --- Edit Numbered Field: the same font, direction and wrap rows ------------
+
+nf_el = document.add_numbered_element(7, 'Batch')
+window.on_element_double_clicked(None, nf_el)
+nf_dialog = window._editors[id(nf_el)]
+nf_content = nf_dialog.get_content_area()
+nf_wrap = [b for b in _find_all(nf_content, Gtk.CheckButton)
+           if b.get_label() == "Wrap the text into a block"]
+nf_font = [b for b in _find_all(nf_content, Gtk.Button)
+           if b.get_label() == "Choose\u2026"]
+check("the numbered editor offers a font chooser and a wrap checkbox",
+      len(nf_wrap) == 1 and len(nf_font) == 1)
+nf_gap = next(w for w in _find_all(nf_content, Gtk.SpinButton)
+              if w.get_name() == 'char_gap')
+nf_gap.set_value(7)
+nf_dialog.response(Gtk.ResponseType.OK)
+nf_zpl = nf_el.to_zpl()
+check("OK writes the gap as ^FP and keeps the ^FN",
+      nf_el.char_gap == 7 and '^FPH,7' in nf_zpl and '^FN7"Batch"' in nf_zpl,
+      nf_zpl)
+document.elements.remove(nf_el)
+
 # --- font 0 is drawn in its stand-in ----------------------------------------
 # The Qt half is in test_core. With the stand-in installed a font 0 field has
 # a face, so the canvas draws it with the shared raster, its H standing where

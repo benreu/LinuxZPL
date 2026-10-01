@@ -7468,6 +7468,37 @@ check("add_numbered_element makes a numbered field with no invented literal",
 check("its box is measured from the placeholder, not an empty literal",
       _numbered_el.width > 0, _numbered_el.width)
 
+# The numbered editor takes the same font, direction and wrap rows as Edit Text.
+_nm_dlg = qt_dialogs.edit_numbered_dialog(None, _numbered_el, _numbered_doc)
+check("the numbered editor offers font, direction, gap and wrap fields",
+      all(_nm_dlg.findChild(w, n) is not None for w, n in (
+          (QComboBox, 'direction'), (QSpinBox, 'char_gap'),
+          (QCheckBox, 'wrap'), (QComboBox, 'block_kind'))))
+_nm_dlg.reject()
+_nm_dlg = qt_dialogs.edit_numbered_dialog(None, _numbered_el, _numbered_doc)
+_nm_dlg.findChild(QSpinBox, 'char_gap').setValue(7)
+_nm_dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+_nm_zpl = _numbered_el.to_zpl()
+check("OK writes the gap as ^FP and keeps the ^FN",
+      _numbered_el.char_gap == 7 and '^FPH,7' in _nm_zpl
+      and '^FN7"Batch"' in _nm_zpl, _nm_zpl)
+_nm_dlg = qt_dialogs.edit_numbered_dialog(None, _numbered_el, _numbered_doc)
+_nm_dlg.findChild(QCheckBox, 'wrap').setChecked(True)
+_nm_dlg.findChild(QSpinBox, 'block_width').setValue(300)
+_nm_dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+_nm_zpl = _numbered_el.to_zpl()
+_nm_back = [e for e in zpl_parser.parse_zpl(_numbered_doc.to_zpl())[0].elements
+            if getattr(e, 'field_number', None) == 7]
+check("a wrapped numbered field writes ^FB before its ^FN and round-trips",
+      '^FB300' in _nm_zpl and _nm_zpl.index('^FB300') < _nm_zpl.index('^FN7')
+      and len(_nm_back) == 1 and isinstance(_nm_back[0].block, FieldBlock),
+      _nm_zpl)
+_nm_dlg = qt_dialogs.edit_numbered_dialog(None, _numbered_el, _numbered_doc)
+_nm_dlg.findChild(QCheckBox, 'wrap').setChecked(False)
+_nm_dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("unticking wrap removes the block and keeps the ^FN",
+      _numbered_el.block is None and _numbered_el.field_number == 7)
+
 
 # --- the commands that move or flip a whole label ---------------------------
 # ^LH and ^LS displace every field: a label carrying one was drawn where its ^FO
