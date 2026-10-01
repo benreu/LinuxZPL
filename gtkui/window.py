@@ -12,6 +12,7 @@ import os
 import base64
 import configparser
 from pathlib import Path
+from types import SimpleNamespace
 from zplcore import fields as zpl_fields
 from zplcore import firmware as zpl_firmware
 from zplcore import fonts as zpl_fonts
@@ -3572,6 +3573,229 @@ class ZPLViewerWindow(Gtk.Window):
             editor.destroy()
         self._editors.clear()
 
+    def _text_format_rows(self, dialog, content, element):
+        """The rows every text-like editor shares: ^FP direction and gap, ^FR,
+        the font, and the ^FB/^TB wrap block.
+
+        Edit Text and Edit Time Field both call this, so a clock field is
+        styled the same way a plain one is. The caller adds its own text row,
+        size and orientation first, sets the element's text, then calls
+        `apply()`, which reads these fields back onto the element.
+        `text_block_chosen()` says whether a ^TB is ticked, because the caller
+        must know before it sets the text: a ^TB has no line break to write a
+        typed one as. `sync()` must be called once the editor is shown, since
+        its show_all() would otherwise re-show every row this hid.
+        """
+        def make_row(lbl_text, widget):
+            return _make_row(content, lbl_text, widget)[0]
+
+        # ^FP: which way the characters run inside that turn, and how
+        # far apart
+        direction_combo, direction_codes = _make_combo(
+            TEXT_DIRECTIONS, element.direction)
+        make_row("Direction:", direction_combo)
+
+        gap_spin = _make_spin(element.char_gap, 0, TextElement.MAX_CHAR_GAP)
+        make_row("Character Gap:", gap_spin)
+
+        fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+        fr_check.set_active(element.reverse_print)
+        make_row("Reverse:", fr_check)
+        make_row("", _reverse_hint())
+
+        # Font chooser (installed families only)
+        selected_font = [element.font_path, element.font_family]
+
+        font_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        font_lbl = Gtk.Label(label="Font:")
+        font_lbl.set_size_request(130, -1)
+        font_lbl.set_halign(Gtk.Align.END)
+        font_row.pack_start(font_lbl, False, False, 0)
+
+        def _font_display():
+            if selected_font[1]:
+                return selected_font[1]
+            canvas_family = self.design_canvas.font_family
+            return f"Default ({canvas_family})" if canvas_family else "Default"
+
+        font_name_lbl = Gtk.Label(label=_font_display())
+        font_name_lbl.set_halign(Gtk.Align.START)
+        font_name_lbl.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
+        font_row.pack_start(font_name_lbl, True, True, 0)
+
+        choose_font_btn = Gtk.Button(label="Choose\u2026")
+        font_row.pack_start(choose_font_btn, False, False, 0)
+
+        clear_font_btn = Gtk.Button(label="Clear")
+        font_row.pack_start(clear_font_btn, False, False, 0)
+
+        content.pack_start(font_row, False, False, 0)
+
+        def on_choose_font(btn):
+            families = zpl_fonts.list_ttf_families()
+            if not families:
+                self.show_error_dialog("No TrueType fonts were found on this system.")
+                return
+            fdialog = Gtk.FontChooserDialog(title="Choose Font", parent=dialog)
+            # Size and style come from the Font Height/Width fields, and only
+            # TrueType can be uploaded to the printer, so offer families only.
+            fdialog.set_level(Gtk.FontChooserLevel.FAMILY)
+            fdialog.set_filter_func(lambda family, face: family.get_name() in families)
+            if selected_font[1]:
+                fdialog.set_font(selected_font[1])
+            resp = fdialog.run()
+            family = None
+            if resp in (Gtk.ResponseType.OK, Gtk.ResponseType.APPLY):
+                desc = fdialog.get_font_desc()
+                family = desc.get_family() if desc else None
+            fdialog.destroy()
+            if not family:
+                return
+            path = zpl_fonts.file_for_family(family)
+            if not path:
+                self.show_error_dialog(f"No TrueType file found for '{family}'.")
+                return
+            selected_font[0], selected_font[1] = path, family
+            font_name_lbl.set_text(_font_display())
+
+        def on_font_clear(btn):
+            selected_font[0], selected_font[1] = None, None
+            font_name_lbl.set_text(_font_display())
+
+        choose_font_btn.connect("clicked", on_choose_font)
+        clear_font_btn.connect("clicked", on_font_clear)
+
+        # Wrapping (^FB or ^TB). Each kind's fields start from the
+        # element's block when it is that kind, and otherwise from one
+        # that draws the text as it is now.
+        document = self.design_canvas.document
+        block = (element.block if isinstance(element.block, FieldBlock)
+                 else element.default_block(document.font_path,
+                                            document.dpi))
+        text_block = (element.block
+                      if isinstance(element.block, TextBlock)
+                      else element.default_text_block(document.font_path,
+                                                      document.dpi))
+
+        wrap_check = Gtk.CheckButton(label="Wrap the text into a block")
+        wrap_check.set_active(element.block is not None)
+        make_row("Wrap:", wrap_check)
+
+        kind_combo, kind_codes = _make_combo(
+            TEXT_BLOCKS,
+            'TB' if isinstance(element.block, TextBlock) else 'FB')
+        kind_combo.set_name("block_kind")
+        make_row("Block:", kind_combo)
+
+        block_width_spin = _make_spin((element.block or block).width,
+                                      10, 2000)
+        make_row("Wrap Width:", block_width_spin)
+
+        block_height_spin = _make_spin(text_block.height, 1, 32000)
+        block_height_spin.set_name("block_height")
+        height_row = make_row("Block Height:", block_height_spin)
+
+        max_lines_spin = _make_spin(block.max_lines, 1, 64)
+        lines_row = make_row("Max Lines:", max_lines_spin)
+
+        spacing_spin = _make_spin(block.line_spacing, -100, 100)
+        spacing_row = make_row("Line Spacing:", spacing_spin)
+
+        justify_combo, justify_codes = _make_combo(TEXT_JUSTIFICATIONS,
+                                                   block.justification)
+        justify_row = make_row("Justification:", justify_combo)
+
+        # A ^TB's lines align by the field's own justification, which
+        # has neither a centre nor a justified
+        text_justify_combo, text_justify_codes = _make_combo(
+            TEXT_BLOCK_JUSTIFICATIONS,
+            'R' if element.justify == geometry.JUSTIFY_RIGHT
+            else 'L')
+        text_justify_combo.set_name("text_justification")
+        text_justify_row = make_row("Justification:", text_justify_combo)
+
+        indent_spin = _make_spin(block.indent, 0, 2000)
+        indent_row = make_row("Indent:", indent_spin)
+
+        block_fields = (kind_combo, block_width_spin, block_height_spin,
+                        max_lines_spin, spacing_spin, justify_combo,
+                        text_justify_combo, indent_spin)
+        field_block_rows = (lines_row, spacing_row, justify_row,
+                            indent_row)
+        text_block_rows = (height_row, text_justify_row)
+
+        def on_wrap_toggled(_widget):
+            for field in block_fields:
+                field.set_sensitive(wrap_check.get_active())
+            text = kind_codes[kind_combo.get_active()] == 'TB'
+            for rows, shown in ((field_block_rows, not text),
+                                (text_block_rows, text)):
+                for row in rows:
+                    row.set_visible(shown)
+            # The manual does not say what ^FB does with a direction, so
+            # a block keeps whichever it has and offers no other.
+            direction_combo.set_sensitive(not wrap_check.get_active())
+
+        wrap_check.connect("toggled", on_wrap_toggled)
+        kind_combo.connect("changed", on_wrap_toggled)
+
+        def text_block_chosen():
+            return (wrap_check.get_active()
+                    and kind_codes[kind_combo.get_active()] == 'TB')
+
+        def apply():
+            element.direction = direction_codes[direction_combo.get_active()]
+            element.char_gap = int(gap_spin.get_value())
+            element.reverse_print = fr_check.get_active()
+
+            if text_block_chosen():
+                element.set_text_block(
+                    int(block_width_spin.get_value()),
+                    int(block_height_spin.get_value()),
+                    text_justify_codes[text_justify_combo.get_active()])
+            elif wrap_check.get_active():
+                # Assigned rather than mutated: the block on the element
+                # may be the one an undo snapshot is holding.
+                element.block = FieldBlock(
+                    int(block_width_spin.get_value()),
+                    int(max_lines_spin.get_value()),
+                    int(spacing_spin.get_value()),
+                    justify_codes[justify_combo.get_active()],
+                    int(indent_spin.get_value()))
+            elif element.block is not None:
+                # Unticked. A forced break left behind would print as the
+                # two characters it is written with, so the lines are
+                # joined rather than abandoned to the printer.
+                element.text = textraster.join_lines(element.text)
+                element.block = None
+            elif textraster.FORCED_BREAK in element.text:
+                # A break typed into an element that never had a block
+                # still needs one, for the same reason. Sized to the
+                # longest line, so nothing moves.
+                element.block = element.default_block(
+                    document.font_path, document.dpi)
+
+            self.design_canvas.sync_text_width(element)
+
+            new_path, new_family = selected_font
+            if new_path != element.font_path:
+                if new_path:
+                    # The font is only recorded here; it is uploaded at print
+                    # time, so choosing a font never blocks on the network.
+                    printer_name = zpl_fonts.printer_font_name(
+                        new_path, taken=self._printer_font_names(exclude=element))
+                    self.design_canvas.set_element_font(element, new_path, new_family, printer_name)
+                    self.renderer.register_font(printer_name, new_path)
+                else:
+                    element.font_path = None
+                    element.font_family = None
+                    element.printer_font_name = None
+                    self.design_canvas.queue_draw()
+
+        return SimpleNamespace(text_block_chosen=text_block_chosen,
+                               apply=apply,
+                               sync=lambda: on_wrap_toggled(wrap_check))
+
     def on_element_double_clicked(self, widget, element):
         """Handle double-click on canvas element for editing."""
         open_editor = self._editors.get(id(element))
@@ -3583,14 +3807,15 @@ class ZPLViewerWindow(Gtk.Window):
             return
 
         if isinstance(element, TextElement) and element.clock_format:
-            # Show time (^FC) edit dialog - deliberately smaller than the
-            # text editor below: no wrap/block section, no Data Source
-            # selector, since this dialog *is* the ^FC source. The plain
-            # text editor carries no field-source mechanism of its own at
-            # all any more: ^FN, ^SN and ^FC each moved out to their own
-            # dialog. Unticking the clock checkbox turns the element back
-            # into a plain static text field, and the next double-click then
-            # falls through to the regular text editor instead of here.
+            # Show time (^FC) edit dialog. It takes the same font,
+            # direction and wrap rows as the text editor below, through
+            # _text_format_rows, but no Data Source selector, since this
+            # dialog *is* the ^FC source. The plain text editor carries no
+            # field-source mechanism of its own at all any more: ^FN, ^SN and
+            # ^FC each moved out to their own dialog. Unticking the clock
+            # checkbox turns the element back into a plain static text field,
+            # and the next double-click then falls through to the regular
+            # text editor instead of here.
             dialog = Gtk.Dialog(title="Edit Time Field", parent=self, flags=0)
             dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                               Gtk.STOCK_OK, Gtk.ResponseType.OK)
@@ -3623,10 +3848,7 @@ class ZPLViewerWindow(Gtk.Window):
                 ORIENTATIONS, element.orientation)
             make_row("Orientation:", orientation_combo)
 
-            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
-            fr_check.set_active(element.reverse_print)
-            make_row("Reverse:", fr_check)
-            make_row("", _reverse_hint())
+            fmt = self._text_format_rows(dialog, content, element)
 
             clock_check = Gtk.CheckButton(
                 label="Comes from the printer's clock (^FC)")
@@ -3643,7 +3865,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.orientation = orientation_codes[
                         orientation_combo.get_active()]
                     element.height = element.font_height
-                    element.reverse_print = fr_check.get_active()
+                    fmt.apply()
                     if clock_check.get_active():
                         element.clock_format = True
                     else:
@@ -3660,6 +3882,7 @@ class ZPLViewerWindow(Gtk.Window):
                 _dialog.destroy()
 
             self._open_editor(element, dialog, on_response)
+            fmt.sync()
 
         elif isinstance(element, TextElement) and element.serial_increment is not None:
             # Show serial (^SN) edit dialog - deliberately smaller than the
@@ -3880,166 +4103,15 @@ class ZPLViewerWindow(Gtk.Window):
                 ORIENTATIONS, element.orientation)
             make_row("Orientation:", orientation_combo)
 
-            # ^FP: which way the characters run inside that turn, and how
-            # far apart
-            direction_combo, direction_codes = _make_combo(
-                TEXT_DIRECTIONS, element.direction)
-            make_row("Direction:", direction_combo)
-
-            gap_spin = _make_spin(element.char_gap, 0, TextElement.MAX_CHAR_GAP)
-            make_row("Character Gap:", gap_spin)
-
-            fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
-            fr_check.set_active(element.reverse_print)
-            make_row("Reverse:", fr_check)
-            make_row("", _reverse_hint())
-
-            # Font chooser (installed families only)
-            selected_font = [element.font_path, element.font_family]
-
-            font_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            font_lbl = Gtk.Label(label="Font:")
-            font_lbl.set_size_request(130, -1)
-            font_lbl.set_halign(Gtk.Align.END)
-            font_row.pack_start(font_lbl, False, False, 0)
-
-            def _font_display():
-                if selected_font[1]:
-                    return selected_font[1]
-                canvas_family = self.design_canvas.font_family
-                return f"Default ({canvas_family})" if canvas_family else "Default"
-
-            font_name_lbl = Gtk.Label(label=_font_display())
-            font_name_lbl.set_halign(Gtk.Align.START)
-            font_name_lbl.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
-            font_row.pack_start(font_name_lbl, True, True, 0)
-
-            choose_font_btn = Gtk.Button(label="Choose\u2026")
-            font_row.pack_start(choose_font_btn, False, False, 0)
-
-            clear_font_btn = Gtk.Button(label="Clear")
-            font_row.pack_start(clear_font_btn, False, False, 0)
-
-            content.pack_start(font_row, False, False, 0)
-
-            def on_choose_font(btn):
-                families = zpl_fonts.list_ttf_families()
-                if not families:
-                    self.show_error_dialog("No TrueType fonts were found on this system.")
-                    return
-                fdialog = Gtk.FontChooserDialog(title="Choose Font", parent=dialog)
-                # Size and style come from the Font Height/Width fields, and only
-                # TrueType can be uploaded to the printer, so offer families only.
-                fdialog.set_level(Gtk.FontChooserLevel.FAMILY)
-                fdialog.set_filter_func(lambda family, face: family.get_name() in families)
-                if selected_font[1]:
-                    fdialog.set_font(selected_font[1])
-                resp = fdialog.run()
-                family = None
-                if resp in (Gtk.ResponseType.OK, Gtk.ResponseType.APPLY):
-                    desc = fdialog.get_font_desc()
-                    family = desc.get_family() if desc else None
-                fdialog.destroy()
-                if not family:
-                    return
-                path = zpl_fonts.file_for_family(family)
-                if not path:
-                    self.show_error_dialog(f"No TrueType file found for '{family}'.")
-                    return
-                selected_font[0], selected_font[1] = path, family
-                font_name_lbl.set_text(_font_display())
-
-            def on_font_clear(btn):
-                selected_font[0], selected_font[1] = None, None
-                font_name_lbl.set_text(_font_display())
-
-            choose_font_btn.connect("clicked", on_choose_font)
-            clear_font_btn.connect("clicked", on_font_clear)
-
-            # Wrapping (^FB or ^TB). Each kind's fields start from the
-            # element's block when it is that kind, and otherwise from one
-            # that draws the text as it is now.
-            document = self.design_canvas.document
-            block = (element.block if isinstance(element.block, FieldBlock)
-                     else element.default_block(document.font_path,
-                                                document.dpi))
-            text_block = (element.block
-                          if isinstance(element.block, TextBlock)
-                          else element.default_text_block(document.font_path,
-                                                          document.dpi))
-
-            wrap_check = Gtk.CheckButton(label="Wrap the text into a block")
-            wrap_check.set_active(element.block is not None)
-            make_row("Wrap:", wrap_check)
-
-            kind_combo, kind_codes = _make_combo(
-                TEXT_BLOCKS,
-                'TB' if isinstance(element.block, TextBlock) else 'FB')
-            kind_combo.set_name("block_kind")
-            make_row("Block:", kind_combo)
-
-            block_width_spin = _make_spin((element.block or block).width,
-                                          10, 2000)
-            make_row("Wrap Width:", block_width_spin)
-
-            block_height_spin = _make_spin(text_block.height, 1, 32000)
-            block_height_spin.set_name("block_height")
-            height_row = make_row("Block Height:", block_height_spin)
-
-            max_lines_spin = _make_spin(block.max_lines, 1, 64)
-            lines_row = make_row("Max Lines:", max_lines_spin)
-
-            spacing_spin = _make_spin(block.line_spacing, -100, 100)
-            spacing_row = make_row("Line Spacing:", spacing_spin)
-
-            justify_combo, justify_codes = _make_combo(TEXT_JUSTIFICATIONS,
-                                                       block.justification)
-            justify_row = make_row("Justification:", justify_combo)
-
-            # A ^TB's lines align by the field's own justification, which
-            # has neither a centre nor a justified
-            text_justify_combo, text_justify_codes = _make_combo(
-                TEXT_BLOCK_JUSTIFICATIONS,
-                'R' if element.justify == geometry.JUSTIFY_RIGHT
-                else 'L')
-            text_justify_combo.set_name("text_justification")
-            text_justify_row = make_row("Justification:", text_justify_combo)
-
-            indent_spin = _make_spin(block.indent, 0, 2000)
-            indent_row = make_row("Indent:", indent_spin)
-
-            block_fields = (kind_combo, block_width_spin, block_height_spin,
-                            max_lines_spin, spacing_spin, justify_combo,
-                            text_justify_combo, indent_spin)
-            field_block_rows = (lines_row, spacing_row, justify_row,
-                                indent_row)
-            text_block_rows = (height_row, text_justify_row)
-
-            def on_wrap_toggled(_widget):
-                for field in block_fields:
-                    field.set_sensitive(wrap_check.get_active())
-                text = kind_codes[kind_combo.get_active()] == 'TB'
-                for rows, shown in ((field_block_rows, not text),
-                                    (text_block_rows, text)):
-                    for row in rows:
-                        row.set_visible(shown)
-                # The manual does not say what ^FB does with a direction, so
-                # a block keeps whichever it has and offers no other.
-                direction_combo.set_sensitive(not wrap_check.get_active())
-
-            wrap_check.connect("toggled", on_wrap_toggled)
-            kind_combo.connect("changed", on_wrap_toggled)
+            fmt = self._text_format_rows(dialog, content, element)
 
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
                     buffer = text_view.get_buffer()
                     # A ^TB has no line break to write a typed one as, so it
                     # is a space
-                    text_block_chosen = (
-                        wrap_check.get_active()
-                        and kind_codes[kind_combo.get_active()] == 'TB')
                     element.text = (textraster.from_editor_unbroken
-                                    if text_block_chosen
+                                    if fmt.text_block_chosen()
                                     else textraster.from_editor)(
                         buffer.get_text(buffer.get_start_iter(),
                                         buffer.get_end_iter(), False))
@@ -4047,55 +4119,7 @@ class ZPLViewerWindow(Gtk.Window):
                     element.font_width = int(width_spin.get_value())
                     element.orientation = orientation_codes[
                         orientation_combo.get_active()]
-                    element.direction = direction_codes[
-                        direction_combo.get_active()]
-                    element.char_gap = int(gap_spin.get_value())
-                    element.reverse_print = fr_check.get_active()
-
-                    if text_block_chosen:
-                        element.set_text_block(
-                            int(block_width_spin.get_value()),
-                            int(block_height_spin.get_value()),
-                            text_justify_codes[
-                                text_justify_combo.get_active()])
-                    elif wrap_check.get_active():
-                        # Assigned rather than mutated: the block on the element
-                        # may be the one an undo snapshot is holding.
-                        element.block = FieldBlock(
-                            int(block_width_spin.get_value()),
-                            int(max_lines_spin.get_value()),
-                            int(spacing_spin.get_value()),
-                            justify_codes[justify_combo.get_active()],
-                            int(indent_spin.get_value()))
-                    elif element.block is not None:
-                        # Unticked. A forced break left behind would print as the
-                        # two characters it is written with, so the lines are
-                        # joined rather than abandoned to the printer.
-                        element.text = textraster.join_lines(element.text)
-                        element.block = None
-                    elif textraster.FORCED_BREAK in element.text:
-                        # A break typed into an element that never had a block
-                        # still needs one, for the same reason. Sized to the
-                        # longest line, so nothing moves.
-                        element.block = element.default_block(
-                            document.font_path, document.dpi)
-
-                    self.design_canvas.sync_text_width(element)
-
-                    new_path, new_family = selected_font
-                    if new_path != element.font_path:
-                        if new_path:
-                            # The font is only recorded here; it is uploaded at print
-                            # time, so choosing a font never blocks on the network.
-                            printer_name = zpl_fonts.printer_font_name(
-                                new_path, taken=self._printer_font_names(exclude=element))
-                            self.design_canvas.set_element_font(element, new_path, new_family, printer_name)
-                            self.renderer.register_font(printer_name, new_path)
-                        else:
-                            element.font_path = None
-                            element.font_family = None
-                            element.printer_font_name = None
-                            self.design_canvas.queue_draw()
+                    fmt.apply()
 
                     self.design_canvas.document.sync_text_width(element)
 
@@ -4107,7 +4131,7 @@ class ZPLViewerWindow(Gtk.Window):
             # _open_editor's own show_all() would otherwise re-show every row
             # this just hid - so the wrap-dependent ones only get their first
             # visibility pass once it has already run.
-            on_wrap_toggled(wrap_check)
+            fmt.sync()
 
         elif isinstance(element, BarcodeElement):
             # Show barcode edit dialog

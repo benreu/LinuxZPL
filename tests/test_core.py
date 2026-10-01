@@ -7379,6 +7379,54 @@ check("its box is measured from the wrapped marker, not the bare format string",
       _time_el.width > _time_el.printed_width(None, _time_el.text),
       (_time_el.width, _time_el.printed_width(None, _time_el.text)))
 
+# The time editor takes the same font, direction and wrap rows as Edit Text.
+def _drive_time_dialog(element, document, fill):
+    accepted = []
+    dialog = qt_dialogs.edit_time_dialog(
+        None, element, document, on_accept=lambda: accepted.append(True))
+    fill(dialog)
+    dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+    return bool(accepted)
+
+_tf_dlg = qt_dialogs.edit_time_dialog(None, _time_el, _time_doc)
+check("the time editor offers font, direction, gap and wrap fields",
+      all(_tf_dlg.findChild(w, n) is not None for w, n in (
+          (QComboBox, 'direction'), (QSpinBox, 'char_gap'),
+          (QCheckBox, 'wrap'), (QComboBox, 'block_kind'),
+          (QSpinBox, 'block_width'), (QComboBox, 'justification'))))
+_tf_dlg.reject()
+
+
+def _tf_fill(dialog):
+    dialog.findChild(QCheckBox, 'wrap').setChecked(True)
+    dialog.findChild(QSpinBox, 'block_width').setValue(300)
+    dialog.findChild(QComboBox, 'justification').setCurrentIndex(1)
+    dialog.findChild(QSpinBox, 'char_gap').setValue(0)
+
+
+_drive_time_dialog(_time_el, _time_doc, _tf_fill)
+_tf_zpl = _time_el.to_zpl()
+check("a wrapped, centred clock field is written as ^FB before ^FC",
+      isinstance(_time_el.block, FieldBlock) and _time_el.block.width == 300
+      and _time_el.block.justification == 'C'
+      and _tf_zpl.index('^FB300') < _tf_zpl.index('^FC')
+      and '^FC%^FD%m/%d/%y^FS' in _tf_zpl, _tf_zpl)
+_tf_back = zpl_parser.parse_zpl(_time_doc.to_zpl())[0]
+_tf_els = [e for e in _tf_back.elements if getattr(e, 'clock_format', False)]
+check("and it round-trips with its block",
+      len(_tf_els) == 1 and isinstance(_tf_els[0].block, FieldBlock)
+      and _tf_els[0].block.width == 300 and _tf_els[0].text == '%m/%d/%y')
+_tf_dlg = qt_dialogs.edit_time_dialog(None, _time_el, _time_doc)
+check("reopened, the time editor shows the block",
+      _tf_dlg.findChild(QCheckBox, 'wrap').isChecked()
+      and _tf_dlg.findChild(QSpinBox, 'block_width').value() == 300)
+_tf_dlg.reject()
+_drive_time_dialog(_time_el, _time_doc, lambda dialog: dialog.findChild(
+    QCheckBox, 'wrap').setChecked(False))
+check("unticking wrap removes the block and keeps the clock field",
+      _time_el.block is None and _time_el.clock_format
+      and _time_el.text == '%m/%d/%y')
+
 # Likewise, add_serial_element is its own creation path - the "+ Serial"
 # button - rather than a mode of add_text_element.
 _serial_doc = Document()

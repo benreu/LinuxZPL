@@ -8,6 +8,7 @@ wherever it was started from.
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 from PIL import Image as PILImage
@@ -391,44 +392,18 @@ def _field_number_rows(form, element):
     return apply_to
 
 
-def edit_text_dialog(parent, element: TextElement, document: Document,
-                     on_accept=None) -> QDialog:
-    """Edit a text element. `on_accept` runs once OK has changed it."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Text")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+def _text_format_rows(dialog, form, element: TextElement,
+                      document: Document):
+    """The rows every text-like editor shares: ^FP direction and gap, ^FR,
+    the font, and the ^FB/^TB wrap block.
 
-    # Multi-line, because ZPL's forced break is two characters a user should
-    # never have to spell: Enter here becomes \& on the way out. A ^TB breaks
-    # no line at \&, so its data is shown as it is.
-    text_edit = QPlainTextEdit(
-        element.text if isinstance(element.block, TextBlock)
-        else textraster.to_editor(element.text))
-    text_edit.setObjectName("text")
-    text_edit.setMinimumHeight(4 * QFontMetrics(text_edit.font()).height())
-    form.addRow("Text:", text_edit)
-
-    height_spin = QSpinBox()
-    height_spin.setRange(8, 500)
-    height_spin.setValue(element.font_height)
-    form.addRow("Font Height:", height_spin)
-
-    width_spin = QSpinBox()
-    width_spin.setRange(8, 500)
-    width_spin.setValue(element.font_width)
-    form.addRow("Font Width:", width_spin)
-
-    orientation_combo = QComboBox()
-    orientation_combo.setObjectName("orientation")
-    for label, code in ORIENTATIONS:
-        orientation_combo.addItem(label, code)
-    turns = [code for _label, code in ORIENTATIONS]
-    orientation_combo.setCurrentIndex(turns.index(element.orientation)
-                                      if element.orientation in turns else 0)
-    form.addRow("Orientation:", orientation_combo)
-
+    Edit Text and Edit Time Field both call this, so a clock field is styled
+    the same way a plain one is. The caller adds its own text row, size and
+    orientation first, sets the element's text, then calls `apply()`, which
+    reads these fields back onto the element. `text_block_chosen()` says
+    whether a ^TB is ticked, because the caller must know before it sets the
+    text: a ^TB has no line break to write a typed one as.
+    """
     # ^FP: which way the characters run inside that turn, and how far apart
     direction_combo = QComboBox()
     direction_combo.setObjectName("direction")
@@ -578,24 +553,15 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     wrap_check.stateChanged.connect(sync_block_fields)
     kind_combo.currentIndexChanged.connect(sync_block_fields)
 
-    layout.addWidget(_buttons(dialog))
+    def text_block_chosen():
+        return wrap_check.isChecked() and kind_combo.currentData() == 'TB'
 
-    def _apply():
-        # A ^TB has no line break to write a typed one as, so it is a space
-        text_block_chosen = (wrap_check.isChecked()
-                             and kind_combo.currentData() == 'TB')
-        element.text = (textraster.from_editor_unbroken
-                        if text_block_chosen
-                        else textraster.from_editor)(text_edit.toPlainText())
-        element.font_height = height_spin.value()
-        element.font_width = width_spin.value()
-        element.orientation = orientation_combo.currentData()
+    def apply():
         element.direction = direction_combo.currentData()
         element.char_gap = gap_spin.value()
-        element.height = element.font_height
         element.reverse_print = fr_check.isChecked()
 
-        if text_block_chosen:
+        if text_block_chosen():
             element.set_text_block(block_width.value(), block_height.value(),
                                    text_justify_combo.currentData())
         elif wrap_check.isChecked():
@@ -631,6 +597,64 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
                 element.font_path = None
                 element.font_family = None
                 element.printer_font_name = None
+
+    return SimpleNamespace(text_block_chosen=text_block_chosen, apply=apply)
+
+
+
+def edit_text_dialog(parent, element: TextElement, document: Document,
+                     on_accept=None) -> QDialog:
+    """Edit a text element. `on_accept` runs once OK has changed it."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Edit Text")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    # Multi-line, because ZPL's forced break is two characters a user should
+    # never have to spell: Enter here becomes \& on the way out. A ^TB breaks
+    # no line at \&, so its data is shown as it is.
+    text_edit = QPlainTextEdit(
+        element.text if isinstance(element.block, TextBlock)
+        else textraster.to_editor(element.text))
+    text_edit.setObjectName("text")
+    text_edit.setMinimumHeight(4 * QFontMetrics(text_edit.font()).height())
+    form.addRow("Text:", text_edit)
+
+    height_spin = QSpinBox()
+    height_spin.setRange(8, 500)
+    height_spin.setValue(element.font_height)
+    form.addRow("Font Height:", height_spin)
+
+    width_spin = QSpinBox()
+    width_spin.setRange(8, 500)
+    width_spin.setValue(element.font_width)
+    form.addRow("Font Width:", width_spin)
+
+    orientation_combo = QComboBox()
+    orientation_combo.setObjectName("orientation")
+    for label, code in ORIENTATIONS:
+        orientation_combo.addItem(label, code)
+    turns = [code for _label, code in ORIENTATIONS]
+    orientation_combo.setCurrentIndex(turns.index(element.orientation)
+                                      if element.orientation in turns else 0)
+    form.addRow("Orientation:", orientation_combo)
+
+    fmt = _text_format_rows(dialog, form, element, document)
+
+
+    layout.addWidget(_buttons(dialog))
+
+    def _apply():
+        # A ^TB has no line break to write a typed one as, so it is a space
+        element.text = (textraster.from_editor_unbroken
+                        if fmt.text_block_chosen()
+                        else textraster.from_editor)(text_edit.toPlainText())
+        element.font_height = height_spin.value()
+        element.font_width = width_spin.value()
+        element.orientation = orientation_combo.currentData()
+        element.height = element.font_height
+        fmt.apply()
         document.sync_text_width(element)
 
     return _show_editor(dialog, _apply, on_accept)
@@ -640,11 +664,11 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
                      on_accept=None) -> QDialog:
     """Edit a clock field (^FC). `on_accept` runs once OK has changed it.
 
-    Deliberately smaller than edit_text_dialog: no wrap/block section (a
-    clock stamp is one short line, not a paragraph) and no Data Source
-    selector - this dialog *is* the ^FC source. edit_text_dialog carries no
-    field-source mechanism of its own at all any more: ^FN, ^SN and ^FC each
-    moved out to their own dialog. The one on/off control here is the
+    Takes the same font, direction and wrap rows as edit_text_dialog, through
+    _text_format_rows - a clock stamp is styled like any other text. It has no
+    Data Source selector: this dialog *is* the ^FC source. edit_text_dialog
+    carries no field-source mechanism of its own at all any more: ^FN, ^SN and
+    ^FC each moved out to their own dialog. The one on/off control here is the
     checkbox at the bottom: unticking it turns the element back into a plain
     static text field, and the next double-click opens the regular Text
     editor instead of this one.
@@ -682,11 +706,7 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fr_check = QCheckBox("Reverse print (^FR)")
-    fr_check.setObjectName("reverse_print")
-    fr_check.setChecked(element.reverse_print)
-    form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    fmt = _text_format_rows(dialog, form, element, document)
 
     clock_check = QCheckBox("Comes from the printer's clock (^FC)")
     clock_check.setObjectName("clock_format")
@@ -701,7 +721,7 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
         element.font_width = width_spin.value()
         element.orientation = orientation_combo.currentData()
         element.height = element.font_height
-        element.reverse_print = fr_check.isChecked()
+        fmt.apply()
         if clock_check.isChecked():
             element.clock_format = True
         else:

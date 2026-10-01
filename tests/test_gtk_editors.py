@@ -845,6 +845,54 @@ check("and choosing a ^FB there makes it a ^FB of the same width",
 zpl_fonts._resident_cache['0'] = STANDIN
 document.elements.remove(tb_el)
 
+# --- Edit Time Field: the same font, direction and wrap rows ----------------
+# The Qt half is in test_core. A clock field is styled like any other text, so
+# its editor carries the rows Edit Text does, and OK writes the same block.
+
+from zplcore import parser as zpl_parser
+tf_el = document.add_time_element()
+window.on_element_double_clicked(None, tf_el)
+tf_dialog = window._editors[id(tf_el)]
+tf_content = tf_dialog.get_content_area()
+tf_wrap = [b for b in _find_all(tf_content, Gtk.CheckButton)
+           if b.get_label() == "Wrap the text into a block"]
+tf_font = [b for b in _find_all(tf_content, Gtk.Button)
+           if b.get_label() == "Choose\u2026"]
+check("the time editor offers a font chooser and a wrap checkbox",
+      len(tf_wrap) == 1 and len(tf_font) == 1)
+tf_kind = next(w for w in _find_all(tf_content, Gtk.ComboBoxText)
+               if w.get_name() == 'block_kind')
+tf_height = next(w for w in _find_all(tf_content, Gtk.SpinButton)
+                 if w.get_name() == 'block_height')
+check("freshly opened, the wrap fields are greyed out and the ^TB's rows hidden",
+      not tf_kind.get_sensitive() and not tf_height.get_parent().get_visible())
+tf_wrap[0].set_active(True)
+tf_spins = _find_all(tf_content, Gtk.SpinButton)
+tf_spins[3].set_value(300)              # Wrap Width, after height/width/gap
+# orientation, direction, block kind, then the ^FB's justification
+_find_all(tf_content, Gtk.ComboBoxText)[3].set_active(1)
+tf_dialog.response(Gtk.ResponseType.OK)
+tf_zpl = tf_el.to_zpl()
+check("OK writes a wrapped, centred clock field as ^FB before ^FC",
+      isinstance(tf_el.block, FieldBlock) and tf_el.block.width == 300
+      and tf_el.block.justification == 'C' and tf_el.clock_format
+      and tf_zpl.index('^FB300') < tf_zpl.index('^FC')
+      and '^FC%^FD%m/%d/%y^FS' in tf_zpl, tf_zpl)
+tf_back = zpl_parser.parse_zpl(document.to_zpl())[0]
+check("and it round-trips with its block",
+      any(getattr(e, 'clock_format', False) and isinstance(e.block, FieldBlock)
+          and e.block.width == 300 for e in tf_back.elements))
+window.on_element_double_clicked(None, tf_el)
+tf_dialog = window._editors[id(tf_el)]
+tf_wrap = [b for b in _find_all(tf_dialog.get_content_area(), Gtk.CheckButton)
+           if b.get_label() == "Wrap the text into a block"][0]
+check("reopened, the time editor shows the block", tf_wrap.get_active())
+tf_wrap.set_active(False)
+tf_dialog.response(Gtk.ResponseType.OK)
+check("unticking wrap removes the block and keeps the clock field",
+      tf_el.block is None and tf_el.clock_format and tf_el.text == '%m/%d/%y')
+document.elements.remove(tf_el)
+
 # --- font 0 is drawn in its stand-in ----------------------------------------
 # The Qt half is in test_core. With the stand-in installed a font 0 field has
 # a face, so the canvas draws it with the shared raster, its H standing where
