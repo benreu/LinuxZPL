@@ -468,6 +468,18 @@ class ZPLViewerWindow(Gtk.Window):
                 # print is out.
                 self.print_item = item
 
+        upload_menu = Gtk.Menu()
+        upload_item = Gtk.MenuItem.new_with_mnemonic("_Upload Template to Printer")
+        upload_item.set_submenu(upload_menu)
+        file_menu.append(upload_item)
+        self.upload_template_items = []
+        for device, memory in workflow.TEMPLATE_DEVICES:
+            item = Gtk.MenuItem.new_with_label(f"To {memory} ({device}:)\u2026")
+            item.connect("activate", self.on_upload_template_clicked, device, memory)
+            upload_menu.append(item)
+            self.upload_template_items.append(item)
+        upload_menu.show_all()
+
         # A submenu rather than a flat item: this is where printer-related
         # actions beyond the one session override belong as they show up.
         printer_settings_menu = Gtk.Menu()
@@ -892,7 +904,7 @@ class ZPLViewerWindow(Gtk.Window):
         status_row.pack_end(self.zoom_label, False, False, 0)
         # Beside the zoom, for the one network call the main window makes
         # itself: Print.
-        self._busy = BusyBar((self.print_item,), self.update_status)
+        self._busy = BusyBar((self.print_item, *self.upload_template_items), self.update_status)
         self._busy.set_margin_end(8)
         status_row.pack_end(self._busy, False, False, 0)
         main_box.pack_end(status_row, False, False, 0)
@@ -1325,6 +1337,69 @@ class ZPLViewerWindow(Gtk.Window):
         if response == Gtk.ResponseType.APPLY:
             return 'upload'
         return 'print' if response == Gtk.ResponseType.OK else 'cancel'
+
+    def _ask_template_name(self, memory, default):
+        """The name to store a template under in `memory`, or None if cancelled."""
+        name, problem = default, None
+        while True:
+            dialog = Gtk.Dialog(title="Upload Template", transient_for=self,
+                                modal=True)
+            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            dialog.add_button("Upload", Gtk.ResponseType.OK)
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            content = dialog.get_content_area()
+            content.set_spacing(8)
+            content.set_border_width(12)
+            if problem:
+                content.pack_start(Gtk.Label(label=problem), False, False, 0)
+            entry = Gtk.Entry()
+            entry.set_text(name)
+            entry.set_activates_default(True)
+            _make_row(content, f"Name in {memory}:", entry, 150)
+            dialog.show_all()
+            response = dialog.run()
+            name = entry.get_text().strip().upper()
+            dialog.destroy()
+            if response != Gtk.ResponseType.OK:
+                return None
+            problem = workflow.template_name_problem(name)
+            if problem is None:
+                return name
+
+    def on_upload_template_clicked(self, widget, device, memory):
+        """Store the design on the printer as a ^DF format, printing nothing."""
+        document = self.design_canvas.document
+        if document.is_empty():
+            self.show_error_dialog("There is nothing to upload.")
+            return
+        name = self._ask_template_name(
+            f"{memory} ({device}:)",
+            workflow.default_template_name(document, self.current_filepath))
+        if name is None:
+            return
+        try:
+            content = workflow.build_template_upload(document, device, name)
+        except Exception as e:
+            self.show_error_dialog(f"Failed to generate ZPL: {e}")
+            return
+        address, port = self.printer_address, self.printer_port
+        stored = f"{device}:{name}.ZPL"
+        self.update_status(f"Uploading {stored}...")
+
+        def work(cancel):
+            printer_io.send(address, port, content.encode('utf-8'), 10,
+                            cancel=cancel)
+
+        def done(_result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self.update_status("Upload cancelled")
+            elif error is not None:
+                self.show_error_dialog(str(error))
+                self.update_status("Upload failed")
+            else:
+                self.update_status(f"Stored {stored} on {address}:{port}")
+
+        self._busy.run(work, done)
 
     def on_print_clicked(self, widget):
         """Print in up to three steps, each network one off the main loop

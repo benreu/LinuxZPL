@@ -19,6 +19,7 @@ from PySide2.QtGui import (QFont, QFontMetrics, QGuiApplication,
 from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+                               QInputDialog,
                                QLabel, QLineEdit, QListWidget, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton,
                                QScrollArea,
@@ -3050,6 +3051,23 @@ class PrinterStatusDialog(QDialog):
 
 
 # --- prompts ----------------------------------------------------------------
+
+def ask_template_name(parent, memory: str, default: str) -> Optional[str]:
+    """The name to store a template under in `memory`, or None if cancelled."""
+    name, problem = default, None
+    while True:
+        text = f"Name for the template in printer {memory}:"
+        if problem:
+            text = f"{problem}\n\n{text}"
+        name, accepted = QInputDialog.getText(
+            parent, "Upload Template", text, QLineEdit.Normal, name)
+        if not accepted:
+            return None
+        name = name.strip().upper()
+        problem = workflow.template_name_problem(name)
+        if problem is None:
+            return name
+
 
 def ask_overwrite(parent, filepath) -> bool:
     """Whether to replace a file the chooser never asked about."""

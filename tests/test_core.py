@@ -9957,6 +9957,31 @@ check("Qt Printer menu: Firmware Update sits between Console and Status",
       _fw_texts[_fw_texts.index("Console…") + 1:_fw_texts.index("Console…") + 3]
       == ["Firmware Update…", "Status…"], _fw_texts)
 
+# Uploading a template to the printer's flash or RAM.
+_td = zpl_parser.parse_zpl("^XA^DFR:OLD.GRF^FS^FO10,10^A0N,30,30^FDhi^FS^XZ")[0]
+_flash = workflow.build_template_upload(_td, 'E', 'LABEL1')
+_ram = workflow.build_template_upload(_td, 'R', 'LABEL1')
+check("template upload stores to flash with ^DFE:", '^DFE:LABEL1.ZPL^FS' in _flash, _flash)
+check("template upload stores to RAM with ^DFR:", '^DFR:LABEL1.ZPL^FS' in _ram, _ram)
+check("template upload replaces the document's own ^DF", 'OLD' not in _flash, _flash)
+check("template upload leaves the document alone", _td.stored_format == 'R:OLD.GRF')
+check("^DF comes straight after ^XA", _flash.startswith('^XA\n^DFE:'), _flash[:20])
+check("a template name is 1-16 alphanumerics",
+      workflow.template_name_problem('') and workflow.template_name_problem('A B')
+      and workflow.template_name_problem('A' * 17)
+      and workflow.template_name_problem('AB12') is None)
+try:
+    workflow.build_template_upload(_td, 'E', 'a/b')
+    _refused = False
+except ValueError:
+    _refused = True
+check("a bad name is refused", _refused)
+check("default name comes from the ^DF", workflow.default_template_name(_td) == 'OLD')
+_td.stored_format = None
+check("default name falls back to the file stem",
+      workflow.default_template_name(_td, '/x/my-label 2.zpl') == 'mylabel2')
+check("default name falls back to TEMPLATE", workflow.default_template_name(_td) == 'TEMPLATE')
+
 # CONTRIBUTING rule 4: no module in zplcore may import a GUI toolkit. Checked
 # by reading the source, since this suite imports PySide2 itself for other
 # reasons and so sys.modules proves nothing.

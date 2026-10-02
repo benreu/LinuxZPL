@@ -143,7 +143,7 @@ class ZPLDesignerWindow(QMainWindow):
         # Its own widget, so a status message does not wipe the zoom away.
         # The busy row sits beside it for the one network call the main
         # window makes itself: Print.
-        self._busy = BusyBar((self.print_action,), self.update_status, self)
+        self._busy = BusyBar((self.print_action, *self.upload_template_actions), self.update_status, self)
         self.statusBar().addPermanentWidget(self._busy)
         self.zoom_label = QLabel()
         self.statusBar().addPermanentWidget(self.zoom_label)
@@ -271,6 +271,11 @@ class ZPLDesignerWindow(QMainWindow):
         self.save_action = self._action("&Save", self.on_save, QKeySequence.Save)
         self.save_as_action = self._action("Save &as…", self.on_save_as, "Ctrl+Shift+S")
         self.print_action = self._action("&Print", self.on_print, "Ctrl+P")
+        self.upload_template_actions = [
+            self._action(f"To {memory} ({device}:)\u2026",
+                         lambda _checked=False, d=device, m=memory:
+                         self.on_upload_template(d, m))
+            for device, memory in workflow.TEMPLATE_DEVICES]
         self.quit_action = self._action("&Quit", self.close, "Ctrl+Q")
 
         self.undo_action = self._action("&Undo", self.on_undo, "Ctrl+Z")
@@ -362,6 +367,9 @@ class ZPLDesignerWindow(QMainWindow):
         file_menu.addAction(self.save_as_action)
         file_menu.addSeparator()
         file_menu.addAction(self.print_action)
+        upload_menu = file_menu.addMenu("&Upload Template to Printer")
+        for action in self.upload_template_actions:
+            upload_menu.addAction(action)
         # A submenu rather than a flat item: this is where printer-related
         # actions beyond the one session override belong as they show up.
         printer_settings_menu = file_menu.addMenu("Prin&ter Settings")
@@ -1310,6 +1318,40 @@ class ZPLDesignerWindow(QMainWindow):
         self.update_status("Checking printer fonts...")
         self._busy.run(lambda cancel: workflow.missing_printer_fonts(
             self.document, address, port, cancel=cancel), checked)
+
+    def on_upload_template(self, device, memory):
+        """Store the design on the printer as a ^DF format, printing nothing."""
+        if self.document.is_empty():
+            self.show_error("There is nothing to upload.")
+            return
+        name = qt_dialogs.ask_template_name(
+            self, f"{memory} ({device}:)",
+            workflow.default_template_name(self.document, self.current_filepath))
+        if name is None:
+            return
+        try:
+            content = workflow.build_template_upload(self.document, device, name)
+        except Exception as e:
+            self.show_error(f"Failed to generate ZPL: {e}")
+            return
+        address, port = self.printer_address, self.printer_port
+        stored = f"{device}:{name}.ZPL"
+        self.update_status(f"Uploading {stored}...")
+
+        def work(cancel):
+            printer_io.send(address, port, content.encode('utf-8'),
+                            PRINT_TIMEOUT, cancel=cancel)
+
+        def done(_result, error):
+            if isinstance(error, printer_io.Cancelled):
+                self.update_status("Upload cancelled")
+            elif error is not None:
+                self.show_error(str(error))
+                self.update_status("Upload failed")
+            else:
+                self.update_status(f"Stored {stored} on {address}:{port}")
+
+        self._busy.run(work, done)
 
     # --- settings file -------------------------------------------------------
 

@@ -883,11 +883,12 @@ pinned.
 | **Save** | Writes to the current path, or behaves as Save As if there is none. |
 | **Save as…** | File chooser, default name `untitled.zpl`. A name typed with no extension gets `.zpl`; one that already has an extension is left alone. Confirms before overwriting an existing file, and declining returns to the chooser. Adopts the chosen path as the current file. |
 | **Print** | §9. |
+| **Upload Template to Printer ▸ To Flash (E:)… / To RAM (R:)…** | Asks for a name (1–16 letters and digits, shown upper-case; offered from the document's `^DF`, else the file's name, else `TEMPLATE`), then sends the design to the printer with `^DF<device>:<NAME>.ZPL` in place of any `^DF` it had. The printer stores the format and prints nothing; recall it with `^XF`. Flash survives power-off, RAM does not. Refused for an empty document. Runs behind the busy row, and is withheld while another request is out, like Print. |
 | **Printer Settings ▸ Set Printer for This Session…** | §9. A submenu rather than a flat item, so further printer-related actions can join it later. |
 | **Quit** | Prompts about unsaved changes (§6.7). |
 
 **The menu is in four groups**, separated in this order: start a document
-(New, Open), persist it (Save, Save as), print it (Print, Printer Settings),
+(New, Open), persist it (Save, Save as), print it (Print, Upload Template, Printer Settings),
 leave. A port that runs them together is the thing this grouping exists to
 avoid.
 

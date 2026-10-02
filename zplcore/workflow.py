@@ -70,6 +70,58 @@ def fill_template(document, pairs) -> None:
     document.stored_format = None
 
 
+TEMPLATE_DEVICES = (('E', 'Flash'), ('R', 'RAM'))
+TEMPLATE_NAME_MAX = 16
+
+
+def template_name_problem(name):
+    """Why `name` cannot name a stored format, or None when it can.
+
+    ^DF takes 1 to 16 alphanumerics; the extension is always .ZPL here.
+    """
+    if not name:
+        return "Enter a name for the template."
+    if len(name) > TEMPLATE_NAME_MAX:
+        return f"The name can be at most {TEMPLATE_NAME_MAX} characters."
+    if not (name.isascii() and name.isalnum()):
+        return "The name can only contain letters and digits."
+    return None
+
+
+def default_template_name(document, filepath=None) -> str:
+    """The name offered for a template: its ^DF name, else the file's, else TEMPLATE."""
+    stored = document.stored_format
+    if stored:
+        stem = os.path.splitext(stored.split(':', 1)[-1])[0]
+        if template_name_problem(stem) is None:
+            return stem
+    if filepath:
+        stem = ''.join(c for c in os.path.splitext(os.path.basename(filepath))[0]
+                       if c.isascii() and c.isalnum())[:TEMPLATE_NAME_MAX]
+        if stem:
+            return stem
+    return 'TEMPLATE'
+
+
+def build_template_upload(document, device, name) -> str:
+    """The ZPL that stores `document` on the printer as `device`:`name`.ZPL.
+
+    The document's own ^DF, if any, is replaced; the document is left as it was.
+    Printing nothing is the point of ^DF, so this is sent like a label.
+    """
+    problem = template_name_problem(name)
+    if problem:
+        raise ValueError(problem)
+    if device not in dict(TEMPLATE_DEVICES):
+        raise ValueError(f"Unknown printer memory {device!r}")
+    saved = document.stored_format
+    document.stored_format = f"{device}:{name}.ZPL"
+    try:
+        return document.to_zpl(explicit_flips=True)
+    finally:
+        document.stored_format = saved
+
+
 def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):
     """Settle a design against a printer resolution it was not drawn for.
 
