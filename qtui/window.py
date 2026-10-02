@@ -405,6 +405,12 @@ class ZPLDesignerWindow(QMainWindow):
         # _release_edit_menu.
         edit_menu.aboutToShow.connect(self._update_edit_menu)
         edit_menu.aboutToHide.connect(self._release_edit_menu)
+        # Paste's state is cached from the clipboard's own signal: the
+        # QMimeData it hands out is freed when the clipboard changes, and a
+        # stale wrapper raises if it is touched later, as the menu opens.
+        self._clipboard_has_text = False
+        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
+        self._on_clipboard_changed()
 
         view_menu = menubar.addMenu("&View")
         view_menu.addAction(self.zoom_in_action)
@@ -529,16 +535,21 @@ class ZPLDesignerWindow(QMainWindow):
         for action in self._edit_menu_actions():
             action.setEnabled(True)
 
+    def _on_clipboard_changed(self):
+        """Remember whether the clipboard holds any text at all.
+
+        Whether it is ZPL is the paste's to find out, and fetching a clipboard
+        that may hold an image's worth of hex is not worth an earlier answer.
+        """
+        mime = QApplication.clipboard().mimeData()
+        self._clipboard_has_text = mime is not None and mime.hasText()
+
     def _update_edit_menu(self):
         """Grey out the actions that need a selection, or a place to move to."""
         doc = self.document
         for action in (self.cut_action, self.copy_action, self.duplicate_action):
             action.setEnabled(bool(doc.selection))
-        # Any text at all: whether it is ZPL is the paste's to find out, and
-        # fetching a clipboard that may hold an image's worth of hex every
-        # time the menu opens is not worth an earlier answer.
-        mime = QApplication.clipboard().mimeData()
-        self.paste_action.setEnabled(mime is not None and mime.hasText())
+        self.paste_action.setEnabled(self._clipboard_has_text)
         self.delete_action.setEnabled(bool(doc.selection))
         self.select_all_action.setEnabled(len(doc.selection) < len(doc.elements))
         self.deselect_all_action.setEnabled(bool(doc.selection))
