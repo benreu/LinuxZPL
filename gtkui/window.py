@@ -743,11 +743,12 @@ class ZPLViewerWindow(Gtk.Window):
 
         printer_menu.show_all()
 
-        # Undo/redo buttons at the far end of the header bar. pack_end fills
-        # right to left, so redo goes in first to read undo then redo.
+        # Undo/redo, Fit and Align sit in the header bar beside the menus,
+        # packed in the order they are built here: undo and redo first.
         button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         button_box.get_style_context().add_class("linked")
-        header.pack_end(button_box)
+        button_box.set_margin_start(10)
+        header.pack_start(button_box)
 
         self.undo_button = Gtk.Button()
         self.undo_button.set_image(Gtk.Image.new_from_icon_name(
@@ -794,12 +795,13 @@ class ZPLViewerWindow(Gtk.Window):
         content_box.set_margin_end(10)
         main_box.pack_start(content_box, True, True, 0)
         
-        # Left side: Designer canvas
-        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        # The element tools down the left, the designer canvas beside them
+        left_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         content_box.pack_start(left_box, True, True, 0)
-        
-        # Designer toolbar
-        toolbar_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+
+        # Element palette
+        toolbar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        toolbar_box.set_valign(Gtk.Align.START)
         left_box.pack_start(toolbar_box, False, False, 0)
         
         # Add text button
@@ -867,10 +869,11 @@ class ZPLViewerWindow(Gtk.Window):
         self.add_symbol_button = add_symbol_btn
         toolbar_box.pack_start(add_symbol_btn, False, False, 0)
 
-        # Zoom controls
+        # Zoom controls, in the header bar after undo and redo
         zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         zoom_box.get_style_context().add_class("linked")
-        toolbar_box.pack_start(zoom_box, False, False, 10)
+        zoom_box.set_margin_start(10)
+        header.pack_start(zoom_box)
         for label, action, tip in (("\u2212", self.on_zoom_out, "Zoom out (Ctrl+-)"),
                                    ("Fit", self.on_fit_label, "Fit the label (Ctrl+0)"),
                                    ("+", self.on_zoom_in, "Zoom in (Ctrl++)")):
@@ -880,7 +883,7 @@ class ZPLViewerWindow(Gtk.Window):
             zoom_box.pack_start(button, False, False, 0)
 
         # One button opening the same six commands the Edit menu holds, rather
-        # than six buttons: the toolbar is text-labelled, and there are no
+        # than six buttons: the header bar is text-labelled, and there are no
         # object-align icons in the icon theme to label them with. GTK menu
         # items belong to one menu, so this is a second copy of the items - the
         # handlers and the enable rules are shared, and the conformance suite
@@ -889,12 +892,7 @@ class ZPLViewerWindow(Gtk.Window):
         align_button.set_tooltip_text("Line the selection up (Edit \u25b8 Align)")
         align_button.set_popup(self._build_align_menu())
         self.align_button = align_button
-        toolbar_box.pack_start(align_button, False, False, 0)
-
-        # Delete button
-        delete_btn = Gtk.Button(label="Delete")
-        delete_btn.connect("clicked", self.on_delete_clicked)
-        toolbar_box.pack_end(delete_btn, False, False, 0)
+        header.pack_start(align_button)
         
         # Design canvas
         scrolled_canvas = Gtk.ScrolledWindow()
@@ -3692,9 +3690,10 @@ class ZPLViewerWindow(Gtk.Window):
             self.update_status(f"Duplicated {workflow.elements_phrase(count)}")
 
     def _on_edit_requested(self, _canvas, command: str):
-        """A clipboard command chosen from the canvas's right-click menu."""
+        """A command chosen from the canvas's right-click menu."""
         {'cut': self.on_cut_clicked, 'copy': self.on_copy_clicked,
-         'duplicate': self.on_duplicate_clicked}[command](None)
+         'duplicate': self.on_duplicate_clicked,
+         'delete': self.on_delete_clicked}[command](None)
 
     def on_canvas_draw(self, widget, context):
         """Canvas draw event handler - re-render when canvas changes."""

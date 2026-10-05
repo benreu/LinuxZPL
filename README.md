@@ -70,7 +70,7 @@ disagree.
   one head resolution can be rescaled for another
 - **Undo and redo** of every document change, 50 deep
 - **Zoom**: fit the whole label, fit its width, or pin a scale from 5% to 800%
-  — from the View menu, the toolbar, or Ctrl with the wheel
+  — from the View menu, the header bar, or Ctrl with the wheel
 
 ## Requirements
 
@@ -150,7 +150,7 @@ a save would not keep.
    CSA mark from **+ Symbol ▾**
 2. Drag elements to position them, or drag the handles to resize
 3. Double-click an element to edit it - text, font, barcode value, image file
-4. Right-click an element for **Print This Element** and the z-order actions
+4. Right-click an element for **Print This Element**, **Delete** and the z-order actions
 5. Set the printer address and resolution under **Settings -> Printer Settings**
    (**Test Connection** also asks the printer what dpi it is, and fills it in)
 6. **File -> Print** to send the label

@@ -14,8 +14,8 @@ from pathlib import Path
 
 from PySide2.QtCore import QSize, Qt
 from PySide2.QtGui import QCursor, QIcon, QImage, QKeySequence, QPixmap
-from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QLabel,
-                               QMainWindow, QMenu, QMessageBox, QScrollArea, QSizePolicy,
+from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QHBoxLayout, QLabel,
+                               QMainWindow, QMenu, QMessageBox, QScrollArea,
                                QToolBar, QToolButton, QWidget)
 
 from zplcore import fonts as zpl_fonts
@@ -438,7 +438,8 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar = QToolBar("Elements", self)
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(16, 16))
-        self.addToolBar(toolbar)
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.addToolBar(Qt.LeftToolBarArea, toolbar)
 
         toolbar.addAction(self._action("+ Text", self.on_add_text))
         toolbar.addAction(self._action("+ Time", self.on_add_time))
@@ -473,20 +474,35 @@ class ZPLDesignerWindow(QMainWindow):
         self.add_symbol_button = symbol_button
         toolbar.addWidget(symbol_button)
 
-        toolbar.addSeparator()
-        toolbar.addAction(self.delete_action)
+        # Undo and redo, Fit and Align fill the free end of the menu bar. Qt
+        # has no slot beside the last menu, so they are its right corner.
+        strip = QWidget(self)
+        row = QHBoxLayout(strip)
+        row.setContentsMargins(0, 0, 4, 0)
+        row.setSpacing(2)
 
-        toolbar.addSeparator()
-        toolbar.addAction(self._action("\u2212", self.on_zoom_out))
-        toolbar.addAction(self._action("Fit", self.on_fit_label))
-        toolbar.addAction(self._action("+", self.on_zoom_in))
+        def strip_button(action):
+            button = QToolButton(strip)
+            button.setDefaultAction(action)
+            button.setAutoRaise(True)
+            row.addWidget(button)
+
+        self.undo_button_action = self._action("\u21b6 Undo", self.on_undo)
+        self.redo_button_action = self._action("\u21b7 Redo", self.on_redo)
+        strip_button(self.undo_button_action)
+        strip_button(self.redo_button_action)
+        row.addSpacing(10)
+        strip_button(self._action("\u2212", self.on_zoom_out))
+        strip_button(self._action("Fit", self.on_fit_label))
+        strip_button(self._action("+", self.on_zoom_in))
+        row.addSpacing(10)
 
         # One button opening the same six commands the Edit menu holds, rather
         # than six buttons: the toolbar is text-labelled, and there are no
         # object-align icons in the icon theme to label them with. The actions
         # are the same objects, so the two menus can never disagree.
-        toolbar.addSeparator()
-        align_button = QToolButton(self)
+        align_button = QToolButton(strip)
+        align_button.setAutoRaise(True)
         align_button.setText("Align \u25be")
         align_button.setToolTip("Line the selection up (Edit \u25b8 Align)")
         align_button.setPopupMode(QToolButton.InstantPopup)
@@ -499,16 +515,8 @@ class ZPLDesignerWindow(QMainWindow):
         align_popup.aboutToHide.connect(self._release_edit_menu)
         align_button.setMenu(align_popup)
         self.align_button = align_button
-        toolbar.addWidget(align_button)
-
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        toolbar.addWidget(spacer)
-
-        self.undo_button_action = self._action("↶ Undo", self.on_undo)
-        self.redo_button_action = self._action("↷ Redo", self.on_redo)
-        toolbar.addAction(self.undo_button_action)
-        toolbar.addAction(self.redo_button_action)
+        row.addWidget(align_button)
+        self.menuBar().setCornerWidget(strip, Qt.TopRightCorner)
 
     def _edit_menu_actions(self):
         """Every action _update_edit_menu greys out."""
@@ -721,9 +729,9 @@ class ZPLDesignerWindow(QMainWindow):
             self.update_status(f"Duplicated {workflow.elements_phrase(count)}")
 
     def _on_edit_requested(self, command: str):
-        """A clipboard command chosen from the canvas's right-click menu."""
+        """A command chosen from the canvas's right-click menu."""
         {'cut': self.on_cut, 'copy': self.on_copy,
-         'duplicate': self.on_duplicate}[command]()
+         'duplicate': self.on_duplicate, 'delete': self.on_delete}[command]()
 
     # Selection commands change the selection and never the document, so
     # they repaint and record nothing - the same as a click or a band.

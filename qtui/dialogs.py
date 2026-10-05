@@ -13,7 +13,7 @@ from typing import Optional
 
 from PIL import Image as PILImage
 
-from PySide2.QtCore import Qt, QTimer
+from PySide2.QtCore import QSize, Qt, QTimer
 from PySide2.QtGui import (QFont, QFontMetrics, QGuiApplication,
                           QPixmap)
 from PySide2.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
@@ -151,6 +151,28 @@ def _dpi_from(combo: QComboBox, fallback: int) -> int:
     return int(text) if text.isdigit() else fallback
 
 
+class _FittingScrollArea(QScrollArea):
+    """A scroll area that asks for as much room as its body wants, up to the
+    screen's usable area less the title bar and the button row.
+
+    Asked at show time rather than fixed when built: an editor shows and hides
+    rows as its fields change, so a size taken early is too small by then.
+    """
+
+    def __init__(self, dialog):
+        super().__init__()
+        self._dialog = dialog
+
+    def sizeHint(self):
+        screen = (self._dialog.screen() if hasattr(self._dialog, "screen")
+                  else None) or QApplication.primaryScreen()
+        avail = screen.availableGeometry()
+        hint = self.widget().sizeHint()
+        bar = self.verticalScrollBar().sizeHint().width() + 4
+        return QSize(min(hint.width() + bar, avail.width() - 40),
+                     min(hint.height() + bar, avail.height() - 160))
+
+
 def _make_scrollable(dialog):
     """Keep a dialog inside the screen: its body scrolls once it outgrows it.
 
@@ -176,19 +198,10 @@ def _make_scrollable(dialog):
         else:
             body_layout.addItem(item)
 
-    scroll = QScrollArea()
+    scroll = _FittingScrollArea(dialog)
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.NoFrame)
     scroll.setWidget(body)
-    # Only as tall and wide as the content, but never more than the screen's
-    # usable area less room for the title bar and the button row.
-    screen = (dialog.screen() if hasattr(dialog, "screen") else None) \
-        or QApplication.primaryScreen()
-    avail = screen.availableGeometry()
-    hint = body.sizeHint()
-    bar = scroll.verticalScrollBar().sizeHint().width() + 4
-    scroll.setMinimumSize(min(hint.width() + bar, avail.width() - 40),
-                          min(hint.height() + bar, avail.height() - 160))
     layout.addWidget(scroll)
     layout.addWidget(buttons)
 

@@ -633,20 +633,23 @@ source at the new size — never from the previous bitmap.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ File Edit View Settings           Title        ↶  ↷   ✕ │  header bar
-├─────────────────────────────────────────────────────────┤
-│ [+ Text] [+ Frame] [+ Circle] [+ Ellipse] [+ Diagonal] …│  toolbar
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│                    design canvas                        │  scrollable
-│                                                         │
-├─────────────────────────────────────────────────────────┤
+│ File Edit View Settings  ↶ ↷  − Fit +  Align ▾   Title ✕│  header bar
+├────────────┬────────────────────────────────────────────┤
+│ [+ Text]   │                                            │
+│ [+ Time]   │                                            │
+│ [+ Frame]  │              design canvas                 │  tool palette,
+│ [+ Circle] │                                            │  scrollable canvas
+│ …          │                                            │
+├────────────┴────────────────────────────────────────────┤
 │ Ready                                            75% ▏  │  status bar
 └─────────────────────────────────────────────────────────┘
 ```
 
-The menu bar sits in the header bar; undo and redo are icon buttons at the
-opposite end, disabled when their history stack is empty. The canvas is
+The menu bar sits in the header bar. Beside it, in the space the menus leave,
+are undo and redo (disabled when their history stack is empty), the zoom group
+`−` / `Fit` / `+`, and `Align ▾`. The element tools are a vertical palette down
+the left of the canvas. (GTK places the cluster just after the menus; Qt has no
+slot there and puts it in the menu bar's right corner.) The canvas is
 scrollable, with the vertical scrollbar always present so the width a fit is
 measured against cannot change when it appears.
 
@@ -1038,17 +1041,18 @@ those two groups. §5 describes what each does to the scale.
 | **Label Size** | §7 |
 | **Default Printer** | §7 |
 
-### 6.5 Toolbar
+### 6.5 Tool palette
 
 `+ Text`, `+ Frame`, `+ Circle`, `+ Ellipse`, `+ Diagonal`, `+ Barcode` add an
 element with the defaults from §3.3.
 `+ Image` opens a file chooser (JPEG/PNG) first. Each new element is placed at a
 staggered offset so successive additions do not stack exactly, and becomes the
-selection. `Delete` removes the selected elements.
+selection. There is no Delete button: Delete is in the Edit menu, on the Delete
+key, and in the element's right-click menu (§6.6).
 
 `Align ▾` opens the same six commands the Edit menu holds, under the same enable
 rules, re-evaluated as the popup opens — the popup can be reached without the
-Edit menu ever having been shown. One button rather than six: the toolbar is
+Edit menu ever having been shown. One button rather than six: the header bar is
 text-labelled, and the icon theme has no object-align icons to label six with.
 
 `+ Symbol ▾` opens the five `^GS` symbols of §3.3 - Registered trademark,
@@ -1070,6 +1074,7 @@ other does not.
   selection the right click left - the whole group, when the element is in one.
   Paste is not here: this menu opens on an element, and a paste lands where
   its copy was, not where the pointer is.
+- **Delete**, as the Edit menu's, on the same selection, as one undo entry.
 - **Group / Ungroup / Remove from Group**, under the same rules as in the Edit
   menu (§6.2).
 - **Bring to Front / Bring Forward / Send Backward / Send to Back**, disabled at
@@ -1098,7 +1103,7 @@ Circle, Edit Ellipse, Edit Diagonal Line, Edit Symbol and Edit Barcode — are
 **non-modal child windows** of the designer. Each is
 transient for the designer, so it floats above it, follows it and closes with
 it rather than taking a window of its own, but it never blocks it: the canvas,
-the menus and the toolbar stay live while one is open. Edit Image is a file
+the menus and the tool palette stay live while one is open. Edit Image is a file
 chooser rather than a form, and stays modal.
 
 - **One editor per element.** Two different elements may each have one open at

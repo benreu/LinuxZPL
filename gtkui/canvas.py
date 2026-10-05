@@ -1156,6 +1156,12 @@ class DesignCanvas(Gtk.DrawingArea):
             menu.append(item)
         menu.append(Gtk.SeparatorMenuItem())
 
+        item_delete = Gtk.MenuItem(label="Delete")
+        item_delete.connect("activate",
+                            lambda _i: self.emit('edit-requested', 'delete'))
+        menu.append(item_delete)
+        menu.append(Gtk.SeparatorMenuItem())
+
         item_group = Gtk.MenuItem(label="Group")
         item_group.connect("activate", lambda _: self.group_selected())
         item_group.set_sensitive(self.document.can_group())

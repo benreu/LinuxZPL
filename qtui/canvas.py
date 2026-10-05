@@ -1049,6 +1049,8 @@ class DesignCanvas(QWidget):
         clipboard = {menu.addAction(label): command for label, command in
                      (("Cut", 'cut'), ("Copy", 'copy'), ("Duplicate", 'duplicate'))}
         menu.addSeparator()
+        clipboard[menu.addAction("Delete")] = 'delete'
+        menu.addSeparator()
 
         group = menu.addAction("Group")
         ungroup = menu.addAction("Ungroup")
