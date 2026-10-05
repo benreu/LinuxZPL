@@ -4530,8 +4530,11 @@ class ZPLViewerWindow(Gtk.Window):
                         widget.set_active(codes.index(current)
                                           if current in codes else 0)
                 # A dialog GTK already grew to fit more rows does not shrink
-                # back on its own just because some of them hid.
-                dialog.resize(1, 1)
+                # back on its own just because some of them hid. Resize to the
+                # size it now wants, not to 1x1: the body scrolls, so its
+                # minimum is a sliver and 1x1 would stay that small.
+                natural = dialog.get_preferred_size()[1]
+                dialog.resize(natural.width, natural.height)
 
             symbology_combo.connect('changed', on_symbology_changed)
 
