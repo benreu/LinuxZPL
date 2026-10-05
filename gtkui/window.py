@@ -388,7 +388,13 @@ def _make_dialog_scrollable(dialog, parent):
     the bottom of a small display.
     """
     content = dialog.get_content_area()
-    children = content.get_children()
+    # The action area sits in a box that is one of the content box's own
+    # children: leave it where it is, or OK and Cancel scroll away with the
+    # form.
+    action = dialog.get_action_area()
+    while action.get_parent() is not content:
+        action = action.get_parent()
+    children = [c for c in content.get_children() if c is not action]
     body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                    spacing=content.get_spacing())
     for child in children:
@@ -413,6 +419,7 @@ def _make_dialog_scrollable(dialog, parent):
     scroller.set_max_content_height(area.height - 160)
     scroller.add(body)
     content.pack_start(scroller, True, True, 0)
+    content.reorder_child(scroller, 0)
 
 
 class ZPLViewerWindow(Gtk.Window):
