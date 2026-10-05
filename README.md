@@ -117,12 +117,25 @@ label[1] = "Hello"                  # ^FN1
 label.fill({2: "World"}, f3="123")  # several at once
 label.copies = 5                    # ^PQ
 label.set_data("OLD TEXT", "new")   # a field with no ^FN: by its data, or by element index
+label["customer"] = "ACME"          # the element whose ^FX ID is customer (see below)
 label.serial(start=100, increment=2, leading_zeros=True)   # a ^SN field
 
 zpl = label.to_zpl()                # what --save-file writes
 image = label.render()              # a PIL image
 label.save("out.zpl"); label.save_image("out.png")
 ```
+
+To fill an element that has no `^FN`, give it an ID with a `^FX` comment inside
+its field, between `^FO` and `^FS`:
+`^FO50,50^FXid:customer^A0N,30^FDplaceholder^FS`. Every editor of an element that
+carries data (text, clock, serial, numbered, barcode, symbol) has an **ID** row
+that writes it. Printers ignore `^FX`, so the printed label is unchanged.
+`label.ids` lists the IDs; `label["customer"] = ...` or
+`label.fill(customer=...)` sets every element with that ID (an `^FN` value, if
+given, wins). Plain-number strings are refused as IDs, and an unknown ID raises
+`KeyError`.
+A runnable example, filling several records from one template, is in
+[examples/ids.py](examples/ids.py).
 
 Nothing is changed in the template itself, so one `Label` can be filled again
 and again in a loop. `to_zpl(template=True)` keeps the `^FN`/`^DF` and writes
