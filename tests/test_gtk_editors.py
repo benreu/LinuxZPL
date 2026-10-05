@@ -116,8 +116,15 @@ for build, describe in ((lambda: document.add_text_element('reversible'), 'text'
 # --- Edit Circle: one diameter, and a thickness held under its radius -------
 
 
+def _editor_body(dialog):
+    """The box the editor's rows are packed into: _open_editor wraps them in a
+    scrolled window so a tall editor stays on a small screen."""
+    scroller = dialog.get_content_area().get_children()[0]
+    return scroller.get_child().get_child()
+
+
 def _spin_buttons(dialog):
-    return [child for child in dialog.get_content_area().get_children()
+    return [child for child in _editor_body(dialog).get_children()
             if isinstance(child, Gtk.SpinButton)]
 
 
@@ -144,7 +151,7 @@ document.elements.remove(circle)
 
 
 def _combos(dialog):
-    return [child for child in dialog.get_content_area().get_children()
+    return [child for child in _editor_body(dialog).get_children()
             if isinstance(child, Gtk.ComboBoxText)]
 
 
@@ -275,8 +282,8 @@ window.on_element_double_clicked(None, mark)
 mark_dialog = window._editors[id(mark)]
 check("a double-click on a symbol opens Edit Symbol",
       mark_dialog.get_title() == "Edit Symbol", mark_dialog.get_title())
-symbol_combo, turn_combo = _find_all(mark_dialog.get_content_area(), Gtk.ComboBoxText)
-mark_height, mark_width = _find_all(mark_dialog.get_content_area(), Gtk.SpinButton)
+symbol_combo, turn_combo = _find_all(_editor_body(mark_dialog), Gtk.ComboBoxText)
+mark_height, mark_width = _find_all(_editor_body(mark_dialog), Gtk.SpinButton)
 symbol_combo.set_active(1)
 mark_height.set_value(60)
 mark_width.set_value(30)
@@ -293,7 +300,7 @@ check("OK in Edit Symbol writes the symbol, both sizes and the turn, as one "
 
 window.on_element_double_clicked(None, mark)
 mark_dialog = window._editors[id(mark)]
-_find_all(mark_dialog.get_content_area(), Gtk.ComboBoxText)[0].set_active(4)
+_find_all(_editor_body(mark_dialog), Gtk.ComboBoxText)[0].set_active(4)
 _before = len(window._undo_stack)
 mark_dialog.response(Gtk.ResponseType.CANCEL)
 check("and Cancel leaves the symbol alone, recording nothing",
@@ -306,7 +313,7 @@ document.elements.append(pair)
 window.on_element_double_clicked(None, pair)
 pair_dialog = window._editors[id(pair)]
 check("data that is not one of the five is offered first, as written",
-      _find_all(pair_dialog.get_content_area(),
+      _find_all(_editor_body(pair_dialog),
                 Gtk.ComboBoxText)[0].get_active_text() == "As written: AB")
 pair_dialog.response(Gtk.ResponseType.OK)
 check("so accepting it unchanged keeps the data and both sizes",
@@ -374,7 +381,7 @@ maxi.barcode_value, maxi.orientation = 'A_B', 'R'
 maxi.sync_box()
 window.on_element_double_clicked(None, maxi)
 maxi_dialog = window._editors[id(maxi)]
-maxi_content = maxi_dialog.get_content_area()
+maxi_content = _editor_body(maxi_dialog)
 _find_all(maxi_content, Gtk.ComboBoxText)[0].set_active(
     [code for _l, code in zpl_model.BARCODE_SYMBOLOGIES].index('maxicode'))
 check("Edit Barcode hides Orientation, Bar Height and Module Width for a MaxiCode",
@@ -402,14 +409,14 @@ check("OK makes it a MaxiCode with ^FH on, unturned",
 
 window.on_element_double_clicked(None, maxi)
 _cancelled = window._editors[id(maxi)]
-_named_button(_cancelled.get_content_area(), 'insert_RS').clicked()
+_named_button(_editor_body(_cancelled), 'insert_RS').clicked()
 _cancelled.response(Gtk.ResponseType.CANCEL)
 check("Cancel leaves the value as it was",
       maxi.barcode_value == 'A_5FB_1D_04', maxi.barcode_value)
 
 plain = document.add_barcode_element()
 window.on_element_double_clicked(None, plain)
-plain_content = window._editors[id(plain)].get_content_area()
+plain_content = _editor_body(window._editors[id(plain)])
 check("a Code 128 keeps its Orientation row and has no Insert",
       _row_for(plain_content, "Orientation:").get_visible()
       and not _row_for(plain_content, "Insert:").get_visible())
@@ -425,7 +432,7 @@ micro.barcode_value = 'HELLO'
 micro.sync_box()
 window.on_element_double_clicked(None, micro)
 micro_dialog = window._editors[id(micro)]
-micro_content = micro_dialog.get_content_area()
+micro_content = _editor_body(micro_dialog)
 micro_size = next(c for c in _find_all(micro_content, Gtk.ComboBoxText)
                   if c.get_name() == 'micro_mode')
 check("Edit Barcode shows a MicroPDF417's Size row, set to its own mode, and "
@@ -451,7 +458,7 @@ series = zpl_parser.parse_zpl(
 document.elements.append(series)
 window.on_element_double_clicked(None, series)
 series_dialog = window._editors[id(series)]
-series_content = series_dialog.get_content_area()
+series_content = _editor_body(series_dialog)
 positions_view = next(v for v in _find_all(series_content, Gtk.TreeView)
                       if v.get_name() == 'positions')
 positions_store = positions_view.get_model()
@@ -477,7 +484,7 @@ tlc = zpl_parser.parse_zpl(
 document.elements.append(tlc)
 window.on_element_double_clicked(None, tlc)
 tlc_dialog = window._editors[id(tlc)]
-tlc_content = tlc_dialog.get_content_area()
+tlc_content = _editor_body(tlc_dialog)
 row_height = next(s for s in _find_all(tlc_content, Gtk.SpinButton)
                   if s.get_name() == 'micro_height')
 check("Edit Barcode offers a TLC39's MicroPDF417 row height as a number",
@@ -715,9 +722,9 @@ fp_el = document.add_text_element("ABCD")
 fp_el.font_code, fp_el.font_height, fp_el.font_width = '0', 30, 20
 window.on_element_double_clicked(None, fp_el)
 fp_dialog = window._editors[id(fp_el)]
-fp_combos = _find_all(fp_dialog.get_content_area(), Gtk.ComboBoxText)
-fp_spins = _find_all(fp_dialog.get_content_area(), Gtk.SpinButton)
-fp_wrap = [b for b in _find_all(fp_dialog.get_content_area(), Gtk.CheckButton)
+fp_combos = _find_all(_editor_body(fp_dialog), Gtk.ComboBoxText)
+fp_spins = _find_all(_editor_body(fp_dialog), Gtk.SpinButton)
+fp_wrap = [b for b in _find_all(_editor_body(fp_dialog), Gtk.CheckButton)
            if b.get_label() == "Wrap the text into a block"][0]
 # Orientation, then Direction; Font Height, Font Width, then Character Gap
 fp_combos[1].set_active(1)
@@ -782,7 +789,7 @@ tb_el.font_code, tb_el.font_height, tb_el.font_width = '0', 30, 20
 document.sync_text_width(tb_el)
 window.on_element_double_clicked(None, tb_el)
 tb_dialog = window._editors[id(tb_el)]
-tb_content = tb_dialog.get_content_area()
+tb_content = _editor_body(tb_dialog)
 
 def _tb_named(kind, name):
     return next(w for w in _find_all(tb_content, kind) if w.get_name() == name)
@@ -821,7 +828,7 @@ check("and the box is the block",
 tb_el.text = r"aaa\&bbb"
 window.on_element_double_clicked(None, tb_el)
 tb_dialog = window._editors[id(tb_el)]
-tb_buffer = _find_all(tb_dialog.get_content_area(), Gtk.TextView)[0].get_buffer()
+tb_buffer = _find_all(_editor_body(tb_dialog), Gtk.TextView)[0].get_buffer()
 check(r"a ^TB's \& is shown as written",
       tb_buffer.get_text(tb_buffer.get_start_iter(), tb_buffer.get_end_iter(),
                          False) == r"aaa\&bbb")
@@ -832,7 +839,7 @@ check("and a line break typed into a ^TB is a space",
       tb_el.text)
 window.on_element_double_clicked(None, tb_el)
 tb_dialog = window._editors[id(tb_el)]
-tb_content = tb_dialog.get_content_area()
+tb_content = _editor_body(tb_dialog)
 check("reopened, the dialog shows the ^TB it made",
       _tb_named(Gtk.ComboBoxText, 'block_kind').get_active() == 1
       and _tb_named(Gtk.SpinButton, 'block_height').get_value() == 75
@@ -853,7 +860,7 @@ from zplcore import parser as zpl_parser
 tf_el = document.add_time_element()
 window.on_element_double_clicked(None, tf_el)
 tf_dialog = window._editors[id(tf_el)]
-tf_content = tf_dialog.get_content_area()
+tf_content = _editor_body(tf_dialog)
 tf_wrap = [b for b in _find_all(tf_content, Gtk.CheckButton)
            if b.get_label() == "Wrap the text into a block"]
 tf_font = [b for b in _find_all(tf_content, Gtk.Button)
@@ -884,7 +891,7 @@ check("and it round-trips with its block",
           and e.block.width == 300 for e in tf_back.elements))
 window.on_element_double_clicked(None, tf_el)
 tf_dialog = window._editors[id(tf_el)]
-tf_wrap = [b for b in _find_all(tf_dialog.get_content_area(), Gtk.CheckButton)
+tf_wrap = [b for b in _find_all(_editor_body(tf_dialog), Gtk.CheckButton)
            if b.get_label() == "Wrap the text into a block"][0]
 check("reopened, the time editor shows the block", tf_wrap.get_active())
 tf_wrap.set_active(False)
@@ -898,7 +905,7 @@ document.elements.remove(tf_el)
 sf_el = document.add_serial_element()
 window.on_element_double_clicked(None, sf_el)
 sf_dialog = window._editors[id(sf_el)]
-sf_content = sf_dialog.get_content_area()
+sf_content = _editor_body(sf_dialog)
 sf_wrap = [b for b in _find_all(sf_content, Gtk.CheckButton)
            if b.get_label() == "Wrap the text into a block"]
 sf_font = [b for b in _find_all(sf_content, Gtk.Button)
@@ -920,7 +927,7 @@ document.elements.remove(sf_el)
 nf_el = document.add_numbered_element(7, 'Batch')
 window.on_element_double_clicked(None, nf_el)
 nf_dialog = window._editors[id(nf_el)]
-nf_content = nf_dialog.get_content_area()
+nf_content = _editor_body(nf_dialog)
 nf_wrap = [b for b in _find_all(nf_content, Gtk.CheckButton)
            if b.get_label() == "Wrap the text into a block"]
 nf_font = [b for b in _find_all(nf_content, Gtk.Button)
@@ -943,7 +950,7 @@ for nm_label, nm_el in (
         ("numbered", document.add_numbered_element(8, 'Lot'))):
     window.on_element_double_clicked(None, nm_el)
     nm_dialog = window._editors[id(nm_el)]
-    nm_row = _row_for(nm_dialog.get_content_area(), "ID:")
+    nm_row = _row_for(_editor_body(nm_dialog), "ID:")
     check(f"the {nm_label} editor has an ID row", nm_row is not None)
     if nm_row is not None:
         next(w for w in nm_row.get_children()

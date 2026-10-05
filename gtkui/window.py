@@ -379,6 +379,42 @@ def _fallback_config_path() -> Path:
     return Path(__file__).resolve().parent.parent / 'settings.ini'
 
 
+def _make_dialog_scrollable(dialog, parent):
+    """Keep a dialog inside the screen: its body scrolls once it outgrows it.
+
+    The content area's widgets move into a scrolled window that grows with
+    them up to the monitor's work area, less room for the title bar and the
+    OK/Cancel row, which sit outside the scroll so they are never pushed off
+    the bottom of a small display.
+    """
+    content = dialog.get_content_area()
+    children = content.get_children()
+    body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                   spacing=content.get_spacing())
+    for child in children:
+        content.remove(child)
+        body.pack_start(child, False, False, 0)
+    for side in ("start", "end", "top", "bottom"):
+        getattr(body, "set_margin_" + side)(
+            getattr(content, "get_margin_" + side)())
+        getattr(content, "set_margin_" + side)(0)
+
+    display = Gdk.Display.get_default()
+    window = parent.get_window() if parent is not None else None
+    monitor = (display.get_monitor_at_window(window) if window
+               else display.get_primary_monitor() or display.get_monitor(0))
+    area = monitor.get_workarea()
+
+    scroller = Gtk.ScrolledWindow()
+    scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    scroller.set_propagate_natural_width(True)
+    scroller.set_propagate_natural_height(True)
+    scroller.set_max_content_width(area.width - 40)
+    scroller.set_max_content_height(area.height - 160)
+    scroller.add(body)
+    content.pack_start(scroller, True, True, 0)
+
+
 class ZPLViewerWindow(Gtk.Window):
     """Main GTK window for the ZPL Viewer application."""
     
@@ -3676,6 +3712,7 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.set_transient_for(self)
         dialog.set_destroy_with_parent(True)
         dialog.set_modal(False)
+        _make_dialog_scrollable(dialog, self)
         dialog.connect("response", on_response)
         key = id(element)
         self._editors[key] = dialog

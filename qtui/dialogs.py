@@ -16,7 +16,7 @@ from PIL import Image as PILImage
 from PySide2.QtCore import Qt, QTimer
 from PySide2.QtGui import (QFont, QFontMetrics, QGuiApplication,
                           QPixmap)
-from PySide2.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
+from PySide2.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QFrame, QGroupBox, QHBoxLayout,
                                QInputDialog,
@@ -151,6 +151,48 @@ def _dpi_from(combo: QComboBox, fallback: int) -> int:
     return int(text) if text.isdigit() else fallback
 
 
+def _make_scrollable(dialog):
+    """Keep a dialog inside the screen: its body scrolls once it outgrows it.
+
+    The form moves into a scroll area; the OK/Cancel row stays outside it, so
+    a small display never pushes it off the bottom. A dialog that already fits
+    keeps its natural size.
+    """
+    layout = dialog.layout()
+    buttons = dialog.findChild(QDialogButtonBox)
+    if layout is None or buttons is None:
+        return
+    body = QWidget()
+    body_layout = QVBoxLayout(body)
+    body_layout.setContentsMargins(0, 0, 0, 0)
+    while layout.count():
+        item = layout.takeAt(0)
+        if item.widget() is buttons:
+            continue
+        if item.layout() is not None:
+            body_layout.addLayout(item.layout())
+        elif item.widget() is not None:
+            body_layout.addWidget(item.widget())
+        else:
+            body_layout.addItem(item)
+
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setWidget(body)
+    # Only as tall and wide as the content, but never more than the screen's
+    # usable area less room for the title bar and the button row.
+    screen = (dialog.screen() if hasattr(dialog, "screen") else None) \
+        or QApplication.primaryScreen()
+    avail = screen.availableGeometry()
+    hint = body.sizeHint()
+    bar = scroll.verticalScrollBar().sizeHint().width() + 4
+    scroll.setMinimumSize(min(hint.width() + bar, avail.width() - 40),
+                          min(hint.height() + bar, avail.height() - 160))
+    layout.addWidget(scroll)
+    layout.addWidget(buttons)
+
+
 def _show_editor(dialog, apply_edits, on_accept=None):
     """Put an element editor on screen as a non-modal child of the designer.
 
@@ -161,6 +203,7 @@ def _show_editor(dialog, apply_edits, on_accept=None):
     applied there, and the caller hears about it through `on_accept`.
     """
     dialog.setAttribute(Qt.WA_DeleteOnClose)
+    _make_scrollable(dialog)
 
     def on_finished(result):
         if result != QDialog.Accepted:
