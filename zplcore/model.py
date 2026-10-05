@@ -49,6 +49,10 @@ from . import geometry
 from . import symbology as symbologies
 
 
+# An ^FX comment of this form is the element's ID, which Label.fill finds it by.
+ID_TAG = 'id:'
+
+
 class DesignElement:
     """Base class for design elements.
 
@@ -164,6 +168,25 @@ class DesignElement:
     data_attribute = None
     field_number = None
     field_prompt = None
+
+    @property
+    def element_id(self) -> str:
+        """What Label.fill calls this element: the "id:..." ^FX comment, or
+        ''. A comment, so a printer ignores it and a file keeps it."""
+        for comment in self.comments:
+            comment = comment.strip()
+            if comment.startswith(ID_TAG) and comment[len(ID_TAG):].strip():
+                return comment[len(ID_TAG):].strip()
+        return ''
+
+    @element_id.setter
+    def element_id(self, ident: str):
+        # A comment ends at the next caret, and an ID is one word of the
+        # author's choosing, so carets and edge blanks are not part of it.
+        ident = ident.replace('^', ' ').replace('~', ' ').strip()
+        kept = tuple(c for c in self.comments
+                     if not c.strip().startswith(ID_TAG))
+        self.comments = kept + ((ID_TAG + ident,) if ident else ())
 
     # ^SN: the printer increments this field's value each time it prints.
     # `serial_start` is kept apart from the field's own literal because ^SN

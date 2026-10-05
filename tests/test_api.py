@@ -112,5 +112,32 @@ with tempfile.TemporaryDirectory() as d:
     api.save_image(png)
     check("save_image writes a file", os.path.getsize(png) > 0)
 
+IDENTIFIED = ("^XA^FO10,10^FXid:customer^A0N,30,30^FDplaceholder^FS\n"
+         "^FO10,60^FX id: sku ^BCN,60^FD000000^FS\n"
+         "^FO10,140^FXid:customer^A0N,30,30^FDagain^FS\n"
+         "^FO10,200^FXnote only^A0N,30,30^FDkeep^FS^XZ")
+tagged = Label.from_zpl(IDENTIFIED)
+check("ids lists the tags once each, in order", tagged.ids == ['customer', 'sku'])
+tagged['customer'] = 'ACME'
+tagged.fill(sku='123456')
+out = tagged.to_zpl()
+check("an ID fills every element carrying it",
+      out.count('^FDACME') == 2 and 'placeholder' not in out and 'again' not in out)
+check("an ID fills a barcode", '^FD123456' in out)
+check("an untagged element is left alone", '^FDkeep' in out)
+check("the tag survives the fill", out.count('id:customer') == 2)
+check("the template is not touched", 'placeholder' in Label.from_zpl(IDENTIFIED).to_zpl())
+check("an ID is readable back", tagged['sku'] == '123456' and 'sku' in tagged)
+check("an unknown ID is a KeyError", raises(KeyError, tagged.__setitem__, 'nope', 'x'))
+check("an unknown keyword is a KeyError", raises(KeyError, tagged.fill, nope='x'))
+check("an ID takes no None", raises(ValueError, tagged.__setitem__, 'sku', None))
+del tagged['sku']
+check("an ID can be unset", 'sku' not in tagged and '^FD000000' in tagged.to_zpl())
+mixed = Label.from_zpl("^XA^DFF^FS^FO1,1^FXid:a^A0N,30,30^FN1^FS^XZ")
+mixed['a'] = 'byid'
+check("an ID fills an ^FN element too", '^FDbyid' in mixed.to_zpl())
+mixed[1] = 'bynumber'
+check("the ^FN value wins over an ID", '^FDbynumber' in mixed.to_zpl())
+
 print(f"\n{failures} failure(s)" if failures else "\nall passed")
 sys.exit(1 if failures else 0)

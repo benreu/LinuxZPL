@@ -42,6 +42,7 @@ class Label:
         self._fields = {}       # ^FN number -> data
         self._prompts = {}      # ^FN number -> prompt
         self._edits = []        # (target, data) for elements with no ^FN
+        self._by_id = {}        # ^FX id -> data
         self._serials = []      # (index, start, increment, leading_zeros)
         self._copies = None
         # Parsed once to validate the text and to answer questions about the
@@ -77,6 +78,17 @@ class Label:
         return seen
 
     @property
+    def ids(self) -> list:
+        """The ^FX "id:..." tags the template's elements carry, in order and
+        without repeats."""
+        seen = []
+        for element in self._template.elements:
+            ident = element.element_id
+            if ident and ident not in seen:
+                seen.append(ident)
+        return seen
+
+    @property
     def elements(self) -> list:
         """The template's elements, in the order set_data's indexes count.
         Changing them changes nothing: outputs are built from the text."""
@@ -89,32 +101,53 @@ class Label:
 
     # -- giving it data ---------------------------------------------------
 
-    def __setitem__(self, number, data):
-        self._fields[_field_number(number)] = _text(data)
+    def _id(self, ident) -> str:
+        """`ident` if some element carries that ID, else KeyError."""
+        if ident.isdigit():
+            raise ValueError(f"{ident!r}: a field number is an int, not a str")
+        if ident not in self.ids:
+            known = ', '.join(self.ids) or 'none'
+            raise KeyError(f"no element has the ID {ident!r} (IDs: {known})")
+        return ident
 
-    def __getitem__(self, number):
-        return self._fields[_field_number(number)]
+    def __setitem__(self, key, data):
+        """A str key is an element's ^FX ID, anything else an ^FN number."""
+        if isinstance(key, str):
+            self._by_id[self._id(key)] = _text(data)
+        else:
+            self._fields[_field_number(key)] = _text(data)
 
-    def __delitem__(self, number):
-        del self._fields[_field_number(number)]
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return self._by_id[key]
+        return self._fields[_field_number(key)]
 
-    def __contains__(self, number):
-        return number in self._fields
+    def __delitem__(self, key):
+        if isinstance(key, str):
+            del self._by_id[key]
+        else:
+            del self._fields[_field_number(key)]
 
-    def fill(self, mapping=None, **named):
-        """Give several numbered fields their data: a {number: data} mapping.
-        A later value for a number wins, as a later --field does.
+    def __contains__(self, key):
+        return key in (self._by_id if isinstance(key, str) else self._fields)
+
+    def fill(self, mapping=None, **keywords):
+        """Give several fields their data: a {number: data} mapping, whose
+        str keys are ^FX IDs. A later value for a key wins, as a later
+        --field does.
 
         Keywords spell numbers as f1=..., f2=..., for call sites that read
-        better that way.
+        better that way; any other keyword is an ^FX ID.
         """
         pairs = list((mapping or {}).items())
-        for key, data in named.items():
-            if not (key[:1] == 'f' and key[1:].isdigit()):
-                raise ValueError(f"{key!r}: keyword fields are spelled f1=..., f2=...")
-            pairs.append((int(key[1:]), data))
-        checked = [(_field_number(n), _text(d)) for n, d in pairs]
-        self._fields.update(checked)
+        for key, data in keywords.items():
+            if key[:1] == 'f' and key[1:].isdigit():
+                key = int(key[1:])
+            pairs.append((key, data))
+        checked = [(self._id(k) if isinstance(k, str) else _field_number(k),
+                    _text(d)) for k, d in pairs]
+        for key, data in checked:
+            self[key] = data
 
     def set_prompt(self, number, prompt):
         """The prompt ^FN`number` names. Only a to_zpl(template=True) writes
@@ -191,6 +224,11 @@ class Label:
             element.serial_leading_zero = zeros
             if element.data_literal():
                 setattr(element, element.data_attribute, start)
+        # IDs go first so an ^FN value, the more specific, wins.
+        for element in elements:
+            ident = element.element_id
+            if ident in self._by_id and element.data_attribute:
+                setattr(element, element.data_attribute, self._by_id[ident])
         pairs = sorted(self._fields.items())
         if template:
             workflow.apply_field_data(document, pairs)

@@ -19,7 +19,7 @@ from . import graphic_store
 from . import graphics
 from . import symbology as symbologies
 from . import transforms as zpl_transforms
-from .model import (MAX_SERIES_ORIGINS, ORIENTATIONS, BarcodeElement,
+from .model import (MAX_SERIES_ORIGINS, ID_TAG, ORIENTATIONS, BarcodeElement,
                     CircleElement, DiagonalLineElement, Document,
                     EllipseElement, FieldBlock, FrameElement,
                     GraphicSymbolElement, ImageElement, StoredGraphicElement,
@@ -637,9 +637,11 @@ def parse_zpl(zpl_content: str, renderer=None) -> Tuple[Document, Optional[int]]
                 field['path'] = key[len(PATH_PARAM):]
             elif key and not key.startswith(DESIGNER_PARAM):
                 # A comment the author wrote. One ahead of every field is
-                # about the label as a whole; any other travels with the
+                # about the label as a whole - unless it is an ID, which is
+                # always the next element's; any other travels with the
                 # element it sits in or in front of.
-                if field is None and not doc.elements:
+                if field is None and not doc.elements \
+                        and not key.startswith(ID_TAG):
                     doc.comments.append(params.rstrip())
                 else:
                     comments.append(params.rstrip())
