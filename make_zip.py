@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent
 TOP = "LinuxZPL"
 
 SOURCE_DIRS = ["zplcore", "qtui", "gtkui"]
-WHOLE_DIRS = ["tests"]  # every file, fixtures and scripts included
+WHOLE_DIRS = ["tests", "examples"]  # every file, fixtures and scripts included
 FILES = [
     "linuxzpl.py",
     "run.sh",
