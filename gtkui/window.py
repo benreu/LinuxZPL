@@ -750,12 +750,15 @@ class ZPLViewerWindow(Gtk.Window):
 
         printer_menu.show_all()
 
-        # Undo/redo, Fit and Align sit in the header bar beside the menus,
-        # packed in the order they are built here: undo and redo first.
+        # Undo/redo, Fit and Align sit at the right end of the header bar,
+        # where Qt puts them in its menu bar's corner. pack_end fills from the
+        # edge inward, so they share one box, packed in the order they read
+        # left to right: undo and redo first.
+        end_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.pack_end(end_box)
         button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         button_box.get_style_context().add_class("linked")
-        button_box.set_margin_start(10)
-        header.pack_start(button_box)
+        end_box.pack_start(button_box, False, False, 0)
 
         self.undo_button = Gtk.Button()
         self.undo_button.set_image(Gtk.Image.new_from_icon_name(
@@ -876,11 +879,11 @@ class ZPLViewerWindow(Gtk.Window):
         self.add_symbol_button = add_symbol_btn
         toolbar_box.pack_start(add_symbol_btn, False, False, 0)
 
-        # Zoom controls, in the header bar after undo and redo
+        # Zoom controls, after undo and redo
         zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         zoom_box.get_style_context().add_class("linked")
         zoom_box.set_margin_start(10)
-        header.pack_start(zoom_box)
+        end_box.pack_start(zoom_box, False, False, 0)
         for label, action, tip in (("\u2212", self.on_zoom_out, "Zoom out (Ctrl+-)"),
                                    ("Fit", self.on_fit_label, "Fit the label (Ctrl+0)"),
                                    ("+", self.on_zoom_in, "Zoom in (Ctrl++)")):
@@ -899,7 +902,8 @@ class ZPLViewerWindow(Gtk.Window):
         align_button.set_tooltip_text("Line the selection up (Edit \u25b8 Align)")
         align_button.set_popup(self._build_align_menu())
         self.align_button = align_button
-        header.pack_start(align_button)
+        align_button.set_margin_start(10)
+        end_box.pack_start(align_button, False, False, 0)
         
         # Design canvas
         scrolled_canvas = Gtk.ScrolledWindow()

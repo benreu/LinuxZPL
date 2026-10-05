@@ -633,7 +633,7 @@ source at the new size — never from the previous bitmap.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ File Edit View Settings  ↶ ↷  − Fit +  Align ▾   Title ✕│  header bar
+│ File Edit View Settings   Title  ↶ ↷  − Fit +  Align ▾ ✕│  header bar
 ├────────────┬────────────────────────────────────────────┤
 │ [+ Text]   │                                            │
 │ [+ Time]   │                                            │
@@ -645,11 +645,11 @@ source at the new size — never from the previous bitmap.
 └─────────────────────────────────────────────────────────┘
 ```
 
-The menu bar sits in the header bar. Beside it, in the space the menus leave,
-are undo and redo (disabled when their history stack is empty), the zoom group
-`−` / `Fit` / `+`, and `Align ▾`. The element tools are a vertical palette down
-the left of the canvas. (GTK places the cluster just after the menus; Qt has no
-slot there and puts it in the menu bar's right corner.) The canvas is
+The menu bar sits in the header bar. At its right end are undo and redo
+(disabled when their history stack is empty), the zoom group `−` / `Fit` /
+`+`, and `Align ▾`, in that order. The element tools are a vertical palette
+down the left of the canvas. (GTK packs the cluster at the header bar's end;
+Qt puts it in the menu bar's right corner.) The canvas is
 scrollable, with the vertical scrollbar always present so the width a fit is
 measured against cannot change when it appears.
 
