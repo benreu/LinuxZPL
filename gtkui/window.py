@@ -99,6 +99,21 @@ def _make_ratio_spin(value, lower, upper):
     return spin
 
 
+def _make_name_row(content, element, label_width: int = 130):
+    """The ID row of an element that carries data: what a Python program
+    finds it by when it fills the label in (Label.fill). Kept as an ^FX comment,
+    which a printer ignores. Returns the function that applies it."""
+    entry = Gtk.Entry()
+    entry.set_text(element.element_id)
+    entry.set_placeholder_text("optional - Python fills this element in by ID")
+    _make_row(content, "ID:", entry, label_width)
+
+    def apply_to(target):
+        target.element_id = entry.get_text()
+
+    return apply_to
+
+
 def _make_field_number_rows(content, element, label_width: int = 130):
     """The ^FN controls, for a barcode.
 
@@ -3970,8 +3985,11 @@ class ZPLViewerWindow(Gtk.Window):
 
             content.show_all()
 
+            apply_name = _make_name_row(content, element)
+
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
+                    apply_name(element)
                     element.text = text_entry.get_text()
                     element.font_height = int(height_spin.get_value())
                     element.font_width = int(width_spin.get_value())
@@ -4053,8 +4071,11 @@ class ZPLViewerWindow(Gtk.Window):
 
             content.show_all()
 
+            apply_name = _make_name_row(content, element)
+
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
+                    apply_name(element)
                     element.text = text_entry.get_text()
                     element.font_height = int(height_spin.get_value())
                     element.font_width = int(width_spin.get_value())
@@ -4144,8 +4165,11 @@ class ZPLViewerWindow(Gtk.Window):
 
             content.show_all()
 
+            apply_name = _make_name_row(content, element)
+
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
+                    apply_name(element)
                     element.text = text_entry.get_text()
                     element.font_height = int(height_spin.get_value())
                     element.font_width = int(width_spin.get_value())
@@ -4214,8 +4238,11 @@ class ZPLViewerWindow(Gtk.Window):
 
             fmt = self._text_format_rows(dialog, content, element)
 
+            apply_name = _make_name_row(content, element)
+
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
+                    apply_name(element)
                     buffer = text_view.get_buffer()
                     # A ^TB has no line break to write a typed one as, so it
                     # is a space
@@ -4421,6 +4448,7 @@ class ZPLViewerWindow(Gtk.Window):
                                                        positions_box)
 
             apply_field_number = _make_field_number_rows(content, element)
+            apply_name = _make_name_row(content, element)
 
             def on_symbology_changed(_combo):
                 # Each symbology carries a different subset of these rows -
@@ -4491,6 +4519,7 @@ class ZPLViewerWindow(Gtk.Window):
                                 int(widget.get_value()) if codes is None
                                 else codes[widget.get_active()])
                     apply_field_number(element)
+                    apply_name(element)
                     element.check_digit = check_codes[check_combo.get_active()]
                     element.mode = mode_codes[mode_combo.get_active()]
                     element.reverse_print = fr_check.get_active()
@@ -4801,8 +4830,11 @@ class ZPLViewerWindow(Gtk.Window):
 
             content.show_all()
 
+            apply_name = _make_name_row(content, element)
+
             def on_response(_dialog, response):
                 if response == Gtk.ResponseType.OK:
+                    apply_name(element)
                     element.text = symbol_codes[symbol_combo.get_active()]
                     element.font_height = int(height_spin.get_value())
                     element.font_width = int(width_spin.get_value())

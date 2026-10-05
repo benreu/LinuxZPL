@@ -353,6 +353,21 @@ def _reverse_hint(form):
     form.addRow("", hint)
 
 
+def _name_row(form, element):
+    """The ID row of an element that carries data: what a Python program
+    finds it by when it fills the label in (Label.fill). Kept as an ^FX comment,
+    which a printer ignores."""
+    edit = QLineEdit(element.element_id)
+    edit.setObjectName("element_id")
+    edit.setPlaceholderText("optional - Python fills this element in by ID")
+    form.addRow("ID:", edit)
+
+    def apply_to(target):
+        target.element_id = edit.text()
+
+    return apply_to
+
+
 def _field_number_rows(form, element):
     """The ^FN controls, for a barcode.
 
@@ -653,9 +668,12 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
     fmt = _text_format_rows(dialog, form, element, document)
 
 
+    apply_name = _name_row(form, element)
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
+        apply_name(element)
         # A ^TB has no line break to write a typed one as, so it is a space
         element.text = (textraster.from_editor_unbroken
                         if fmt.text_block_chosen()
@@ -723,9 +741,12 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
     clock_check.setChecked(element.clock_format)
     form.addRow("Clock:", clock_check)
 
+    apply_name = _name_row(form, element)
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
+        apply_name(element)
         element.text = text_edit.text()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -808,9 +829,12 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
     serial_check.setChecked(element.serial_increment is not None)
     form.addRow("Serial:", serial_check)
 
+    apply_name = _name_row(form, element)
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
+        apply_name(element)
         element.text = text_edit.text()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -899,9 +923,12 @@ def edit_numbered_dialog(parent, element: TextElement, document: Document,
     variable_check.setChecked(element.field_number is not None)
     form.addRow("Variable:", variable_check)
 
+    apply_name = _name_row(form, element)
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
+        apply_name(element)
         element.text = text_edit.text()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -1242,9 +1269,12 @@ def edit_graphic_symbol_dialog(parent, element, on_accept=None) -> QDialog:
     form.addRow("Reverse:", fr_check)
     _reverse_hint(form)
 
+    apply_name = _name_row(form, element)
+
     layout.addWidget(_buttons(dialog))
 
     def _apply():
+        apply_name(element)
         element.text = symbol_combo.currentData()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -1551,6 +1581,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     positions_label = form.labelForField(positions_box)
 
     apply_field_number = _field_number_rows(form, element)
+    apply_name = _name_row(form, element)
 
     def _update_visible_rows():
         # Each symbology carries a different subset of these rows - Code
@@ -1618,6 +1649,7 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
         element.mode = mode_combo.currentData()
         element.reverse_print = fr_check.isChecked()
         apply_field_number(element)
+        apply_name(element)
         element.set_series_positions(_position_rows()
                                      if element.symbology in BARCODE_SERIES
                                      else [])

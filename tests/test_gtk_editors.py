@@ -937,6 +937,23 @@ check("OK writes the gap as ^FP and keeps the ^FN",
       nf_zpl)
 document.elements.remove(nf_el)
 
+# Every editor of an element that carries data has an ID row, for Label.fill.
+for nm_label, nm_el in (
+        ("text", document.add_text_element("T")),
+        ("numbered", document.add_numbered_element(8, 'Lot'))):
+    window.on_element_double_clicked(None, nm_el)
+    nm_dialog = window._editors[id(nm_el)]
+    nm_row = _row_for(nm_dialog.get_content_area(), "ID:")
+    check(f"the {nm_label} editor has an ID row", nm_row is not None)
+    if nm_row is not None:
+        next(w for w in nm_row.get_children()
+             if isinstance(w, Gtk.Entry)).set_text('n_' + nm_label)
+    nm_dialog.response(Gtk.ResponseType.OK)
+    check(f"the {nm_label} editor's ID row gives the element its ID",
+          nm_el.element_id == 'n_' + nm_label, nm_el.comments)
+    document.elements.remove(nm_el)
+
+
 # --- font 0 is drawn in its stand-in ----------------------------------------
 # The Qt half is in test_core. With the stand-in installed a font 0 field has
 # a face, so the canvas draws it with the shared raster, its H standing where

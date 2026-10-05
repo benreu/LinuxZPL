@@ -7493,6 +7493,48 @@ check("a wrapped numbered field writes ^FB before its ^FN and round-trips",
       '^FB300' in _nm_zpl and _nm_zpl.index('^FB300') < _nm_zpl.index('^FN7')
       and len(_nm_back) == 1 and isinstance(_nm_back[0].block, FieldBlock),
       _nm_zpl)
+
+# An ID for Label.fill is an ^FX comment on the element, and every editor of an
+# element that carries data has an ID row.
+_nmx_el = _numbered_doc.add_text_element('Plain')
+check("an element starts with no ID", _nmx_el.element_id == '')
+_nmx_el.comments = ('keep me',)
+_nmx_el.element_id = ' cust^omer '
+check("an ID drops carets and edge blanks and keeps other comments",
+      _nmx_el.element_id == 'cust omer' and 'keep me' in _nmx_el.comments)
+_nmx_el.element_id = 'second'
+check("setting an ID again replaces it, never adds one",
+      [c for c in _nmx_el.comments if c.startswith('id:')] == ['id:second'])
+_nmx_doc = zpl_parser.parse_zpl(
+    "^XA^FO10,10^FXid:first^A0N,30,30^FDa^FS^FO10,60^A0N,30,30^FDb^FS^XZ")[0]
+_nmx_back = zpl_parser.parse_zpl(_nmx_doc.to_zpl())[0]
+check("the first element's ID stays on it through a save, not the label",
+      _nmx_back.elements[0].element_id == 'first' and not _nmx_back.comments,
+      (_nmx_back.elements[0].comments, _nmx_back.comments))
+_nmx_el.element_id = ''
+check("an emptied ID removes the tag", _nmx_el.comments == ('keep me',))
+
+_nm_dlg = qt_dialogs.edit_numbered_dialog(None, _numbered_el, _numbered_doc)
+_nm_dlg.findChild(_QLineEdit, 'element_id').setText('batch_no')
+_nm_dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+check("the numbered editor's ID row gives the element its ID",
+      _numbered_el.element_id == 'batch_no' and 'id:batch_no' in _numbered_doc.to_zpl())
+for _label, _dlg, _el in (
+        ("text", qt_dialogs.edit_text_dialog, _numbered_doc.add_text_element('T')),
+        ("clock", qt_dialogs.edit_time_dialog, _numbered_doc.add_text_element('%H')),
+        ("serial", qt_dialogs.edit_serial_dialog, _numbered_doc.add_text_element('1')),
+        ("barcode", qt_dialogs.edit_barcode_dialog, BarcodeElement(0, 0, 80, 'AB')),
+        ("symbol", qt_dialogs.edit_graphic_symbol_dialog, GraphicSymbolElement(0, 0, 'A'))):
+    _args = (None, _el) if _label in ("barcode", "symbol") else (None, _el, _numbered_doc)
+    _d = _dlg(*_args)
+    _d.findChild(_QLineEdit, 'element_id').setText('n_' + _label)
+    _d.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+    check(f"the {_label} editor has a ID row that gives the element its ID",
+          _el.element_id == 'n_' + _label, _el.comments)
+    _d = _dlg(*_args)
+    check(f"the {_label} editor shows the ID it has",
+          _d.findChild(_QLineEdit, 'element_id').text() == 'n_' + _label)
+    _d.reject()
 _nm_dlg = qt_dialogs.edit_numbered_dialog(None, _numbered_el, _numbered_doc)
 _nm_dlg.findChild(QCheckBox, 'wrap').setChecked(False)
 _nm_dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
