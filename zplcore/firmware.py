@@ -16,6 +16,27 @@ CHUNK = 16 * 1024
 UPLOAD_TIMEOUT = 60
 
 
+def format_elapsed(seconds: float) -> str:
+    """m:ss, or h:mm:ss from an hour up."""
+    seconds = max(0, int(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def progress_text(fraction: float, elapsed: float) -> str:
+    """`42%  0:12 elapsed, ~0:17 left` for an upload `fraction` done after
+    `elapsed` seconds. The estimate waits until there is something to base it
+    on, and is only as good as the bytes-handed-over figure it extrapolates."""
+    fraction = max(0.0, min(1.0, fraction))
+    text = f"{int(fraction * 100)}%  {format_elapsed(elapsed)} elapsed"
+    if 0.02 <= fraction < 1.0 and elapsed >= 1:
+        text += f", ~{format_elapsed(elapsed * (1 - fraction) / fraction)} left"
+    return text
+
+
 def current_firmware(address: str, port: int,
                      cancel: Optional[printer_io.CancelToken] = None) -> Optional[str]:
     """The firmware version ~HI reports, or None if the printer could not be

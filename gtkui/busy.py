@@ -11,13 +11,14 @@ as well as from the main window.
 """
 
 import threading
+import time
 from typing import Callable, Optional, Sequence
 
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import GLib, Gtk
 
-from zplcore import printer_io
+from zplcore import firmware, printer_io
 
 
 class BusyBar(Gtk.Box):
@@ -40,6 +41,9 @@ class BusyBar(Gtk.Box):
         self._was_sensitive = []
         self._dead = False
         self._on_done = None
+        self._started = 0.0
+        self._fraction: Optional[float] = None
+        self._ticker = None
 
         self._spinner = Gtk.Spinner()
         self.pack_start(self._spinner, False, False, 0)
@@ -72,6 +76,9 @@ class BusyBar(Gtk.Box):
         for w in self._blocked:
             w.set_sensitive(False)
         self._cancel_btn.set_sensitive(True)
+        self._started, self._fraction = time.monotonic(), None
+        # Keeps the elapsed time counting while a printer says nothing.
+        self._ticker = GLib.timeout_add_seconds(1, self._tick)
         self._spinner.start()
         self._spinner.show()
         self._bar.hide()
@@ -106,9 +113,11 @@ class BusyBar(Gtk.Box):
         """Cancel whatever is running and drop its result when it lands -
         for a dialog being destroyed while a call is still out."""
         self._dead = True
+        self._stop_ticker()
         self.cancel()
 
     def _finish(self, result, error) -> bool:
+        self._stop_ticker()
         if not self._dead:
             self._spinner.stop()
             self.hide()
@@ -124,12 +133,29 @@ class BusyBar(Gtk.Box):
             self._message(text)
         return False
 
+    def _stop_ticker(self) -> None:
+        if self._ticker is not None:
+            GLib.source_remove(self._ticker)
+            self._ticker = None
+
     def _show_fraction(self, fraction: float) -> bool:
         if not self._dead and self._token is not None:
-            fraction = max(0.0, min(1.0, fraction))
+            self._fraction = fraction
             self._spinner.stop()
             self._spinner.hide()
-            self._bar.set_fraction(fraction)
-            self._bar.set_text(f"{int(fraction * 100)}%")
+            self._bar.set_fraction(max(0.0, min(1.0, fraction)))
             self._bar.show()
+            self._refresh_fraction()
         return False
+
+    def _refresh_fraction(self) -> None:
+        if self._fraction is not None and self._token is not None:
+            self._bar.set_text(firmware.progress_text(
+                self._fraction, time.monotonic() - self._started))
+
+    def _tick(self) -> bool:
+        self._refresh_fraction()
+        if self._token is None:
+            self._ticker = None
+            return False
+        return True

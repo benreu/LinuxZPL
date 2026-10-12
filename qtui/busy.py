@@ -18,12 +18,13 @@ cost of a lifecycle to manage.
 """
 
 import threading
+import time
 from typing import Callable, Optional, Sequence
 
-from PySide2.QtCore import QObject, Signal
+from PySide2.QtCore import QObject, QTimer, Signal
 from PySide2.QtWidgets import QHBoxLayout, QProgressBar, QPushButton, QWidget
 
-from zplcore import printer_io
+from zplcore import firmware, printer_io
 
 
 class _Relay(QObject):
@@ -53,6 +54,8 @@ class BusyBar(QWidget):
         self._was_enabled = []
         self._dead = False
         self._on_done = None
+        self._started = 0.0
+        self._fraction: Optional[float] = None
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -69,6 +72,10 @@ class BusyBar(QWidget):
         self._relay.done.connect(self._finish)
         self._relay.progress.connect(self._show_message)
         self._relay.fraction.connect(self._show_fraction)
+        # Keeps the elapsed time counting while a printer says nothing.
+        self._ticker = QTimer(self)
+        self._ticker.setInterval(1000)
+        self._ticker.timeout.connect(self._refresh_fraction)
         self.hide()
 
     @property
@@ -91,6 +98,8 @@ class BusyBar(QWidget):
         self._cancel_btn.setEnabled(True)
         self._bar.setRange(0, 0)
         self._bar.setTextVisible(False)
+        self._started, self._fraction = time.monotonic(), None
+        self._ticker.start()
         self.show()
         self._on_done = on_done
         token, relay = self._token, self._relay
@@ -133,11 +142,13 @@ class BusyBar(QWidget):
         """Cancel whatever is running and drop its result when it lands -
         for a dialog closing while a call is still out."""
         self._dead = True
+        self._ticker.stop()
         self.cancel()
 
     def _finish(self, result, error) -> None:
         if self._dead:
             return
+        self._ticker.stop()
         self.hide()
         for w, enabled in zip(self._blocked, self._was_enabled):
             w.setEnabled(enabled)
@@ -152,6 +163,13 @@ class BusyBar(QWidget):
     def _show_fraction(self, fraction: float) -> None:
         if self._dead or self._token is None:
             return
+        self._fraction = fraction
         self._bar.setRange(0, 100)
         self._bar.setTextVisible(True)
         self._bar.setValue(int(max(0.0, min(1.0, fraction)) * 100))
+        self._refresh_fraction()
+
+    def _refresh_fraction(self) -> None:
+        if self._fraction is not None and self._token is not None:
+            self._bar.setFormat(firmware.progress_text(
+                self._fraction, time.monotonic() - self._started))

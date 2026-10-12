@@ -9,6 +9,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 import os
+import time
 import base64
 import configparser
 from pathlib import Path
@@ -1969,7 +1970,7 @@ class ZPLViewerWindow(Gtk.Window):
         row.pack_start(update_btn, False, False, 0)
         close_btn = Gtk.Button(label="Close")
         row.pack_end(close_btn, False, False, 0)
-        busy = BusyBar((refresh_btn, browse_btn, update_btn, close_btn), width=200)
+        busy = BusyBar((refresh_btn, browse_btn, update_btn, close_btn), width=330)
         row.pack_end(busy, False, False, 0)
         content.pack_end(row, False, False, 0)
 
@@ -2025,6 +2026,8 @@ class ZPLViewerWindow(Gtk.Window):
             def progress(sent, total):
                 busy.report_fraction(sent / total)
 
+            started = time.monotonic()
+
             def done(_result, error):
                 if isinstance(error, printer_io.Cancelled):
                     status.set_text(
@@ -2034,8 +2037,9 @@ class ZPLViewerWindow(Gtk.Window):
                     status.set_text("Firmware update failed.")
                     self.show_error_dialog(f"Could not send {name}: {error}")
                 else:
+                    took = zpl_firmware.format_elapsed(time.monotonic() - started)
                     status.set_text(
-                        "Firmware sent. The printer will flash it and "
+                        f"Firmware sent in {took}. The printer will flash it and "
                         "restart; press Refresh in a minute to see the new "
                         "version.")
 

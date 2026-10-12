@@ -9942,6 +9942,15 @@ try:
 finally:
     _fw_pio.send = _fw_real_send
 
+check("format_elapsed: m:ss, and h:mm:ss from an hour",
+      [zpl_firmware.format_elapsed(x) for x in (0, 9.9, 65, 3725)]
+      == ["0:00", "0:09", "1:05", "1:02:05"])
+check("progress_text: elapsed, and an estimate once there is one to make",
+      zpl_firmware.progress_text(0.5, 10) == "50%  0:10 elapsed, ~0:10 left"
+      and zpl_firmware.progress_text(0.01, 30) == "1%  0:30 elapsed"
+      and zpl_firmware.progress_text(0.5, 0.4) == "50%  0:00 elapsed"
+      and zpl_firmware.progress_text(1.0, 21) == "100%  0:21 elapsed")
+
 def _fw_listener(received):
     srv = _fw_socket.socket(); srv.bind(('127.0.0.1', 0)); srv.listen(1)
     def serve():

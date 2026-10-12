@@ -7,6 +7,7 @@ status bar - the window owns those, so one action produces one history entry
 wherever it was started from.
 """
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -2809,7 +2810,7 @@ class PrinterFirmwareDialog(QDialog):
         self._close_btn = QPushButton("Close")
         self._busy = BusyBar((self._refresh_btn, self._browse_btn,
                               self._update_btn, self._close_btn),
-                             parent=self, width=200)
+                             parent=self, width=330)
         row.addWidget(self._busy)
         row.addWidget(self._close_btn)
         layout.addLayout(row)
@@ -2866,6 +2867,8 @@ class PrinterFirmwareDialog(QDialog):
         def progress(sent, total):
             self._busy.report_fraction(sent / total)
 
+        started = time.monotonic()
+
         def done(_result, error):
             if isinstance(error, printer_io.Cancelled):
                 self._status.setText(
@@ -2876,8 +2879,9 @@ class PrinterFirmwareDialog(QDialog):
                 self._status.setText("Firmware update failed.")
                 show_error(self, f"Could not send {name}: {error}")
                 return
+            took = zpl_firmware.format_elapsed(time.monotonic() - started)
             self._status.setText(
-                "Firmware sent. The printer will flash it and restart; "
+                f"Firmware sent in {took}. The printer will flash it and restart; "
                 "press Refresh in a minute to see the new version.")
 
         self._busy.run(lambda cancel: zpl_firmware.upload_firmware(
