@@ -2703,11 +2703,23 @@ rather than requirements:
   implementation written without the standard in hand is right for most
   values and wrong for some, which is worse than drawing nothing. Such a
   field keeps its footprint and says which type is missing; its data,
-  including the composite half, round-trips unchanged.
+  including the composite half, round-trips unchanged. The six that are
+  drawn carry the bars a printer draws - types 7 and 8 were captured off a
+  ZT410 and are its symbols module for module - but not its geometry: a
+  printer indents the linear symbol 7 modules past the `^FO`, draws its bars
+  74 modules tall whatever the command's height says (222 dots at a
+  magnification of 3, 148 at 2), and prints no interpretation line. This
+  designer places it at the `^FO`, at the height the command gives, with the
+  line its symbology would show - a `^BR` field is therefore the right
+  symbol in the wrong box, and a label that depends on where a composite
+  sits should be checked on the printer.
 - **`^BR`'s composite component is carried, not drawn.** The field data is
   the linear value, a `|`, and a component that would print above it as a
   MicroPDF417 or PDF417. Only the linear part is drawn; the rest survives a
-  save untouched.
+  save untouched. A ZT410 given the type 7 example draws it: 99 modules
+  wide, starting 4 modules past the `^FO` - three modules left of the linear
+  symbol's own edge - over a separator, the two together pushing the linear
+  symbol 12 modules down the label.
 - **`^B0` and `^BO` are one symbology.** The manual lists Aztec twice under
   both spellings; a file that used `^BO` reads the same and comes back as
   `^B0`, the one this designer writes.
@@ -2828,6 +2840,18 @@ rather than requirements:
   back by the test decoder**, which does not know them. Each was checked
   module for module against BWIPP, the reference implementation, when it was
   written - see `tests/test_decode.py`.
+- **What a decoder calls a UPC or a Codabar is the decoder's, not the
+  symbol's.** zxing-cpp 2.2.1 names a UPC-A `UPCA` and gives its twelve
+  digits, hands a UPC-E back in its compressed eight-digit form, and reports
+  Codabar's data without the start and stop it carries; 3.1.1 uses the
+  EAN-13 spelling, expands a UPC-E into the UPC-A it stands for, and keeps
+  the pair. `tests/test_decode.py` accepts either, and the symbols
+  themselves are settled where a spelling cannot reach: `^BU`, both `^B9`
+  zero-suppression rules, both `^BK` start and stop pairs and `^BR` types 7
+  and 8 were captured off a ZT410 at 203 dpi - stored with `^IS`, fetched
+  back with `^HG` - and are the printer's own bars, run for run, in
+  `tests/test_core.py`'s `printed:` checks. The five linear ones landed on
+  their `^FO` to the dot and as tall as the command asked.
 - **`^BQ`'s model 1 is carried but drawn as model 2.** Model 2 is what the
   manual recommends, what every reader expects, and the only one the encoder
   builds. The parameter round-trips, so a printer still does what the file

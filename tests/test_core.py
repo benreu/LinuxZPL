@@ -1951,6 +1951,44 @@ check("a number UPC-E cannot shorten draws nothing and says why",
 check("and it still has a footprint, so it can be selected and corrected",
       _bad.width > 0 and _bad.height > 0, (_bad.width, _bad.height))
 
+# Printed: the bars of each symbol tests/test_decode.py has to read back
+# through a decoder that reports UPC and Codabar differently from one build to
+# the next. Captured off a ZT410 at 203 dpi - stored with ^IS and fetched with
+# ^HG rather than printed on media - and measured a run at a time: one digit a
+# run here, in modules, bar first. The bars settle which symbol was drawn,
+# whatever a decoder chooses to call it.
+for label, _sym, _value, _params, _printed in (
+        ('^BU', 'upca', '03600029145', None,
+         '11132111411111432113211321111111212231122221113212312122111'),
+        ('^B9', 'upce', '4210000526', None,
+         '111231121221321221211142221111111'),
+        ('^B9', 'upce', '1230000045', None,
+         '111122222121411231112311411111111'),
+        ('^BK A,A', 'codabar', '123456',
+         {'start_char': 'A', 'stop_char': 'A'},
+         '113313111111331111131131331111111131131131111311131111311133131'),
+        ('^BK B,C', 'codabar', '12-34',
+         {'start_char': 'B', 'stop_char': 'C'},
+         '1313113111113311111311311113311133111111113113111113133'),
+        ('^BR type 7', 'databar', '12345678901|composite',
+         {'databar_type': '7'},
+         '11122212122141111321231111411111131212133112321122212122111'),
+        ('^BR type 8', 'databar', '4210000526', {'databar_type': '8'},
+         '111231121221321221211142221111111'),
+):
+    _el = BarcodeElement(0, 0, 60, _value, symbology=_sym, params=_params)
+    _bars = ''.join(str(m) for m in _el.modules())
+    check(f"printed: {label} {_value}'s bars are the printer's, module for "
+          f"module", _bars == _printed, _bars)
+# The five linear ones also printed at their own ^FO to the dot and as tall as
+# their command asked, at ^BY3 and a height of 100. The ^BR pair did not: the
+# printer indents the linear symbol 7 modules past the ^FO, draws its bars 74
+# modules tall whatever the height says (222 dots at a magnification of 3, 148
+# at 2), prints no interpretation line, and with a composite half in the data
+# draws it - 99 modules wide, starting 4 modules past the ^FO - over a
+# separator, pushing the linear symbol 12 modules down. This app honours the
+# ^FO and the height and draws the line; FUNCTIONAL_SPEC.md section 18 says so.
+
 # Code 93's two check characters are not optional the way Code 39's is: ^BA's
 # own e says whether the line shows them, not whether the symbol carries them.
 check("Code 93's check characters for TEST93 are +6",

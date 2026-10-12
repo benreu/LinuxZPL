@@ -10,6 +10,12 @@ Without it the suite says so and passes, rather than failing a machine that
 simply has not installed a test tool:
 
     pip install zxing-cpp        (or: apt install python3-zxing-cpp)
+
+Two builds of it report some symbols differently - apt's 2.2.1 names a UPC-A
+`UPCA` and gives twelve digits, hands a UPC-E back compressed and drops
+Codabar's start and stop, where pip's 3.1.1 uses the EAN-13 spelling, expands
+a UPC-E and keeps the start and stop. Neither is wrong about the bars, so the
+checks that meet this take `alt` and accept either spelling.
 """
 
 import os, sys
@@ -43,11 +49,18 @@ def decoded(zpl: str, width=600, height=600, dpi=203) -> list:
             for result in zxingcpp.read_barcodes(image)]
 
 
-def reads(name: str, zpl: str, expect: str, symbology: str) -> None:
-    """One label, drawn and read back."""
+def reads(name: str, zpl: str, expect: str, symbology: str, alt=()) -> None:
+    """One label, drawn and read back.
+
+    `alt` holds further (format, text) pairs that are the same symbol in
+    another decoder build's spelling. Each one is written out as a literal
+    rather than derived from this app's own tables: the expansion a UPC-E
+    stands for is the thing being checked, so computing it here would check
+    nothing.
+    """
     found = decoded(zpl)
     check(name,
-          len(found) == 1 and found[0] == (symbology, expect),
+          len(found) == 1 and found[0] in ((symbology, expect), *alt),
           found or "nothing decoded")
 
 
@@ -127,19 +140,22 @@ reads("^B2 Interleaved 2 of 5 reads back",
 
 # --- the symbologies added with this one ------------------------------------
 # A UPC-A is an EAN-13 with a leading zero, bar for bar, so a decoder is free
-# to call it either - and reports the thirteen digits. A UPC-E is reported
-# expanded, as the UPC-A it stands for, which is the real check on the
-# zero-suppression table: a wrong rule gives a well-formed symbol for the
-# wrong product code.
+# to call it either - 3.1.1 reports the thirteen digits and 2.2.1 the twelve.
+# A UPC-E is reported expanded by 3.1.1, as the UPC-A it stands for, and
+# compressed by 2.2.1; the expansion is the real check on the zero-suppression
+# table, since a wrong rule gives a well-formed symbol for the wrong product
+# code, and the compressed form is checked against the same table in
+# tests/test_core.py. Each of these three symbols was captured off a ZT410
+# with ^IS and read back the same way as this app draws it, in both builds.
 reads("^BU UPC-A reads back, with the check digit it added itself",
       "^XA^PW600^LL600^FO60,60^BY3^BUN,100^FD03600029145^FS^XZ",
-      "0036000291452", 'EAN13')
+      "0036000291452", 'EAN13', alt=[('UPCA', '036000291452')])
 reads("^B9 UPC-E expands to the UPC-A number it was given",
       "^XA^PW600^LL600^FO60,60^BY3^B9N,100^FD4210000526^FS^XZ",
-      "0042100005264", 'UPCE')
+      "0042100005264", 'UPCE', alt=[('UPCE', '04252614')])
 reads("...and a different suppression rule expands to its own number",
       "^XA^PW600^LL600^FO60,60^BY3^B9N,100^FD1230000045^FS^XZ",
-      "0012300000451", 'UPCE')
+      "0012300000451", 'UPCE', alt=[('UPCE', '01234531')])
 reads("^B8 EAN-8 reads back",
       "^XA^PW600^LL600^FO60,60^BY3^B8N,100^FD9638507^FS^XZ",
       "96385074", 'EAN8')
@@ -149,12 +165,15 @@ reads("^BA Code 93 reads back, its two check characters checking out",
 reads("^BA Code 93 carries the full alphanumeric set",
       "^XA^PW600^LL600^FO60,60^BY2^BAN,100^FDABC-123. $/+%^FS^XZ",
       "ABC-123. $/+%", 'Code93')
+# 2.2.1 reports the data between the start and the stop without them, so the
+# pair itself only shows in 3.1.1's reading. Both were captured off a ZT410:
+# the printer's bars are these, start and stop included.
 reads("^BK Codabar reads back between the start and stop it was given",
       "^XA^PW600^LL600^FO60,60^BY3^BKN,N,100,Y,N,A,A^FD123456^FS^XZ",
-      "A123456A", 'Codabar')
+      "A123456A", 'Codabar', alt=[('Codabar', '123456')])
 reads("...and a different start and stop pair comes back as that pair",
       "^XA^PW600^LL600^FO60,60^BY3^BKN,N,100,Y,N,B,C^FD12-34^FS^XZ",
-      "B12-34C", 'Codabar')
+      "B12-34C", 'Codabar', alt=[('Codabar', '12-34')])
 reads("^BL LOGMARS reads back as the Code 39 it is, check digit and all",
       "^XA^PW600^LL600^FO60,60^BY3^BLN,100^FD12AB^FS^XZ",
       "12ABO", 'Code39')
@@ -432,12 +451,16 @@ reads_maxicode("and it reads the same after the designer has saved it",
 
 # --- ^BR, the six of twelve that are drawn ----------------------------------
 
+# The same two spellings as ^BU and ^B9 above. Both were captured off a
+# ZT410, where the bars are this app's module for module - though the printer
+# places and sizes the symbol differently, and draws the composite half
+# (FUNCTIONAL_SPEC.md section 18).
 reads("^BR type 7 is a UPC-A, composite half and all left off",
       "^XA^PW900^LL400^FO60,60^BRN,7,3,2,100^FD12345678901|composite^FS^XZ",
-      "0123456789012", 'EAN13')
+      "0123456789012", 'EAN13', alt=[('UPCA', '123456789012')])
 reads("^BR type 8 is a UPC-E",
       "^XA^PW900^LL400^FO60,60^BRN,8,3,2,100^FD4210000526^FS^XZ",
-      "0042100005264", 'UPCE')
+      "0042100005264", 'UPCE', alt=[('UPCE', '04252614')])
 reads("^BR type 9 is an EAN-13",
       "^XA^PW900^LL400^FO60,60^BRN,9,3,2,100^FD400638133393^FS^XZ",
       "4006381333931", 'EAN13')
