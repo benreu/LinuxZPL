@@ -195,9 +195,15 @@ check("query_printer_fonts(): no drive is unreadable when every one answers",
 # A real ^HW reply, captured from a printer rather than composed here: its
 # entries carry the drive themselves ("* E:ANI.TTF"), which the manual's own
 # format for the command does not show, and one name runs to the full eight
-# characters with a trailing underscore.
+# characters with a trailing underscore. ABYSSINIA.TTF is not from the
+# capture - it is added here, one character longer than ABYSSINI.TTF, to
+# cover the boundary a real printer's own E:BLUETOOTH.WML once broke: a
+# regex capped at 8 characters used to slide a 9-character name forward by
+# one and silently hand back "BYSSINIA.TTF" instead of failing or keeping
+# the whole name.
 _REAL_HW = (b"\r\n- DIR E:*.TTF \r\n"
             b"* E:ABYSSINI.TTF    312804          \r\n"
+            b"* E:ABYSSINIA.TTF    312804          \r\n"
             b"* E:ANI.TTF    120404          \r\n"
             b"* E:TT0003M_.TTF    169188  P       \r\n"
             b"\r\n-  66119680 bytes free E: ONBOARD FLASH \r\n")
@@ -214,18 +220,40 @@ try:
 finally:
     _font_pio.send = _font_real_send
 check("query_printer_fonts(): a real ^HW reply parses to its fonts and nothing else",
-      _real_listed[0] == {'E:ABYSSINI.TTF', 'E:ANI.TTF', 'E:TT0003M_.TTF'},
+      _real_listed[0] == {'E:ABYSSINI.TTF', 'E:ABYSSINIA.TTF', 'E:ANI.TTF',
+                          'E:TT0003M_.TTF'},
       _real_listed)
+check("query_printer_fonts(): a name over 8 characters comes back whole",
+      'E:ABYSSINIA.TTF' in _real_listed[0]
+      and 'E:BYSSINIA.TTF' not in _real_listed[0], _real_listed)
 # Reachability cannot be judged on the first device alone once every device is
 # asked: R: comes first, and a printer with nothing on R: is not unreachable.
 check("query_printer_fonts(): silence on R: is not unreachable when E: answers",
-      _real_listed is not None and len(_real_listed[0]) == 3, _real_listed)
+      _real_listed is not None and len(_real_listed[0]) == 4, _real_listed)
 check("query_printer_fonts(): and the silent drives come back named",
       _real_listed[1] == ['R', 'B', 'A'], _real_listed[1])
 check("query_printer_fonts(): None only when no device answered at all",
       _silent is None, _silent)
 check("query_printer_fonts(): a drive that lists nothing is an empty set, not None",
       _empty[0] == set(), _empty)
+
+# query_resident_fonts(): Zebra's built-in fonts, conventionally reported as
+# .FNT objects on Z:. ALERTCFG0.FNT is one character past the 8-char cap
+# that used to slide a long name forward and truncate it - see
+# query_printer_fonts()'s own ABYSSINIA.TTF check above for the same bug.
+_RESIDENT_HW = (b"\r\n- DIR Z:*.FNT \r\n"
+                b"* Z:0.FNT    4096          \r\n"
+                b"* Z:A.FNT    4096          \r\n"
+                b"* Z:ALERTCFG0.FNT    4096          \r\n"
+                b"\r\n-  66119680 bytes free Z: READ-ONLY \r\n")
+_font_real_send = _font_pio.send
+_font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: _RESIDENT_HW
+try:
+    _resident = zpl_fonts.query_resident_fonts('h', 1)
+finally:
+    _font_pio.send = _font_real_send
+check("query_resident_fonts(): parses every .FNT object, long name included",
+      _resident == {'0', 'A', 'ALERTCFG0'}, _resident)
 
 # Document.font_device is where a font this app assigns goes; an element that
 # carries a path of its own - anything loaded from a file - overrides it.
@@ -6971,9 +6999,18 @@ def _hw_reply(device, entries):
             ).encode('ascii')
 
 def _only_e_answers(_a, _p, payload, _t, read_reply=False, cancel=None):
-    """A printer whose R: says nothing at all, but whose E: has objects."""
+    """A printer whose R: says nothing at all, but whose E: has objects.
+
+    PANORAMIC.GRF and BLUETOOTH.WML are both over 8 characters - the
+    boundary a regex capped at 8 characters used to slide forward by one
+    and truncate, same as a real printer's E:BLUETOOTH.WML once did. One of
+    each extension, so both query_printer_graphics' GRF-only filter and
+    query_printer_objects' unfiltered listing are each checked against a
+    name their own old regex would have corrupted.
+    """
     if b'^HWE:' in payload:
-        return _hw_reply('E', [('LOGO.GRF', 4488), ('ANI.TTF', 120404)])
+        return _hw_reply('E', [('LOGO.GRF', 4488), ('ANI.TTF', 120404),
+                               ('PANORAMIC.GRF', 9001), ('BLUETOOTH.WML', 1234)])
     return b''
 
 def _nothing_answers(*a, **k):
@@ -6990,9 +7027,10 @@ def _dead_host(_a, _p, payload, _t, read_reply=False, cancel=None):
 
 for _label, _query, _devices, _wanted in (
         ("query_printer_graphics", zpl_graphic_store.query_printer_graphics,
-         zpl_graphic_store.DEVICES, ['E:LOGO.GRF']),
+         zpl_graphic_store.DEVICES, ['E:LOGO.GRF', 'E:PANORAMIC.GRF']),
         ("query_printer_objects", printer_objects.query_printer_objects,
-         printer_objects.DEVICES, ['E:ANI.TTF', 'E:LOGO.GRF'])):
+         printer_objects.DEVICES,
+         ['E:ANI.TTF', 'E:BLUETOOTH.WML', 'E:LOGO.GRF', 'E:PANORAMIC.GRF'])):
     zpl_printer_io.send = _only_e_answers
     try:
         _found = _query('10.0.0.1', 9100)
@@ -9292,7 +9330,7 @@ check("parse_free_space(): and the manual's bare formal shape",
 check("parse_free_space(): a listing with no footer is None",
       zpl_status.parse_free_space('- DIR R:*.*\r\n') is None)
 check("_object_count(): counts the listing's own entry lines",
-      zpl_status._object_count(_REAL_HW.decode()) == 3,
+      zpl_status._object_count(_REAL_HW.decode()) == 4,
       zpl_status._object_count(_REAL_HW.decode()))
 
 # ~HQOD, in both unit systems the manual shows. The unit is the printer's,

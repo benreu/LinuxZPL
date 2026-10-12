@@ -36,8 +36,17 @@ from .graphic_store import split_device_spec
 # completeness, so it gets its own tuple rather than reusing that one.
 DEVICES = ('R', 'E', 'B', 'A', 'Z')
 
-_OBJECT_SPEC = re.compile(r'([A-Za-z0-9_\-]{1,8})\.([A-Za-z0-9_\-]{1,8})',
-                          re.IGNORECASE)
+# Anchored on the literal '*' that starts every object line in a real ^HW
+# reply (confirmed in tests/test_core.py's own hardware-captured fixture:
+# "* E:ANI.TTF    120404          "), with an optional device prefix before
+# the name - not a bare, unanchored scan for an 8-char-capped run of
+# identifier characters, which used to slide a 9+ character name forward by
+# one and quietly return "LUETOOTH.WML" for a real "BLUETOOTH.WML". The name
+# and extension are themselves uncapped: ^HW's own doc describes an 8-char
+# field width, but real replies (WML menus, status icons - anything newer
+# than the classic 8.3 TTF/GRF convention) are not bound by it.
+_OBJECT_SPEC = re.compile(
+    r'\*\s*(?:[A-Za-z]:)?([A-Za-z0-9_\-]+)\.([A-Za-z0-9_\-]+)', re.IGNORECASE)
 
 
 def query_printer_objects(address: str, port: int, timeout: float = 5,

@@ -142,8 +142,15 @@ def device_name(spec: str) -> str:
 DEVICES = ('R', 'E', 'B', 'A')
 GRAPHIC_EXTENSION = 'GRF'
 
-_OBJECT_SPEC = re.compile(r'([A-Za-z0-9_\-]{1,8})\.([A-Za-z0-9_\-]{1,8})',
-                          re.IGNORECASE)
+# Anchored on the literal '*' that starts every object line in a real ^HW
+# reply (confirmed in tests/test_core.py's own hardware-captured fixture),
+# with an optional device prefix before the name - not a bare, unanchored
+# scan for an 8-char-capped run of identifier characters, which used to
+# slide a 9+ character name forward by one and quietly return a wrong,
+# truncated one instead. See printer_objects._OBJECT_SPEC for the same fix
+# and its full reasoning.
+_OBJECT_SPEC = re.compile(
+    r'\*\s*(?:[A-Za-z]:)?([A-Za-z0-9_\-]+)\.([A-Za-z0-9_\-]+)', re.IGNORECASE)
 
 
 def query_printer_graphics(address: str, port: int, timeout: float = 5,

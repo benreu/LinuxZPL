@@ -36,8 +36,19 @@ DEFAULT_DPI = 203
 # Styles preferred when a family ships several faces
 _PREFERRED_STYLES = ('regular', 'book', 'roman', 'normal')
 _UNSAFE_CHARS = re.compile(r'[^A-Z0-9_-]')
-_OBJECT_NAME = re.compile(r'([A-Za-z0-9_\-]{1,8})\.TTF', re.IGNORECASE)
-_FONT_OBJECT_NAME = re.compile(r'([A-Za-z0-9_\-]{1,8})\.FNT', re.IGNORECASE)
+# Anchored on the literal '*' that starts every object line in a real ^HW
+# reply (confirmed in this file's own hardware-captured test fixture), with
+# an optional device prefix before the name - not a bare, unanchored scan
+# for an 8-char-capped run of identifier characters, which used to slide a
+# 9+ character name forward by one and quietly return a wrong, truncated
+# one instead. See zplcore.printer_objects._OBJECT_SPEC for the same fix
+# and its full reasoning. The name itself is uncapped for the same reason;
+# only the extension stays a fixed literal, since each regex exists to pick
+# out one specific object type.
+_OBJECT_NAME = re.compile(r'\*\s*(?:[A-Za-z]:)?([A-Za-z0-9_\-]+)\.TTF',
+                          re.IGNORECASE)
+_FONT_OBJECT_NAME = re.compile(r'\*\s*(?:[A-Za-z]:)?([A-Za-z0-9_\-]+)\.FNT',
+                               re.IGNORECASE)
 
 # Zebra's standard resident fonts - built into printer firmware, not objects
 # that can be uploaded or deleted. Matrix/kind are from the ZPL Programming
