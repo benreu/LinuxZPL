@@ -2849,9 +2849,30 @@ class Document:
             element.x = at[0] - element.width // 2
             element.y = at[1] - element.height // 2
         self._fit_new_element_to_bounds(element)
+        if self._previewing:
+            return element
         self.elements.append(element)
         self.selected_element = element
         return element
+
+    # Set only inside drop_preview, where _append builds without adding
+    _previewing = False
+
+    def drop_preview(self, kind: str, at) -> DesignElement:
+        """The element a palette drop of `kind` at `at` would add, without
+        adding it - what a drag shows under the pointer on its way to the
+        canvas.
+
+        Built by the very add_<kind>_element the drop calls, so its size, its
+        measured text and its barcode's dpi are the dropped element's; only
+        the last step, adding it and selecting it, is skipped. The document,
+        its selection and its history are left as they were.
+        """
+        self._previewing = True
+        try:
+            return getattr(self, f'add_{kind}_element')(at=at)
+        finally:
+            self._previewing = False
 
     def _fit_new_element_to_bounds(self, element) -> None:
         """Bring a freshly placed element fully onto the label.

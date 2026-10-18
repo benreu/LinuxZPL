@@ -14,12 +14,13 @@ The geometry of editing and the text raster live in zplcore, so this file is
 only the Qt half: painting, events and cursors.
 """
 
+import math
 import time
 from typing import Optional
 
 from PySide2.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide2.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter,
-                           QPainterPath, QPen, QPolygonF)
+                           QPainterPath, QPen, QPixmap, QPolygonF)
 from PySide2.QtWidgets import QMenu, QWidget
 
 from zplcore import geometry, graphic_store, graphic_symbols, textraster, view
@@ -1013,6 +1014,24 @@ class DesignCanvas(QWidget):
             self._set_cursor(None)
 
     # --- dropping from the palette -------------------------------------------
+
+    def drag_picture(self, kind: str) -> QPixmap:
+        """The element a palette drag of `kind` would drop, drawn as this
+        canvas draws it at the current zoom. A drop centres the element on
+        the pointer, so the drag holds this at its centre."""
+        element = self.document.drop_preview(kind, (0, 0))
+        scale = self._scale()
+        pad = 2             # room for an outline drawn astride the box's edge
+        pixmap = QPixmap(math.ceil(element.width * scale) + 2 * pad,
+                         math.ceil(element.height * scale) + 2 * pad)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.translate(pad, pad)
+        painter.scale(scale, scale)
+        painter.translate(-element.x, -element.y)
+        self._draw_element(painter, element, False)
+        painter.end()
+        return pixmap
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasFormat(PALETTE_MIME):

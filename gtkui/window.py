@@ -835,7 +835,7 @@ class ZPLViewerWindow(Gtk.Window):
             button.connect("clicked", handler)
             button.drag_source_set(Gdk.ModifierType.BUTTON1_MASK, palette_targets(),
                                    Gdk.DragAction.COPY)
-            button.connect("drag-begin", self._on_palette_drag_begin)
+            button.connect("drag-begin", self._on_palette_drag_begin, kind)
             button.connect("drag-data-get", self._on_palette_drag_data_get, kind)
             toolbar_box.pack_start(button, False, False, 0)
             self._palette[kind] = handler
@@ -3569,8 +3569,16 @@ class ZPLViewerWindow(Gtk.Window):
         """Handle add stored graphic element button click."""
         self.design_canvas.add_stored_graphic_element(at=at)
 
-    def _on_palette_drag_begin(self, button, context):
-        """Drag the button's own picture, held where it was picked up."""
+    def _on_palette_drag_begin(self, button, context, kind):
+        """Drag the element itself, as the canvas will draw it once dropped.
+
+        Except an image, which has no file until the drop asks for one: a
+        blank placeholder box says less than the button, so that drags the
+        button's own picture, held where it was picked up.
+        """
+        if kind != 'image':
+            Gtk.drag_set_icon_surface(context, self.design_canvas.drag_picture(kind))
+            return
         allocation = button.get_allocation()
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32,
                                      allocation.width, allocation.height)

@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide2.QtCore import QMimeData, QSize, Qt, QTimer
+from PySide2.QtCore import QMimeData, QPoint, QSize, Qt, QTimer
 from PySide2.QtGui import QCursor, QDrag, QIcon, QImage, QKeySequence, QPixmap
 from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QScrollArea,
@@ -205,11 +205,20 @@ class ZPLDesignerWindow(QMainWindow):
         # its action never fires, which is right - a drag is not a click.
         button.setDown(False)
         mime = QMimeData()
-        mime.setData(PALETTE_MIME, self._palette_kinds[button].encode())
+        kind = self._palette_kinds[button]
+        mime.setData(PALETTE_MIME, kind.encode())
         drag = QDrag(button)
         drag.setMimeData(mime)
-        drag.setPixmap(button.grab())
-        drag.setHotSpot(hot_spot)
+        if kind == 'image':
+            # No file until the drop asks for one, and a blank placeholder
+            # box says less than the button does.
+            drag.setPixmap(button.grab())
+            drag.setHotSpot(hot_spot)
+        else:
+            # The element itself, as the canvas will draw it once dropped
+            picture = self.canvas.drag_picture(kind)
+            drag.setPixmap(picture)
+            drag.setHotSpot(QPoint(picture.width() // 2, picture.height() // 2))
         drag.exec_(Qt.CopyAction)
         return True
 

@@ -1115,6 +1115,31 @@ check("a drop on the GTK canvas is one undo entry",
 check("every GTK palette button can be dropped", sorted(window._palette) == sorted(
       ['text', 'time', 'serial', 'numbered', 'frame', 'circle', 'ellipse',
        'diagonal', 'barcode', 'image', 'stored_graphic']), sorted(window._palette))
+
+# What a drag shows under the pointer: the element at the canvas's zoom, held
+# at its centre, which is where a drop puts the pointer.
+import math as _math
+undo_before_picture = len(window._undo_stack)
+count_before_picture = len(drop_canvas.elements)
+picture_sizes = {}
+for zoom in (0.5, 2.0):
+    drop_canvas.set_zoom(zoom)
+    for kind in ('text', 'frame', 'barcode'):
+        shown = drop_canvas.document.drop_preview(kind, (0, 0))
+        picture = drop_canvas.drag_picture(kind)
+        width = _math.ceil(shown.width * zoom) + 4
+        height = _math.ceil(shown.height * zoom) + 4
+        picture_sizes[(zoom, kind)] = (
+            (picture.get_width(), picture.get_height(), picture.get_device_offset()),
+            (width, height, (-width / 2, -height / 2)))
+check("the GTK drag picture is the element's box at the canvas's zoom, held at its centre",
+      all(got == want for got, want in picture_sizes.values()), picture_sizes)
+drop_canvas.set_zoom(0.5)
+drawn = drop_canvas.drag_picture('frame')
+check("and the element is drawn on it", max(bytes(drawn.get_data())[3::4]) > 0)
+check("drawing it adds nothing to the design or its history",
+      len(window._undo_stack) == undo_before_picture
+      and len(drop_canvas.elements) == count_before_picture)
 drop_canvas.set_fit(_view.FIT_LABEL)
 
 window.destroy()

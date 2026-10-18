@@ -1380,6 +1380,24 @@ class DesignCanvas(Gtk.DrawingArea):
         if not self.active_handle:
             self._set_cursor(None)
 
+    def drag_picture(self, kind: str) -> cairo.ImageSurface:
+        """The element a palette drag of `kind` would drop, drawn as this
+        canvas draws it at the current zoom and held at its centre - which
+        is the point a drop centres it on."""
+        element = self.document.drop_preview(kind, (0, 0))
+        scale = self._scale()
+        pad = 2             # room for an outline drawn astride the box's edge
+        width = math.ceil(element.width * scale) + 2 * pad
+        height = math.ceil(element.height * scale) + 2 * pad
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+        context = cairo.Context(surface)
+        context.translate(pad, pad)
+        context.scale(scale, scale)
+        context.translate(-element.x, -element.y)
+        self._draw_element(context, element, False)
+        surface.set_device_offset(-width / 2, -height / 2)
+        return surface
+
     def on_drag_data_received(self, widget, context, x, y, data, info, _time):
         """A palette button let go over the canvas: say which, and where in dots."""
         lx, ly = self._screen_to_label(x, y)

@@ -406,6 +406,27 @@ check("a drop on a label too small for the element still lands on it",
       and 0 <= tiny_drop.y and tiny_drop.y + tiny_drop.height <= 60,
       (tiny_drop.x, tiny_drop.y, tiny_drop.width, tiny_drop.height))
 
+# --- what a drag shows under the pointer is the element the drop will add,
+#     built by the same code, and building it adds nothing
+previewed = Document(812, 1218)
+kept = previewed.add_text_element('kept')
+before_preview = previewed.to_zpl()
+previews = {kind: previewed.drop_preview(kind, (400, 600))
+            for kind in ('text', 'time', 'serial', 'numbered', 'frame', 'circle',
+                         'ellipse', 'diagonal', 'barcode', 'stored_graphic')}
+check("a drop preview leaves the document, its selection and its ZPL as they were",
+      previewed.elements == [kept] and previewed.selection == [kept]
+      and previewed.to_zpl() == before_preview,
+      [el.element_type for el in previewed.elements])
+landed = {kind: getattr(previewed, f'add_{kind}_element')(at=(400, 600)) for kind in previews}
+check("each element drops exactly onto its preview",
+      all(type(landed[k]) is type(p)
+          and (landed[k].x, landed[k].y, landed[k].width, landed[k].height)
+          == (p.x, p.y, p.width, p.height) for k, p in previews.items()),
+      {k: ((p.x, p.y, p.width, p.height),
+           (landed[k].x, landed[k].y, landed[k].width, landed[k].height))
+       for k, p in previews.items()})
+
 # --- full round trip against the reference sample ---------------------------
 orig = open(str(Path(__file__).resolve().parent / 'fixtures' / 'sample_300dpi.zpl')).read()
 d1, dpi1 = zpl_parser.parse_zpl(orig); d1.dpi = dpi1
@@ -520,6 +541,28 @@ check("a click on a palette button still adds at the staggered spot",
       len(w.document.elements) == before + 1 and clicked.element_type == 'text'
       and (clicked.x, clicked.y) == (50 + 10 * before, 50 + 10 * before),
       (len(w.document.elements), clicked.element_type, clicked.x, clicked.y))
+
+# what a drag shows under the pointer: the element at the canvas's zoom
+undo_before_picture, count_before_picture = len(w._undo_stack), len(w.document.elements)
+picture_sizes = {}
+for zoom in (0.5, 2.0):
+    w.canvas.set_zoom(zoom)
+    for kind in ('text', 'frame', 'barcode'):
+        shown = w.document.drop_preview(kind, (0, 0))
+        picture = w.canvas.drag_picture(kind)
+        picture_sizes[(zoom, kind)] = (
+            (picture.width(), picture.height()),
+            (math.ceil(shown.width * zoom) + 4, math.ceil(shown.height * zoom) + 4))
+check("the Qt drag picture is the element's box at the canvas's zoom, padded 2 a side",
+      all(got == want for got, want in picture_sizes.values()), picture_sizes)
+w.canvas.set_zoom(0.5)
+drawn = w.canvas.drag_picture('frame').toImage()
+inked = sum(1 for y in range(drawn.height()) for x in range(drawn.width())
+            if drawn.pixelColor(x, y).alpha())
+check("and the element is drawn on it", inked > 0, inked)
+check("drawing it adds nothing to the design or its history",
+      len(w._undo_stack) == undo_before_picture
+      and len(w.document.elements) == count_before_picture)
 w.canvas.set_fit(zpl_view.FIT_LABEL)
 
 # z-order

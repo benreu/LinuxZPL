@@ -1055,10 +1055,17 @@ The element is then centred on the point where it is let go, rather than put at
 the staggered offset, and is brought fully onto the label the same way: a drop
 near an edge lands against that edge at full size. A dropped `+ Image` opens its
 file chooser once the drag has ended, and the image lands at the drop point. A
-drop is one undo entry, like a click. The drag carries only the element's kind,
-under a private type (`application/x-linuxzpl-element`) that is offered to this
-application's own widgets and nothing else. `+ Symbol ▾` stays click-only,
-because dragging out of an open popup menu is unreliable in GTK3.
+drop is one undo entry, like a click.
+
+While the drag is under way, the pointer carries the element itself. It is built
+by the same code the drop will run, drawn as the canvas draws it at the current
+zoom, and held at its centre, so the element lands on the pixels it was dragged
+as - unless a drop near an edge pushes it back onto the label. `+ Image` carries
+the button's own picture instead, because it has no file until the drop asks
+for one. The drag carries only the element's kind, under a private type
+(`application/x-linuxzpl-element`) that is offered to this application's own
+widgets and nothing else. `+ Symbol ▾` stays click-only, because dragging out
+of an open popup menu is unreliable in GTK3.
 
 `Align ▾` opens the same six commands the Edit menu holds, under the same enable
 rules, re-evaluated as the popup opens — the popup can be reached without the
