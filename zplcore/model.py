@@ -2743,16 +2743,17 @@ class Document:
     # --- adding and removing -------------------------------------------------
 
     def _stagger(self, step: int) -> int:
-        """Offset for a new element, so successive additions do not stack."""
+        """Offset for a new element, so successive additions do not stack.
+        Only a click uses it: a dropped element goes where it was dropped."""
         return len(self.elements) * step
 
-    def add_text_element(self, text: str = "New Text") -> TextElement:
+    def add_text_element(self, text: str = "New Text", at=None) -> TextElement:
         offset = self._stagger(10)
         element = TextElement(50 + offset, 50 + offset, text)
         self.sync_text_width(element)
-        return self._append(element)
+        return self._append(element, at)
 
-    def add_time_element(self, text: str = "%m/%d/%y") -> TextElement:
+    def add_time_element(self, text: str = "%m/%d/%y", at=None) -> TextElement:
         """A field the printer's real-time clock fills in (^FC).
 
         Its own creation button and element state rather than a mode of a
@@ -2764,9 +2765,9 @@ class Document:
         element = TextElement(50 + offset, 50 + offset, text)
         element.clock_format = True
         self.sync_text_width(element)
-        return self._append(element)
+        return self._append(element, at)
 
-    def add_serial_element(self, text: str = "1") -> TextElement:
+    def add_serial_element(self, text: str = "1", at=None) -> TextElement:
         """A field the printer increments or decrements each label (^SN).
 
         Its own creation button and element state rather than a mode of a
@@ -2781,9 +2782,9 @@ class Document:
         element.serial_increment = 1
         element.serial_leading_zero = False
         self.sync_text_width(element)
-        return self._append(element)
+        return self._append(element, at)
 
-    def add_numbered_element(self, number: int = 1, prompt=None) -> TextElement:
+    def add_numbered_element(self, number: int = 1, prompt=None, at=None) -> TextElement:
         """A field a stored format recalls by number at print time (^FN).
 
         Its own creation button and element state rather than a mode of a
@@ -2797,45 +2798,56 @@ class Document:
         element.field_number = number
         element.field_prompt = prompt
         self.sync_text_width(element)
-        return self._append(element)
+        return self._append(element, at)
 
-    def add_frame_element(self) -> FrameElement:
+    def add_frame_element(self, at=None) -> FrameElement:
         offset = self._stagger(20)
-        return self._append(FrameElement(100 + offset, 100 + offset))
+        return self._append(FrameElement(100 + offset, 100 + offset), at)
 
-    def add_circle_element(self) -> CircleElement:
+    def add_circle_element(self, at=None) -> CircleElement:
         offset = self._stagger(20)
-        return self._append(CircleElement(100 + offset, 100 + offset))
+        return self._append(CircleElement(100 + offset, 100 + offset), at)
 
-    def add_ellipse_element(self) -> EllipseElement:
+    def add_ellipse_element(self, at=None) -> EllipseElement:
         offset = self._stagger(20)
-        return self._append(EllipseElement(100 + offset, 100 + offset))
+        return self._append(EllipseElement(100 + offset, 100 + offset), at)
 
-    def add_graphic_symbol_element(self, code: str = 'A') -> GraphicSymbolElement:
+    def add_graphic_symbol_element(self, code: str = 'A', at=None) -> GraphicSymbolElement:
         """A ^GS symbol - `code` is its letter, A to E (graphic_symbols.SYMBOLS)."""
         offset = self._stagger(10)
-        return self._append(GraphicSymbolElement(50 + offset, 50 + offset, code))
+        return self._append(GraphicSymbolElement(50 + offset, 50 + offset, code), at)
 
-    def add_diagonal_element(self) -> DiagonalLineElement:
+    def add_diagonal_element(self, at=None) -> DiagonalLineElement:
         offset = self._stagger(20)
-        return self._append(DiagonalLineElement(100 + offset, 100 + offset))
+        return self._append(DiagonalLineElement(100 + offset, 100 + offset), at)
 
-    def add_barcode_element(self) -> BarcodeElement:
+    def add_barcode_element(self, at=None) -> BarcodeElement:
         offset = self._stagger(20)
-        return self._append(BarcodeElement(50 + offset, 250 + offset))
+        return self._append(BarcodeElement(50 + offset, 250 + offset), at)
 
-    def add_image_element(self, image_path: str) -> ImageElement:
+    def add_image_element(self, image_path: str, at=None) -> ImageElement:
         offset = self._stagger(20)
-        return self._append(ImageElement(50 + offset, 50 + offset, 200, 200, image_path))
+        return self._append(ImageElement(50 + offset, 50 + offset, 200, 200, image_path), at)
 
     def add_stored_graphic_element(self, command: str = 'XG',
-                                   device_spec: str = 'R:UNKNOWN.GRF') -> StoredGraphicElement:
+                                   device_spec: str = 'R:UNKNOWN.GRF',
+                                   at=None) -> StoredGraphicElement:
         offset = self._stagger(20)
         return self._append(StoredGraphicElement(50 + offset, 50 + offset, 200, 200,
-                                                  command=command, device_spec=device_spec))
+                                                  command=command, device_spec=device_spec), at)
 
-    def _append(self, element: DesignElement) -> DesignElement:
+    def _append(self, element: DesignElement, at=None) -> DesignElement:
+        """Add a new element and select it.
+
+        `at` is the point, in dots, the element was dropped at from the
+        palette; the element is centred on it. Without one it stays at its
+        staggered offset. Either way it is then brought fully onto the label,
+        so a drop near an edge lands against that edge at full size.
+        """
         self._stamp_dpi(element)
+        if at is not None:
+            element.x = at[0] - element.width // 2
+            element.y = at[1] - element.height // 2
         self._fit_new_element_to_bounds(element)
         self.elements.append(element)
         self.selected_element = element

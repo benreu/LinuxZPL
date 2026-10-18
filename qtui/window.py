@@ -12,8 +12,8 @@ import os
 import sys
 from pathlib import Path
 
-from PySide2.QtCore import QSize, Qt
-from PySide2.QtGui import QCursor, QIcon, QImage, QKeySequence, QPixmap
+from PySide2.QtCore import QMimeData, QSize, Qt, QTimer
+from PySide2.QtGui import QCursor, QDrag, QIcon, QImage, QKeySequence, QPixmap
 from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QScrollArea,
                                QToolBar, QToolButton, QWidget)
@@ -32,7 +32,7 @@ from zplcore.renderer import ZPLRenderer
 
 from . import dialogs as qt_dialogs
 from .busy import BusyBar
-from .canvas import DesignCanvas, to_qimage
+from .canvas import PALETTE_MIME, DesignCanvas, to_qimage
 
 # The align commands, in menu order: the three horizontal, then the three
 # vertical. The GTK frontend spells the same six the same way, and the
@@ -121,6 +121,7 @@ class ZPLDesignerWindow(QMainWindow):
 
         self.canvas.scaleChanged.connect(self._update_zoom_readout)
         self.canvas.zoomAt.connect(self._zoom_at)
+        self.canvas.elementDropped.connect(self.on_element_dropped)
 
         self.scroller = QScrollArea()
         self.scroller.setWidget(self.canvas)
@@ -179,9 +180,46 @@ class ZPLDesignerWindow(QMainWindow):
         self.move(x, y)
 
     def eventFilter(self, watched, event):
-        if watched is self.scroller.viewport() and event.type() == event.Resize:
-            self._sync_view_size()
+        if watched is self.scroller.viewport():
+            if event.type() == event.Resize:
+                self._sync_view_size()
+        elif watched in self._palette_kinds and self._palette_drag(watched, event):
+            return True
         return super().eventFilter(watched, event)
+
+    def _palette_drag(self, button, event) -> bool:
+        """Drag a palette button's element once the pointer, held down on the
+        button, has moved far enough to be a drag rather than a click. True
+        when this event started the drag, so the button never sees it."""
+        if event.type() == event.MouseButtonPress and event.button() == Qt.LeftButton:
+            self._palette_press = event.pos()
+            return False
+        if (event.type() != event.MouseMove or self._palette_press is None
+                or not event.buttons() & Qt.LeftButton):
+            return False
+        if ((event.pos() - self._palette_press).manhattanLength()
+                < QApplication.startDragDistance()):
+            return False
+        hot_spot, self._palette_press = self._palette_press, None
+        # The drag takes the release, so the button would be left pressed in;
+        # its action never fires, which is right - a drag is not a click.
+        button.setDown(False)
+        mime = QMimeData()
+        mime.setData(PALETTE_MIME, self._palette_kinds[button].encode())
+        drag = QDrag(button)
+        drag.setMimeData(mime)
+        drag.setPixmap(button.grab())
+        drag.setHotSpot(hot_spot)
+        drag.exec_(Qt.CopyAction)
+        return True
+
+    def on_element_dropped(self, kind, x, y):
+        """A palette button let go over the canvas: add its element there.
+
+        Once the drag has finished rather than inside it, so + Image's file
+        chooser is not run while the drop is still being delivered.
+        """
+        QTimer.singleShot(0, lambda: self._palette[kind](at=(x, y)))
 
     def _sync_view_size(self):
         """Tell the canvas how much room it has, so a fit can follow it."""
@@ -441,17 +479,29 @@ class ZPLDesignerWindow(QMainWindow):
         toolbar.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.addToolBar(Qt.LeftToolBarArea, toolbar)
 
-        toolbar.addAction(self._action("+ Text", self.on_add_text))
-        toolbar.addAction(self._action("+ Time", self.on_add_time))
-        toolbar.addAction(self._action("+ Serial", self.on_add_serial))
-        toolbar.addAction(self._action("+ Numbered", self.on_add_numbered))
-        toolbar.addAction(self._action("+ Frame", self.on_add_frame))
-        toolbar.addAction(self._action("+ Circle", self.on_add_circle))
-        toolbar.addAction(self._action("+ Ellipse", self.on_add_ellipse))
-        toolbar.addAction(self._action("+ Diagonal", self.on_add_diagonal))
-        toolbar.addAction(self._action("+ Barcode", self.on_add_barcode))
-        toolbar.addAction(self._action("+ Image", self.on_add_image))
-        toolbar.addAction(self._action("+ Graphic", self.on_add_stored_graphic))
+        # A click adds an element at a staggered spot; dragging the button onto
+        # the canvas adds it where it is let go.
+        self._palette = {}         # kind -> its handler
+        self._palette_kinds = {}   # toolbar button -> the kind it adds
+        self._palette_press = None
+        for text, kind, slot in (
+                ("+ Text", 'text', self.on_add_text),
+                ("+ Time", 'time', self.on_add_time),
+                ("+ Serial", 'serial', self.on_add_serial),
+                ("+ Numbered", 'numbered', self.on_add_numbered),
+                ("+ Frame", 'frame', self.on_add_frame),
+                ("+ Circle", 'circle', self.on_add_circle),
+                ("+ Ellipse", 'ellipse', self.on_add_ellipse),
+                ("+ Diagonal", 'diagonal', self.on_add_diagonal),
+                ("+ Barcode", 'barcode', self.on_add_barcode),
+                ("+ Image", 'image', self.on_add_image),
+                ("+ Graphic", 'stored_graphic', self.on_add_stored_graphic)):
+            action = self._action(text, slot)
+            toolbar.addAction(action)
+            button = toolbar.widgetForAction(action)
+            button.installEventFilter(self)
+            self._palette[kind] = slot
+            self._palette_kinds[button] = kind
 
         # One button opening the five ^GS symbols, rather than five buttons
         # on a toolbar that is already text-labelled end to end. Each action
@@ -627,51 +677,51 @@ class ZPLDesignerWindow(QMainWindow):
 
     # --- elements ------------------------------------------------------------
 
-    def on_add_text(self):
-        self.document.add_text_element("New Text")
+    def on_add_text(self, _checked=False, at=None):
+        self.document.add_text_element("New Text", at=at)
         self.canvas.commit()
 
-    def on_add_time(self):
-        self.document.add_time_element()
+    def on_add_time(self, _checked=False, at=None):
+        self.document.add_time_element(at=at)
         self.canvas.commit()
 
-    def on_add_serial(self):
-        self.document.add_serial_element()
+    def on_add_serial(self, _checked=False, at=None):
+        self.document.add_serial_element(at=at)
         self.canvas.commit()
 
-    def on_add_numbered(self):
-        self.document.add_numbered_element()
+    def on_add_numbered(self, _checked=False, at=None):
+        self.document.add_numbered_element(at=at)
         self.canvas.commit()
 
-    def on_add_frame(self):
-        self.document.add_frame_element()
+    def on_add_frame(self, _checked=False, at=None):
+        self.document.add_frame_element(at=at)
         self.canvas.commit()
 
-    def on_add_circle(self):
-        self.document.add_circle_element()
+    def on_add_circle(self, _checked=False, at=None):
+        self.document.add_circle_element(at=at)
         self.canvas.commit()
 
-    def on_add_ellipse(self):
-        self.document.add_ellipse_element()
+    def on_add_ellipse(self, _checked=False, at=None):
+        self.document.add_ellipse_element(at=at)
         self.canvas.commit()
 
-    def on_add_diagonal(self):
-        self.document.add_diagonal_element()
+    def on_add_diagonal(self, _checked=False, at=None):
+        self.document.add_diagonal_element(at=at)
         self.canvas.commit()
 
-    def on_add_barcode(self):
-        self.document.add_barcode_element()
+    def on_add_barcode(self, _checked=False, at=None):
+        self.document.add_barcode_element(at=at)
         self.canvas.commit()
 
-    def on_add_image(self):
+    def on_add_image(self, _checked=False, at=None):
         path = qt_dialogs.choose_image_file(self, "Load Image")
         if not path:
             return
-        self.document.add_image_element(path)
+        self.document.add_image_element(path, at=at)
         self.canvas.commit()
 
-    def on_add_stored_graphic(self):
-        self.document.add_stored_graphic_element()
+    def on_add_stored_graphic(self, _checked=False, at=None):
+        self.document.add_stored_graphic_element(at=at)
         self.canvas.commit()
 
     def on_add_graphic_symbol(self, code: str):

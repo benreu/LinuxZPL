@@ -29,6 +29,15 @@ from zplcore.model import (BarcodeElement, DesignElement, Document,
                            FrameElement, ImageElement, StoredGraphicElement,
                            TextElement)
 
+# What a palette button carries while it is dragged onto the canvas: the kind
+# of element to add, by name ('text', 'frame', ...). Only ever passed between
+# this app's own widgets.
+PALETTE_TARGET = 'application/x-linuxzpl-element'
+
+
+def palette_targets() -> list:
+    return [Gtk.TargetEntry.new(PALETTE_TARGET, Gtk.TargetFlags.SAME_APP, 0)]
+
 
 def to_pixbuf(pil_image) -> Optional[GdkPixbuf.Pixbuf]:
     """A PIL RGBA image as a GdkPixbuf, via PNG."""
@@ -101,6 +110,9 @@ class DesignCanvas(Gtk.DrawingArea):
         # window owns the clipboard and the editors a cut has to close, so it
         # carries the command out.
         'edit-requested': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # (kind, x, y in dots) - a palette button let go over the canvas. The
+        # window adds the element, since it owns the + Image file chooser.
+        'element-dropped': (GObject.SignalFlags.RUN_FIRST, None, (str, int, int)),
     }
 
     # Cursor shown while hovering each resize handle
@@ -154,6 +166,8 @@ class DesignCanvas(Gtk.DrawingArea):
         self.connect("button-release-event", self.on_button_release)
         self.connect("motion-notify-event", self.on_motion)
         self.connect("leave-notify-event", self.on_leave)
+        self.drag_dest_set(Gtk.DestDefaults.ALL, palette_targets(), Gdk.DragAction.COPY)
+        self.connect("drag-data-received", self.on_drag_data_received)
 
         self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK |
                         Gdk.EventMask.BUTTON_RELEASE_MASK |
@@ -237,42 +251,42 @@ class DesignCanvas(Gtk.DrawingArea):
             self.on_change_callback()
         return element
 
-    def add_text_element(self, text: str = "New Text"):
-        return self._added(self.document.add_text_element(text))
+    def add_text_element(self, text: str = "New Text", at=None):
+        return self._added(self.document.add_text_element(text, at=at))
 
-    def add_time_element(self, text: str = "%m/%d/%y"):
-        return self._added(self.document.add_time_element(text))
+    def add_time_element(self, text: str = "%m/%d/%y", at=None):
+        return self._added(self.document.add_time_element(text, at=at))
 
-    def add_serial_element(self, text: str = "1"):
-        return self._added(self.document.add_serial_element(text))
+    def add_serial_element(self, text: str = "1", at=None):
+        return self._added(self.document.add_serial_element(text, at=at))
 
-    def add_numbered_element(self, number: int = 1, prompt=None):
-        return self._added(self.document.add_numbered_element(number, prompt))
+    def add_numbered_element(self, number: int = 1, prompt=None, at=None):
+        return self._added(self.document.add_numbered_element(number, prompt, at=at))
 
-    def add_frame_element(self):
-        return self._added(self.document.add_frame_element())
+    def add_frame_element(self, at=None):
+        return self._added(self.document.add_frame_element(at=at))
 
-    def add_circle_element(self):
-        return self._added(self.document.add_circle_element())
+    def add_circle_element(self, at=None):
+        return self._added(self.document.add_circle_element(at=at))
 
-    def add_ellipse_element(self):
-        return self._added(self.document.add_ellipse_element())
+    def add_ellipse_element(self, at=None):
+        return self._added(self.document.add_ellipse_element(at=at))
 
-    def add_diagonal_element(self):
-        return self._added(self.document.add_diagonal_element())
+    def add_diagonal_element(self, at=None):
+        return self._added(self.document.add_diagonal_element(at=at))
 
-    def add_graphic_symbol_element(self, code: str = 'A'):
-        return self._added(self.document.add_graphic_symbol_element(code))
+    def add_graphic_symbol_element(self, code: str = 'A', at=None):
+        return self._added(self.document.add_graphic_symbol_element(code, at=at))
 
-    def add_barcode_element(self):
-        return self._added(self.document.add_barcode_element())
+    def add_barcode_element(self, at=None):
+        return self._added(self.document.add_barcode_element(at=at))
 
-    def add_image_element(self, image_path: str):
-        return self._added(self.document.add_image_element(image_path))
+    def add_image_element(self, image_path: str, at=None):
+        return self._added(self.document.add_image_element(image_path, at=at))
 
     def add_stored_graphic_element(self, command: str = 'XG',
-                                   device_spec: str = 'R:UNKNOWN.GRF'):
-        return self._added(self.document.add_stored_graphic_element(command, device_spec))
+                                   device_spec: str = 'R:UNKNOWN.GRF', at=None):
+        return self._added(self.document.add_stored_graphic_element(command, device_spec, at=at))
 
     def remove_selected(self):
         if self.document.remove_selected():
@@ -1365,6 +1379,11 @@ class DesignCanvas(Gtk.DrawingArea):
         """Restore the default cursor when the pointer leaves the canvas."""
         if not self.active_handle:
             self._set_cursor(None)
+
+    def on_drag_data_received(self, widget, context, x, y, data, info, _time):
+        """A palette button let go over the canvas: say which, and where in dots."""
+        lx, ly = self._screen_to_label(x, y)
+        self.emit('element-dropped', data.get_data().decode(), lx, ly)
 
     def on_motion(self, widget, event):
         """Handle mouse motion for dragging elements or resizing."""

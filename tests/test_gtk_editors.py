@@ -1078,6 +1078,45 @@ window.printer_dpi = 203
 window.unsaved_changes = False
 window.on_new_clicked()
 
+# --- a palette button dropped on the canvas lands centred where it was let go.
+# GTK hands a drop over as a Gtk.SelectionData, which only a real drag can
+# build; the canvas reads nothing from it but the bytes.
+class _PaletteDrop:
+    def __init__(self, kind):
+        self.kind = kind
+
+    def get_data(self):
+        return self.kind.encode()
+
+
+def _drop_on_canvas(kind, x, y):
+    drop_canvas.on_drag_data_received(drop_canvas, None, x, y, _PaletteDrop(kind), 0, 0)
+    while Gtk.events_pending():      # the element is added once the drag has finished
+        Gtk.main_iteration()
+
+
+from zplcore import view as _view
+drop_canvas = window.design_canvas
+drop_canvas.set_zoom(0.5)
+aim = (drop_canvas.label_width // 4 * 2, drop_canvas.label_height // 4 * 2)
+before_drop, undo_before = len(drop_canvas.elements), len(window._undo_stack)
+_drop_on_canvas('frame', aim[0] / 2, aim[1] / 2)
+dropped_frame = drop_canvas.elements[-1]
+check("a frame dropped on the GTK canvas is centred where it was let go, in dots",
+      len(drop_canvas.elements) == before_drop + 1
+      and dropped_frame.element_type == 'frame'
+      and drop_canvas.document.selected_element is dropped_frame
+      and abs(dropped_frame.x + dropped_frame.width / 2 - aim[0]) <= 1
+      and abs(dropped_frame.y + dropped_frame.height / 2 - aim[1]) <= 1,
+      (aim, dropped_frame.element_type, dropped_frame.x, dropped_frame.y))
+check("a drop on the GTK canvas is one undo entry",
+      len(window._undo_stack) == min(undo_before + 1, window.UNDO_LIMIT),
+      (undo_before, len(window._undo_stack)))
+check("every GTK palette button can be dropped", sorted(window._palette) == sorted(
+      ['text', 'time', 'serial', 'numbered', 'frame', 'circle', 'ellipse',
+       'diagonal', 'barcode', 'image', 'stored_graphic']), sorted(window._palette))
+drop_canvas.set_fit(_view.FIT_LABEL)
+
 window.destroy()
 
 print()

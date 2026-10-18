@@ -312,6 +312,20 @@ class GtkDriver:
         self.canvas.on_button_release(self.canvas,
                                       self._Event(to_x * scale, to_y * scale))
 
+    def drop(self, kind, lx, ly):
+        """Let a palette button go over the canvas at a point in label dots,
+        and wait for its element, which is added once the drag has ended."""
+        from gi.repository import Gtk
+
+        class _Selection:          # all the canvas reads of a real drag's data
+            def get_data(self):
+                return kind.encode()
+        scale = self.canvas._scale()
+        self.canvas.on_drag_data_received(self.canvas, None, lx * scale, ly * scale,
+                                          _Selection(), 0, 0)
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+
     def selection(self):
         """Which elements are selected, as indices into the document."""
         document = self.canvas.document
@@ -618,6 +632,24 @@ class QtDriver:
         self.canvas.mouseMoveEvent(self._event(QEvent.MouseMove, to_x, to_y))
         self.canvas.mouseReleaseEvent(
             self._event(QEvent.MouseButtonRelease, to_x, to_y))
+
+    def drop(self, kind, lx, ly):
+        """Let a palette button go over the canvas at a point in label dots,
+        and wait for its element, which is added once the drag has ended."""
+        from PySide2.QtCore import QMimeData, QPointF, Qt
+        from PySide2.QtGui import QDragEnterEvent, QDropEvent
+        from PySide2.QtWidgets import QApplication
+        from qtui.canvas import PALETTE_MIME
+        scale = self.canvas._scale()
+        point = QPointF(lx * scale, ly * scale)
+        mime = QMimeData()         # held for as long as the events carrying it
+        mime.setData(PALETTE_MIME, kind.encode())
+        # A drop only reaches the widget that took the drag's enter.
+        QApplication.sendEvent(self.canvas, QDragEnterEvent(
+            point.toPoint(), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+        QApplication.sendEvent(self.canvas, QDropEvent(
+            point, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+        self.app.processEvents()
 
     def selection(self):
         """Which elements are selected, as indices into the document."""
@@ -1568,6 +1600,17 @@ def sequence(driver, record):
     _box = driver.elements[3]
     driver.drag_pointer(_box.x + 2, _box.y + 30, 40, 20)
     record('drag the box, which the field after it goes on following')
+
+    # A palette button let go over the canvas, through each frontend's own
+    # drop path: the element is centred on the point, then held on the label.
+    # Zoomed out, where two frontends turning the pointer into dots
+    # differently would land on different dots.
+    driver.set_zoom(0.5)
+    driver.drop('frame', 300, 200)
+    record('drop a frame from the palette')
+    driver.drop('text', 4, 4)
+    record('drop text from the palette into the top left corner')
+    driver.set_zoom(1.0)
 
 
 def main():

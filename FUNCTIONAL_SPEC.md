@@ -1050,6 +1050,16 @@ staggered offset so successive additions do not stack exactly, and becomes the
 selection. There is no Delete button: Delete is in the Edit menu, on the Delete
 key, and in the element's right-click menu (§6.6).
 
+Every palette button except `+ Symbol ▾` can also be dragged onto the canvas.
+The element is then centred on the point where it is let go, rather than put at
+the staggered offset, and is brought fully onto the label the same way: a drop
+near an edge lands against that edge at full size. A dropped `+ Image` opens its
+file chooser once the drag has ended, and the image lands at the drop point. A
+drop is one undo entry, like a click. The drag carries only the element's kind,
+under a private type (`application/x-linuxzpl-element`) that is offered to this
+application's own widgets and nothing else. `+ Symbol ▾` stays click-only,
+because dragging out of an open popup menu is unreliable in GTK3.
+
 `Align ▾` opens the same six commands the Edit menu holds, under the same enable
 rules, re-evaluated as the popup opens — the popup can be reached without the
 Edit menu ever having been shown. One button rather than six: the header bar is

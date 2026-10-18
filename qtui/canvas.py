@@ -25,6 +25,11 @@ from PySide2.QtWidgets import QMenu, QWidget
 from zplcore import geometry, graphic_store, graphic_symbols, textraster, view
 from zplcore.model import DesignElement, Document
 
+# What a palette button carries while it is dragged onto the canvas: the kind
+# of element to add, by name ('text', 'frame', ...). Only ever passed between
+# this app's own widgets.
+PALETTE_MIME = 'application/x-linuxzpl-element'
+
 
 def to_qimage(pil_image) -> Optional[QImage]:
     """A PIL RGBA image as a QImage.
@@ -63,6 +68,9 @@ class DesignCanvas(QWidget):
     # measured before the zoom moves everything, and the window owns the
     # scrollbars, so the window applies the whole thing.
     zoomAt = Signal(object, bool)
+    # (kind, x, y in dots) - a palette button let go over the canvas. The
+    # window adds the element, since it owns the + Image file chooser.
+    elementDropped = Signal(str, int, int)
 
     # Cursor shown while hovering each resize handle
     HANDLE_CURSORS = {
@@ -86,6 +94,7 @@ class DesignCanvas(QWidget):
 
         self.setMouseTracking(True)   # so handle cursors track a hover
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setAcceptDrops(True)     # palette buttons dragged onto the label
 
         self.drag_start = None
         self._drag_changed = False               # a drag moved something
@@ -1002,6 +1011,25 @@ class DesignCanvas(QWidget):
     def leaveEvent(self, event):
         if not self.active_handle:
             self._set_cursor(None)
+
+    # --- dropping from the palette -------------------------------------------
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(PALETTE_MIME):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat(PALETTE_MIME):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        """A palette button let go over the canvas: say which, and where in dots."""
+        if not event.mimeData().hasFormat(PALETTE_MIME):
+            return
+        event.acceptProposedAction()
+        kind = bytes(event.mimeData().data(PALETTE_MIME)).decode()
+        lx, ly = self._screen_to_label(event.pos().x(), event.pos().y())
+        self.elementDropped.emit(kind, lx, ly)
 
     def _set_cursor(self, shape):
         if shape == self._cursor_shape:

@@ -377,6 +377,35 @@ check("a barcode that overshoots a short label is repositioned, not trimmed",
       and placed_barcode.y + placed_barcode.height == roomy.label_height,
       (placed_barcode.y, placed_barcode.height, natural_barcode_height))
 
+# --- a palette button dropped on the canvas lands centred on the point it was
+#     let go at, rather than at the staggered spot a click uses
+dropped = Document(812, 1218)
+centred = [dropped.add_frame_element(at=(400, 600)),
+           dropped.add_text_element('drop', at=(400, 600)),
+           dropped.add_barcode_element(at=(400, 600)),
+           dropped.add_image_element('unused.png', at=(400, 600))]
+check("a dropped element is centred on the drop point",
+      all(abs(el.x + el.width / 2 - 400) <= 1 and abs(el.y + el.height / 2 - 600) <= 1
+          for el in centred),
+      [(el.element_type, el.x, el.y, el.width, el.height) for el in centred])
+check("a dropped element is the selection", dropped.selected_element is centred[-1])
+
+# a drop near a corner lands against it at full size, as a click's overshoot does
+natural = FrameElement(0, 0)
+cornered = [(dropped.add_frame_element(at=point), point)
+            for point in ((0, 0), (812, 0), (0, 1218), (812, 1218))]
+check("a drop at each corner of the label lands against that corner, at full size",
+      all(el.width == natural.width and el.height == natural.height
+          and el.x == (0 if px == 0 else 812 - el.width)
+          and el.y == (0 if py == 0 else 1218 - el.height)
+          for el, (px, py) in cornered),
+      [(el.x, el.y, el.width, el.height) for el, _ in cornered])
+tiny_drop = Document(60, 60).add_barcode_element(at=(30, 30))
+check("a drop on a label too small for the element still lands on it",
+      0 <= tiny_drop.x and tiny_drop.x + tiny_drop.width <= 60
+      and 0 <= tiny_drop.y and tiny_drop.y + tiny_drop.height <= 60,
+      (tiny_drop.x, tiny_drop.y, tiny_drop.width, tiny_drop.height))
+
 # --- full round trip against the reference sample ---------------------------
 orig = open(str(Path(__file__).resolve().parent / 'fixtures' / 'sample_300dpi.zpl')).read()
 d1, dpi1 = zpl_parser.parse_zpl(orig); d1.dpi = dpi1
@@ -420,6 +449,78 @@ w.on_add_frame()
 check("new action discards the redo branch", not w._redo_stack)
 for i in range(60): w.on_add_text()
 check("history capped at 50", len(w._undo_stack) == 50, len(w._undo_stack))
+
+# dropping a palette button on the canvas, and clicking one
+from PySide2.QtCore import QMimeData, QPointF
+from PySide2.QtGui import QDragEnterEvent, QDropEvent
+from zplcore import view as zpl_view
+w.unsaved_changes = False; w.on_new()
+w.canvas.set_zoom(0.5)
+
+def palette_mime(kind):
+    mime = QMimeData()
+    mime.setData(qt_canvas.PALETTE_MIME, kind.encode())
+    return mime
+
+# An event does not own its mime data, so each is held in a name for as long
+# as the event that carries it - a temporary is freed under the event. A drop
+# only reaches the widget that took the drag's enter, so one goes first, as in
+# a real drag.
+def drop_on_canvas(kind, x, y):
+    mime = palette_mime(kind)
+    QApplication.sendEvent(w.canvas, QDragEnterEvent(QPoint(x, y), Qt.CopyAction, mime,
+                                                     Qt.LeftButton, Qt.NoModifier))
+    event = QDropEvent(QPointF(x, y), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    QApplication.sendEvent(w.canvas, event)
+    app.processEvents()      # the element is added once the drag has finished
+    return event.isAccepted()
+
+frame_mime = palette_mime('frame')
+ours = QDragEnterEvent(QPoint(10, 10), Qt.CopyAction, frame_mime,
+                       Qt.LeftButton, Qt.NoModifier)
+QApplication.sendEvent(w.canvas, ours)
+plain_text = QMimeData(); plain_text.setText('not a palette button')
+theirs = QDragEnterEvent(QPoint(10, 10), Qt.CopyAction, plain_text,
+                         Qt.LeftButton, Qt.NoModifier)
+QApplication.sendEvent(w.canvas, theirs)
+check("the Qt canvas takes a palette button's drag and nothing else",
+      ours.isAccepted() and not theirs.isAccepted())
+
+accepted = drop_on_canvas('frame', 200, 300)
+dropped_frame = w.document.elements[-1] if w.document.elements else None
+check("a frame dropped on the Qt canvas is centred where it was let go, in dots",
+      accepted and dropped_frame is not None and dropped_frame.element_type == 'frame'
+      and abs(dropped_frame.x + dropped_frame.width / 2 - 400) <= 1
+      and abs(dropped_frame.y + dropped_frame.height / 2 - 600) <= 1,
+      dropped_frame and (dropped_frame.x, dropped_frame.y))
+check("a drop is one undo entry", len(w._undo_stack) == 1, len(w._undo_stack))
+
+real_choose_image = qt_dialogs.choose_image_file
+qt_dialogs.choose_image_file = lambda parent, title: 'unused.png'
+try:
+    drop_on_canvas('image', 100, 100)
+finally:
+    qt_dialogs.choose_image_file = real_choose_image
+dropped_image = w.document.elements[-1]
+check("+ Image dropped on the Qt canvas asks for its file, then lands where it was let go",
+      dropped_image.element_type == 'image' and dropped_image.image_path == 'unused.png'
+      and abs(dropped_image.x + dropped_image.width / 2 - 200) <= 1
+      and abs(dropped_image.y + dropped_image.height / 2 - 200) <= 1,
+      (dropped_image.element_type, dropped_image.x, dropped_image.y))
+
+# the drag watches every press on a palette button; a click must still get through
+before = len(w.document.elements)
+text_button = next(b for b, kind in w._palette_kinds.items() if kind == 'text')
+QApplication.sendEvent(text_button, QMouseEvent(QEvent.MouseButtonPress, QPointF(5, 5),
+                                                 Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+QApplication.sendEvent(text_button, QMouseEvent(QEvent.MouseButtonRelease, QPointF(5, 5),
+                                                 Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
+clicked = w.document.elements[-1]
+check("a click on a palette button still adds at the staggered spot",
+      len(w.document.elements) == before + 1 and clicked.element_type == 'text'
+      and (clicked.x, clicked.y) == (50 + 10 * before, 50 + 10 * before),
+      (len(w.document.elements), clicked.element_type, clicked.x, clicked.y))
+w.canvas.set_fit(zpl_view.FIT_LABEL)
 
 # z-order
 w.unsaved_changes = False; w.on_new()

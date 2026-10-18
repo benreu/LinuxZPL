@@ -147,7 +147,8 @@ a save would not keep.
 
 1. Add elements with the **+ Text**, **+ Frame**, **+ Circle**, **+ Ellipse**,
    **+ Diagonal**, **+ Barcode** and **+ Image** buttons, and a ®, ©, ™, UL or
-   CSA mark from **+ Symbol ▾**
+   CSA mark from **+ Symbol ▾**. Click a button to add at a staggered spot, or
+   drag it onto the canvas to drop the element where you want it
 2. Drag elements to position them, or drag the handles to resize
 3. Double-click an element to edit it - text, font, barcode value, image file
 4. Right-click an element for **Print This Element**, **Delete** and the z-order actions

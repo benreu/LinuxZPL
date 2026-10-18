@@ -5,6 +5,7 @@ ZPL Viewer - Gtk Application to Display ZPL Output
 A simple GTK3 application for viewing rendered ZPL (Zebra Programming Language) output.
 """
 
+import cairo
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
@@ -41,7 +42,7 @@ from zplcore.model import (DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
 from zplcore.renderer import ZPLRenderer
 
 from .busy import BusyBar
-from .canvas import DesignCanvas, to_pixbuf
+from .canvas import DesignCanvas, palette_targets, to_pixbuf
 from PIL import Image
 import io
 
@@ -815,60 +816,29 @@ class ZPLViewerWindow(Gtk.Window):
         toolbar_box.set_valign(Gtk.Align.START)
         left_box.pack_start(toolbar_box, False, False, 0)
         
-        # Add text button
-        add_text_btn = Gtk.Button(label="+ Text")
-        add_text_btn.connect("clicked", self.on_add_text_clicked)
-        toolbar_box.pack_start(add_text_btn, False, False, 0)
-
-        # Add time button
-        add_time_btn = Gtk.Button(label="+ Time")
-        add_time_btn.connect("clicked", self.on_add_time_clicked)
-        toolbar_box.pack_start(add_time_btn, False, False, 0)
-
-        # Add serial button
-        add_serial_btn = Gtk.Button(label="+ Serial")
-        add_serial_btn.connect("clicked", self.on_add_serial_clicked)
-        toolbar_box.pack_start(add_serial_btn, False, False, 0)
-
-        # Add numbered button
-        add_numbered_btn = Gtk.Button(label="+ Numbered")
-        add_numbered_btn.connect("clicked", self.on_add_numbered_clicked)
-        toolbar_box.pack_start(add_numbered_btn, False, False, 0)
-
-        # Add frame button
-        add_frame_btn = Gtk.Button(label="+ Frame")
-        add_frame_btn.connect("clicked", self.on_add_frame_clicked)
-        toolbar_box.pack_start(add_frame_btn, False, False, 0)
-
-        # Add circle button
-        add_circle_btn = Gtk.Button(label="+ Circle")
-        add_circle_btn.connect("clicked", self.on_add_circle_clicked)
-        toolbar_box.pack_start(add_circle_btn, False, False, 0)
-
-        # Add ellipse button
-        add_ellipse_btn = Gtk.Button(label="+ Ellipse")
-        add_ellipse_btn.connect("clicked", self.on_add_ellipse_clicked)
-        toolbar_box.pack_start(add_ellipse_btn, False, False, 0)
-
-        # Add diagonal line button
-        add_diagonal_btn = Gtk.Button(label="+ Diagonal")
-        add_diagonal_btn.connect("clicked", self.on_add_diagonal_clicked)
-        toolbar_box.pack_start(add_diagonal_btn, False, False, 0)
-        
-        # Add barcode button
-        add_barcode_btn = Gtk.Button(label="+ Barcode")
-        add_barcode_btn.connect("clicked", self.on_add_barcode_clicked)
-        toolbar_box.pack_start(add_barcode_btn, False, False, 0)
-
-        # Add image button
-        add_image_btn = Gtk.Button(label="+ Image")
-        add_image_btn.connect("clicked", self.on_add_image_clicked)
-        toolbar_box.pack_start(add_image_btn, False, False, 0)
-
-        # Add stored graphic button
-        add_stored_graphic_btn = Gtk.Button(label="+ Graphic")
-        add_stored_graphic_btn.connect("clicked", self.on_add_stored_graphic_clicked)
-        toolbar_box.pack_start(add_stored_graphic_btn, False, False, 0)
+        # A click adds an element at a staggered spot; dragging the button onto
+        # the canvas adds it where it is let go.
+        self._palette = {}
+        for label, kind, handler in (
+                ("+ Text", 'text', self.on_add_text_clicked),
+                ("+ Time", 'time', self.on_add_time_clicked),
+                ("+ Serial", 'serial', self.on_add_serial_clicked),
+                ("+ Numbered", 'numbered', self.on_add_numbered_clicked),
+                ("+ Frame", 'frame', self.on_add_frame_clicked),
+                ("+ Circle", 'circle', self.on_add_circle_clicked),
+                ("+ Ellipse", 'ellipse', self.on_add_ellipse_clicked),
+                ("+ Diagonal", 'diagonal', self.on_add_diagonal_clicked),
+                ("+ Barcode", 'barcode', self.on_add_barcode_clicked),
+                ("+ Image", 'image', self.on_add_image_clicked),
+                ("+ Graphic", 'stored_graphic', self.on_add_stored_graphic_clicked)):
+            button = Gtk.Button(label=label)
+            button.connect("clicked", handler)
+            button.drag_source_set(Gdk.ModifierType.BUTTON1_MASK, palette_targets(),
+                                   Gdk.DragAction.COPY)
+            button.connect("drag-begin", self._on_palette_drag_begin)
+            button.connect("drag-data-get", self._on_palette_drag_data_get, kind)
+            toolbar_box.pack_start(button, False, False, 0)
+            self._palette[kind] = handler
 
         # One button opening the five ^GS symbols, rather than five buttons
         # on a toolbar that is already text-labelled end to end. Each item
@@ -931,6 +901,7 @@ class ZPLViewerWindow(Gtk.Window):
         self.design_canvas.connect("element-double-clicked", self.on_element_double_clicked)
         self.design_canvas.connect("scale-changed", self._update_zoom_readout)
         self.design_canvas.connect("zoom-at", self._zoom_at)
+        self.design_canvas.connect("element-dropped", self.on_element_dropped)
 
         # what is selected changes while the menu is closed. Connected here
         # rather than at build time: show_all() emits "show", and the handler
@@ -3529,43 +3500,43 @@ class ZPLViewerWindow(Gtk.Window):
     def on_align_clicked(self, _widget, edge: str):
         self.design_canvas.align_selected(edge)
 
-    def on_add_text_clicked(self, widget):
+    def on_add_text_clicked(self, widget, at=None):
         """Handle add text element button click."""
-        self.design_canvas.add_text_element("New Text")
+        self.design_canvas.add_text_element("New Text", at=at)
 
-    def on_add_time_clicked(self, widget):
+    def on_add_time_clicked(self, widget, at=None):
         """Handle add time element button click."""
-        self.design_canvas.add_time_element()
+        self.design_canvas.add_time_element(at=at)
 
-    def on_add_serial_clicked(self, widget):
+    def on_add_serial_clicked(self, widget, at=None):
         """Handle add serial element button click."""
-        self.design_canvas.add_serial_element()
+        self.design_canvas.add_serial_element(at=at)
 
-    def on_add_numbered_clicked(self, widget):
+    def on_add_numbered_clicked(self, widget, at=None):
         """Handle add numbered element button click."""
-        self.design_canvas.add_numbered_element()
+        self.design_canvas.add_numbered_element(at=at)
 
-    def on_add_frame_clicked(self, widget):
+    def on_add_frame_clicked(self, widget, at=None):
         """Handle add frame element button click."""
-        self.design_canvas.add_frame_element()
+        self.design_canvas.add_frame_element(at=at)
 
-    def on_add_circle_clicked(self, widget):
+    def on_add_circle_clicked(self, widget, at=None):
         """Handle add circle element button click."""
-        self.design_canvas.add_circle_element()
+        self.design_canvas.add_circle_element(at=at)
 
-    def on_add_ellipse_clicked(self, widget):
+    def on_add_ellipse_clicked(self, widget, at=None):
         """Handle add ellipse element button click."""
-        self.design_canvas.add_ellipse_element()
+        self.design_canvas.add_ellipse_element(at=at)
 
-    def on_add_diagonal_clicked(self, widget):
+    def on_add_diagonal_clicked(self, widget, at=None):
         """Handle add diagonal line element button click."""
-        self.design_canvas.add_diagonal_element()
+        self.design_canvas.add_diagonal_element(at=at)
     
-    def on_add_barcode_clicked(self, widget):
+    def on_add_barcode_clicked(self, widget, at=None):
         """Handle add barcode element button click."""
-        self.design_canvas.add_barcode_element()
+        self.design_canvas.add_barcode_element(at=at)
     
-    def on_add_image_clicked(self, widget):
+    def on_add_image_clicked(self, widget, at=None):
         """Handle add image element button click."""
         dialog = Gtk.FileChooserDialog(
             title="Load Image",
@@ -3590,13 +3561,40 @@ class ZPLViewerWindow(Gtk.Window):
         if response == Gtk.ResponseType.OK:
             filepath = dialog.get_filename()
             dialog.destroy()
-            self.design_canvas.add_image_element(filepath)
+            self.design_canvas.add_image_element(filepath, at=at)
         else:
             dialog.destroy()
 
-    def on_add_stored_graphic_clicked(self, widget):
+    def on_add_stored_graphic_clicked(self, widget, at=None):
         """Handle add stored graphic element button click."""
-        self.design_canvas.add_stored_graphic_element()
+        self.design_canvas.add_stored_graphic_element(at=at)
+
+    def _on_palette_drag_begin(self, button, context):
+        """Drag the button's own picture, held where it was picked up."""
+        allocation = button.get_allocation()
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32,
+                                     allocation.width, allocation.height)
+        button.draw(cairo.Context(surface))
+        # A button has no window of its own: the pointer comes back in its
+        # parent's, which the allocation is measured in too.
+        _window, x, y, _mask = button.get_window().get_device_position(
+            context.get_device())
+        surface.set_device_offset(allocation.x - x, allocation.y - y)
+        Gtk.drag_set_icon_surface(context, surface)
+
+    def _on_palette_drag_data_get(self, _button, _context, data, _info, _time, kind):
+        data.set(data.get_target(), 8, kind.encode())
+
+    def on_element_dropped(self, _canvas, kind, x, y):
+        """A palette button let go over the canvas: add its element there.
+
+        Once the drag has finished rather than inside it, so + Image's file
+        chooser is not run while the drop is still being delivered.
+        """
+        def add():
+            self._palette[kind](None, at=(x, y))
+            return False
+        GLib.idle_add(add)
 
     def _build_symbol_menu(self) -> Gtk.Menu:
         """The "+ Symbol" popup: one item per ^GS symbol, each with its
