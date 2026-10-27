@@ -10351,7 +10351,7 @@ check("Qt Printer menu: Firmware Update sits between Console and Status",
       _fw_texts[_fw_texts.index("Console…") + 1:_fw_texts.index("Console…") + 3]
       == ["Firmware Update…", "Status…"], _fw_texts)
 
-_lp_real_list = zpl_local.list_ports
+_lp_real_list, _lp_real_help = zpl_local.list_ports, qt_dialogs.show_help
 try:
     zpl_local.list_ports = lambda: [('/dev/usb/lp3', 'Zebra Technologies ZTC UPS ZT400'),
                                     ('/dev/usb/lp4', '')]
@@ -10373,9 +10373,23 @@ try:
     check("Qt Firmware Update: listing again keeps the port chosen",
           _lp_dlg._local() == zpl_local.LocalPort('/dev/usb/lp3')
           and _lp_dlg._where() == '/dev/usb/lp3', _lp_dlg._where())
+
+    _lp_helped = []
+    qt_dialogs.show_help = lambda parent, title, text: _lp_helped.append((title, text))
+    _lp_hold = _fw_threading.Event()
+    _lp_dlg._busy.run(lambda cancel: _lp_hold.wait(3), lambda r, e: None)
+    _lp_busy_state = (_lp_dlg._help_btn.isEnabled(), _lp_dlg._refresh_btn.isEnabled(),
+                      _lp_dlg._connection.isEnabled())
+    _lp_dlg._help_btn.click()
+    _lp_hold.set()
+    check("Qt Firmware Update: Help opens the shared help text, and stays "
+          "usable while a call is out when Refresh and Connection do not",
+          _lp_helped == [("Firmware Update", zpl_firmware.HELP)]
+          and _lp_busy_state == (True, False, False), (_lp_busy_state, len(_lp_helped)))
     _lp_dlg._busy.abandon(); _lp_dlg.deleteLater()
 finally:
     zpl_local.list_ports = _lp_real_list
+    qt_dialogs.show_help = _lp_real_help
 
 # Uploading a template to the printer's flash or RAM.
 _td = zpl_parser.parse_zpl("^XA^DFR:OLD.GRF^FS^FO10,10^A0N,30,30^FDhi^FS^XZ")[0]

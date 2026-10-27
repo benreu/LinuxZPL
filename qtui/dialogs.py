@@ -104,6 +104,16 @@ def show_error(parent, message: str):
     box.exec_()
 
 
+def show_help(parent, title: str, text: str):
+    """A window's Help: `text` is plain, shared with the GTK frontend."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Information)
+    box.setWindowTitle(f"{title} Help")
+    box.setText(title)
+    box.setInformativeText(text)
+    box.exec_()
+
+
 def _buttons(dialog, accept_text="OK"):
     box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog)
     box.button(QDialogButtonBox.Ok).setText(accept_text)
@@ -2815,6 +2825,10 @@ class PrinterFirmwareDialog(QDialog):
         layout.addStretch(1)
 
         row = QHBoxLayout()
+        # Not one of the BusyBar's blocked buttons: Help is most wanted while
+        # an upload is going wrong.
+        self._help_btn = QPushButton("Help")
+        row.addWidget(self._help_btn)
         self._update_btn = QPushButton("Update")
         self._update_btn.setEnabled(False)
         row.addWidget(self._update_btn)
@@ -2832,6 +2846,8 @@ class PrinterFirmwareDialog(QDialog):
         self._connection.currentIndexChanged.connect(self._ask_version)
         self._browse_btn.clicked.connect(self._on_browse)
         self._update_btn.clicked.connect(self._on_update)
+        self._help_btn.clicked.connect(
+            lambda: show_help(self, "Firmware Update", zpl_firmware.HELP))
         self._close_btn.clicked.connect(self.reject)
         QTimer.singleShot(0, self._ask_version)
 

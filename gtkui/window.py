@@ -1947,6 +1947,10 @@ class ZPLViewerWindow(Gtk.Window):
         content.pack_start(status, False, False, 0)
 
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # Not one of the BusyBar's blocked buttons: Help is most wanted while
+        # an upload is going wrong.
+        help_btn = Gtk.Button(label="Help")
+        row.pack_start(help_btn, False, False, 0)
         update_btn = Gtk.Button(label="Update")
         update_btn.set_sensitive(False)
         row.pack_start(update_btn, False, False, 0)
@@ -2063,6 +2067,8 @@ class ZPLViewerWindow(Gtk.Window):
         refresh_btn.connect("clicked", on_refresh)
         browse_btn.connect("clicked", on_browse)
         update_btn.connect("clicked", on_update)
+        help_btn.connect("clicked", lambda _b: self.show_help_dialog(
+            dialog, "Firmware Update", zpl_firmware.HELP))
         close_btn.connect("clicked", lambda _b: dialog.response(Gtk.ResponseType.CLOSE))
         dialog.show_all()
         ask_version()
@@ -5111,6 +5117,16 @@ class ZPLViewerWindow(Gtk.Window):
             text="Error"
         )
         dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
+
+    def show_help_dialog(self, parent, title: str, text: str):
+        """A window's Help: `text` is plain, shared with the Qt frontend."""
+        dialog = Gtk.MessageDialog(
+            parent=parent, flags=0, message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK, text=title)
+        dialog.set_title(f"{title} Help")
+        dialog.format_secondary_text(text)
         dialog.run()
         dialog.destroy()
 

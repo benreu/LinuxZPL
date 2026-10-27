@@ -18,6 +18,40 @@ CHUNK = 16 * 1024
 # Generous: a printer can stop reading for a while as it erases flash.
 UPLOAD_TIMEOUT = 60
 
+# What Help in Printer -> Firmware Update says, in both frontends. Forced
+# Download Mode is how a ZT410 running a special build was got to take a
+# standard V75 file on 2026-10-27, after it refused it running normally;
+# the button holds are Zebra's, per model.
+HELP = """\
+Connection: Network sends to this session's printer. USB lists every USB \
+printer this computer can see, by the name the printer gives itself. Its \
+/dev/usb/lpN number can change when a printer restarts or is plugged in \
+again, so Refresh lists them again.
+
+The file: Zebra ships firmware as a .zip. Unpack it and choose the .zpl \
+file inside, such as V75.20.21Z.zpl. It is sent exactly as it is.
+
+If the printer refuses it: the printer checks the file as it arrives and \
+shows "Download failed" on its own display if it will not take it. This \
+window cannot see that, and goes on sending to the end. Put the printer in \
+Forced Download Mode and send the file again:
+1. Switch the printer off.
+2. Hold the top two menu buttons (ZT410, ZT420) or all three (ZT411, \
+ZT421). Other models differ; Zebra's support site has each one's.
+3. Switch it on, still holding them, until the display shows "Download \
+New Firmware" and "USB: Active".
+4. Press Refresh, choose the printer's USB entry, and press Update. The \
+current firmware may show as unavailable in this mode; that does not stop \
+the update.
+
+The printer's network is off in Forced Download Mode, so it has to be USB.
+
+Once the printer has the whole file it flashes it and restarts by itself. \
+Do not switch it off before it has.
+
+No permission to open a USB printer: add yourself to the group the message \
+names (usually lp), then log out and back in."""
+
 
 def format_elapsed(seconds: float) -> str:
     """m:ss, or h:mm:ss from an hour up."""

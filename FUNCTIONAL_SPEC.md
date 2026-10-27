@@ -2202,6 +2202,16 @@ away earlier is a failure. On USB the upload also waits for the printer to take
 the last write before closing the port, since closing would cut it off, so a
 stall there is a failure even at 100%.
 
+Whether to take a file is the printer's decision, and only its own display shows
+it: a printer that refuses one says "Download failed" and goes on accepting and
+discarding the rest, so this window sends to the end and reports it sent. A ZT410
+running a special build did exactly that with a standard V75 file, then took the
+same file over USB in forced download mode. **Help** explains the window in
+plain text both frontends share (`firmware.HELP`): the connections, unpacking the
+`.zpl` from Zebra's zip, forced download mode step by step with each model's
+buttons, and the `lp` group. Help is left out of the busy row's blocked buttons,
+since it is most wanted while an upload is going wrong.
+
 ---
 
 ## 11. Print resolution
