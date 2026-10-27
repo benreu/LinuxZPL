@@ -29,7 +29,8 @@ from PySide2.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QWidget)
 
 from zplcore import (fields as zpl_fields, firmware as zpl_firmware,
-                     fonts as zpl_fonts, geometry, graphic_store, printer_io, printer_objects,
+                     fonts as zpl_fonts, geometry, graphic_store,
+                     local_port as zpl_local, printer_io, printer_objects,
                      printer_status, textraster, workflow)
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
@@ -2768,6 +2769,11 @@ class PrinterFirmwareDialog(QDialog):
     Modal, like the Fonts/Graphics/Objects managers: nothing else should
     touch the printer while its flash is being written. The upload's bar is
     the BusyBar's, switched to a percentage by report_fraction.
+
+    The printer is the session's network one, or any USB printer this
+    machine has - the way in to one in forced download mode. Refresh looks
+    for USB printers again, since one that restarts into that mode can come
+    back under another number.
     """
 
     def __init__(self, parent, address: str, port: int):
@@ -2780,7 +2786,13 @@ class PrinterFirmwareDialog(QDialog):
         self._size = 0
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f"Printer: {address}:{port}"))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Connection:"))
+        self._connection = QComboBox()
+        row.addWidget(self._connection, 1)
+        layout.addLayout(row)
+        self._list_connections()
+
         row = QHBoxLayout()
         self._current = QLabel("Current firmware: checking\u2026")
         self._current.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -2808,25 +2820,55 @@ class PrinterFirmwareDialog(QDialog):
         row.addWidget(self._update_btn)
         row.addStretch(1)
         self._close_btn = QPushButton("Close")
-        self._busy = BusyBar((self._refresh_btn, self._browse_btn,
-                              self._update_btn, self._close_btn),
+        self._busy = BusyBar((self._connection, self._refresh_btn,
+                              self._browse_btn, self._update_btn,
+                              self._close_btn),
                              parent=self, width=330)
         row.addWidget(self._busy)
         row.addWidget(self._close_btn)
         layout.addLayout(row)
 
         self._refresh_btn.clicked.connect(self._on_refresh)
+        self._connection.currentIndexChanged.connect(self._ask_version)
         self._browse_btn.clicked.connect(self._on_browse)
         self._update_btn.clicked.connect(self._on_update)
         self._close_btn.clicked.connect(self.reject)
-        QTimer.singleShot(0, self._on_refresh)
+        QTimer.singleShot(0, self._ask_version)
 
     def reject(self):
         self._busy.abandon()
         super().reject()
 
+    def _list_connections(self):
+        """Network first, then every USB printer, keeping the one chosen if
+        it is still there."""
+        chosen = self._connection.currentData()
+        self._connection.blockSignals(True)
+        self._connection.clear()
+        self._connection.addItem(f"Network: {self._address}:{self._port}", None)
+        for path, described in zpl_local.list_ports():
+            self._connection.addItem(
+                f"USB: {path} ({described})" if described else f"USB: {path}", path)
+            if path == chosen:
+                self._connection.setCurrentIndex(self._connection.count() - 1)
+        self._connection.blockSignals(False)
+
+    def _local(self) -> Optional[zpl_local.LocalPort]:
+        """The chosen USB port, or None for the network printer."""
+        path = self._connection.currentData()
+        return zpl_local.LocalPort(path) if path else None
+
+    def _where(self) -> str:
+        local = self._local()
+        return local.path if local else f"{self._address}:{self._port}"
+
     def _on_refresh(self):
+        self._list_connections()
+        self._ask_version()
+
+    def _ask_version(self, _index=None):
         self._current.setText("Current firmware: checking\u2026")
+        local = self._local()
 
         def done(version, error):
             if isinstance(error, printer_io.Cancelled):
@@ -2835,9 +2877,11 @@ class PrinterFirmwareDialog(QDialog):
             self._current.setText(
                 f"Current firmware: {version}" if version and error is None
                 else "Current firmware: unavailable")
+            if isinstance(error, PermissionError):
+                self._status.setText(str(error))
 
         self._busy.run(lambda cancel: zpl_firmware.current_firmware(
-            self._address, self._port, cancel=cancel), done)
+            self._address, self._port, cancel=cancel, local=local), done)
 
     def _on_browse(self):
         path, _ = QFileDialog.getOpenFileName(self, "Choose Firmware File")
@@ -2858,10 +2902,9 @@ class PrinterFirmwareDialog(QDialog):
 
     def _on_update(self):
         if self._path is None or not ask_firmware_update(
-                self, Path(self._path).name, self._size,
-                self._address, self._port):
+                self, Path(self._path).name, self._size, self._where()):
             return
-        path, name = self._path, Path(self._path).name
+        path, name, local = self._path, Path(self._path).name, self._local()
         self._status.setText(f"Sending {name}\u2026")
 
         def progress(sent, total):
@@ -2886,7 +2929,7 @@ class PrinterFirmwareDialog(QDialog):
 
         self._busy.run(lambda cancel: zpl_firmware.upload_firmware(
             self._address, self._port, path, progress=progress,
-            cancel=cancel), done)
+            cancel=cancel, local=local), done)
 
 
 class PrinterStatusDialog(QDialog):
@@ -3201,13 +3244,14 @@ def ask_delete_object(parent, spec: str, address: str, port: int) -> bool:
     return box.clickedButton() is delete
 
 
-def ask_firmware_update(parent, name: str, size: int, address: str, port: int) -> bool:
-    """Whether to really send firmware - the printer reboots and an
-    interrupted flash can leave it unusable, so it is asked every time."""
+def ask_firmware_update(parent, name: str, size: int, where: str) -> bool:
+    """Whether to really send firmware to `where` (address:port, or a device
+    path) - the printer reboots and an interrupted flash can leave it
+    unusable, so it is asked every time."""
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Warning)
     box.setWindowTitle("Update Firmware")
-    box.setText(f"Send {name} ({size:,} bytes) to {address}:{port}?")
+    box.setText(f"Send {name} ({size:,} bytes) to {where}?")
     box.setInformativeText(
         "The printer will flash the file and restart. Do not switch it off "
         "or cancel while it is being written: an interrupted update can "

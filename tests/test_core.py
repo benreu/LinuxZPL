@@ -10219,6 +10219,129 @@ with tempfile.TemporaryDirectory() as _fw_dir:
           _fw_o == 'Cancelled' and sum(map(len, _fw_got)) < len(_fw_blob),
           (_fw_o, sum(map(len, _fw_got))))
 
+# The same file down a USB port. A FIFO stands in for /dev/usb/lpN: a node
+# that is not a tty, opened, written and drained the same way.
+import pty as _lp_pty, tty as _lp_tty
+from zplcore import local_port as zpl_local
+
+check("describe_1284: a Zebra's long keys and the usual short ones",
+      zpl_local.describe_1284('MANUFACTURER:Zebra Technologies ;COMMAND SET:ZPL;'
+                              'MODEL:ZTC UPS ZT400;CLASS:PRINTER;OPTIONS:XML;')
+      == 'Zebra Technologies ZTC UPS ZT400'
+      and zpl_local.describe_1284('MFG:Brother;CMD:PJL,HBP;MDL:HL-2140 series;'
+                                  'CLS:PRINTER;') == 'Brother HL-2140 series'
+      and zpl_local.describe_1284('CLS:PRINTER;') == '')
+
+with tempfile.TemporaryDirectory() as _lp_dir:
+    _lp_root = Path(_lp_dir)
+    (_lp_root / 'dev' / 'usb').mkdir(parents=True)
+    for _lp_name in ('lp10', 'lp3', 'hiddev0'):
+        (_lp_root / 'dev' / 'usb' / _lp_name).touch()
+    _lp_sys = _lp_root / 'sys' / 'class' / 'usbmisc' / 'lp3' / 'device'
+    _lp_sys.mkdir(parents=True)
+    (_lp_sys / 'ieee1284_id').write_text(
+        'MANUFACTURER:Zebra Technologies ;MODEL:ZTC UPS ZT400;')
+    _lp_found = zpl_local.list_ports(str(_lp_root / 'dev'), str(_lp_root / 'sys'))
+    check("list_ports: USB printer nodes in number order, described when the "
+          "printer says what it is, hiddev left out",
+          _lp_found == [(str(_lp_root / 'dev/usb/lp3'), 'Zebra Technologies ZTC UPS ZT400'),
+                        (str(_lp_root / 'dev/usb/lp10'), '')], _lp_found)
+
+    _lp_file = _lp_root / 'fw.zpl'; _lp_file.write_bytes(_fw_blob)
+
+    def _lp_reader(fifo, received):
+        def drain():
+            with open(fifo, 'rb') as f:
+                while True:
+                    data = f.read(4096)
+                    if not data:
+                        break
+                    received.append(data)
+        th = _fw_threading.Thread(target=drain, daemon=True); th.start()
+        return th
+
+    _lp_fifo = _lp_root / 'lp0'; os.mkfifo(_lp_fifo)
+    _lp_port = zpl_local.LocalPort(str(_lp_fifo))
+    _lp_got, _lp_prog = [], []
+    _lp_th = _lp_reader(_lp_fifo, _lp_got)
+    _lp_sent = zpl_firmware.upload_firmware(
+        'unused', 0, _lp_file, progress=lambda a, b: _lp_prog.append((a, b)),
+        local=_lp_port)
+    _lp_th.join(3)
+    check("upload_firmware down a local port sends the file byte for byte",
+          b''.join(_lp_got) == _fw_blob and _lp_sent == len(_fw_blob),
+          sum(map(len, _lp_got)))
+    check("upload_firmware down a local port: progress rises to the total",
+          len(_lp_prog) > 1 and _lp_prog[-1] == (len(_fw_blob), len(_fw_blob))
+          and [a for a, _ in _lp_prog] == sorted(a for a, _ in _lp_prog), _lp_prog[-1:])
+
+    # Nobody reads, so the FIFO fills at 64 KB and the printer has "stopped".
+    try:
+        zpl_local.send_stream(_lp_port, [_fw_blob], len(_fw_blob), 0.5)
+        _lp_o = 'returned'
+    except TimeoutError as e:
+        _lp_o = str(e)
+    check("a local port that stops taking data is a TimeoutError naming it",
+          _lp_o == f"{_lp_fifo} stopped taking data for 0.5 s", _lp_o)
+
+    _lp_tok = _fw_pio.CancelToken(); _lp_got = []
+    _lp_th = _lp_reader(_lp_fifo, _lp_got)
+    try:
+        zpl_firmware.upload_firmware('unused', 0, _lp_file,
+                                     progress=lambda a, b: _lp_tok.cancel(),
+                                     cancel=_lp_tok, local=_lp_port)
+        _lp_o = 'returned'
+    except _fw_pio.Cancelled:
+        _lp_o = 'Cancelled'
+    _lp_th.join(3)
+    check("upload_firmware down a local port: cancel raises Cancelled and stops short",
+          _lp_o == 'Cancelled' and sum(map(len, _lp_got)) < len(_fw_blob),
+          (_lp_o, sum(map(len, _lp_got))))
+    try:
+        zpl_local.send(_lp_port, b'~HI', 1, cancel=_lp_tok); _lp_o = 'returned'
+    except _fw_pio.Cancelled:
+        _lp_o = 'Cancelled'
+    check("a local send with a token already cancelled never opens the port",
+          _lp_o == 'Cancelled', _lp_o)
+
+    _lp_locked = _lp_root / 'locked'; _lp_locked.touch(); _lp_locked.chmod(0)
+    try:
+        zpl_local.send(zpl_local.LocalPort(str(_lp_locked)), b'~HI', 1)
+        _lp_o = 'returned'
+    except PermissionError as e:
+        _lp_o = str(e)
+    _lp_group = __import__('grp').getgrgid(_lp_locked.stat().st_gid).gr_name
+    check("a port this user may not open says which group to join",
+          os.geteuid() == 0 or _lp_o == (
+              f"No permission to open {_lp_locked}: add yourself to the "
+              f"'{_lp_group}' group (sudo usermod -aG {_lp_group} $USER) "
+              "and log in again."), _lp_o)
+    try:
+        zpl_firmware.current_firmware('unused', 0,
+                                      local=zpl_local.LocalPort(str(_lp_locked)))
+        _lp_o = 'returned'
+    except PermissionError:
+        _lp_o = 'PermissionError'
+    check("current_firmware lets a permission problem through rather than "
+          "calling the printer unavailable",
+          os.geteuid() == 0 or _lp_o == 'PermissionError', _lp_o)
+
+# A pty is a printer that answers: what is written to its slave end comes out
+# of the master, and the master's reply is read back from the slave.
+_lp_master, _lp_slave = _lp_pty.openpty()
+_lp_tty.setraw(_lp_slave)
+_lp_heard = []
+def _lp_answer():
+    _lp_heard.append(os.read(_lp_master, 64))
+    os.write(_lp_master, b'\x02ZT410-200dpi,V75.20.21Z,8,4096KB\x03\r\n')
+_lp_th = _fw_threading.Thread(target=_lp_answer, daemon=True); _lp_th.start()
+_lp_version = zpl_firmware.current_firmware(
+    'unused', 0, local=zpl_local.LocalPort(os.ttyname(_lp_slave)))
+_lp_th.join(3)
+os.close(_lp_master); os.close(_lp_slave)
+check("current_firmware asks ~HI down a local port and reads the version back",
+      _lp_heard == [b'~HI'] and _lp_version == 'V75.20.21Z', (_lp_heard, _lp_version))
+
 _fw_texts = None
 for _fw_act in _cw_win.menuBar().actions():
     if _fw_act.text() == "&Printer":
@@ -10227,6 +10350,32 @@ check("Qt Printer menu: Firmware Update sits between Console and Status",
       _fw_texts is not None and
       _fw_texts[_fw_texts.index("Console…") + 1:_fw_texts.index("Console…") + 3]
       == ["Firmware Update…", "Status…"], _fw_texts)
+
+_lp_real_list = zpl_local.list_ports
+try:
+    zpl_local.list_ports = lambda: [('/dev/usb/lp3', 'Zebra Technologies ZTC UPS ZT400'),
+                                    ('/dev/usb/lp4', '')]
+    _lp_dlg = qt_dialogs.PrinterFirmwareDialog(None, '192.168.50.94', 9100)
+    _lp_items = [_lp_dlg._connection.itemText(i) for i in range(_lp_dlg._connection.count())]
+    check("Qt Firmware Update: the network printer first, then each USB printer",
+          _lp_items == ["Network: 192.168.50.94:9100",
+                        "USB: /dev/usb/lp3 (Zebra Technologies ZTC UPS ZT400)",
+                        "USB: /dev/usb/lp4"]
+          and _lp_dlg._local() is None and _lp_dlg._where() == '192.168.50.94:9100',
+          _lp_items)
+    _lp_dlg._connection.blockSignals(True)
+    _lp_dlg._connection.setCurrentIndex(1)
+    _lp_dlg._connection.blockSignals(False)
+    # Another printer is plugged in ahead of it: Refresh keeps the choice by
+    # path, not by its place in the list.
+    zpl_local.list_ports = lambda: [('/dev/usb/lp1', ''), ('/dev/usb/lp3', '')]
+    _lp_dlg._list_connections()
+    check("Qt Firmware Update: listing again keeps the port chosen",
+          _lp_dlg._local() == zpl_local.LocalPort('/dev/usb/lp3')
+          and _lp_dlg._where() == '/dev/usb/lp3', _lp_dlg._where())
+    _lp_dlg._busy.abandon(); _lp_dlg.deleteLater()
+finally:
+    zpl_local.list_ports = _lp_real_list
 
 # Uploading a template to the printer's flash or RAM.
 _td = zpl_parser.parse_zpl("^XA^DFR:OLD.GRF^FS^FO10,10^A0N,30,30^FDhi^FS^XZ")[0]

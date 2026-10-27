@@ -4,12 +4,15 @@ Firmware for a printer: what it runs now, and sending it a new file.
 A Zebra firmware file is not wrapped in any command. It is sent to the raw
 port exactly as downloaded, and the printer flashes itself and restarts - so
 there is nothing to read back, and the upload is only a long send_stream().
+
+Either over the network, or down a USB port (local_port.py) - the one way in
+to a printer in forced download mode, whose network is not running.
 """
 
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import printer_io, printer_status
+from . import local_port, printer_io, printer_status
 
 CHUNK = 16 * 1024
 # Generous: a printer can stop reading for a while as it erases flash.
@@ -38,11 +41,22 @@ def progress_text(fraction: float, elapsed: float) -> str:
 
 
 def current_firmware(address: str, port: int,
-                     cancel: Optional[printer_io.CancelToken] = None) -> Optional[str]:
+                     cancel: Optional[printer_io.CancelToken] = None,
+                     local: Optional[local_port.LocalPort] = None) -> Optional[str]:
     """The firmware version ~HI reports, or None if the printer could not be
-    asked or did not answer in a form ~HI has. Cancelled propagates."""
+    asked or did not answer in a form ~HI has. With `local` the printer is
+    asked on that port instead, and `address` and `port` are not used.
+
+    Cancelled propagates, and so does PermissionError: neither means the
+    printer is out of reach, and a port this user may not open has a fix
+    they need to be told."""
     try:
-        reply = printer_io.send_command(address, port, '~HI', cancel=cancel)
+        if local is not None:
+            reply = local_port.send_command(local, '~HI', cancel=cancel)
+        else:
+            reply = printer_io.send_command(address, port, '~HI', cancel=cancel)
+    except PermissionError:
+        raise
     except OSError:
         return None
     ident = printer_status.parse_host_identification(reply)
@@ -51,8 +65,11 @@ def current_firmware(address: str, port: int,
 
 def upload_firmware(address: str, port: int, path,
                     progress: Optional[Callable[[int, int], None]] = None,
-                    cancel: Optional[printer_io.CancelToken] = None) -> int:
+                    cancel: Optional[printer_io.CancelToken] = None,
+                    local: Optional[local_port.LocalPort] = None) -> int:
     """Send the firmware file at `path`; returns the number of bytes sent.
+    With `local` it goes down that port instead of to `address`:`port`, and
+    UPLOAD_TIMEOUT is how long the printer may stop taking data.
 
     `progress(sent, total)` is called from the calling thread after each
     chunk. Raises ValueError for a file that is missing, not a file, or empty,
@@ -74,6 +91,10 @@ def upload_firmware(address: str, port: int, path,
                     return
                 yield chunk
 
-    printer_io.send_stream(address, port, chunks(), total, UPLOAD_TIMEOUT,
-                           cancel=cancel, progress=progress)
+    if local is not None:
+        local_port.send_stream(local, chunks(), total, UPLOAD_TIMEOUT,
+                               cancel=cancel, progress=progress)
+    else:
+        printer_io.send_stream(address, port, chunks(), total, UPLOAD_TIMEOUT,
+                               cancel=cancel, progress=progress)
     return total

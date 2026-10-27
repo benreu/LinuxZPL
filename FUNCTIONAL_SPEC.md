@@ -2169,6 +2169,39 @@ clipboard as text rendered by the core, so both frontends copy identical text.
 puts the printer into communications diagnostics mode, and the other three print
 a label instead of replying. A test asserts no payload contains them.
 
+### 10.8 Firmware update
+
+**Printer → Firmware Update…** shows the firmware version the printer reports in
+`~HI` and sends it a new firmware file. The file is sent exactly as downloaded,
+with no command wrapped around it; the printer flashes it and restarts, so
+nothing comes back, and success means every byte was taken. The bar shows the
+share sent, the time elapsed and an estimate of the time left. **Update** asks
+every time, naming the file, its size and where it is going, because an
+interrupted flash can leave a printer unusable. Cancel stops sending and says
+the printer may hold part of the file.
+
+**Connection** chooses where the printer is: the session's network printer
+(`address:port`), or any USB printer this machine has, `/dev/usb/lpN`, named by
+the manufacturer and model in its IEEE 1284 device ID. USB is the way in to a
+printer whose network is not running: a Zebra in *forced download mode* -
+powered on with a key held, to replace firmware the running printer will not
+take - listens on USB, serial and parallel only. Changing the connection asks
+the version again. **Refresh** lists the USB printers again first, keeping the
+chosen one by path, because the kernel numbers the nodes in the order printers
+appear and a printer restarting into that mode can come back under another
+number.
+
+A USB printer node belongs to a group (`lp` on Debian and Ubuntu). A user
+outside it is told which group to join, read from the node's own ownership,
+as soon as the version is asked rather than only when an upload fails.
+
+Either way, the printer may stop taking data for up to 60 s - it does while it
+erases flash - before the upload is called stalled. A printer that goes away
+only after every byte has been taken is restarting, not failing; one that goes
+away earlier is a failure. On USB the upload also waits for the printer to take
+the last write before closing the port, since closing would cut it off, so a
+stall there is a failure even at 100%.
+
 ---
 
 ## 11. Print resolution

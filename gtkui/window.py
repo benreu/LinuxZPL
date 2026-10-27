@@ -20,6 +20,7 @@ from zplcore import firmware as zpl_firmware
 from zplcore import fonts as zpl_fonts
 from zplcore import geometry
 from zplcore import graphic_store
+from zplcore import local_port as zpl_local
 from zplcore import printer_io
 from zplcore import printer_objects
 from zplcore import printer_status
@@ -1876,14 +1877,15 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.destroy()
         return response == Gtk.ResponseType.ACCEPT
 
-    def _confirm_firmware_update(self, parent, name: str, size: int) -> bool:
-        """Whether to really send firmware - the printer reboots and an
-        interrupted flash can leave it unusable, so it is asked every time."""
+    def _confirm_firmware_update(self, parent, name: str, size: int,
+                                 where: str) -> bool:
+        """Whether to really send firmware to `where` (address:port, or a
+        device path) - the printer reboots and an interrupted flash can
+        leave it unusable, so it is asked every time."""
         dialog = Gtk.MessageDialog(
             parent=parent, flags=0, message_type=Gtk.MessageType.WARNING,
             buttons=Gtk.ButtonsType.NONE,
-            text=f"Send {name} ({size:,} bytes) to "
-                 f"{self.printer_address}:{self.printer_port}?")
+            text=f"Send {name} ({size:,} bytes) to {where}?")
         dialog.format_secondary_text(
             "The printer will flash the file and restart. Do not switch it "
             "off or cancel while it is being written: an interrupted update "
@@ -1901,6 +1903,11 @@ class ZPLViewerWindow(Gtk.Window):
         Modal, like the Fonts/Graphics/Objects managers: nothing else should
         touch the printer while its flash is being written. The upload's bar
         is the BusyBar's, switched to a percentage by report_fraction.
+
+        The printer is the session's network one, or any USB printer this
+        machine has - the way in to one in forced download mode. Refresh
+        looks for USB printers again, since one that restarts into that mode
+        can come back under another number.
         """
         address, port = self.printer_address, self.printer_port
         dialog = Gtk.Dialog(title="Firmware Update", parent=self, flags=0)
@@ -1912,8 +1919,12 @@ class ZPLViewerWindow(Gtk.Window):
         content.set_margin_top(8)
         content.set_margin_bottom(8)
 
-        content.pack_start(Gtk.Label(label=f"Printer: {address}:{port}",
-                                     halign=Gtk.Align.START), False, False, 0)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.pack_start(Gtk.Label(label="Connection:"), False, False, 0)
+        connection = Gtk.ComboBoxText()
+        row.pack_start(connection, True, True, 0)
+        content.pack_start(row, False, False, 0)
+
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         current = Gtk.Label(label="Current firmware: checking…",
                             halign=Gtk.Align.START, selectable=True)
@@ -1941,14 +1952,35 @@ class ZPLViewerWindow(Gtk.Window):
         row.pack_start(update_btn, False, False, 0)
         close_btn = Gtk.Button(label="Close")
         row.pack_end(close_btn, False, False, 0)
-        busy = BusyBar((refresh_btn, browse_btn, update_btn, close_btn), width=330)
+        busy = BusyBar((connection, refresh_btn, browse_btn, update_btn,
+                        close_btn), width=330)
         row.pack_end(busy, False, False, 0)
         content.pack_end(row, False, False, 0)
 
         chosen = {'path': None, 'size': 0}
 
-        def on_refresh(_b=None):
+        def list_connections():
+            """Network first (id ""), then every USB printer, keeping the
+            one chosen if it is still there."""
+            was = connection.get_active_id()
+            connection.handler_block(changed_id)
+            connection.remove_all()
+            connection.append("", f"Network: {address}:{port}")
+            for path, described in zpl_local.list_ports():
+                connection.append(path, f"USB: {path} ({described})"
+                                  if described else f"USB: {path}")
+            if not was or not connection.set_active_id(was):
+                connection.set_active_id("")
+            connection.handler_unblock(changed_id)
+
+        def chosen_local():
+            """The chosen USB port, or None for the network printer."""
+            path = connection.get_active_id()
+            return zpl_local.LocalPort(path) if path else None
+
+        def ask_version(_w=None):
             current.set_text("Current firmware: checking…")
+            local = chosen_local()
 
             def done(version, error):
                 if isinstance(error, printer_io.Cancelled):
@@ -1957,9 +1989,15 @@ class ZPLViewerWindow(Gtk.Window):
                     current.set_text(f"Current firmware: {version}")
                 else:
                     current.set_text("Current firmware: unavailable")
+                if isinstance(error, PermissionError):
+                    status.set_text(str(error))
 
             busy.run(lambda cancel: zpl_firmware.current_firmware(
-                address, port, cancel=cancel), done)
+                address, port, cancel=cancel, local=local), done)
+
+        def on_refresh(_b):
+            list_connections()
+            ask_version()
 
         def on_browse(_b):
             chooser = Gtk.FileChooserDialog(
@@ -1989,8 +2027,10 @@ class ZPLViewerWindow(Gtk.Window):
             path = chosen['path']
             if path is None:
                 return
-            name = os.path.basename(path)
-            if not self._confirm_firmware_update(dialog, name, chosen['size']):
+            name, local = os.path.basename(path), chosen_local()
+            where = local.path if local else f"{address}:{port}"
+            if not self._confirm_firmware_update(dialog, name, chosen['size'],
+                                                 where):
                 return
             status.set_text(f"Sending {name}…")
 
@@ -2015,14 +2055,17 @@ class ZPLViewerWindow(Gtk.Window):
                         "version.")
 
             busy.run(lambda cancel: zpl_firmware.upload_firmware(
-                address, port, path, progress=progress, cancel=cancel), done)
+                address, port, path, progress=progress, cancel=cancel,
+                local=local), done)
 
+        changed_id = connection.connect("changed", ask_version)
+        list_connections()
         refresh_btn.connect("clicked", on_refresh)
         browse_btn.connect("clicked", on_browse)
         update_btn.connect("clicked", on_update)
         close_btn.connect("clicked", lambda _b: dialog.response(Gtk.ResponseType.CLOSE))
         dialog.show_all()
-        on_refresh()
+        ask_version()
         dialog.run()
         busy.abandon()
         dialog.destroy()

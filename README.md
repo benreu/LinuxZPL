@@ -51,6 +51,11 @@ disagree.
   before `~HS`, because a Zebra answers no status query at all while its head is
   open or its media is out, so the panel explains that silence instead of going
   blank
+- **Firmware update**: **Printer -> Firmware Update...** shows the printer's
+  firmware version and sends it a new firmware file, over the network or down
+  a USB port - the way in to a Zebra in forced download mode, whose network is
+  not running. USB needs membership of the group that owns `/dev/usb/lpN`
+  (`lp` on Debian and Ubuntu)
 - **Network Printing**: straight over TCP to a Zebra, no printing subsystem
   involved
 - **Select more than one**: shift-click, or drag a band across the canvas, and
@@ -205,6 +210,9 @@ zplcore/    no GUI toolkit, runs headless
                     Status... (faults, work state, memory, head wear)
   printer_io.py  the raw socket send/reply fonts.py, graphic_store.py,
                     printer_objects.py and printer_status.py share
+  local_port.py  the same send/reply down a USB printer node, /dev/usb/lpN
+  firmware.py    the version ~HI reports, and a firmware file sent to the
+                    printer for Printer -> Firmware Update...
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   textraster.py  the text raster both canvases blit
