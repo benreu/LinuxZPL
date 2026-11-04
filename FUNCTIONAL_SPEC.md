@@ -849,8 +849,10 @@ pinned.
   their joint box drifts a little from the one dragged, so the group is shifted
   back to put the anchored edge where the press had it, then held inside the
   label as one, the way a drag is.
-- **Double click** (same element, within 500 ms) opens that element's edit
-  dialog. A modified click is a selection gesture and never a double click.
+- **Double click** (same element, within 500 ms) shows the Properties panel
+  (§7.1) on the selection the first click made — brought back if it was closed
+  or floating out of sight. A modified click is a selection gesture and never a
+  double click.
 - **Right click** selects the element under the pointer and opens a context menu
   (§6.6). If that element is part of a group the rest of the group is kept, and
   the element becomes the primary — so the z-order commands in the menu act on
@@ -884,9 +886,10 @@ pinned.
   a group of one. Each member keeps its own selection rectangle; the handles,
   when the selection is a whole group, sit on the members' joint box with the
   outline 2 dots outside them.
-- **Double click on a member** opens that member's editor, and **Print This
-  Element** on a member toggles that member alone — both name one element and
-  act on one.
+- **A plain click on a member selects its group, and the Properties panel
+  shows the group** — the rows its members share (§7.2). Ctrl-click a member to
+  edit that member alone. **Print This Element** in the right-click menu on a
+  member toggles that member alone: the menu names the one element pointed at.
 
 ---
 
@@ -1036,11 +1039,10 @@ one rigid box by one shared delta — so aligning left does not stack a group's
 members at the same x and undo the very arrangement grouping was meant to keep.
 A group selected on its own is one unit and lines up against the label.
 
-**Properties** (Alt+Enter) opens the editor of the primary element (§7) — the
-one a double click on it opens, so in a group it is the member last picked,
-not the group. It is the same command as the right-click menu's (§6.6), and
-like a double click it raises an editor already open on that element rather
-than opening a second.
+**Properties** (Alt+Enter) shows the Properties panel (§7.1) on the selection,
+with the focus in its first row: what brings a closed or floating panel back.
+With nothing selected it does nothing. It is the same command as the
+right-click menu's (§6.6) and does what a double click does.
 
 Results are clamped into the label the way a drag is, so a unit larger than the
 label lands against the edge rather than at a negative coordinate. An align
@@ -1120,9 +1122,9 @@ other does not.
 - **Bring to Front / Bring Forward / Send Backward / Send to Back**, disabled at
   the ends of the z-order — of the units, so a group at the top offers neither
   raise even when the member right-clicked is not the last element (§6.2).
-- **Properties**, as the Edit menu's (§6.2): the editor of the element
-  right-clicked, which the right click has made the primary — the member
-  pointed at, when it is in a group.
+- **Properties**, as the Edit menu's (§6.2): the Properties panel, on the
+  selection the right click made — the whole group, when the element is in
+  one.
 
 ### 6.7 The unsaved-changes prompt
 
@@ -1141,13 +1143,93 @@ effect of building elements while parsing.
 
 ## 7. Dialogs
 
-The element editors that are forms of fields — Edit Text, Edit Frame, Edit
-Circle, Edit Ellipse, Edit Diagonal Line, Edit Symbol and Edit Barcode — are
-**non-modal child windows** of the designer. Each is
-transient for the designer, so it floats above it, follows it and closes with
-it rather than taking a window of its own, but it never blocks it: the canvas,
-the menus and the tool palette stay live while one is open. Edit Image is a file
-chooser rather than a form, and stays modal.
+### 7.1 The Properties panel
+
+The element editors that are forms of fields — Edit Text, the clock, serial
+and numbered text editors, Edit Frame, Edit Circle, Edit Ellipse, Edit
+Diagonal Line, Edit Symbol, Edit Stored Graphic and Edit Barcode — are shown
+in one **Properties panel** beside the canvas, not in a window per element.
+The panel is a dock: on the right of the designer by default, it can be moved
+to the left or pulled off to float, and it comes back where it was left —
+side, size and whether it floats (§13).
+
+- **Docked, it always shows the selection**; there is nothing to open.
+  **Floating, it stays away until it is asked for** — a double click, Edit ▸
+  Properties or right-click ▸ Properties (Alt+Enter) — and then follows the
+  selection in the same way until it is closed. A panel left floating starts
+  the next session hidden.
+- **What it shows.** A title — the kind of element ("Frame", "Time Field"),
+  "Group of 3" for one whole group, "3 elements" for anything else selected
+  together, or "Nothing selected" — and then:
+  - **X and Y**, the left and top of the selection's box in dots, and **Print
+    This Element**. Typing an X or Y moves the whole selection by the
+    difference, held inside the label as a drag holds it (§5). Print This
+    Element is half-ticked while only some of the selection prints.
+  - For **one element**, its own rows — the table at the end of this section.
+    An image has one, its file, with **Replace Image…**, which opens the file
+    chooser; a replaced image is one history entry.
+  - For **several**, the rows every one of them has (§7.2), and a line saying
+    that text, data and symbology settings are each element's own: Ctrl-click
+    one to edit it (§5).
+- **An edit applies as it is made.** The element changes and the canvas
+  redraws with each keystroke, tick or choice. A burst of edits is **one
+  history entry** (§12), recorded when the focus leaves the panel, on Enter,
+  after a second without a change, when the selection changes, and before any
+  command, click on the canvas or undo can act on what was edited. **Escape**
+  throws the burst in progress away; the selection stays where it is.
+- **A change made anywhere else** — a drag, a resize, Align, a paste, undo —
+  is read back into the rows, so the panel never holds a stale value that a
+  later edit would write back over it.
+- **The rows follow what the element has become.** Unticking the clock of a
+  time field shows plain text's rows in their place, on the same element. A
+  line break typed into text whose Wrap is clear gives it a block and ticks
+  Wrap; clearing Wrap joins the lines in the text box as well as in the
+  element. An applied row never leaves another row saying something the
+  element no longer is.
+- A row the panel is too narrow for puts its field under its label rather
+  than widening the panel, and a list asks for room for a few characters
+  rather than its longest choice.
+- The font chooser opened from the text rows is modal to the window the panel
+  is in, not to the application.
+
+The GTK frontend does not have the panel yet: it still opens the editor
+windows of §7.3. Until it does, this is a deliberate difference between the
+two (§18).
+
+### 7.2 Shared rows
+
+What a selection of several elements offers, from one table in the core
+(`zplcore/properties.py`) that both frontends draw from. A row is offered when
+**every** selected element has it; its value is shown when they all agree and
+reads **Mixed** when they do not; and a value set is written to every one of
+them, with whatever each element's own editor does after that change. Its
+range is the narrowest of theirs, so no element is given a value its own
+editor would refuse.
+
+| Row | Offered on | After the change |
+|---|---|---|
+| Width, Height | frames, ellipses, diagonal lines | the thickness is held under what the new size allows |
+| Diameter | circles | the box follows; the thickness is held under the radius |
+| Thickness | frames, circles, ellipses, diagonal lines | — (its maximum is the smallest of theirs) |
+| Colour | frames, circles, ellipses, diagonal lines | — |
+| Corner Rounding | frames | — |
+| Height, Width | graphic symbols | the box is re-measured |
+| Font Height, Font Width | every text field | the box is re-measured |
+| Bar Height | barcodes whose symbology has one (not a matrix code) | the box is re-measured |
+| Module Width | barcodes whose symbology has one (not MaxiCode); named as their editor names it — Magnification, Module Size — when they agree | the box is re-measured |
+| Orientation | text, graphic symbols, barcodes that can be turned (not MaxiCode) | the box is re-measured |
+| Reverse print (^FR) | everything with ink — not images or stored graphics | — |
+
+Text, barcode data and each symbology's own parameters, a block, a font file,
+`^FN`, `^FM` positions, IDs, an image's file and a stored graphic's name are
+each element's own, and only the panel for one element offers them.
+
+### 7.3 The editor windows (GTK, until it has the panel)
+
+In the GTK frontend the same forms are **non-modal child windows** of the
+designer, opened by a double click or Properties. Each is transient for the
+designer, so it floats above it, follows it and closes with it, but it never
+blocks it. Edit Image is a file chooser rather than a form, and stays modal.
 
 - **One editor per element.** Two different elements may each have one open at
   once; double-clicking an element that already has one raises that window
@@ -1161,6 +1243,9 @@ chooser rather than a form, and stays modal.
   editor's Width and Height will undo a resize made behind it.
 - The font chooser opened from Edit Text is modal to that editor alone, not to
   the application.
+
+### 7.4 Every editor, and the other dialogs
+
 - **Label Settings carries the label home and the three presentation flags** —
   `^LH`'s x and y because preprinted stock is a design decision, and `^PO`,
   `^PM` and `^LR` because they change the whole label. `^LS` and `^LT`
@@ -1190,7 +1275,7 @@ file choosers and the prompts — are modal.
 | **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
 | **Edit Diagonal Line** | Width; Height; Thickness; Colour; Direction; Reverse | Width and height 3–32000, `^GD`'s own range, so a line from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to the width, the maximum updating live as the width changes. Direction is right-leaning ( / ) or left-leaning ( \ ) (§3.3). Colour and Reverse as Edit Frame's. |
 | **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse; ID | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
-| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; ID; and the chosen symbology's own rows | Bar height 20–300 dots (1–9999 dots for PDF417 and MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a PDF417 with rows 3 dots tall and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
+| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; ID; and the chosen symbology's own rows | Bar height 20–300 dots (1–9999 dots for PDF417 and MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a PDF417 with rows 3 dots tall and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert is held until OK in an editor window, and applies at once in the panel. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
@@ -2534,9 +2619,14 @@ to come back as the group.
   the mouse is released — not one per motion event.
 - Every document change is undoable: adding, deleting, cutting, pasting,
   duplicating, moving, resizing, reordering, aligning, grouping and
-  ungrouping, editing an element through its dialog, toggling Print This
-  Element, and changing the label size (including the element clamping that a
-  smaller label causes).
+  ungrouping, editing an element in the Properties panel or its dialog,
+  toggling Print This Element, and changing the label size (including the
+  element clamping that a smaller label causes).
+- **A burst of edits in the Properties panel is one entry** (§7.1), like a
+  held arrow key: recorded when the focus leaves the panel, on Enter, after a
+  second without a change, when the selection changes, or before any command,
+  click on the canvas or undo — so it is never folded into the next action.
+  Escape throws a burst away instead of recording it.
 - Changing the **selection** is not a document change and is not undoable: a
   click, a shift-click, a rubber band, Select All, Deselect All and Invert
   Selection record no entry. An align that moves nothing records none either,
@@ -2547,12 +2637,13 @@ to come back as the group.
 - Loading a file clears the history — undo never crosses a file boundary.
 - Undo and redo both mark the document modified.
 - Undo and redo controls are disabled when their stack is empty.
-- **Undo, redo and loading a file close any open element editor** (§7).
-  Restoring a snapshot replaces every element object, so an editor left open
-  would hold one the document no longer has; accepting it would write the edit
-  into that detached copy, where it would be lost with no error to show for it.
-  Deleting an element closes the editor open on it for the same reason, and so
-  does cutting one.
+- **Undo, redo and loading a file leave nothing editing an element the
+  document no longer has.** Restoring a snapshot replaces every element object;
+  the Properties panel rebuilds its rows on the restored selection, and in the
+  GTK frontend any open element editor window (§7.3) is closed, since accepting
+  it would write the edit into a detached copy where it would be lost with no
+  error to show for it. Deleting or cutting an element closes the editor open
+  on it for the same reason.
 
 Changes that are *not* part of the document — printer address, port, resolution
 — are not undoable. This holds for a resolution changed through Label Size too:
@@ -2585,6 +2676,9 @@ y = 952
 width = 1201
 height = 844
 
+[docks]
+state = AAAA/wAAAAD9AAAAAQAAAAEAAAGkAAADAPwCAAAAAfsAAAAU…
+
 [recent]
 file1 = /home/you/labels/shipping.zpl
 file2 = /home/you/labels/100%% off.zpl
@@ -2595,6 +2689,7 @@ file2 = /home/you/labels/100%% off.zpl
 | `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion |
 | `[label]` | when Label Size is accepted | the label at startup and on File > New |
 | `[window]` | on quit | where the window opens (§2) |
+| `[docks]` | with the rest of the file (Qt) | where the Properties panel is — its side, its size, whether it floats — as the toolkit's own saved window state (§7.1) |
 | `[recent]` | whenever a file is opened or saved, an entry is dropped, or the list is cleared | File > Open Recent (§6.1) |
 
 **File → Printer Settings ▸ Set Printer for This Session…** (§9) deliberately
@@ -2667,6 +2762,10 @@ Three notes for a port:
   Ctrl+C and Ctrl+V mean the main window must never hold a text entry of its
   own: the bindings would take select-all, cut, copy and paste of its text
   away from it. The element editors are windows of their own and keep theirs.
+  The Properties panel (§7.1) is the exception, in the Qt frontend: its text
+  and number boxes take their own editing keys - Delete, Ctrl+A, Ctrl+C,
+  Ctrl+V, Ctrl+X and Ctrl+Z among them - ahead of the window's bindings while
+  they have the focus, which a Qt line edit does of itself.
   Cut, Copy and Paste are bound to those three keys alone, not also to the
   Shift+Delete, Ctrl+Insert and Shift+Insert some toolkits add, so that both
   frontends take the same keys.
@@ -3325,6 +3424,10 @@ rather than requirements:
   performs the real exchanges instead — `~DG` for Store, `^HG` for Retrieve,
   `^ID` for Delete — directly against the printer, just never triggered by
   opening a file.
+- **Only the Qt frontend has the Properties panel so far** (§7.1). The GTK
+  frontend still opens an editor window per element (§7.3), applying on OK, and
+  has no X / Y or shared rows. The forms in both are the same; what differs is
+  where they are shown and when they apply.
 - **Which memory a font goes to is one printer setting, not a choice per text
   element.** Font memory (§10.4.1) decides where every font this designer
   assigns is written and uploaded; there is no per-element control, because a

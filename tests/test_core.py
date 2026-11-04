@@ -4102,63 +4102,247 @@ check("...and leaves the rest of the box untouched",
       QColor(reversed_canvas.pixel(15, 30)).red() < 50,
       QColor(reversed_canvas.pixel(15, 30)).getRgb())
 
-# --- the editors are non-modal child windows --------------------------------
-# Non-modal means an editor can still be up when the element under it is
-# replaced or removed, which is the one way an edit can be silently lost.
+# --- the Properties panel ----------------------------------------------------
+# One panel shows the selection's rows and edits them as they are changed; a
+# burst of edits is one undo entry. The window is never shown here, so nothing
+# paints on its own: the panel is synced by hand where a paint would sync it.
 
-ew = qt_main.ZPLDesignerWindow()
-etext = ew.document.add_text_element("editable")
-eframe = ew.document.add_frame_element()
-
-ew.on_element_double_clicked(etext)
-first = ew._editors[id(etext)]
-check("an element editor opens without blocking its caller", first.isVisible())
-ew.on_element_double_clicked(etext)
-check("a second double-click raises the open editor rather than opening another",
-      ew._editors[id(etext)] is first and len(ew._editors) == 1,
-      len(ew._editors))
-
-ew.on_element_double_clicked(eframe)
-check("a different element gets an editor of its own alongside",
-      len(ew._editors) == 2, len(ew._editors))
-
-ew._apply_snapshot(ew.document.snapshot())
-check("undo closes the editors, whose elements it has just replaced",
-      not ew._editors, len(ew._editors))
-
-# Closed, not merely forgotten: an editor still on screen over a replaced
-# element is exactly how an OK press writes into a detached copy.
-survivor = ew.document.elements[0]
-ew.on_element_double_clicked(survivor)
-stale = ew._editors[id(survivor)]
-ew._apply_snapshot(ew.document.snapshot())
-check("the editor is taken off screen, not just dropped from the register",
-      not stale.isVisible() and not ew._editors)
-check("restoring really did replace the element it was editing",
-      all(el is not survivor for el in ew.document.elements))
-
-ew.document.selected_element = ew.document.elements[0]
-ew.on_element_double_clicked(ew.document.selected_element)
-ew.on_delete()
-check("deleting an element closes the editor open on it",
-      not ew._editors, len(ew._editors))
-
-# --- Properties: the editor, from the menus as well as a double click -------
-
-from PySide2.QtGui import QContextMenuEvent, QKeySequence
-from PySide2.QtWidgets import QMenu
+import configparser
+import os
+import tempfile as _ptempfile
+from PySide2.QtGui import QContextMenuEvent, QKeyEvent, QKeySequence
+from PySide2.QtWidgets import (QMenu, QCheckBox as _PCheck, QComboBox as _PCombo,
+                               QLabel as _PLabel, QPlainTextEdit as _PText,
+                               QPushButton as _PButton, QSpinBox as _PSpin)
 
 pw = qt_main.ZPLDesignerWindow()
+pw._save_settings = lambda *a: None
 pw.canvas.set_zoom(1.0)
-p_frame = pw.document.add_frame_element()
-p_circle = pw.document.add_circle_element()
-p_circle.x, p_circle.y = 400, 400
-pw.document.select_many([p_frame, p_circle])
-pw.document.group_selected()
+pp = pw.properties
+pdoc = pw.document
+
+def _prow(kind, name):
+    return pp._content.findChild(kind, name)
+
+def _pdepth():
+    return len(pw._undo_stack)
+
+def _same_sel(a, b):
+    return len(a) == len(b) and all(x is y for x, y in zip(a, b))
+
+def _pkey(key):
+    QApplication.sendEvent(pp, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier))
+
+check("the Properties panel starts docked on the right of the window",
+      pw.dockWidgetArea(pp) == Qt.RightDockWidgetArea and not pp.isFloating()
+      and not pp.isHidden())
+pp.sync()
+check("with nothing selected it says so",
+      pp._title.text() == "Nothing selected" and _prow(_PSpin, 'prop_x') is None)
+
+p_frame = pdoc.add_frame_element()
+pw.canvas.commit()
+pp.sync()
+check("it shows the element just added, with X and Y and the frame's own rows",
+      pp._title.text() == "Frame" and _prow(_PSpin, 'prop_x').value() == p_frame.x
+      and _prow(_PCombo, 'colour') is not None, pp._title.text())
+
+p_oval = pdoc.add_ellipse_element()
+pw.canvas.commit()
+pdoc.select(p_frame)
+_p_paint = QImage(pw.canvas.size(), QImage.Format_ARGB32)
+pw.canvas.render(_p_paint)
+app.processEvents()
+check("a paint is what moves it to the new selection",
+      pp._bound == (p_frame,), pp._bound)
+
+# Live, and one undo entry a burst
+_pd = _pdepth()
+_prow(_PCombo, 'colour').setCurrentIndex(1)
+_prow(_PSpin, 'rounding').setValue(3)
+check("an edit reaches the element as it is made",
+      (p_frame.colour, p_frame.rounding) == ('W', 3))
+check("...and is not an undo entry yet", _pdepth() == _pd and pp.pending)
+check("...while a pause would end it", pp._quiet.isActive())
+pp.finish_edit()
+check("the burst is one undo entry", _pdepth() == _pd + 1 and not pp.pending,
+      _pdepth() - _pd)
+pw.on_undo()
+pp.sync()
+_p_back = pdoc.elements[0]
+check("undo takes the whole burst back, and the panel follows the restored selection",
+      (_p_back.colour, _p_back.rounding) == ('B', 0) and _p_back is not p_frame
+      and _same_sel(pp._bound, pdoc.selection))
+p_frame = _p_back
+pdoc.select(p_frame)
+pp.sync()
+
+_pd = _pdepth()
+_prow(_PCombo, 'colour').setCurrentIndex(1)
+_pkey(Qt.Key_Escape)
+pp.sync()
+check("Escape throws the burst away, and records nothing",
+      pdoc.selected_element.colour == 'B' and _pdepth() == _pd and not pp.pending)
+check("...and stays on the element being edited",
+      pdoc.selected_element is pdoc.elements[0] and pp._bound == (pdoc.elements[0],))
+p_frame = pdoc.selected_element
+
+_prow(_PCombo, 'colour').setCurrentIndex(1)
+_pkey(Qt.Key_Return)
+check("Enter ends the burst", _pdepth() == _pd + 1 and not pp.pending)
+_prow(_PSpin, 'rounding').setValue(2)
+pp._quiet.timeout.emit()
+check("so does a pause", _pdepth() == _pd + 2 and not pp.pending)
+_prow(_PSpin, 'rounding').setValue(4)
+QApplication.sendEvent(pw.canvas, QMouseEvent(QEvent.MouseButtonPress, QPoint(700, 1100),
+                                              Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+QApplication.sendEvent(pw.canvas, QMouseEvent(QEvent.MouseButtonRelease, QPoint(700, 1100),
+                                              Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+check("so does a click on the canvas, before it acts",
+      _pdepth() == _pd + 3 and not pp.pending, _pdepth() - _pd)
+
+pdoc.select(p_frame)
+pp.sync()
+_prow(_PSpin, 'rounding').setValue(5)
+_pd = _pdepth()
+pw.duplicate_action.trigger()
+check("a command records the burst first, as an entry of its own",
+      _pdepth() == _pd + 2, _pdepth() - _pd)
+pw.on_undo()
+check("...so undoing the command leaves the edit made before it",
+      len(pdoc.elements) == 2 and pdoc.elements[0].rounding == 5)
+
+# X and Y, on one element and on a group
+pdoc.select(pdoc.elements[0])
+pp.sync()
+p_frame = pdoc.elements[0]
+p_frame.x += 10           # as a drag in progress would
+pp.sync()
+check("X follows the element as it is dragged", _prow(_PSpin, 'prop_x').value() == p_frame.x)
+_prow(_PSpin, 'prop_x').setValue(150)
+check("typing an X moves the element", p_frame.x == 150)
+pp.finish_edit()
+
+p_oval = pdoc.elements[1]
+p_oval.x, p_oval.y = 400, 400
+pdoc.select_many([p_frame, p_oval])
+pdoc.group_selected()
+pdoc.select(p_frame)
+pp.sync()
+check("a whole group is titled as one", pp._title.text() == "Group of 2", pp._title.text())
+_p_before = [(e.x, e.y) for e in (p_frame, p_oval)]
+_prow(_PSpin, 'prop_x').setValue(190)
+check("X moves the whole group by the same amount",
+      [(e.x, e.y) for e in (p_frame, p_oval)]
+      == [(_p_before[0][0] + 40, _p_before[0][1]), (_p_before[1][0] + 40, _p_before[1][1])],
+      [(e.x, e.y) for e in (p_frame, p_oval)])
+pp.finish_edit()
+check("the shared rows are what a frame and an ellipse both have",
+      _prow(_PSpin, 'prop_thickness') is not None and _prow(_PSpin, 'prop_rounding') is None
+      and _prow(_PLabel, 'properties_hint') is not None)
+pdoc.ungroup_selected()
+
+p_other = pdoc.add_frame_element()
+p_frame.thickness, p_other.thickness = 2, 6
+p_frame.print_enabled = False
+pw.canvas.commit()
+pdoc.select_many([p_frame, p_other])
+pp.sync()
+_p_thick = _prow(_PSpin, 'prop_thickness')
+check("loose elements are counted, not called a group", pp._title.text() == "2 elements",
+      pp._title.text())
+check("a value they disagree on shows as Mixed",
+      _p_thick.value() == _p_thick.minimum() and _p_thick.specialValueText() == "Mixed")
+check("...and so does Print This Element, as a half-ticked box",
+      _prow(_PCheck, 'prop_print_enabled').checkState() == Qt.PartiallyChecked)
+_pd = _pdepth()
+_p_thick.setValue(4)
+_prow(_PCheck, 'prop_print_enabled').setCheckState(Qt.Checked)
+check("setting a shared row writes it to every element",
+      (p_frame.thickness, p_other.thickness) == (4, 4)
+      and p_frame.print_enabled and p_other.print_enabled)
+pp.finish_edit()
+check("...as one undo entry", _pdepth() == _pd + 1)
+
+# A text element: its form changes with what feeds it, and Wrap keeps up
+p_time = pdoc.add_time_element()
+pw.canvas.commit()
+pp.sync()
+check("a clock field shows its own rows", pp._title.text() == "Time Field", pp._title.text())
+_prow(_PCheck, 'clock_format').setChecked(False)
+app.processEvents()
+check("unticking the clock shows plain text's rows in their place",
+      pp._title.text() == "Text" and pp._bound == (p_time,), pp._title.text())
+pp.finish_edit()
+p_text = pdoc.add_text_element("one")
+pw.canvas.commit()
+pp.sync()
+_prow(_PText, 'text').setPlainText("one\ntwo")
+check("a line break typed gets the text a block, and ticks Wrap",
+      p_text.block is not None and _prow(_PCheck, 'wrap').isChecked())
+_prow(_PText, 'text').setPlainText("one\ntwos")
+check("...which the next keystroke keeps", p_text.block is not None
+      and p_text.text == 'one\\&twos', p_text.text)
+_prow(_PCheck, 'wrap').setChecked(False)
+check("clearing Wrap joins the lines, and the text box shows them joined",
+      p_text.block is None and '\n' not in _prow(_PText, 'text').toPlainText(),
+      _prow(_PText, 'text').toPlainText())
+pp.finish_edit()
+
+# A change made elsewhere is read back in
+pdoc.select(p_oval)
+pp.sync()
+p_oval.width = 333
+pw.canvas.commit()
+app.processEvents()
+check("a change made on the canvas shows in the rows",
+      _prow(_PSpin, 'width').value() == 333, _prow(_PSpin, 'width').value())
+
+# An image's one setting is its file
+_p_dir = _ptempfile.mkdtemp()
+_p_png = os.path.join(_p_dir, 'swap.png')
+Image.new('RGB', (8, 8), (0, 0, 0)).save(_p_png)
+p_image = ImageElement(10, 10, 40, 40, _pil_image=Image.new('RGB', (40, 40), (255, 255, 255)))
+pdoc.elements.append(p_image)
+pdoc.select(p_image)
+pp.sync()
+_pd = _pdepth()
+_p_real_choose = qt_dialogs.choose_image_file
+qt_dialogs.choose_image_file = lambda parent, title: _p_png
+try:
+    _prow(_PButton, 'replace_image').click()
+finally:
+    qt_dialogs.choose_image_file = _p_real_choose
+check("an image shows Replace Image, which swaps the file as one undo entry",
+      pp._title.text() == "Image" and p_image.image_path == _p_png
+      and _pdepth() == _pd + 1, (pp._title.text(), p_image.image_path))
+
+pdoc.select(p_text)
+pw.on_delete()
+pp.sync()
+check("deleting the element empties the panel", pp._title.text() == "Nothing selected")
+
+# Floating, it waits to be asked for
+pp.setFloating(True)
+pp.hide()
+pdoc.clear_selection()
+pw.on_properties()
+check("Properties with nothing selected leaves a hidden panel hidden", pp.isHidden())
+pdoc.select(p_oval)
+pw.on_properties()
+check("...and with a selection shows it, on that selection",
+      not pp.isHidden() and pp._bound == (p_oval,))
+pp.hide()
+pw.on_element_double_clicked(p_oval)
+check("a double click shows it too", not pp.isHidden())
 
 # The right-click menu runs its own event loop, so the canvas is handed one
 # that answers at once with Properties, noting what it offered. A subclass in
 # the canvas's namespace, since PySide2 does not see exec_ replaced on QMenu.
+pdoc.select_many([p_frame, p_other])
+pdoc.group_selected()
+pdoc.clear_selection()
+pp.hide()
 p_offered = []
 class _ChoosesProperties(QMenu):
     def exec_(self, *_a):
@@ -4167,34 +4351,40 @@ class _ChoosesProperties(QMenu):
 p_real_menu = qt_canvas.QMenu
 qt_canvas.QMenu = _ChoosesProperties
 try:
-    centre = QPoint(p_circle.x + p_circle.width // 2, p_circle.y + p_circle.height // 2)
+    centre = QPoint(p_other.x + p_other.width // 2, p_other.y + p_other.height // 2)
     pw.canvas.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse, centre,
                                                  pw.canvas.mapToGlobal(centre)))
 finally:
     qt_canvas.QMenu = p_real_menu
 check("the right-click menu ends with Properties", p_offered[-1:] == ["Properties"],
       p_offered)
-check("right-click Properties opens the member right-clicked, not its group",
-      list(pw._editors) == [id(p_circle)], [pw._editors])
-pw._close_element_editors()
-
-pw.document.select(p_frame, direct=True)
-pw.on_properties()
-check("Edit > Properties opens the primary's editor",
-      list(pw._editors) == [id(p_frame)], list(pw._editors))
-pw._close_element_editors()
+check("...which shows the panel on the selection the right click made",
+      not pp.isHidden() and pp._title.text() == "Group of 2", pp._title.text())
 check("Edit > Properties is on Alt+Enter",
       pw.properties_action.shortcut() == QKeySequence("Alt+Return"),
       pw.properties_action.shortcut().toString())
-
-pw.document.clear_selection()
-pw.on_properties()
-check("Properties with nothing selected opens nothing", not pw._editors)
+pdoc.clear_selection()
 pw._update_edit_menu()
 p_greyed = not pw.properties_action.isEnabled()
 pw._release_edit_menu()
 check("the Edit menu greys Properties with nothing selected, and lets go of "
       "it once closed", p_greyed and pw.properties_action.isEnabled())
+
+# Where it was left is where it comes back - and floating, hidden
+_p_saver = qt_main.ZPLDesignerWindow()
+_p_saver.properties.setFloating(True)
+_p_saver._save_settings()
+_p_next = qt_main.ZPLDesignerWindow()
+check("a panel left floating comes back floating, and hidden until asked for",
+      _p_next.properties.isFloating() and _p_next.properties.isHidden())
+_p_config = configparser.ConfigParser()
+_p_config.read(qt_main._config_path())
+_p_config.remove_section('docks')
+with open(qt_main._config_path(), 'w') as _p_out:
+    _p_config.write(_p_out)
+_p_fresh = qt_main.ZPLDesignerWindow()
+check("...and with nothing saved it is docked and shown",
+      not _p_fresh.properties.isFloating() and not _p_fresh.properties.isHidden())
 
 # --- an editor's rows, apart from the window they are shown in --------------
 # The Properties panel shows the same rows the editor windows do, so each
@@ -5564,11 +5754,10 @@ check("+ Diagonal adds a selected line and one undo entry",
       and len(dw._undo_stack) == _before + 1,
       (type(_added_line).__name__, len(dw._undo_stack) - _before))
 dw.on_element_double_clicked(_added_line)
-check("and a double-click opens Edit Diagonal Line on it",
-      id(_added_line) in dw._editors
-      and dw._editors[id(_added_line)].windowTitle() == "Edit Diagonal Line",
-      list(dw._editors))
-dw._close_element_editors()
+check("and the Properties panel shows Edit Diagonal Line's rows for it",
+      dw.properties._bound == (_added_line,)
+      and dw.properties._title.text() == "Diagonal Line",
+      dw.properties._title.text())
 
 # --- ^GE, the ellipse -------------------------------------------------------
 # Every parameter optional, as ^GD's are: the thickness defaults to 1, the
@@ -5779,11 +5968,10 @@ check("+ Ellipse adds a selected ellipse and one undo entry",
       and len(ew._undo_stack) == _before + 1,
       (type(_added_oval).__name__, len(ew._undo_stack) - _before))
 ew.on_element_double_clicked(_added_oval)
-check("and a double-click opens Edit Ellipse on it",
-      id(_added_oval) in ew._editors
-      and ew._editors[id(_added_oval)].windowTitle() == "Edit Ellipse",
-      list(ew._editors))
-ew._close_element_editors()
+check("and the Properties panel shows Edit Ellipse's rows for it",
+      ew.properties._bound == (_added_oval,)
+      and ew.properties._title.text() == "Ellipse",
+      ew.properties._title.text())
 
 # --- ^GS, the graphic symbol ------------------------------------------------
 # A symbol from the printer's GS font, chosen by the field data: A (R), B (C),
@@ -6087,11 +6275,10 @@ check("choosing CSA adds a selected ^GS^FDE and one undo entry",
       (type(_added_gs).__name__, getattr(_added_gs, 'text', None),
        len(gw._undo_stack) - _before))
 gw.on_element_double_clicked(_added_gs)
-check("and a double-click opens Edit Symbol on it",
-      id(_added_gs) in gw._editors
-      and gw._editors[id(_added_gs)].windowTitle() == "Edit Symbol",
-      list(gw._editors))
-gw._close_element_editors()
+check("and the Properties panel shows Edit Symbol's rows for it",
+      gw.properties._bound == (_added_gs,)
+      and gw.properties._title.text() == "Symbol",
+      gw.properties._title.text())
 
 # --- ^FT names a baseline where ^FO names a top -----------------------------
 

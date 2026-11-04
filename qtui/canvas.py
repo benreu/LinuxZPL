@@ -59,9 +59,9 @@ class DesignCanvas(QWidget):
 
     elementDoubleClicked = Signal(object)
     documentChanged = Signal()
-    # 'cut', 'copy' or 'duplicate', chosen from the right-click menu. The
-    # window owns the clipboard and the editors a cut has to close, so it
-    # carries the command out.
+    # 'cut', 'copy', 'duplicate', 'delete' or 'properties', chosen from the
+    # right-click menu. The window owns the clipboard and the Properties
+    # panel, so it carries the command out.
     editRequested = Signal(str)
     scaleChanged = Signal()
     # (pointer position in canvas pixels, zooming in) - a request rather than
@@ -72,6 +72,12 @@ class DesignCanvas(QWidget):
     # (kind, x, y in dots) - a palette button let go over the canvas. The
     # window adds the element, since it owns the + Image file chooser.
     elementDropped = Signal(str, int, int)
+    # Every paint, which every change to the selection or the document ends
+    # in - what the Properties panel follows the selection by.
+    painted = Signal()
+    # A mouse button went down, before the canvas acts on it: the Properties
+    # panel records the edits it has made so far as their own undo entry.
+    pressed = Signal()
 
     # Cursor shown while hovering each resize handle
     HANDLE_CURSORS = {
@@ -234,6 +240,7 @@ class DesignCanvas(QWidget):
         self._draw_band(painter, scale)
 
         painter.restore()
+        self.painted.emit()
 
     def _draw_element(self, painter, element: DesignElement, selected: bool):
         if element.element_type == 'text':
@@ -867,6 +874,7 @@ class DesignCanvas(QWidget):
     # --- mouse ---------------------------------------------------------------
 
     def mousePressEvent(self, event):
+        self.pressed.emit()
         self.finish_nudge()
         lx, ly = self._screen_to_label(event.x(), event.y())
         doc = self.document

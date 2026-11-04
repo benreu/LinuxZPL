@@ -43,10 +43,11 @@ from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
                            TEXT_BLOCK_JUSTIFICATIONS, TEXT_BLOCKS,
                            TEXT_DIRECTIONS, TEXT_JUSTIFICATIONS,
-                           CircleElement,
+                           BarcodeElement, CircleElement,
                            DiagonalLineElement, Document, EllipseElement,
                            FieldBlock, FrameElement, GraphicSymbolElement,
-                           TextBlock, TextElement, graphic_symbol_choices)
+                           StoredGraphicElement, TextBlock, TextElement,
+                           graphic_symbol_choices)
 
 from .busy import BusyBar
 from .canvas import to_qimage
@@ -562,10 +563,29 @@ def _field_number_rows(form, element):
     return apply_to
 
 
+def _set_quietly(edit, text: str) -> None:
+    """Put text in a line or text box without it counting as an edit."""
+    edit.blockSignals(True)
+    try:
+        if isinstance(edit, QPlainTextEdit):
+            edit.setPlainText(text)
+        else:
+            edit.setText(text)
+    finally:
+        edit.blockSignals(False)
+
+
 def _text_format_rows(editor, form, element: TextElement,
-                      document: Document):
+                      document: Document, show_text=None):
     """The rows every text-like editor shares: ^FP direction and gap, ^FR,
     the font, and the ^FB/^TB wrap block.
+
+    `apply()` can change the element beyond what these rows say - a line
+    break typed with Wrap clear gets a block, and clearing Wrap joins the
+    lines - and then puts the rows, and through `show_text` the caller's own
+    text row, back in step with it. A window applies once and closes, but the
+    Properties panel applies on every change, and rows left behind would
+    undo the block on the next keystroke.
 
     Edit Text and Edit Time Field both call this, so a clock field is styled
     the same way a plain one is. The caller adds its own text row, size and
@@ -729,6 +749,27 @@ def _text_format_rows(editor, form, element: TextElement,
     def text_block_chosen():
         return wrap_check.isChecked() and kind_combo.currentData() == 'TB'
 
+    def show_block(new_block):
+        """Tick Wrap and show a field block the element was just given."""
+        rows = (wrap_check, kind_combo, block_width, max_lines, spacing_spin,
+                justify_combo, indent_spin)
+        for row in rows:
+            row.blockSignals(True)
+        try:
+            wrap_check.setChecked(True)
+            kind_combo.setCurrentIndex(0)
+            block_width.setValue(new_block.width)
+            max_lines.setValue(new_block.max_lines)
+            spacing_spin.setValue(new_block.line_spacing)
+            justify_combo.setCurrentIndex(
+                codes.index(new_block.justification)
+                if new_block.justification in codes else 0)
+            indent_spin.setValue(new_block.indent)
+        finally:
+            for row in rows:
+                row.blockSignals(False)
+        sync_block_fields()
+
     def apply():
         element.direction = direction_combo.currentData()
         element.char_gap = gap_spin.value()
@@ -750,12 +791,15 @@ def _text_format_rows(editor, form, element: TextElement,
             # rather than abandoned to the printer.
             element.text = textraster.join_lines(element.text)
             element.block = None
+            if show_text is not None:
+                show_text()
         elif textraster.FORCED_BREAK in element.text:
             # A break typed into an element that never had a block still
             # needs one, for the same reason. Sized to the longest line,
             # so nothing moves.
             element.block = element.default_block(document.font_path,
                                                   document.dpi)
+            show_block(element.block)
 
         if chosen['path'] != element.font_path:
             if chosen['path']:
@@ -809,7 +853,9 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(editor, form, element, document)
+    fmt = _text_format_rows(
+        editor, form, element, document,
+        show_text=lambda: _set_quietly(text_edit, textraster.to_editor(element.text)))
 
 
     apply_name = _name_row(form, element)
@@ -846,8 +892,8 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
     carries no field-source mechanism of its own at all any more: ^FN, ^SN and
     ^FC each moved out to their own dialog. The one on/off control here is the
     checkbox at the bottom: unticking it turns the element back into a plain
-    static text field, and the next double-click opens the regular Text
-    editor instead of this one.
+    static text field, whose rows - text_form's - then take the place of
+    these (form_builder).
     """
     editor = EditorForm("Edit Time Field")
     form = editor.rows
@@ -879,7 +925,9 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(editor, form, element, document)
+    fmt = _text_format_rows(
+        editor, form, element, document,
+        show_text=lambda: _set_quietly(text_edit, element.text))
 
     clock_check = QCheckBox("Comes from the printer's clock (^FC)")
     clock_check.setObjectName("clock_format")
@@ -927,8 +975,8 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
     field-source mechanism of its own at all any more: ^FN, ^SN and ^FC each
     moved out to their own dialog. The one on/off control here is the
     checkbox at the bottom: unticking it turns the element back into a plain
-    static text field, and the next double-click opens the regular Text
-    editor instead of this one.
+    static text field, whose rows - text_form's - then take the place of
+    these (form_builder).
     """
     editor = EditorForm("Edit Serial Field")
     form = editor.rows
@@ -968,7 +1016,9 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(editor, form, element, document)
+    fmt = _text_format_rows(
+        editor, form, element, document,
+        show_text=lambda: _set_quietly(text_edit, element.text))
 
     serial_check = QCheckBox("Auto-increments each print (^SN)")
     serial_check.setObjectName("serial_format")
@@ -1016,8 +1066,8 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
     The font, direction, wrap and reverse rows are the ones edit_text_dialog
     has (_text_format_rows); the one thing it leaves out is a Data Source
     selector, since this dialog *is* the ^FN source. The one on/off control is the checkbox at the bottom: unticking
-    it turns the element back into a plain static text field, and the next
-    double-click opens the regular Text editor instead of this one.
+    it turns the element back into a plain static text field, whose rows -
+    text_form's - then take the place of these (form_builder).
 
     ^FN is still available on a barcode, through `_field_number_rows` in
     edit_barcode_dialog - unlike ^SN/^FC, a recalled stored-format barcode is
@@ -1063,7 +1113,9 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(editor, form, element, document)
+    fmt = _text_format_rows(
+        editor, form, element, document,
+        show_text=lambda: _set_quietly(text_edit, element.text))
 
     variable_check = QCheckBox("Data comes from a numbered field (^FN)")
     variable_check.setObjectName("variable")
@@ -1825,6 +1877,43 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     """barcode_form in a window of its own, with OK and Cancel.
     `on_accept` runs once OK has changed the element."""
     return _editor_dialog(parent, barcode_form(element), on_accept)
+
+
+def form_builder(element):
+    """The form function that edits this element, or None for one with no
+    form - an image, whose one setting is which file it shows.
+
+    A text element's form follows what feeds it - the clock, a serial number,
+    a numbered field, or nothing - so unticking the clock in its form changes
+    which form it needs.
+    """
+    if isinstance(element, TextElement):
+        if element.clock_format:
+            return time_form
+        if element.serial_increment is not None:
+            return serial_form
+        if element.field_number is not None:
+            return numbered_form
+        return text_form
+    for kind, builder in ((FrameElement, frame_form), (CircleElement, circle_form),
+                          (EllipseElement, ellipse_form),
+                          (DiagonalLineElement, diagonal_form),
+                          (GraphicSymbolElement, graphic_symbol_form),
+                          (StoredGraphicElement, stored_graphic_form),
+                          (BarcodeElement, barcode_form)):
+        if isinstance(element, kind):
+            return builder
+    return None
+
+
+def editor_form(element, document: Document) -> Optional[EditorForm]:
+    """The form that edits this element, built, or None if it has none."""
+    builder = form_builder(element)
+    if builder is None:
+        return None
+    if builder in (text_form, time_form, serial_form, numbered_form):
+        return builder(element, document)
+    return builder(element)
 
 
 def choose_image_file(parent, title="Select Image") -> Optional[str]:

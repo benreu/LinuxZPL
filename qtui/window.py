@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide2.QtCore import QMimeData, QPoint, QSize, Qt, QTimer
+from PySide2.QtCore import QByteArray, QMimeData, QPoint, QSize, Qt, QTimer
 from PySide2.QtGui import QCursor, QDrag, QIcon, QImage, QKeySequence, QPixmap
 from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QScrollArea,
@@ -24,15 +24,13 @@ from zplcore import printer_io
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import graphic_symbols
-from zplcore.model import (BarcodeElement, CircleElement,
-                           DiagonalLineElement, Document, EllipseElement,
-                           FrameElement, GraphicSymbolElement, ImageElement,
-                           StoredGraphicElement, TextElement)
+from zplcore.model import Document
 from zplcore.renderer import ZPLRenderer
 
 from . import dialogs as qt_dialogs
 from .busy import BusyBar
 from .canvas import PALETTE_MIME, DesignCanvas, to_qimage
+from .properties import PropertiesPanel
 
 # The align commands, in menu order: the three horizontal, then the three
 # vertical. The GTK frontend spells the same six the same way, and the
@@ -89,6 +87,9 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_status_dialog = None
         self.label_inches = DEFAULT_LABEL_INCHES
         self.saved_geometry = None
+        # The dock layout - the Properties panel's side, size and whether it
+        # floats - as saveState() gave it, or None for the default.
+        self.saved_dock_state = None
         self._load_settings()
         # The persisted printer, snapshotted so a session-only override (Print
         # To) can offer "Use Default" without re-reading the settings file.
@@ -103,10 +104,6 @@ class ZPLDesignerWindow(QMainWindow):
         self.unsaved_changes = False
         self._update_title()
         self.renderer = ZPLRenderer()
-        # The element editors are non-modal, so more than one can be on screen
-        # at once. One per element, keyed by id: an open editor holds its
-        # element, so the id cannot be reused while it is registered here.
-        self._editors = {}
 
         # A label is the size last chosen in Label Settings, at whatever
         # resolution the printer is set to, so its dot dimensions depend on
@@ -137,9 +134,15 @@ class ZPLDesignerWindow(QMainWindow):
         self.scroller.viewport().installEventFilter(self)
         self.setCentralWidget(self.scroller)
 
+        # The selection's properties, edited live, beside the canvas. Built
+        # before the actions, every one of which ends its burst of edits.
+        self.properties = PropertiesPanel(self)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.properties)
+
         self._build_actions()
         self._build_menus()
         self._build_toolbar()
+        self._restore_docks()
 
         # Its own widget, so a status message does not wipe the zoom away.
         # The busy row sits beside it for the one network call the main
@@ -155,6 +158,23 @@ class ZPLDesignerWindow(QMainWindow):
         self._redo_stack = []
         self._current_snapshot = self.document.snapshot()
         self._update_undo_actions()
+
+    def _restore_docks(self):
+        """Put the Properties panel where it was left, or docked on the right.
+
+        Floating, it starts hidden: it is asked for when wanted (a double
+        click, Properties), where docked it is part of the window.
+        """
+        if self.saved_dock_state:
+            try:
+                self.restoreState(QByteArray.fromBase64(
+                    self.saved_dock_state.encode('ascii')))
+            except (ValueError, UnicodeError):
+                pass                # a hand-edited value: the default layout
+        else:
+            self.resizeDocks([self.properties], [420], Qt.Horizontal)
+        if self.properties.isFloating():
+            self.properties.hide()
 
     # --- the view ------------------------------------------------------------
 
@@ -228,6 +248,7 @@ class ZPLDesignerWindow(QMainWindow):
         Once the drag has finished rather than inside it, so + Image's file
         chooser is not run while the drop is still being delivered.
         """
+        self.properties.finish_edit()
         QTimer.singleShot(0, lambda: self._palette[kind](at=(x, y)))
 
     def _sync_view_size(self):
@@ -302,6 +323,9 @@ class ZPLDesignerWindow(QMainWindow):
 
     def _action(self, text, slot, shortcut=None, checkable=False):
         action = QAction(text, self)
+        # Before the command, so the edits made in the Properties panel are
+        # an undo entry of their own rather than part of whatever comes next.
+        action.triggered.connect(self.properties.finish_edit)
         action.triggered.connect(slot)
         if shortcut is not None:
             action.setShortcut(QKeySequence(shortcut))
@@ -504,6 +528,8 @@ class ZPLDesignerWindow(QMainWindow):
 
     def _build_toolbar(self):
         toolbar = QToolBar("Elements", self)
+        # So saveState() can name it alongside the Properties panel
+        toolbar.setObjectName("elements")
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(16, 16))
         toolbar.setToolButtonStyle(Qt.ToolButtonTextOnly)
@@ -547,6 +573,7 @@ class ZPLDesignerWindow(QMainWindow):
             icon = QIcon(QPixmap.fromImage(
                 to_qimage(graphic_symbols.icon(code))))
             action = symbol_popup.addAction(icon, name)
+            action.triggered.connect(self.properties.finish_edit)
             action.triggered.connect(
                 lambda _checked=False, code=code: self.on_add_graphic_symbol(code))
             self.symbol_actions.append(action)
@@ -657,6 +684,34 @@ class ZPLDesignerWindow(QMainWindow):
     # --- history -------------------------------------------------------------
 
     def on_canvas_changed(self):
+        """A change made anywhere but the Properties panel: record it, and
+        have the panel read the document again."""
+        self.properties.document_changed()
+        self._record_change()
+
+    def record_panel_edit(self):
+        """The Properties panel's burst of edits, as one undo entry."""
+        self._register_label_fonts()
+        self._record_change()
+
+    def revert_to_last_entry(self):
+        """Put the document back as the last undo entry left it - Escape in
+        the Properties panel, throwing its burst of edits away.
+
+        The selection stays what it is now, not what it was when that entry
+        was made: the edits were to the elements still being looked at. A
+        burst never adds or removes an element, so their places are the same
+        in the restored list.
+        """
+        doc = self.document
+        places = [doc.elements.index(el) for el in doc.selection
+                  if el in doc.elements]
+        doc.restore(self._current_snapshot)
+        doc.selection = [doc.elements[i] for i in places if i < len(doc.elements)]
+        self.canvas._sync_size()
+        self.canvas.update()
+
+    def _record_change(self):
         """Record one undo entry and mark the document unsaved."""
         self.unsaved_changes = True
         # the snapshot standing before this change is what undo goes back to
@@ -667,7 +722,9 @@ class ZPLDesignerWindow(QMainWindow):
         self._update_undo_actions()
 
     def on_undo(self):
-        # a nudge still held down is a change of its own, recorded first
+        # a burst in the Properties panel, or a nudge still held down, is a
+        # change of its own, recorded first
+        self.properties.finish_edit()
         self.canvas.finish_nudge()
         if not self._undo_stack:
             return
@@ -677,7 +734,9 @@ class ZPLDesignerWindow(QMainWindow):
         self.update_status("Undo")
 
     def on_redo(self):
-        # a nudge still held down is a change of its own, recorded first
+        # a burst in the Properties panel, or a nudge still held down, is a
+        # change of its own, recorded first
+        self.properties.finish_edit()
         self.canvas.finish_nudge()
         if not self._redo_stack:
             return
@@ -687,7 +746,6 @@ class ZPLDesignerWindow(QMainWindow):
         self.update_status("Redo")
 
     def _apply_snapshot(self, snapshot):
-        self._close_element_editors()
         self.document.restore(snapshot)
         self.unsaved_changes = True
         self.canvas._sync_size()
@@ -696,7 +754,7 @@ class ZPLDesignerWindow(QMainWindow):
 
     def _reset_history(self):
         """Start a fresh history, so it never spans a file load."""
-        self._close_element_editors()
+        self.properties.document_changed()
         self._undo_stack = []
         self._redo_stack = []
         self._current_snapshot = self.document.snapshot()
@@ -765,12 +823,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.canvas.commit()
 
     def on_delete(self):
-        # Every selected element goes, so every editor open on one has to be
-        # closed - an editor must never outlive the element it is editing.
-        doomed = list(self.document.selection)
         if self.document.remove_selected():
-            for element in doomed:
-                self._close_editor_for(element)
             self.canvas.commit()
 
     # The clipboard holds ZPL (Document.copy_zpl), so what one window copies
@@ -821,11 +874,10 @@ class ZPLDesignerWindow(QMainWindow):
          'properties': self.on_properties}[command]()
 
     def on_properties(self):
-        """Open the editor for the primary - the element a double click on it
-        would open, which in a group is the member last picked."""
-        element = self.document.selected_element
-        if element is not None:
-            self.on_element_double_clicked(element)
+        """Show the Properties panel on the selection - floating and hidden,
+        this is how it comes back."""
+        if self.document.selection:
+            self.properties.request()
 
     # Selection commands change the selection and never the document, so
     # they repaint and record nothing - the same as a click or a band.
@@ -876,91 +928,9 @@ class ZPLDesignerWindow(QMainWindow):
             self.canvas.commit()
 
     def on_element_double_clicked(self, element):
-        """Open the editor for whichever element was double-clicked."""
-        open_editor = self._editors.get(id(element))
-        if open_editor is not None:
-            # Already being edited. Raising the window it is in beats opening a
-            # second one onto the same element, where whichever was accepted
-            # last would silently undo the other.
-            open_editor.raise_()
-            open_editor.activateWindow()
-            return
-
-        def committed():
-            self.canvas.commit()
-
-        def text_committed():
-            self._register_label_fonts()
-            self.canvas.commit()
-
-        if isinstance(element, TextElement) and element.clock_format:
-            editor = qt_dialogs.edit_time_dialog(self, element, self.document,
-                                                 on_accept=text_committed)
-        elif isinstance(element, TextElement) and element.serial_increment is not None:
-            editor = qt_dialogs.edit_serial_dialog(self, element, self.document,
-                                                   on_accept=text_committed)
-        elif isinstance(element, TextElement) and element.field_number is not None:
-            editor = qt_dialogs.edit_numbered_dialog(self, element, self.document,
-                                                      on_accept=text_committed)
-        elif isinstance(element, TextElement):
-            editor = qt_dialogs.edit_text_dialog(self, element, self.document,
-                                                 on_accept=text_committed)
-        elif isinstance(element, FrameElement):
-            editor = qt_dialogs.edit_frame_dialog(self, element,
-                                                  on_accept=committed)
-        elif isinstance(element, CircleElement):
-            editor = qt_dialogs.edit_circle_dialog(self, element,
-                                                   on_accept=committed)
-        elif isinstance(element, EllipseElement):
-            editor = qt_dialogs.edit_ellipse_dialog(self, element,
-                                                    on_accept=committed)
-        elif isinstance(element, DiagonalLineElement):
-            editor = qt_dialogs.edit_diagonal_dialog(self, element,
-                                                     on_accept=committed)
-        elif isinstance(element, GraphicSymbolElement):
-            editor = qt_dialogs.edit_graphic_symbol_dialog(self, element,
-                                                           on_accept=committed)
-        elif isinstance(element, BarcodeElement):
-            editor = qt_dialogs.edit_barcode_dialog(self, element,
-                                                    on_accept=committed)
-        elif isinstance(element, ImageElement):
-            # A file chooser rather than a form of fields, so it stays modal;
-            # there is nothing to leave open alongside the canvas.
-            path = qt_dialogs.choose_image_file(self, "Replace Image")
-            if path:
-                element.image_path = path
-                element.reload()
-                self.canvas.commit()
-            return
-        elif isinstance(element, StoredGraphicElement):
-            editor = qt_dialogs.edit_stored_graphic_dialog(self, element,
-                                                            on_accept=committed)
-        else:
-            return
-
-        self._editors[id(element)] = editor
-        editor.finished.connect(lambda _r, key=id(element):
-                                self._editors.pop(key, None))
-
-    def _close_editor_for(self, element):
-        """Close the editor open on one element, if there is one."""
-        editor = self._editors.pop(id(element), None) if element else None
-        if editor is not None:
-            # close() rather than reject(): both refuse the edit, but only
-            # close() honours WA_DeleteOnClose and actually frees the window.
-            editor.close()
-
-    def _close_element_editors(self):
-        """Close every open editor.
-
-        Undo, redo and loading a file all replace the element objects the open
-        editors hold, so an editor left up would write its fields into an
-        element the document no longer has - the edit would vanish with no
-        error to show for it.
-        """
-        for editor in list(self._editors.values()):
-            editor.close()
-        self._editors.clear()
+        """A double click asks for the Properties panel, which the first
+        click has already pointed at the element."""
+        self.properties.request()
 
     def _register_label_fonts(self):
         """Tell the preview renderer about every font this label uses."""
@@ -1547,6 +1517,7 @@ class ZPLDesignerWindow(QMainWindow):
                 self.printer_font_device = font_device
             zpl_fonts.set_extra_font_dir(
                 parser.get('fonts', 'extra_dir', fallback=''))
+            self.saved_dock_state = parser.get('docks', 'state', fallback=None)
             if parser.has_section('window'):
                 self.saved_geometry = tuple(
                     parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
@@ -1605,6 +1576,13 @@ class ZPLDesignerWindow(QMainWindow):
                     for key, value in zip(('x', 'y', 'width', 'height'),
                                           self.saved_geometry):
                         parser.set('window', key, str(int(value)))
+                if hasattr(self, 'properties'):
+                    # A section of its own: one more key in [window] would
+                    # make it a section without the geometry its reader wants
+                    if not parser.has_section('docks'):
+                        parser.add_section('docks')
+                    parser.set('docks', 'state',
+                               bytes(self.saveState().toBase64()).decode('ascii'))
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, 'w', encoding='utf-8') as f:
                     parser.write(f)
@@ -1619,6 +1597,8 @@ class ZPLDesignerWindow(QMainWindow):
     # --- window --------------------------------------------------------------
 
     def closeEvent(self, event):
+        # An edit still in its burst is an unsaved change like any other
+        self.properties.finish_edit()
         if not self.check_unsaved_changes():
             event.ignore()
             return
