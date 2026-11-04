@@ -1224,6 +1224,14 @@ class DesignCanvas(Gtk.DrawingArea):
         item_forward.set_sensitive(can_raise)
         item_backward.set_sensitive(can_lower)
         item_back.set_sensitive(can_lower)
+        menu.append(Gtk.SeparatorMenuItem())
+
+        # The right click has already made this element the primary, which is
+        # what Properties opens on - the member pointed at, in a group.
+        item_properties = Gtk.MenuItem(label="Properties")
+        item_properties.connect("activate",
+                                lambda _i: self.emit('edit-requested', 'properties'))
+        menu.append(item_properties)
 
         menu.show_all()
         menu.popup_at_pointer(event)

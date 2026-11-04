@@ -632,6 +632,53 @@ check("Deselect All clears it and records nothing",
 for element in list(document.elements):
     document.elements.remove(element)
 
+# --- Properties: the editor, from the menus as well as a double click -------
+
+p_frame = document.add_frame_element()
+p_circle = document.add_circle_element()
+p_circle.x, p_circle.y = 400, 400
+document.select_many([p_frame, p_circle])
+document.group_selected()
+document.select(p_circle)          # what the right click itself does
+
+# The right-click menu is popped up and left to the main loop, so it is caught
+# on its way up and its Properties item activated by hand.
+p_menus = []
+p_real_popup = Gtk.Menu.popup_at_pointer
+Gtk.Menu.popup_at_pointer = lambda menu, _event: p_menus.append(menu)
+try:
+    window.design_canvas._show_context_menu(None, p_circle)
+finally:
+    Gtk.Menu.popup_at_pointer = p_real_popup
+p_items = [item for item in p_menus[0].get_children() if item.get_label()]
+check("the right-click menu ends with Properties",
+      [item.get_label() for item in p_items][-1:] == ["Properties"],
+      [item.get_label() for item in p_items])
+p_items[-1].activate()
+check("right-click Properties opens the member right-clicked, not its group",
+      list(window._editors) == [id(p_circle)], list(window._editors))
+window._close_element_editors()
+
+document.select(p_frame, direct=True)
+window.on_properties_clicked(None)
+check("Edit > Properties opens the primary's editor",
+      list(window._editors) == [id(p_frame)], list(window._editors))
+window._close_element_editors()
+check("Edit > Properties is on Alt+Enter",
+      window.accelerators.get(window.properties_item) == "<Alt>Return",
+      window.accelerators.get(window.properties_item))
+
+document.clear_selection()
+window.on_properties_clicked(None)
+check("Properties with nothing selected opens nothing", not window._editors)
+window._update_edit_menu(None)
+p_greyed = not window.properties_item.get_sensitive()
+window._release_edit_menu(None)
+check("the Edit menu greys Properties with nothing selected, and lets go of "
+      "it once closed", p_greyed and window.properties_item.get_sensitive())
+for element in list(document.elements):
+    document.elements.remove(element)
+
 # --- a wrapped block paints its lines where it wraps them -------------------
 # The conformance suite compares ZPL, and the ZPL for a block is right whether
 # or not the canvas draws it wrapped - which is how a block came to print

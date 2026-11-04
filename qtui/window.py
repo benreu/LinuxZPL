@@ -363,6 +363,11 @@ class ZPLDesignerWindow(QMainWindow):
         self.backward_action = self._action("Send Backward", self.on_send_backward, "Ctrl+[")
         self.back_action = self._action("Send to Back", self.on_send_to_back, "Ctrl+Shift+[")
 
+        # Alt+Enter, the conventional Properties key. It opens the primary's
+        # editor, as a double click on it does.
+        self.properties_action = self._action("Pr&operties", self.on_properties,
+                                              "Alt+Return")
+
         # Some layouts report the shifted symbol, so Ctrl+Shift+] arrives as
         # Ctrl+} and never matches a binding declared on ']'. Both are bound.
         self._alt_front = self._action("Bring to Front", self.on_bring_to_front, "Ctrl+}")
@@ -461,6 +466,8 @@ class ZPLDesignerWindow(QMainWindow):
         align_menu = edit_menu.addMenu("&Align")
         for action in self.align_actions:
             align_menu.addAction(action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.properties_action)
         # Re-evaluated each time the menu opens, since the selection and the
         # z-order both move underneath it - and released when it closes, see
         # _release_edit_menu.
@@ -599,7 +606,8 @@ class ZPLDesignerWindow(QMainWindow):
                  self.invert_selection_action, self.group_action,
                  self.ungroup_action, self.remove_from_group_action,
                  self.front_action, self.forward_action,
-                 self.backward_action, self.back_action]
+                 self.backward_action, self.back_action,
+                 self.properties_action]
                 + self.align_actions)
 
     def _release_edit_menu(self):
@@ -644,6 +652,7 @@ class ZPLDesignerWindow(QMainWindow):
             action.setEnabled(doc.can_raise())
         for action in (self.backward_action, self.back_action):
             action.setEnabled(doc.can_lower())
+        self.properties_action.setEnabled(doc.selected_element is not None)
 
     # --- history -------------------------------------------------------------
 
@@ -808,7 +817,15 @@ class ZPLDesignerWindow(QMainWindow):
     def _on_edit_requested(self, command: str):
         """A command chosen from the canvas's right-click menu."""
         {'cut': self.on_cut, 'copy': self.on_copy,
-         'duplicate': self.on_duplicate, 'delete': self.on_delete}[command]()
+         'duplicate': self.on_duplicate, 'delete': self.on_delete,
+         'properties': self.on_properties}[command]()
+
+    def on_properties(self):
+        """Open the editor for the primary - the element a double click on it
+        would open, which in a group is the member last picked."""
+        element = self.document.selected_element
+        if element is not None:
+            self.on_element_double_clicked(element)
 
     # Selection commands change the selection and never the document, so
     # they repaint and record nothing - the same as a click or a band.

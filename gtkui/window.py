@@ -698,6 +698,15 @@ class ZPLViewerWindow(Gtk.Window):
         align_item.set_submenu(self._build_align_menu())
         edit_menu.append(align_item)
 
+        edit_menu.append(Gtk.SeparatorMenuItem())
+
+        # Alt+Enter, the conventional Properties key. It opens the primary's
+        # editor, as a double click on it does.
+        self.properties_item = Gtk.MenuItem.new_with_mnemonic("Pr_operties")
+        self.properties_item.connect("activate", self.on_properties_clicked)
+        add_accel(self.properties_item, "<Alt>Return")
+        edit_menu.append(self.properties_item)
+
         edit_menu.show_all()
         self._edit_menu = edit_menu
 
@@ -3578,7 +3587,7 @@ class ZPLViewerWindow(Gtk.Window):
                      self.select_all_item, self.deselect_all_item,
                      self.invert_selection_item, self.group_item,
                      self.ungroup_item, self.remove_from_group_item,
-                     *self.zorder_items):
+                     *self.zorder_items, self.properties_item):
             item.set_sensitive(True)
         self._release_align_items()
 
@@ -3607,7 +3616,8 @@ class ZPLViewerWindow(Gtk.Window):
             item.set_sensitive(doc.can_raise())
         for item in (backward, back):
             item.set_sensitive(doc.can_lower())
-    
+        self.properties_item.set_sensitive(doc.selected_element is not None)
+
     def _build_align_menu(self) -> Gtk.Menu:
         """One copy of the align commands, for a menu or a popup."""
         menu = Gtk.Menu()
@@ -3837,7 +3847,15 @@ class ZPLViewerWindow(Gtk.Window):
         """A command chosen from the canvas's right-click menu."""
         {'cut': self.on_cut_clicked, 'copy': self.on_copy_clicked,
          'duplicate': self.on_duplicate_clicked,
-         'delete': self.on_delete_clicked}[command](None)
+         'delete': self.on_delete_clicked,
+         'properties': self.on_properties_clicked}[command](None)
+
+    def on_properties_clicked(self, widget):
+        """Open the editor for the primary - the element a double click on it
+        would open, which in a group is the member last picked."""
+        element = self.design_canvas.document.selected_element
+        if element is not None:
+            self.on_element_double_clicked(None, element)
 
     def on_canvas_draw(self, widget, context):
         """Canvas draw event handler - re-render when canvas changes."""

@@ -920,7 +920,8 @@ must report the real error and leave the flag set.
 Undo, Redo, then Cut / Copy / Paste / Duplicate / Delete, then Select All /
 Deselect All / Invert Selection, then Group / Ungroup / Remove from Group, then
 Bring to Front / Bring Forward / Send Backward / Send to Back, then an
-**Align** submenu. Cut, Copy, Duplicate, Delete and the four z-order items are
+**Align** submenu, then **Properties**. Cut, Copy, Duplicate, Delete, the four
+z-order items and Properties are
 disabled when nothing is selected; Paste is disabled when the clipboard holds
 no text; the raise pair is disabled when the selection is already on top and
 the lower pair when it is already at the bottom. Sensitivity is re-evaluated
@@ -1035,6 +1036,12 @@ one rigid box by one shared delta — so aligning left does not stack a group's
 members at the same x and undo the very arrangement grouping was meant to keep.
 A group selected on its own is one unit and lines up against the label.
 
+**Properties** (Alt+Enter) opens the editor of the primary element (§7) — the
+one a double click on it opens, so in a group it is the member last picked,
+not the group. It is the same command as the right-click menu's (§6.6), and
+like a double click it raises an editor already open on that element rather
+than opening a second.
+
 Results are clamped into the label the way a drag is, so a unit larger than the
 label lands against the edge rather than at a negative coordinate. An align
 that moves nothing records no undo entry. Nothing else about an element changes:
@@ -1113,6 +1120,9 @@ other does not.
 - **Bring to Front / Bring Forward / Send Backward / Send to Back**, disabled at
   the ends of the z-order — of the units, so a group at the top offers neither
   raise even when the member right-clicked is not the last element (§6.2).
+- **Properties**, as the Edit menu's (§6.2): the editor of the element
+  right-clicked, which the right click has made the primary — the member
+  pointed at, when it is in a group.
 
 ### 6.7 The unsaved-changes prompt
 
@@ -2642,6 +2652,7 @@ treated as corrupt and falls back too.
 | Ctrl+Shift+] | Bring to Front |
 | Ctrl+[ | Send Backward |
 | Ctrl+Shift+[ | Send to Back |
+| Alt+Enter | Properties |
 | Ctrl++, Ctrl+= | Zoom In |
 | Ctrl+- | Zoom Out |
 | Ctrl+0 | Fit Label |

@@ -4143,6 +4143,59 @@ ew.on_delete()
 check("deleting an element closes the editor open on it",
       not ew._editors, len(ew._editors))
 
+# --- Properties: the editor, from the menus as well as a double click -------
+
+from PySide2.QtGui import QContextMenuEvent, QKeySequence
+from PySide2.QtWidgets import QMenu
+
+pw = qt_main.ZPLDesignerWindow()
+pw.canvas.set_zoom(1.0)
+p_frame = pw.document.add_frame_element()
+p_circle = pw.document.add_circle_element()
+p_circle.x, p_circle.y = 400, 400
+pw.document.select_many([p_frame, p_circle])
+pw.document.group_selected()
+
+# The right-click menu runs its own event loop, so the canvas is handed one
+# that answers at once with Properties, noting what it offered. A subclass in
+# the canvas's namespace, since PySide2 does not see exec_ replaced on QMenu.
+p_offered = []
+class _ChoosesProperties(QMenu):
+    def exec_(self, *_a):
+        p_offered.extend(a.text() for a in self.actions() if a.text())
+        return next(a for a in self.actions() if a.text() == "Properties")
+p_real_menu = qt_canvas.QMenu
+qt_canvas.QMenu = _ChoosesProperties
+try:
+    centre = QPoint(p_circle.x + p_circle.width // 2, p_circle.y + p_circle.height // 2)
+    pw.canvas.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse, centre,
+                                                 pw.canvas.mapToGlobal(centre)))
+finally:
+    qt_canvas.QMenu = p_real_menu
+check("the right-click menu ends with Properties", p_offered[-1:] == ["Properties"],
+      p_offered)
+check("right-click Properties opens the member right-clicked, not its group",
+      list(pw._editors) == [id(p_circle)], [pw._editors])
+pw._close_element_editors()
+
+pw.document.select(p_frame, direct=True)
+pw.on_properties()
+check("Edit > Properties opens the primary's editor",
+      list(pw._editors) == [id(p_frame)], list(pw._editors))
+pw._close_element_editors()
+check("Edit > Properties is on Alt+Enter",
+      pw.properties_action.shortcut() == QKeySequence("Alt+Return"),
+      pw.properties_action.shortcut().toString())
+
+pw.document.clear_selection()
+pw.on_properties()
+check("Properties with nothing selected opens nothing", not pw._editors)
+pw._update_edit_menu()
+p_greyed = not pw.properties_action.isEnabled()
+pw._release_edit_menu()
+check("the Edit menu greys Properties with nothing selected, and lets go of "
+      "it once closed", p_greyed and pw.properties_action.isEnabled())
+
 # --- commands that used to lose what they carried ---------------------------
 
 # ^CF: a field with no ^A of its own prints in whatever ^CF last set. Requiring

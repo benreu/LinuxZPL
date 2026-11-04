@@ -1140,10 +1140,11 @@ class DesignCanvas(QWidget):
         print_action.setChecked(element.print_enabled)
         menu.addSeparator()
 
-        clipboard = {menu.addAction(label): command for label, command in
+        # Commands the window carries out, as it does from its Edit menu
+        requested = {menu.addAction(label): command for label, command in
                      (("Cut", 'cut'), ("Copy", 'copy'), ("Duplicate", 'duplicate'))}
         menu.addSeparator()
-        clipboard[menu.addAction("Delete")] = 'delete'
+        requested[menu.addAction("Delete")] = 'delete'
         menu.addSeparator()
 
         group = menu.addAction("Group")
@@ -1164,13 +1165,18 @@ class DesignCanvas(QWidget):
         forward.setEnabled(can_raise)
         backward.setEnabled(can_lower)
         back.setEnabled(can_lower)
+        menu.addSeparator()
+
+        # The right click has already made this element the primary, which is
+        # what Properties opens on - the member pointed at, in a group.
+        requested[menu.addAction("Properties")] = 'properties'
 
         chosen = menu.exec_(event.globalPos())
         if chosen is None:
             return
-        if chosen in clipboard:
+        if chosen in requested:
             # The window records its own undo entry, if the command makes one
-            self.editRequested.emit(clipboard[chosen])
+            self.editRequested.emit(requested[chosen])
             return
         if chosen is print_action:
             # Keeps the element in the design and in the saved file, but off the
