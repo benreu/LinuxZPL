@@ -1341,6 +1341,69 @@ finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
 
+# --- File > Open Recent through the GTK window --------------------------------
+# A window of its own: the suite's first was destroyed further up, and a
+# destroyed one has no File menu left to open.
+recent_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: recent_path
+gtk_main._fallback_config_path = lambda: recent_path
+recent_window = ZPLViewerWindow()
+recent_errors, recent_asked = [], []
+recent_window.show_error_dialog = recent_errors.append
+recent_window.check_unsaved_changes = lambda: recent_asked.append(1) or True
+try:
+    def recent_labels():
+        return [item.get_label() for item in recent_window.recent_menu.get_children()]
+    recent_window._refresh_recent()
+    check("an empty Open Recent is greyed out and holds nothing",
+          not recent_window.recent_item.get_sensitive() and recent_labels() == [], recent_labels())
+
+    recent_dir = tempfile.mkdtemp()
+    first = os.path.join(recent_dir, 'first_label.zpl')
+    second = os.path.join(recent_dir, 'R&D.zpl')
+    recent_window.save_zpl_file(first, '^XA\n^FO10,10^A0N,30,30^FDrecent^FS\n^XZ')
+    recent_window.load_zpl_file(first)
+    check("a file opened is listed first, numbered, its underscore kept out of the mnemonic",
+          recent_labels()[0] == '_1 first__label.zpl' and recent_window.recent_item.get_sensitive(),
+          recent_labels())
+    check("its tooltip is the full path",
+          recent_window.recent_menu.get_children()[0].get_tooltip_text() == first)
+    recent_window.save_zpl_file(second, '^XA\n^FO10,10^A0N,30,30^FDrecent^FS\n^XZ')
+    check("saving under a new name puts that one on top",
+          [l for l in recent_labels() if l][:2] == ['_1 R&D.zpl', '_2 first__label.zpl']
+          and recent_labels()[-1] == '_Clear List', recent_labels())
+
+    recent_window.recent_menu.get_children()[1].activate()
+    check("choosing an entry opens that file and moves it back to the top",
+          recent_window.current_filepath == first and recent_labels()[0] == '_1 first__label.zpl',
+          (recent_window.current_filepath, recent_labels()))
+
+    elsewhere = os.path.join(recent_dir, 'elsewhere.zpl')
+    gtk_main.workflow.save_recent([recent_path], [elsewhere, first, second])
+    file_menu = recent_window.recent_item.get_parent()
+    file_menu.show(); file_menu.hide()
+    check("opening File reads the list again, so another window's files appear",
+          recent_labels()[0] == '_1 elsewhere.zpl', recent_labels())
+
+    os.remove(second)
+    recent_asked.clear()
+    [item for item in recent_window.recent_menu.get_children()
+     if (item.get_label() or '').endswith('R&D.zpl')][0].activate()
+    check("a file no longer there is taken off the list, with a message that says why",
+          not any('R&D' in (l or '') for l in recent_labels())
+          and recent_errors and 'no longer there' in recent_errors[-1],
+          (recent_labels(), recent_errors))
+    check("before anyone is asked about unsaved work", recent_asked == [])
+
+    recent_window.recent_menu.get_children()[-1].activate()
+    check("Clear List empties it and greys it out",
+          recent_labels() == [] and not recent_window.recent_item.get_sensitive()
+          and gtk_main.workflow.load_recent([recent_path]) == [])
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+    recent_window.destroy()
+
 # --- gtkui.busy.BusyBar: a worker thread's result lands back on the main loop
 import time
 from gtkui.busy import BusyBar

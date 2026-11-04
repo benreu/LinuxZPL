@@ -16,7 +16,6 @@ this measures agreement rather than assuming it.
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -110,8 +109,6 @@ FONT_FAMILY = 'DejaVu Sans'
 # follows spells both toolkits' menus the same way so that only real
 # differences survive.
 
-_MNEMONIC = re.compile(r'[&_](\w)')
-
 # GTK renders Shift+Ctrl+S and Delete where Qt renders Ctrl+Shift+S and Del -
 # a display convention on each side, not a difference in what is bound.
 MODIFIER_ORDER = ('Ctrl', 'Shift', 'Alt', 'Meta')
@@ -129,14 +126,27 @@ def _drag_path(from_x, from_y, dx, dy):
             for step in range(1, DRAG_STEPS + 1)]
 
 
-def menu_label(text):
+def menu_label(text, marker):
     """A label with its mnemonic marked the same way whichever toolkit wrote it.
 
     `&New` and `_New` both become `[N]ew`, so the comparison ignores which
     character a toolkit uses to mark one but still catches a mnemonic that has
-    moved to a different letter.
+    moved to a different letter. `marker` is that character - `_` for GTK, `&`
+    for Qt - and doubled it stands for itself, which is how a file name in Open
+    Recent keeps its own: GTK's `sample__300dpi.zpl` and Qt's
+    `sample_300dpi.zpl` are the same label, and neither has a mnemonic in it.
     """
-    return _MNEMONIC.sub(lambda m: f'[{m.group(1)}]', text or '')
+    text = text or ''
+    out, i = [], 0
+    while i < len(text):
+        if text[i] == marker and i + 1 < len(text):
+            following = text[i + 1]
+            out.append(marker if following == marker else f'[{following}]')
+            i += 2
+        else:
+            out.append(text[i])
+            i += 1
+    return ''.join(out)
 
 
 def menu_accel(text):
@@ -485,14 +495,14 @@ class GtkDriver:
                 if accel:
                     key, mods = Gtk.accelerator_parse(accel)
                     accel = Gtk.accelerator_get_label(key, mods)
-                lines.append(f'{pad}{menu_label(item.get_label())}\t{menu_accel(accel)}')
+                lines.append(f'{pad}{menu_label(item.get_label(), '_')}\t{menu_accel(accel)}')
                 # A submenu is the other half of a menu bar: an Align that held
                 # different commands in the two frontends would otherwise pass.
                 if item.get_submenu() is not None:
                     walk(item.get_submenu(), depth + 1)
 
         for top in bar.get_children():
-            lines.append(f'[{menu_label(top.get_label())}]')
+            lines.append(f'[{menu_label(top.get_label(), '_')}]')
             if top.get_submenu() is not None:
                 walk(top.get_submenu(), 1)
         return '\n'.join(lines)
@@ -813,7 +823,7 @@ class QtDriver:
                 if action.isSeparator():
                     lines.append(f'{pad}---')
                     continue
-                lines.append(f'{pad}{menu_label(action.text())}\t'
+                lines.append(f'{pad}{menu_label(action.text(), '&')}\t'
                              f'{menu_accel(action.shortcut().toString())}')
                 # A submenu is the other half of a menu bar: an Align that held
                 # different commands in the two frontends would otherwise pass.
@@ -821,7 +831,7 @@ class QtDriver:
                     walk(action.menu(), depth + 1)
 
         for top in self.window.menuBar().actions():
-            lines.append(f'[{menu_label(top.text())}]')
+            lines.append(f'[{menu_label(top.text(), '&')}]')
             if top.menu() is not None:
                 walk(top.menu(), 1)
         return '\n'.join(lines)
@@ -1172,6 +1182,11 @@ def sequence(driver, record):
     # the text itself.
     driver.load(FIXTURE_TEMPLATE)
     record('load a template using ^A0 and ^FB')
+    # Two files opened, so File > Open Recent lists both, newest first. The
+    # first menu bar recorded it empty; this one holds names - and the 300 dpi
+    # sample's underscore, which each toolkit has to keep from becoming a
+    # mnemonic in its own way.
+    record('the menu bar after opening two files', driver.menus())
 
     # Through the real button handlers, not the geometry helpers underneath:
     # every step above moves elements directly, which is how a frontend whose

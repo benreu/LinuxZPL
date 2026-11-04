@@ -528,6 +528,15 @@ class ZPLViewerWindow(Gtk.Window):
                 # Kept so the status bar's busy row can withhold it while a
                 # print is out.
                 self.print_item = item
+            if action == self.on_load_file_clicked:
+                # Filled in by _rebuild_recent_menu, from the settings file.
+                self.recent_menu = Gtk.Menu()
+                self.recent_item = Gtk.MenuItem.new_with_mnemonic("Open _Recent")
+                self.recent_item.set_submenu(self.recent_menu)
+                file_menu.append(self.recent_item)
+        # Read again each time File opens, so a file another window has opened
+        # since is offered here too.
+        file_menu.connect("show", lambda _menu: self._refresh_recent())
 
         upload_menu = Gtk.Menu()
         upload_item = Gtk.MenuItem.new_with_mnemonic("_Upload Template to Printer")
@@ -561,6 +570,7 @@ class ZPLViewerWindow(Gtk.Window):
         file_menu.append(quit_item)
 
         file_menu.show_all()
+        self._refresh_recent()
 
         # Edit menu
         edit_menu = Gtk.Menu()
@@ -1164,7 +1174,65 @@ class ZPLViewerWindow(Gtk.Window):
             self.load_zpl_file(filepath)
         else:
             dialog.destroy()
-    
+
+    # --- File > Open Recent --------------------------------------------------
+
+    def _recent_candidates(self):
+        """The settings files the list is read from and written to, in order."""
+        return (_config_path(), _fallback_config_path())
+
+    def _refresh_recent(self):
+        """Rebuild Open Recent from what the settings file holds now."""
+        self._rebuild_recent_menu(workflow.load_recent(self._recent_candidates()))
+
+    def _store_recent(self, recent):
+        """Write the list and show it - the one place either happens."""
+        workflow.save_recent(self._recent_candidates(), recent)
+        self._rebuild_recent_menu(recent)
+
+    def _remember_recent(self, filepath):
+        """Put a file just opened or saved at the top of Open Recent."""
+        # Re-read first, so a file another window added since is kept.
+        self._store_recent(workflow.remember_recent(
+            workflow.load_recent(self._recent_candidates()), filepath))
+
+    def _rebuild_recent_menu(self, recent):
+        for child in self.recent_menu.get_children():
+            self.recent_menu.remove(child)
+            child.destroy()
+        for number, (path, text) in enumerate(
+                zip(recent, workflow.recent_labels(recent)), 1):
+            # 1 to 9, then 0 for the tenth. A name's own underscores are
+            # doubled, or GTK would take the first for the mnemonic.
+            item = Gtk.MenuItem.new_with_mnemonic(
+                f"_{number % 10} {text.replace('_', '__')}")
+            item.set_tooltip_text(path)
+            item.connect("activate", lambda _item, p=path: self.on_open_recent(p))
+            self.recent_menu.append(item)
+        if recent:
+            self.recent_menu.append(Gtk.SeparatorMenuItem())
+            clear_item = Gtk.MenuItem.new_with_mnemonic("_Clear List")
+            clear_item.connect("activate", lambda _item: self.on_clear_recent())
+            self.recent_menu.append(clear_item)
+        self.recent_item.set_sensitive(bool(recent))
+        self.recent_menu.show_all()
+
+    def on_open_recent(self, filepath):
+        """Open a file from File > Open Recent."""
+        # Checked before asking about unsaved work: nobody should be made to
+        # save or discard for the sake of a file that is not there to open.
+        if not os.path.isfile(filepath):
+            self._store_recent(workflow.forget_recent(
+                workflow.load_recent(self._recent_candidates()), filepath))
+            self.show_error_dialog(workflow.recent_gone_message(filepath))
+            return
+        if self.check_unsaved_changes():
+            self.load_zpl_file(filepath)
+
+    def on_clear_recent(self):
+        """Empty File > Open Recent."""
+        self._store_recent([])
+
     def on_save_clicked(self, widget):
         """Handle save button click."""
         self.save_file_or_ask_for_filename()
@@ -1269,11 +1337,12 @@ class ZPLViewerWindow(Gtk.Window):
         filename = os.path.basename(filepath)
         self.update_status(f"Saved: {filename}")
         self.unsaved_changes = False
-        return True
       except Exception as e:
         self.show_error_dialog(f"Failed to save file: {e}")
         self.update_status("Save failed")
         return False
+      self._remember_recent(filepath)
+      return True
     
     def load_zpl_file(self, filepath: str):
         """Load a ZPL file and update the views."""
@@ -1286,6 +1355,7 @@ class ZPLViewerWindow(Gtk.Window):
             self.current_zpl_content = content
             self.current_filepath = filepath
             self._update_title()
+            self._remember_recent(filepath)
             self.label_width = document.label_width
             self.label_height = document.label_height
 

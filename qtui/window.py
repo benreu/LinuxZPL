@@ -409,6 +409,20 @@ class ZPLDesignerWindow(QMainWindow):
         file_menu = menubar.addMenu("&File")
         file_menu.addAction(self.new_action)
         file_menu.addAction(self.load_action)
+        # Filled in by _rebuild_recent_menu, from the settings file. Made here
+        # with the window as its parent, not by addMenu("..."): PySide2 hangs
+        # a menu made that way off the File menu's Python wrapper, and the
+        # first walk of the menu bar through menuBar().actions() kills both
+        # wrappers - the menu lives on in C++, but self.recent_menu would
+        # raise from then on.
+        self.recent_menu = QMenu("Open &Recent", self)
+        file_menu.addMenu(self.recent_menu)
+        self.recent_menu.setToolTipsVisible(True)
+        # Read again each time File opens, so a file another window has opened
+        # since is offered here too. File's signal rather than the submenu's:
+        # a greyed-out submenu never opens, so it would never catch up.
+        file_menu.aboutToShow.connect(self._refresh_recent)
+        self._refresh_recent()
         file_menu.addSeparator()
         file_menu.addAction(self.save_action)
         file_menu.addAction(self.save_as_action)
@@ -1160,6 +1174,64 @@ class ZPLDesignerWindow(QMainWindow):
         if path:
             self.load_zpl_file(path)
 
+    # --- File > Open Recent --------------------------------------------------
+
+    def _recent_candidates(self):
+        """The settings files the list is read from and written to, in order."""
+        return (_config_path(), _fallback_config_path())
+
+    def _refresh_recent(self):
+        """Rebuild Open Recent from what the settings file holds now."""
+        self._rebuild_recent_menu(workflow.load_recent(self._recent_candidates()))
+
+    def _store_recent(self, recent):
+        """Write the list and show it - the one place either happens."""
+        workflow.save_recent(self._recent_candidates(), recent)
+        self._rebuild_recent_menu(recent)
+
+    def _remember_recent(self, filepath):
+        """Put a file just opened or saved at the top of Open Recent."""
+        # Re-read first, so a file another window added since is kept.
+        self._store_recent(workflow.remember_recent(
+            workflow.load_recent(self._recent_candidates()), filepath))
+
+    def _rebuild_recent_menu(self, recent):
+        # Taken off now, deleted once control is back in the event loop: when
+        # an entry is chosen, the action still being triggered is one of them.
+        for action in self.recent_menu.actions():
+            self.recent_menu.removeAction(action)
+            action.deleteLater()
+        for number, (path, text) in enumerate(
+                zip(recent, workflow.recent_labels(recent)), 1):
+            # 1 to 9, then 0 for the tenth. A name's own ampersands are
+            # doubled, or Qt would take the first for the mnemonic.
+            action = self.recent_menu.addAction(
+                f"&{number % 10} {text.replace('&', '&&')}")
+            action.setToolTip(path)
+            action.triggered.connect(
+                lambda _checked=False, p=path: self.on_open_recent(p))
+        if recent:
+            self.recent_menu.addSeparator()
+            self.recent_menu.addAction("&Clear List").triggered.connect(
+                lambda _checked=False: self.on_clear_recent())
+        self.recent_menu.menuAction().setEnabled(bool(recent))
+
+    def on_open_recent(self, filepath):
+        """Open a file from File > Open Recent."""
+        # Checked before asking about unsaved work: nobody should be made to
+        # save or discard for the sake of a file that is not there to open.
+        if not os.path.isfile(filepath):
+            self._store_recent(workflow.forget_recent(
+                workflow.load_recent(self._recent_candidates()), filepath))
+            self.show_error(workflow.recent_gone_message(filepath))
+            return
+        if self.check_unsaved_changes():
+            self.load_zpl_file(filepath)
+
+    def on_clear_recent(self):
+        """Empty File > Open Recent."""
+        self._store_recent([])
+
     def _zpl_open_dialog(self):
         """A .zpl chooser that previews the selected file as a rendered label."""
         dialog = QFileDialog(self, "Open ZPL File")
@@ -1261,6 +1333,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.unsaved_changes = False
         self._update_title()
         self.update_status(f"Saved: {os.path.basename(filepath)}")
+        self._remember_recent(filepath)
         return True
 
     def load_zpl_file(self, filepath: str):
@@ -1271,6 +1344,7 @@ class ZPLDesignerWindow(QMainWindow):
             self.canvas.set_document(document)
             self.current_filepath = filepath
             self._update_title()
+            self._remember_recent(filepath)
             rescaled = self._offer_dpi_rescale(loaded_dpi)
             self._register_label_fonts()
             self.canvas.update()

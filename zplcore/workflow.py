@@ -8,7 +8,9 @@ not raise an error - it would print the wrong label - so they live here rather
 than being written twice.
 """
 
+import configparser
 import os.path
+import re
 
 from . import fields as zpl_fields
 from . import fonts, printer_io, symbology
@@ -360,6 +362,131 @@ def confirm_save_path(chosen, ask, exists=os.path.exists):
     if path == chosen or not exists(path):
         return path
     return path if ask(path) else None
+
+
+# --- File > Open Recent --------------------------------------------------------
+#
+# The files last opened or saved, newest first. They are kept in settings.ini,
+# so both frontends show one list and a file opened in either is offered by the
+# other. The desktop's own list (recently-used.xbel) was the alternative and was
+# turned down: it forgets after the desktop's age limit - a week, on the machine
+# this was written on - which a template printed monthly would not survive; a
+# *.zpl filter over it offers firmware images, which Firmware Update's chooser
+# records there too; and Qt has no way to read it.
+
+RECENT_MAX = 10
+RECENT_SECTION = 'recent'
+_RECENT_KEY = re.compile(r'file(\d+)')
+
+
+def remember_recent(recent, path) -> list:
+    """The list with `path` at the top, moved there if it was already listed.
+
+    Absolute but not resolved: a file given on the command line as label.zpl
+    still has to be found from wherever the next session starts, and the path
+    the user knows it by is the one worth showing, symlinks and all.
+    """
+    path = os.path.abspath(path)
+    return ([path] + [p for p in recent if p != path])[:RECENT_MAX]
+
+
+def forget_recent(recent, path) -> list:
+    """The list without `path`."""
+    path = os.path.abspath(path)
+    return [p for p in recent if p != path]
+
+
+def recent_gone_message(path) -> str:
+    """What choosing an entry says when its file is no longer there."""
+    return (f"Cannot open {path}: it is no longer there, "
+            "so it has been taken off Open Recent.")
+
+
+def recent_labels(recent) -> list:
+    """What each entry is called in the menu, without a mnemonic.
+
+    The file's name, which is what anyone looks for - plus its folder, home
+    shortened to ~, when another entry has the same name. Two copies of
+    label.zpl listed as label.zpl twice would leave the user guessing.
+    """
+    names = [os.path.basename(p) for p in recent]
+    home = os.path.expanduser('~')
+    labels = []
+    for path, name in zip(recent, names):
+        if names.count(name) < 2:
+            labels.append(name)
+            continue
+        folder = os.path.dirname(path)
+        if home != os.sep and (folder == home or folder.startswith(home + os.sep)):
+            folder = '~' + folder[len(home):]
+        labels.append(f'{name} ({folder})')
+    return labels
+
+
+def load_recent(candidates) -> list:
+    """The list as the settings file holds it; [] when there is none.
+
+    `candidates` are the settings files in the order a write tries them - the
+    user config directory, then the fallback. The first that has a [recent]
+    section is the one read, which is the one the last write landed in; reading
+    both and letting the later win, as the rest of the settings do, would let a
+    stale fallback left by some earlier sandboxed run shadow every update.
+    """
+    for path in candidates:
+        parser = configparser.ConfigParser()
+        try:
+            if not parser.read(path, encoding='utf-8'):
+                continue
+        except (configparser.Error, UnicodeDecodeError):
+            continue
+        if not parser.has_section(RECENT_SECTION):
+            continue
+        numbered = []
+        for key in parser.options(RECENT_SECTION):
+            match = _RECENT_KEY.fullmatch(key)
+            if not match:
+                continue
+            try:
+                # Interpolated, so the %% a save wrote comes back as %. A lone
+                # % typed in by hand cannot be, and only that entry is lost.
+                value = parser.get(RECENT_SECTION, key).strip()
+            except configparser.Error:
+                continue
+            numbered.append((int(match.group(1)), value))
+        recent = []
+        for _, value in sorted(numbered):
+            if os.path.isabs(value) and value not in recent:
+                recent.append(value)
+        return recent[:RECENT_MAX]
+    return []
+
+
+def save_recent(candidates, recent) -> bool:
+    """Write the list, leaving every other section as it was. True if written.
+
+    The same two candidates as the rest of the settings, tried the same way,
+    each with a fresh parser. Nothing is reported on failure: the open or save
+    that prompted this has already succeeded, and a list that could not be
+    remembered costs nothing but the convenience.
+    """
+    # % is doubled because the parser interpolates on the way back in. A path
+    # with a line break cannot be stored in an INI value at all.
+    stored = [p for p in recent if '\n' not in p and '\r' not in p][:RECENT_MAX]
+    for path in candidates:
+        parser = configparser.ConfigParser()
+        try:
+            parser.read(path, encoding='utf-8')
+            parser.remove_section(RECENT_SECTION)
+            parser.add_section(RECENT_SECTION)
+            for number, value in enumerate(stored, 1):
+                parser.set(RECENT_SECTION, f'file{number}', value.replace('%', '%%'))
+            os.makedirs(os.path.dirname(os.fspath(path)), exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                parser.write(f)
+            return True
+        except (configparser.Error, OSError, UnicodeDecodeError):
+            continue
+    return False
 
 
 # Commands whose effect the model actually keeps: it turns them into elements,

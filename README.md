@@ -189,7 +189,8 @@ Identical in both frontends.
 
 Printer address, port and resolution are kept in
 `~/.config/linuxzpl/settings.ini`, shared by both frontends, along with the
-window's size and position from the last time it was closed. A missing or
+window's size and position from the last time it was closed and the files
+listed under File > Open Recent. A missing or
 corrupt file never blocks startup; the defaults are `192.168.50.21:9100` at
 203 dpi, and a window sized to the monitor it opens on.
 

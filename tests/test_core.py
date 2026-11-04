@@ -1646,6 +1646,78 @@ check("a failed save leaves the title on the file still being edited",
       w.save_zpl_file('/nonexistent-dir/x.zpl', '^XA^XZ') is False
       and w.windowTitle() == 'adopted.zpl', w.windowTitle())
 
+# --- File > Open Recent through the Qt window ---------------------------------
+_real_config, _real_fallback = qt_main._config_path, qt_main._fallback_config_path
+_recent_ini = Path(tempfile.mkdtemp()) / 'settings.ini'
+qt_main._config_path = qt_main._fallback_config_path = lambda: _recent_ini
+_real_ask = qt_dialogs.ask_unsaved_changes
+_asked = []
+qt_dialogs.ask_unsaved_changes = lambda parent: _asked.append(1) or 'discard'
+try:
+    def _recent_texts():
+        return [a.text() for a in w.recent_menu.actions()]
+    # Through a held action: a menu() taken off a temporary one is a PySide2
+    # wrapper that dies with it.
+    _file_action = w.menuBar().actions()[0]
+    _file_menu = _file_action.menu()
+    _file_menu.aboutToShow.emit()
+    check("Open Recent sits right after Open",
+          [a.text() for a in _file_menu.actions()][1:3] == ['&Open…', 'Open &Recent'],
+          [a.text() for a in _file_menu.actions()][:4])
+    check("an empty Open Recent is greyed out and holds nothing",
+          not w.recent_menu.menuAction().isEnabled() and _recent_texts() == [],
+          _recent_texts())
+
+    _first = os.path.join(tmp, 'first_label.zpl')
+    _second = os.path.join(tmp, 'R&D.zpl')
+    w.unsaved_changes = False; w.on_new()
+    w.document.add_text_element('recent'); w.canvas.commit()
+    w.save_zpl_file(_first, w.document.to_zpl())
+    w.load_zpl_file(_first)
+    check("a file opened is listed first, numbered, under its own name",
+          _recent_texts()[0] == '&1 first_label.zpl'
+          and w.recent_menu.menuAction().isEnabled(), _recent_texts())
+    check("its tooltip is the full path", w.recent_menu.actions()[0].toolTip() == _first)
+    w.save_zpl_file(_second, w.document.to_zpl())
+    check("saving under a new name puts that one on top, its & kept out of the mnemonic",
+          _recent_texts() == ['&1 R&&D.zpl', '&2 first_label.zpl', '', '&Clear List'],
+          _recent_texts())
+    check("and the settings file holds the same list",
+          workflow.load_recent([_recent_ini]) == [_second, _first])
+
+    w.unsaved_changes = False
+    w.recent_menu.actions()[1].trigger()
+    check("choosing an entry opens that file and moves it back to the top",
+          w.current_filepath == _first and _recent_texts()[0] == '&1 first_label.zpl',
+          (w.current_filepath, _recent_texts()))
+
+    # Another window adding a file is seen the next time File opens.
+    _elsewhere = os.path.join(tmp, 'elsewhere.zpl')
+    workflow.save_recent([_recent_ini], [_elsewhere, _first, _second])
+    _file_menu.aboutToShow.emit()
+    check("opening File reads the list again, so another window's files appear",
+          _recent_texts()[0] == '&1 elsewhere.zpl', _recent_texts())
+
+    os.remove(_second)
+    w.unsaved_changes = True
+    _asked.clear(); errors.clear()
+    [a for a in w.recent_menu.actions() if a.text().endswith('R&&D.zpl')][0].trigger()
+    check("a file no longer there is taken off the list",
+          not any('R&&D' in t for t in _recent_texts()), _recent_texts())
+    check("with a message that says why",
+          errors and 'no longer there' in errors[-1] and _second in errors[-1], errors)
+    check("before anyone is asked about unsaved work, and the open label is left alone",
+          _asked == [] and w.current_filepath == _first and w.unsaved_changes)
+
+    w.unsaved_changes = False
+    w.recent_menu.actions()[-1].trigger()
+    check("Clear List empties it and greys it out",
+          _recent_texts() == [] and not w.recent_menu.menuAction().isEnabled()
+          and workflow.load_recent([_recent_ini]) == [])
+finally:
+    qt_main._config_path, qt_main._fallback_config_path = _real_config, _real_fallback
+    qt_dialogs.ask_unsaved_changes = _real_ask
+
 # --- the name a save chooser hands back -------------------------------------
 from zplcore import workflow as _wf
 check("a title is the file's name, not its path",
@@ -1675,6 +1747,79 @@ check("a suffix over free ground does not ask",
 check("a name the chooser already confirmed is not asked about twice",
       _wf.confirm_save_path('/t/label.zpl', lambda p: 1 / 0,
                             exists=lambda p: True) == '/t/label.zpl')
+
+# --- File > Open Recent: the list itself ------------------------------------
+_r = []
+for _p in ('/t/a.zpl', '/t/b.zpl', '/t/a.zpl'):
+    _r = _wf.remember_recent(_r, _p)
+check("opening a listed file again moves it to the top rather than listing it twice",
+      _r == ['/t/a.zpl', '/t/b.zpl'], _r)
+_r = []
+for _n in range(12):
+    _r = _wf.remember_recent(_r, f'/t/{_n}.zpl')
+check("the list keeps the newest ten",
+      _r == [f'/t/{n}.zpl' for n in range(11, 1, -1)], _r)
+check("a relative path is stored absolute, so it still opens from elsewhere",
+      _wf.remember_recent([], 'label.zpl') == [os.path.join(os.getcwd(), 'label.zpl')])
+check("forgetting drops just that entry",
+      _wf.forget_recent(['/t/a.zpl', '/t/b.zpl'], '/t/a.zpl') == ['/t/b.zpl'])
+
+_home = os.path.expanduser('~')
+check("an entry is called by its file name while no other shares it",
+      _wf.recent_labels(['/t/a.zpl', '/u/b.zpl']) == ['a.zpl', 'b.zpl'])
+check("two of one name both show their folders, home as ~",
+      _wf.recent_labels([_home + '/ship/a.zpl', '/srv/a.zpl', '/t/b.zpl'])
+      == ['a.zpl (~/ship)', 'a.zpl (/srv)', 'b.zpl'],
+      _wf.recent_labels([_home + '/ship/a.zpl', '/srv/a.zpl', '/t/b.zpl']))
+
+_rd = Path(tempfile.mkdtemp())
+_ini = _rd / 'cfg' / 'settings.ini'
+_names = ['/t/100% done.zpl', '/t/a_b.zpl', '/t/R&D.zpl']
+_ini.parent.mkdir()
+_ini.write_text('[printer]\naddress = 10.0.0.1\n')
+check("the list is written to the settings file", _wf.save_recent([_ini], _names))
+check("and read back as it was, % and all", _wf.load_recent([_ini]) == _names,
+      _wf.load_recent([_ini]))
+import configparser as _cp
+_kept = _cp.ConfigParser(); _kept.read(_ini)
+check("writing it leaves the other sections alone",
+      _kept.get('printer', 'address', fallback=None) == '10.0.0.1')
+check("a path with a line break is not stored, the rest are",
+      _wf.save_recent([_ini], ['/t/a\nb.zpl', '/t/c.zpl'])
+      and _wf.load_recent([_ini]) == ['/t/c.zpl'])
+
+_ini.write_text('[recent]\nfile2 = /t/b.zpl\nfile10 = /t/j.zpl\nfile1 = /t/a.zpl\n'
+                'file3 = /t/50%.zpl\nfile4 = relative.zpl\nfile5 = /t/a.zpl\n')
+check("entries are read in number order, file10 after file2; a stray %, a relative "
+      "path and a repeat are each skipped alone",
+      _wf.load_recent([_ini]) == ['/t/a.zpl', '/t/b.zpl', '/t/j.zpl'],
+      _wf.load_recent([_ini]))
+_ini.write_text('no section header here\n')
+check("a corrupt settings file means an empty list, not a failure",
+      _wf.load_recent([_ini]) == [])
+
+# The user config directory refusing the write: a file where the directory
+# should be, as the frontends' own settings checks do it.
+_blocked = _rd / 'blocked'
+_blocked.write_text('')
+_fallback = _rd / 'fallback.ini'
+_both = [_blocked / 'settings.ini', _fallback]
+check("a list the config directory won't take goes to the fallback",
+      _wf.save_recent(_both, ['/t/a.zpl']) and _wf.load_recent([_fallback]) == ['/t/a.zpl'])
+check("and is read back from there", _wf.load_recent(_both) == ['/t/a.zpl'])
+check("a list nowhere can take is reported as not written",
+      not _wf.save_recent([_blocked / 'settings.ini'], ['/t/a.zpl']))
+
+# Writes land in the first candidate that takes them, so that is the one read:
+# a stale list left in the fallback must not shadow a newer one, even an empty
+# one that Clear List wrote.
+_primary = _rd / 'primary.ini'
+_primary.write_text('[printer]\naddress = 10.0.0.1\n')
+check("with no list in the config directory, the fallback's is read",
+      _wf.load_recent([_primary, _fallback]) == ['/t/a.zpl'])
+_wf.save_recent([_primary], [])
+check("once the config directory has a list, even an empty one, a stale fallback is not read",
+      _wf.load_recent([_primary, _fallback]) == [])
 
 # --- ZPL as other tools write it -------------------------------------------
 # Two real templates, kept verbatim. They are the regression test for a parser

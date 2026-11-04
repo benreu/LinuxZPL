@@ -898,6 +898,7 @@ pinned.
 |---|---|
 | **New** | Prompts about unsaved changes (§6.7), then a blank label of the remembered size (§13) at the printer's resolution. Clears the elements, the undo history and the current file, and resets the status to `Ready`. |
 | **Open…** | Prompts about unsaved changes (§6.7), then a file chooser filtered to `*.zpl`. The chooser previews the selected `.zpl` by rendering it to an image, scaled to at most 300 px wide. Opening replaces the whole document and resets the undo history. |
+| **Open Recent ▸** | The last 10 files opened or saved, newest first, numbered `1`–`9` then `0` as mnemonics. An entry reads as the file's name, plus its folder (home shown as `~`) when another entry has the same name; its tooltip is the full path. Opening or saving a file already listed moves it to the top. Choosing an entry whose file is gone takes it off the list and says so, *before* any prompt about unsaved changes; otherwise it prompts (§6.7) and opens like Open…. **Clear List**, under a separator, empties it. Greyed out while the list is empty. The list is kept in settings.ini (§13), not the desktop's recent files: those age out (after a week on some desktops) and include every `.zpl` any file chooser picked, firmware images among them. |
 | **Save** | Writes to the current path, or behaves as Save As if there is none. |
 | **Save as…** | File chooser, default name `untitled.zpl`. A name typed with no extension gets `.zpl`; one that already has an extension is left alone. Confirms before overwriting an existing file, and declining returns to the chooser. Adopts the chosen path as the current file. |
 | **Print** | §9. |
@@ -906,7 +907,7 @@ pinned.
 | **Quit** | Prompts about unsaved changes (§6.7). |
 
 **The menu is in four groups**, separated in this order: start a document
-(New, Open), persist it (Save, Save as), print it (Print, Upload Template, Printer Settings),
+(New, Open, Open Recent), persist it (Save, Save as), print it (Print, Upload Template, Printer Settings),
 leave. A port that runs them together is the thing this grouping exists to
 avoid.
 
@@ -2573,6 +2574,10 @@ x = 401
 y = 952
 width = 1201
 height = 844
+
+[recent]
+file1 = /home/you/labels/shipping.zpl
+file2 = /home/you/labels/100%% off.zpl
 ```
 
 | Section | Written | Used by |
@@ -2580,11 +2585,22 @@ height = 844
 | `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion |
 | `[label]` | when Label Size is accepted | the label at startup and on File > New |
 | `[window]` | on quit | where the window opens (§2) |
+| `[recent]` | whenever a file is opened or saved, an entry is dropped, or the list is cleared | File > Open Recent (§6.1) |
 
 **File → Printer Settings ▸ Set Printer for This Session…** (§9) deliberately
 never writes `[printer]` — only Default Printer and Label Size do.
 
 Writing re-reads the file first, so a section another version wrote survives.
+
+**`[recent]` is written at once, not on quit,** and read again each time the
+File menu opens, so two windows - either frontend - share one list and a crash
+loses none of it. Each change re-reads the list before editing it, so a file
+another window added in the meantime is kept. The entries are `file1` upward
+in order; `%` is stored doubled, since the file is read with interpolation. A
+list that cannot be written is not reported: the open or save it followed has
+already succeeded. Of the two places the file can be (above), the list is read
+from the first that has a `[recent]` section - the one the last write landed
+in - so a stale list in the fallback cannot hide a newer one.
 
 **The label size is stored in inches, not dots.** Dots only mean a physical size
 once a resolution is fixed, and the resolution beside them is exactly what can
