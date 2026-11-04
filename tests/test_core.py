@@ -4196,6 +4196,81 @@ pw._release_edit_menu()
 check("the Edit menu greys Properties with nothing selected, and lets go of "
       "it once closed", p_greyed and pw.properties_action.isEnabled())
 
+# --- an editor's rows, apart from the window they are shown in --------------
+# The Properties panel shows the same rows the editor windows do, so each
+# editor's form is built on its own and says when any row of it changes.
+
+from PySide2.QtWidgets import QSpinBox as _FSpin, QPlainTextEdit as _FText
+
+_ff_frame = EllipseElement(10, 10, 200, 150, 2)
+_ff = qt_dialogs.ellipse_form(_ff_frame)
+check("a form is built with no window around it",
+      _ff.body.window() is _ff.body and _ff.title == "Edit Ellipse")
+_ff_heard = []
+_ff.on_change(lambda: _ff_heard.append(1))
+_ff.body.findChild(_FSpin, 'thickness').setValue(5)
+check("a form reports a change to one of its inputs, once", _ff_heard == [1],
+      _ff_heard)
+check("...and leaves the element alone until it is applied",
+      _ff_frame.thickness == 2)
+_ff.apply()
+check("applying the form writes its rows back", _ff_frame.thickness == 5)
+
+_ff_doc = Document(812, 1218)
+_ff_text = _ff_doc.add_text_element("words")
+_ff_tf = qt_dialogs.text_form(_ff_text, _ff_doc)
+_ff_heard.clear()
+_ff_tf.on_change(lambda: _ff_heard.append('text'))
+_ff_tf.body.findChild(_FText, 'text').setPlainText("other words")
+check("typing in Edit Text's text box is a change", _ff_heard == ['text'], _ff_heard)
+_ff_heard.clear()
+_ff_parents = []
+_ff_real_choose = qt_dialogs.choose_font_family
+qt_dialogs.choose_font_family = (
+    lambda parent, family=None, title=None: (_ff_parents.append(parent)
+                                             or ("DejaVu Sans", "/x/dv.ttf")))
+try:
+    _ff_buttons = {b.text(): b for b in _ff_tf.body.findChildren(_QPushButton)}
+    _ff_buttons["Choose\u2026"].click()
+    _ff_buttons["Clear"].click()
+finally:
+    qt_dialogs.choose_font_family = _ff_real_choose
+check("choosing and clearing a font are changes, though no input shows them",
+      _ff_heard == ['text', 'text'], _ff_heard)
+_ff_dlg = qt_dialogs.edit_text_dialog(None, _ff_text, _ff_doc)
+_ff_parents.clear()
+qt_dialogs.choose_font_family = (
+    lambda parent, family=None, title=None: (_ff_parents.append(parent)
+                                             or (None, None)))
+try:
+    {b.text(): b for b in _ff_dlg.findChildren(_QPushButton)}["Choose\u2026"].click()
+finally:
+    qt_dialogs.choose_font_family = _ff_real_choose
+check("the font chooser is modal to the editor window the rows are in",
+      _ff_parents == [_ff_dlg], _ff_parents)
+_ff_dlg.reject()
+
+_ff_pdf = BarcodeElement(0, 0, 10, 'AB', symbology='pdf417')
+_ff_bf = qt_dialogs.barcode_form(_ff_pdf)
+_ff_heard.clear()
+_ff_bf.on_change(lambda: _ff_heard.append('barcode'))
+_ff_bf.body.findChild(_QPushButton, 'add_position').click()
+check("adding an ^FM position is a change", _ff_heard == ['barcode'], _ff_heard)
+_ff_table = _ff_bf.body.findChild(qt_dialogs.QTableWidget, 'positions')
+_ff_heard.clear()
+_ff_table.cellWidget(_ff_table.rowCount() - 1, 0).setValue(77)
+check("...and so is editing the position it added", _ff_heard == ['barcode'],
+      _ff_heard)
+_ff_heard.clear()
+_ff_bf.body.findChild(_QPushButton, 'remove_position').click()
+check("removing one is a change", _ff_heard == ['barcode'], _ff_heard)
+_ff_maxi = qt_dialogs.barcode_form(BarcodeElement(0, 0, 10, 'AB', symbology='maxicode'))
+_ff_heard.clear()
+_ff_maxi.on_change(lambda: _ff_heard.append('insert'))
+_ff_maxi.body.findChild(_QPushButton, 'insert_GS').click()
+check("an Insert button's escape is a change to the value",
+      _ff_heard == ['insert'], _ff_heard)
+
 # --- commands that used to lose what they carried ---------------------------
 
 # ^CF: a field with no ^A of its own prints in whatever ^CF last set. Requiring

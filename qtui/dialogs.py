@@ -17,7 +17,8 @@ from PIL import Image as PILImage
 from PySide2.QtCore import QSize, Qt, QTimer
 from PySide2.QtGui import (QFont, QFontMetrics, QGuiApplication,
                           QPixmap)
-from PySide2.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
+from PySide2.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication,
+                               QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QFrame, QGroupBox, QHBoxLayout,
                                QInputDialog,
@@ -240,6 +241,80 @@ def _show_editor(dialog, apply_edits, on_accept=None):
     dialog.finished.connect(on_finished)
     dialog.show()
     return dialog
+
+
+class EditorForm:
+    """An element editor's rows, apart from whatever window they are shown in.
+
+    `body` is a widget holding them - `rows`, a form layout - and `apply()`
+    writes every row back onto the element. The same form goes into an
+    editor window with OK and Cancel (`_editor_dialog`) or anywhere else a
+    widget can go.
+
+    `on_change(callback)` asks to hear about every change to a row, whether
+    it came through an input (`watch`) or a button that changes something no
+    input shows - a font chosen, a position added. A form calls `changed()`
+    for those itself, and `watch()` for any input it adds after it was built.
+    """
+
+    def __init__(self, title: str):
+        self.title = title
+        self.body = QWidget()
+        self.rows = QFormLayout(self.body)
+        # The window it goes into has margins of its own
+        self.rows.setContentsMargins(0, 0, 0, 0)
+        self.apply = lambda: None
+        self._listeners = []
+
+    def on_change(self, callback) -> None:
+        self._listeners.append(callback)
+
+    def changed(self, *_args) -> None:
+        for callback in list(self._listeners):
+            callback()
+
+    def watch(self, root: QWidget) -> None:
+        """Report every change to an input at or under `root` as a change to
+        the form.
+
+        A line edit inside a spin box or a combo box is that control's own,
+        and reports through it, so it is passed over. textChanged rather than
+        textEdited, since a row written by a button - an Insert into the
+        barcode value - is a change too.
+        """
+        for widget in [root] + root.findChildren(QWidget):
+            if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                widget.valueChanged.connect(self.changed)
+            elif isinstance(widget, QComboBox):
+                widget.currentIndexChanged.connect(self.changed)
+            elif isinstance(widget, QCheckBox):
+                widget.toggled.connect(self.changed)
+            elif isinstance(widget, QPlainTextEdit):
+                widget.textChanged.connect(self.changed)
+            elif (isinstance(widget, QLineEdit) and not isinstance(
+                    widget.parent(), (QAbstractSpinBox, QComboBox))):
+                widget.textChanged.connect(self.changed)
+
+    def finish(self, apply) -> 'EditorForm':
+        """Take the function that writes the rows back, and start listening
+        to every input the form was built with."""
+        self.apply = apply
+        self.watch(self.body)
+        return self
+
+
+def _editor_dialog(parent, editor: EditorForm, on_accept=None) -> QDialog:
+    """A form in an editor window: non-modal, with OK and Cancel, applying on
+    OK (see _show_editor)."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(editor.title)
+    # The rows' Python side - apply() and its closures - lives as long as
+    # the window showing them.
+    dialog.editor = editor
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(editor.body)
+    layout.addWidget(_buttons(dialog))
+    return _show_editor(dialog, editor.apply, on_accept)
 
 
 # --- fonts ------------------------------------------------------------------
@@ -485,7 +560,7 @@ def _field_number_rows(form, element):
     return apply_to
 
 
-def _text_format_rows(dialog, form, element: TextElement,
+def _text_format_rows(editor, form, element: TextElement,
                       document: Document):
     """The rows every text-like editor shares: ^FP direction and gap, ^FR,
     the font, and the ^FB/^TB wrap block.
@@ -539,16 +614,19 @@ def _text_format_rows(dialog, form, element: TextElement,
     form.addRow("Font:", font_row)
 
     def on_choose():
-        family, path = choose_font_family(dialog, chosen['family'])
+        # Modal to whichever window the rows are in, not to the application
+        family, path = choose_font_family(editor.body.window(), chosen['family'])
         if not family:
             return
         chosen['family'], chosen['path'] = family, path
         font_label.setText(font_display())
+        editor.changed()
 
     def on_clear():
         # Back to the document font, or the printer's built-in font A.
         chosen['family'], chosen['path'] = None, None
         font_label.setText(font_display())
+        editor.changed()
 
     choose_btn.clicked.connect(on_choose)
     clear_btn.clicked.connect(on_clear)
@@ -695,14 +773,10 @@ def _text_format_rows(dialog, form, element: TextElement,
 
 
 
-def edit_text_dialog(parent, element: TextElement, document: Document,
-                     on_accept=None) -> QDialog:
-    """Edit a text element. `on_accept` runs once OK has changed it."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Text")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+def text_form(element: TextElement, document: Document) -> EditorForm:
+    """The rows that edit a text element."""
+    editor = EditorForm("Edit Text")
+    form = editor.rows
 
     # Multi-line, because ZPL's forced break is two characters a user should
     # never have to spell: Enter here becomes \& on the way out. A ^TB breaks
@@ -733,12 +807,10 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(dialog, form, element, document)
+    fmt = _text_format_rows(editor, form, element, document)
 
 
     apply_name = _name_row(form, element)
-
-    layout.addWidget(_buttons(dialog))
 
     def _apply():
         apply_name(element)
@@ -753,12 +825,18 @@ def edit_text_dialog(parent, element: TextElement, document: Document,
         fmt.apply()
         document.sync_text_width(element)
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_time_dialog(parent, element: TextElement, document: Document,
+def edit_text_dialog(parent, element: TextElement, document: Document,
                      on_accept=None) -> QDialog:
-    """Edit a clock field (^FC). `on_accept` runs once OK has changed it.
+    """text_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, text_form(element, document), on_accept)
+
+
+def time_form(element: TextElement, document: Document) -> EditorForm:
+    """The rows that edit a clock field (^FC).
 
     Takes the same font, direction and wrap rows as edit_text_dialog, through
     _text_format_rows - a clock stamp is styled like any other text. It has no
@@ -769,11 +847,8 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
     static text field, and the next double-click opens the regular Text
     editor instead of this one.
     """
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Time Field")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+    editor = EditorForm("Edit Time Field")
+    form = editor.rows
 
     text_edit = QLineEdit(element.text)
     text_edit.setObjectName("text")
@@ -802,7 +877,7 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(dialog, form, element, document)
+    fmt = _text_format_rows(editor, form, element, document)
 
     clock_check = QCheckBox("Comes from the printer's clock (^FC)")
     clock_check.setObjectName("clock_format")
@@ -810,8 +885,6 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
     form.addRow("Clock:", clock_check)
 
     apply_name = _name_row(form, element)
-
-    layout.addWidget(_buttons(dialog))
 
     def _apply():
         apply_name(element)
@@ -833,12 +906,18 @@ def edit_time_dialog(parent, element: TextElement, document: Document,
         # field.
         document.sync_text_width(element)
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_serial_dialog(parent, element: TextElement, document: Document,
-                       on_accept=None) -> QDialog:
-    """Edit a serialized field (^SN). `on_accept` runs once OK has changed it.
+def edit_time_dialog(parent, element: TextElement, document: Document,
+                     on_accept=None) -> QDialog:
+    """time_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, time_form(element, document), on_accept)
+
+
+def serial_form(element: TextElement, document: Document) -> EditorForm:
+    """The rows that edit a serialized field (^SN).
 
     Takes the same font, direction and wrap rows as edit_text_dialog, through
     _text_format_rows - a serial number is styled like any other text. It has
@@ -849,11 +928,8 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
     static text field, and the next double-click opens the regular Text
     editor instead of this one.
     """
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Serial Field")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+    editor = EditorForm("Edit Serial Field")
+    form = editor.rows
 
     text_edit = QLineEdit(element.text)
     text_edit.setObjectName("text")
@@ -890,7 +966,7 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(dialog, form, element, document)
+    fmt = _text_format_rows(editor, form, element, document)
 
     serial_check = QCheckBox("Auto-increments each print (^SN)")
     serial_check.setObjectName("serial_format")
@@ -898,8 +974,6 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
     form.addRow("Serial:", serial_check)
 
     apply_name = _name_row(form, element)
-
-    layout.addWidget(_buttons(dialog))
 
     def _apply():
         apply_name(element)
@@ -924,12 +998,18 @@ def edit_serial_dialog(parent, element: TextElement, document: Document,
         # field.
         document.sync_text_width(element)
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_numbered_dialog(parent, element: TextElement, document: Document,
-                         on_accept=None) -> QDialog:
-    """Edit a numbered field (^FN). `on_accept` runs once OK has changed it.
+def edit_serial_dialog(parent, element: TextElement, document: Document,
+                       on_accept=None) -> QDialog:
+    """serial_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, serial_form(element, document), on_accept)
+
+
+def numbered_form(element: TextElement, document: Document) -> EditorForm:
+    """The rows that edit a numbered field (^FN).
 
     The font, direction, wrap and reverse rows are the ones edit_text_dialog
     has (_text_format_rows); the one thing it leaves out is a Data Source
@@ -942,11 +1022,8 @@ def edit_numbered_dialog(parent, element: TextElement, document: Document,
     common and already tested, so it keeps a row there rather than moving
     out entirely.
     """
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Numbered Field")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+    editor = EditorForm("Edit Numbered Field")
+    form = editor.rows
 
     text_edit = QLineEdit(element.text)
     text_edit.setObjectName("text")
@@ -984,7 +1061,7 @@ def edit_numbered_dialog(parent, element: TextElement, document: Document,
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(dialog, form, element, document)
+    fmt = _text_format_rows(editor, form, element, document)
 
     variable_check = QCheckBox("Data comes from a numbered field (^FN)")
     variable_check.setObjectName("variable")
@@ -992,8 +1069,6 @@ def edit_numbered_dialog(parent, element: TextElement, document: Document,
     form.addRow("Variable:", variable_check)
 
     apply_name = _name_row(form, element)
-
-    layout.addWidget(_buttons(dialog))
 
     def _apply():
         apply_name(element)
@@ -1014,16 +1089,20 @@ def edit_numbered_dialog(parent, element: TextElement, document: Document,
         # field with no literal of its own.
         document.sync_text_width(element)
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
-    """Edit a frame. `on_accept` runs once OK has changed it."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Frame")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+def edit_numbered_dialog(parent, element: TextElement, document: Document,
+                         on_accept=None) -> QDialog:
+    """numbered_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, numbered_form(element, document), on_accept)
+
+
+def frame_form(element) -> EditorForm:
+    """The rows that edit a frame."""
+    editor = EditorForm("Edit Frame")
+    form = editor.rows
 
     width_spin = QSpinBox()
     width_spin.setRange(10, 800)
@@ -1074,8 +1153,6 @@ def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
     form.addRow("Reverse:", fr_check)
     _reverse_hint(form)
 
-    layout.addWidget(_buttons(dialog))
-
     def _apply():
         element.width = width_spin.value()
         element.height = height_spin.value()
@@ -1084,16 +1161,19 @@ def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
         element.rounding = rounding_spin.value()
         element.reverse_print = fr_check.isChecked()
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_circle_dialog(parent, element, on_accept=None) -> QDialog:
-    """Edit a ^GC circle. `on_accept` runs once OK has changed it."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Circle")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+def edit_frame_dialog(parent, element, on_accept=None) -> QDialog:
+    """frame_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, frame_form(element), on_accept)
+
+
+def circle_form(element) -> EditorForm:
+    """The rows that edit a ^GC circle."""
+    editor = EditorForm("Edit Circle")
+    form = editor.rows
 
     # ^GC's own range, so a small circle from a file is not enlarged by
     # accepting the editor it was only looked at in
@@ -1135,8 +1215,6 @@ def edit_circle_dialog(parent, element, on_accept=None) -> QDialog:
     form.addRow("Reverse:", fr_check)
     _reverse_hint(form)
 
-    layout.addWidget(_buttons(dialog))
-
     def _apply():
         element.diameter = diameter_spin.value()
         element.sync_box()
@@ -1144,16 +1222,19 @@ def edit_circle_dialog(parent, element, on_accept=None) -> QDialog:
         element.colour = colour_combo.currentData()
         element.reverse_print = fr_check.isChecked()
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_ellipse_dialog(parent, element, on_accept=None) -> QDialog:
-    """Edit a ^GE ellipse. `on_accept` runs once OK has changed it."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Ellipse")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+def edit_circle_dialog(parent, element, on_accept=None) -> QDialog:
+    """circle_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, circle_form(element), on_accept)
+
+
+def ellipse_form(element) -> EditorForm:
+    """The rows that edit a ^GE ellipse."""
+    editor = EditorForm("Edit Ellipse")
+    form = editor.rows
 
     # ^GE's own range, so an ellipse from a file is not cut down, or a small
     # one enlarged, by accepting the editor it was only looked at in
@@ -1203,8 +1284,6 @@ def edit_ellipse_dialog(parent, element, on_accept=None) -> QDialog:
     form.addRow("Reverse:", fr_check)
     _reverse_hint(form)
 
-    layout.addWidget(_buttons(dialog))
-
     def _apply():
         element.width = width_spin.value()
         element.height = height_spin.value()
@@ -1212,16 +1291,19 @@ def edit_ellipse_dialog(parent, element, on_accept=None) -> QDialog:
         element.colour = colour_combo.currentData()
         element.reverse_print = fr_check.isChecked()
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_diagonal_dialog(parent, element, on_accept=None) -> QDialog:
-    """Edit a ^GD diagonal line. `on_accept` runs once OK has changed it."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Diagonal Line")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+def edit_ellipse_dialog(parent, element, on_accept=None) -> QDialog:
+    """ellipse_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, ellipse_form(element), on_accept)
+
+
+def diagonal_form(element) -> EditorForm:
+    """The rows that edit a ^GD diagonal line."""
+    editor = EditorForm("Edit Diagonal Line")
+    form = editor.rows
 
     # ^GD's own range, so a line from a file is not cut down, or a short one
     # enlarged, by accepting the editor it was only looked at in
@@ -1275,8 +1357,6 @@ def edit_diagonal_dialog(parent, element, on_accept=None) -> QDialog:
     form.addRow("Reverse:", fr_check)
     _reverse_hint(form)
 
-    layout.addWidget(_buttons(dialog))
-
     def _apply():
         element.width = width_spin.value()
         element.height = height_spin.value()
@@ -1285,16 +1365,19 @@ def edit_diagonal_dialog(parent, element, on_accept=None) -> QDialog:
         element.direction = direction_combo.currentData()
         element.reverse_print = fr_check.isChecked()
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_graphic_symbol_dialog(parent, element, on_accept=None) -> QDialog:
-    """Edit a ^GS symbol. `on_accept` runs once OK has changed it."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Symbol")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+def edit_diagonal_dialog(parent, element, on_accept=None) -> QDialog:
+    """diagonal_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, diagonal_form(element), on_accept)
+
+
+def graphic_symbol_form(element) -> EditorForm:
+    """The rows that edit a ^GS symbol."""
+    editor = EditorForm("Edit Symbol")
+    form = editor.rows
 
     # The five, and whatever else the field already holds - see
     # graphic_symbol_choices - so OK on ^GS^FDAB leaves it AB.
@@ -1339,8 +1422,6 @@ def edit_graphic_symbol_dialog(parent, element, on_accept=None) -> QDialog:
 
     apply_name = _name_row(form, element)
 
-    layout.addWidget(_buttons(dialog))
-
     def _apply():
         apply_name(element)
         element.text = symbol_combo.currentData()
@@ -1350,21 +1431,24 @@ def edit_graphic_symbol_dialog(parent, element, on_accept=None) -> QDialog:
         element.reverse_print = fr_check.isChecked()
         element.sync_box()
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_stored_graphic_dialog(parent, element, on_accept=None) -> QDialog:
-    """Edit a ^XG/^IM reference. `on_accept` runs once OK has changed it.
+def edit_graphic_symbol_dialog(parent, element, on_accept=None) -> QDialog:
+    """graphic_symbol_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, graphic_symbol_form(element), on_accept)
+
+
+def stored_graphic_form(element) -> EditorForm:
+    """The rows that edit a ^XG/^IM reference.
 
     ^XG/^IM name an image the printer holds, not one this file carries the
     bytes for - see zplcore/graphic_store.py. Editing this element only ever
     changes which name it recalls.
     """
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Stored Graphic")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+    editor = EditorForm("Edit Stored Graphic")
+    form = editor.rows
 
     command_combo = QComboBox()
     command_combo.setObjectName("command")
@@ -1413,8 +1497,6 @@ def edit_stored_graphic_dialog(parent, element, on_accept=None) -> QDialog:
     sync_magnification_enabled()
     command_combo.currentIndexChanged.connect(sync_magnification_enabled)
 
-    layout.addWidget(_buttons(dialog))
-
     def _apply():
         element.command = command_combo.currentData()
         object_name = (name_edit.text().strip() or 'UNKNOWN').upper()
@@ -1426,16 +1508,19 @@ def edit_stored_graphic_dialog(parent, element, on_accept=None) -> QDialog:
         else:
             element.mag_x = element.mag_y = 1
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
 
 
-def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
-    """Edit a barcode. `on_accept` runs once OK has changed it."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Edit Barcode")
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
+def edit_stored_graphic_dialog(parent, element, on_accept=None) -> QDialog:
+    """stored_graphic_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, stored_graphic_form(element), on_accept)
+
+
+def barcode_form(element) -> EditorForm:
+    """The rows that edit a barcode."""
+    editor = EditorForm("Edit Barcode")
+    form = editor.rows
 
     symbology_combo = QComboBox()
     symbology_combo.setObjectName("symbology")
@@ -1625,10 +1710,15 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     def _on_add_position():
         if positions.rowCount() < MAX_SERIES_ORIGINS:
             _add_position(*element.next_series_position(_position_rows()), True)
+            row = positions.rowCount() - 1
+            for column in range(positions.columnCount()):
+                editor.watch(positions.cellWidget(row, column))
+            editor.changed()
 
     def _on_remove_position():
         row = positions.currentRow()
         positions.removeRow(row if row >= 0 else positions.rowCount() - 1)
+        editor.changed()
 
     positions_box = QWidget()
     positions_layout = QVBoxLayout(positions_box)
@@ -1695,8 +1785,6 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
     symbology_combo.currentIndexChanged.connect(_update_visible_rows)
     _update_visible_rows()
 
-    layout.addWidget(_buttons(dialog))
-
     def _apply():
         element.symbology = symbology_combo.currentData()
         element.barcode_value = value_edit.text()
@@ -1728,7 +1816,13 @@ def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
             element.font = (code, font_spin.value(), font_spin.value())
         element.sync_box()
 
-    return _show_editor(dialog, _apply, on_accept)
+    return editor.finish(_apply)
+
+
+def edit_barcode_dialog(parent, element, on_accept=None) -> QDialog:
+    """barcode_form in a window of its own, with OK and Cancel.
+    `on_accept` runs once OK has changed the element."""
+    return _editor_dialog(parent, barcode_form(element), on_accept)
 
 
 def choose_image_file(parent, title="Select Image") -> Optional[str]:
