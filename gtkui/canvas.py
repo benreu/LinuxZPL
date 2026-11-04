@@ -142,6 +142,7 @@ class DesignCanvas(Gtk.DrawingArea):
         self.on_change_callback = on_change_callback
         self.drag_start: Optional[Tuple[int, int]] = None
         self._drag_changed = False                # a drag moved something
+        self._nudge_changed = False               # an arrow key moved something
         self.last_click_time = 0
         self.last_click_element = None
         self.active_handle: Optional[str] = None  # which handle is being dragged
@@ -166,6 +167,12 @@ class DesignCanvas(Gtk.DrawingArea):
         self.connect("button-release-event", self.on_button_release)
         self.connect("motion-notify-event", self.on_motion)
         self.connect("leave-notify-event", self.on_leave)
+        self.connect("key-press-event", self.on_key_press)
+        self.connect("key-release-event", self.on_key_release)
+        self.connect("focus-out-event", lambda *_: self.finish_nudge())
+        # Arrow keys nudge only while the canvas has the focus, so they go on
+        # moving the cursor in an entry; a click on the canvas gives it.
+        self.set_can_focus(True)
         self.drag_dest_set(Gtk.DestDefaults.ALL, palette_targets(), Gdk.DragAction.COPY)
         self.connect("drag-data-received", self.on_drag_data_received)
 
@@ -174,7 +181,9 @@ class DesignCanvas(Gtk.DrawingArea):
                         Gdk.EventMask.POINTER_MOTION_MASK |
                         Gdk.EventMask.SCROLL_MASK |
                         Gdk.EventMask.SMOOTH_SCROLL_MASK |
-                        Gdk.EventMask.LEAVE_NOTIFY_MASK)
+                        Gdk.EventMask.LEAVE_NOTIFY_MASK |
+                        Gdk.EventMask.KEY_PRESS_MASK |
+                        Gdk.EventMask.KEY_RELEASE_MASK)
 
     # --- the document, forwarded ---------------------------------------------
     #
@@ -1221,6 +1230,8 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def on_button_press(self, widget, event):
         """Handle mouse button press for element selection and double-click detection."""
+        self.grab_focus()
+        self.finish_nudge()
         lx, ly = self._screen_to_label(event.x, event.y)
 
         if event.button == 3:
@@ -1402,6 +1413,50 @@ class DesignCanvas(Gtk.DrawingArea):
         """A palette button let go over the canvas: say which, and where in dots."""
         lx, ly = self._screen_to_label(x, y)
         self.emit('element-dropped', data.get_data().decode(), lx, ly)
+
+    _ARROWS = {Gdk.KEY_Left: (-1, 0), Gdk.KEY_KP_Left: (-1, 0),
+               Gdk.KEY_Right: (1, 0), Gdk.KEY_KP_Right: (1, 0),
+               Gdk.KEY_Up: (0, -1), Gdk.KEY_KP_Up: (0, -1),
+               Gdk.KEY_Down: (0, 1), Gdk.KEY_KP_Down: (0, 1)}
+
+    def on_key_press(self, widget, event):
+        """An arrow key nudges the selection: one dot, or ten with Shift.
+
+        Ctrl and Alt are left alone - Ctrl+arrow is the scrolled window's. A
+        plain arrow is kept even with nothing selected: let go, GTK would move
+        the focus to the next button, and the arrow after a Select All would
+        walk the toolbar instead of nudging.
+        """
+        signs = self._ARROWS.get(event.keyval)
+        if signs is None:
+            return False
+        if event.state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.MOD1_MASK):
+            return False
+        big = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
+        if geometry.nudge_selection(self.document, self.document.selection,
+                                    *signs, big=big):
+            self._nudge_changed = True
+            self.queue_draw()
+        return True
+
+    def on_key_release(self, widget, event):
+        if event.keyval in self._ARROWS:
+            self.finish_nudge()
+        return False
+
+    def finish_nudge(self):
+        """Report the nudging done since the last report, as one change.
+
+        Held down, an arrow repeats about thirty times a second; reported
+        press by press it would push the whole undo history out in two
+        seconds. So, like a drag, a press is one undo entry however long it
+        is held - reported when the key comes up, or before anything else
+        (a click, undo, losing the focus) could act on the moved elements.
+        """
+        if self._nudge_changed:
+            self._nudge_changed = False
+            if self.on_change_callback:
+                self.on_change_callback()
 
     def on_motion(self, widget, event):
         """Handle mouse motion for dragging elements or resizing."""

@@ -409,6 +409,30 @@ class GtkDriver:
         self.geometry.move_selection(self.canvas.document,
                                      self.canvas.document.selection, dx, dy)
 
+    class _Key:
+        """The fields a key handler reads."""
+        def __init__(self, keyval, state=0):
+            self.keyval, self.state = keyval, state
+
+    def nudge(self, direction, shift=False, repeats=1):
+        """Hold an arrow key for `repeats` presses, then let it come up.
+
+        GTK reports a held key as repeated presses and one release.
+        """
+        from gi.repository import Gdk
+        keyval = {'left': Gdk.KEY_Left, 'right': Gdk.KEY_Right,
+                  'up': Gdk.KEY_Up, 'down': Gdk.KEY_Down}[direction]
+        state = Gdk.ModifierType.SHIFT_MASK if shift else 0
+        for _ in range(repeats):
+            self.canvas.on_key_press(self.canvas, self._Key(keyval, state))
+        self.canvas.on_key_release(self.canvas, self._Key(keyval, state))
+
+    def undo(self):
+        self.window.on_undo()
+
+    def undo_depth(self):
+        return len(self.window._undo_stack)
+
     def set_label_size(self, w, h):
         self.canvas.set_label_size(w, h)
 
@@ -730,6 +754,31 @@ class QtDriver:
         self.geometry.move_selection(self.document, self.document.selection,
                                      dx, dy)
 
+    def nudge(self, direction, shift=False, repeats=1):
+        """Hold an arrow key for `repeats` presses, then let it come up.
+
+        Qt reports a held key as press, then an autorepeat release and press
+        for each repeat, then one real release.
+        """
+        from PySide2.QtCore import QEvent, Qt
+        from PySide2.QtGui import QKeyEvent
+        key = {'left': Qt.Key_Left, 'right': Qt.Key_Right,
+               'up': Qt.Key_Up, 'down': Qt.Key_Down}[direction]
+        modifiers = Qt.ShiftModifier if shift else Qt.NoModifier
+        for i in range(repeats):
+            if i:
+                self.canvas.keyReleaseEvent(
+                    QKeyEvent(QEvent.KeyRelease, key, modifiers, '', True))
+            self.canvas.keyPressEvent(
+                QKeyEvent(QEvent.KeyPress, key, modifiers, '', bool(i)))
+        self.canvas.keyReleaseEvent(QKeyEvent(QEvent.KeyRelease, key, modifiers))
+
+    def undo(self):
+        self.window.on_undo()
+
+    def undo_depth(self):
+        return len(self.window._undo_stack)
+
     def set_label_size(self, w, h):
         self.document.set_label_size(w, h)
 
@@ -909,6 +958,27 @@ def sequence(driver, record):
         record(f'the pair aligned {edge}')
     driver.move_group(-9999, -9999)
     record('the pair dragged into the corner as one box')
+
+    # Arrow keys, through each canvas's own key handlers. Into the corner the
+    # pair is already against moves nothing and is no undo entry; a held
+    # key's whole run is one entry, so one undo takes all of it back.
+    depth = driver.undo_depth()
+    driver.nudge('left')
+    driver.nudge('up', shift=True)
+    record(f'nudges into the corner add {driver.undo_depth() - depth} undo entries')
+    driver.nudge('right')
+    record('the pair nudged one dot right')
+    driver.nudge('down', shift=True)
+    record('the pair nudged ten dots down')
+    depth = driver.undo_depth()
+    driver.nudge('right', shift=True, repeats=5)
+    record(f'a held Shift+right adds {driver.undo_depth() - depth} undo entry')
+    places = [driver.elements.index(el) for el in (text, frame)]
+    driver.undo()
+    record('and one undo takes the whole run back')
+    # an undo puts back copies, so the steps after this pick theirs up again
+    text, frame = (driver.elements[i] for i in places)
+    driver.select_many([text, frame])
 
     # Grouping. The pair becomes one unit, and every selection gesture is
     # driven through the frontend's own handlers again, since each of them

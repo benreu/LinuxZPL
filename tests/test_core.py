@@ -653,6 +653,27 @@ geometry.move_selection(d, d.selection, 9999, 9999)
 check("the far edge clamps the group too",
       (two.x + two.width, two.y + two.height) == (400, 400), (two.x, two.y))
 
+# an arrow key nudges the selection one dot, or ten with Shift
+d, one, two = pair()
+check("a nudge reports that it moved something",
+      geometry.nudge_selection(d, d.selection, 1, 0))
+check("a nudge is one dot",
+      [(el.x, el.y) for el in (one, two)] == [(101, 100), (301, 250)],
+      [(el.x, el.y) for el in (one, two)])
+geometry.nudge_selection(d, d.selection, 0, -1, big=True)
+check("a Shift nudge is ten dots",
+      [(el.x, el.y) for el in (one, two)] == [(101, 90), (301, 240)],
+      [(el.x, el.y) for el in (one, two)])
+d, one, two = pair(first=(3, 100, 60, 40))
+geometry.nudge_selection(d, d.selection, -1, 0, big=True)
+check("a Shift nudge into the edge stops the group there as one box",
+      (one.x, two.x) == (0, 297), (one.x, two.x))
+check("and one more nudge into the edge moves nothing, and says so",
+      not geometry.nudge_selection(d, d.selection, -1, 0)
+      and (one.x, two.x) == (0, 297), (one.x, two.x))
+check("a nudge of nothing selected moves nothing",
+      not geometry.nudge_selection(d, [], 1, 0))
+
 # the rubber band's hit rule
 d, one, two = pair()
 caught = geometry.elements_in_box(d.elements, 90, 90, 170, 170)

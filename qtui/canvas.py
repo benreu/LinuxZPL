@@ -99,6 +99,7 @@ class DesignCanvas(QWidget):
 
         self.drag_start = None
         self._drag_changed = False               # a drag moved something
+        self._nudge_changed = False              # an arrow key moved something
         self.active_handle: Optional[str] = None
         # The box the element had when a resize started. A resize is measured
         # from here rather than from the previous motion event, because the box
@@ -866,6 +867,7 @@ class DesignCanvas(QWidget):
     # --- mouse ---------------------------------------------------------------
 
     def mousePressEvent(self, event):
+        self.finish_nudge()
         lx, ly = self._screen_to_label(event.x(), event.y())
         doc = self.document
 
@@ -993,6 +995,51 @@ class DesignCanvas(QWidget):
             # entry rather than one per motion event.
             self._drag_changed = False
             self.update()
+            self.documentChanged.emit()
+
+    _ARROWS = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0),
+               Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}
+
+    def keyPressEvent(self, event):
+        """An arrow key nudges the selection: one dot, or ten with Shift.
+
+        Ctrl and Alt are left alone, and so is an arrow with nothing selected,
+        so the scroll area behind the canvas still gets it.
+        """
+        signs = self._ARROWS.get(event.key())
+        if (signs is None or not self.document.selection
+                or event.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
+            super().keyPressEvent(event)
+            return
+        big = bool(event.modifiers() & Qt.ShiftModifier)
+        if geometry.nudge_selection(self.document, self.document.selection,
+                                    *signs, big=big):
+            self._nudge_changed = True
+            self.update()
+        event.accept()
+
+    def keyReleaseEvent(self, event):
+        # A held key sends a release before each repeat; only the last one,
+        # when the key really comes up, ends the press.
+        if event.key() in self._ARROWS and not event.isAutoRepeat():
+            self.finish_nudge()
+        super().keyReleaseEvent(event)
+
+    def focusOutEvent(self, event):
+        self.finish_nudge()
+        super().focusOutEvent(event)
+
+    def finish_nudge(self):
+        """Report the nudging done since the last report, as one change.
+
+        Held down, an arrow repeats about thirty times a second; reported
+        press by press it would push the whole undo history out in two
+        seconds. So, like a drag, a press is one undo entry however long it
+        is held - reported when the key comes up, or before anything else
+        (a click, undo, losing the focus) could act on the moved elements.
+        """
+        if self._nudge_changed:
+            self._nudge_changed = False
             self.documentChanged.emit()
 
     def _finish_band(self):

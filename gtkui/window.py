@@ -3435,6 +3435,8 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_undo(self, widget=None):
         """Step back to the state before the last change."""
+        # a nudge still held down is a change of its own, recorded first
+        self.design_canvas.finish_nudge()
         if not self._undo_stack:
             return
         self._redo_stack.append(self._current_snapshot)
@@ -3444,6 +3446,8 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_redo(self, widget=None):
         """Step forward again after an undo."""
+        # a nudge still held down is a change of its own, recorded first
+        self.design_canvas.finish_nudge()
         if not self._redo_stack:
             return
         self._undo_stack.append(self._current_snapshot)

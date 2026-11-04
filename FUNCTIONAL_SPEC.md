@@ -751,6 +751,21 @@ pinned.
   dragged together with the field it follows, it goes on following. A nudge,
   an align, a resize that moves its corner and a label shrunk under it are
   moves of their own the same way.
+- **Arrow keys nudge** the selection: one dot, the finest step a printer can
+  place, or ten with **Shift** — the 10× most drawing programs use, fixed in
+  dots at every resolution. A nudge is a move like a drag: one shared delta,
+  clamped against the selection's joint box, so a group against the edge
+  stays put rather than coming apart. The keys belong to the canvas only while
+  it has the keyboard focus, which a click on it gives, so an arrow still moves
+  the cursor in an entry. With Ctrl or Alt held the key is left to the scroll
+  area. With nothing selected Qt's scroll area scrolls on a plain arrow, while
+  GTK's canvas keeps the key and does nothing with it: let go, GTK would move
+  the focus on to the next button, and the arrow after a Select All would walk
+  the toolbar instead of nudging. A press is **one undo entry however long it
+  is held** — reported when the key comes up, or first if a click, an undo or
+  the focus leaving comes before that — since an arrow repeating thirty times
+  a second would otherwise push the whole undo history out in two seconds. A
+  press that moved nothing is no entry at all.
 - **Eight resize handles** on the *resize target* — four corners, four edge
   midpoints — drawn as small filled squares, once, after every element, so
   nothing drawn above the target covers them. The target is the one selected

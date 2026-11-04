@@ -459,6 +459,30 @@ def move_selection(document, elements, dx: int, dy: int) -> None:
         element.y += dy
 
 
+# An arrow key moves the selection one dot, the finest step a printer can
+# place; Shift+arrow moves it ten, the 10x most drawing programs use.
+NUDGE_STEP = 1
+NUDGE_BIG_STEP = 10
+
+
+def nudge_selection(document, elements, dx_sign: int, dy_sign: int,
+                    big: bool = False) -> bool:
+    """Move the selection one arrow-key step; whether anything moved.
+
+    The signs say which way (-1, 0 or 1 on each axis). The move is a
+    move_selection, so a group against the edge of the label stays put as one
+    box, and the answer is False then - a press that moved nothing is not an
+    undo entry.
+    """
+    elements = [el for el in elements if el is not None]
+    if not elements:
+        return False
+    step = NUDGE_BIG_STEP if big else NUDGE_STEP
+    before = [(el.x, el.y) for el in elements]
+    move_selection(document, elements, dx_sign * step, dy_sign * step)
+    return before != [(el.x, el.y) for el in elements]
+
+
 def elements_in_box(elements, x0: int, y0: int, x1: int, y1: int):
     """Every element a rubber band has caught, in the order it was given.
 

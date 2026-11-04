@@ -644,6 +644,8 @@ class ZPLDesignerWindow(QMainWindow):
         self._update_undo_actions()
 
     def on_undo(self):
+        # a nudge still held down is a change of its own, recorded first
+        self.canvas.finish_nudge()
         if not self._undo_stack:
             return
         self._redo_stack.append(self._current_snapshot)
@@ -652,6 +654,8 @@ class ZPLDesignerWindow(QMainWindow):
         self.update_status("Undo")
 
     def on_redo(self):
+        # a nudge still held down is a change of its own, recorded first
+        self.canvas.finish_nudge()
         if not self._redo_stack:
             return
         self._undo_stack.append(self._current_snapshot)
