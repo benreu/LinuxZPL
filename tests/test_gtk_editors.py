@@ -1478,6 +1478,67 @@ check("BusyBar: afterwards the row hides and each button is restored to its prio
       not bb.running and not bb.get_visible() and bb_btn.get_sensitive()
       and not bb_off.get_sensitive())
 
+# --- an editor's rows, apart from the window they are shown in --------------
+# The Properties panel will show the same rows the editor windows do, so each
+# editor is built into a box of its own and says when any row of it changes.
+
+from gtkui import editors as gtk_editors
+from zplcore.model import EllipseElement, BarcodeElement
+
+ff_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+ff_oval = EllipseElement(10, 10, 200, 150, 2)
+ff = gtk_editors.ellipse_form(window, ff_box, ff_oval)
+check("a form is built into a box of its own, with no window around it",
+      ff.title == "Edit Ellipse" and ff.content is ff_box
+      and ff_box.get_toplevel() is ff_box)
+ff_heard = []
+ff.on_change(lambda: ff_heard.append(1))
+_find_all(ff_box, Gtk.SpinButton)[2].set_value(5)
+check("a form reports a change to one of its inputs, once", ff_heard == [1], ff_heard)
+check("...and leaves the element alone until it is applied", ff_oval.thickness == 2)
+ff.apply()
+check("applying the form writes its rows back", ff_oval.thickness == 5)
+
+ff_text = document.add_text_element("words")
+ff_tbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+ff_tf = gtk_editors.text_form(window, ff_tbox, ff_text)
+ff_heard.clear()
+ff_tf.on_change(lambda: ff_heard.append('text'))
+_find_all(ff_tbox, Gtk.TextView)[0].get_buffer().set_text("other words")
+# set_text() is a delete and an insert, two changes; a typed key is one
+check("typing in Edit Text's text box is a change",
+      ff_heard and set(ff_heard) == {'text'}, ff_heard)
+ff_heard.clear()
+next(b for b in _find_all(ff_tbox, Gtk.Button) if b.get_label() == "Clear").clicked()
+check("clearing the font is a change, though no input shows it",
+      ff_heard == ['text'], ff_heard)
+document.elements.remove(ff_text)
+
+ff_pdf = BarcodeElement(0, 0, 10, 'AB', symbology='pdf417')
+ff_bbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+ff_bf = gtk_editors.barcode_form(window, ff_bbox, ff_pdf)
+ff_bf.after_show()
+ff_heard.clear()
+ff_bf.on_change(lambda: ff_heard.append('barcode'))
+_named_button(ff_bbox, 'add_position').clicked()
+check("adding an ^FM position is a change", ff_heard == ['barcode'], ff_heard)
+ff_heard.clear()
+_named_button(ff_bbox, 'remove_position').clicked()
+check("removing one is a change", ff_heard == ['barcode'], ff_heard)
+ff_maxi_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+ff_maxi = gtk_editors.barcode_form(
+    window, ff_maxi_box, BarcodeElement(0, 0, 10, 'AB', symbology='maxicode'))
+ff_heard.clear()
+ff_maxi.on_change(lambda: ff_heard.append('insert'))
+_named_button(ff_maxi_box, 'insert_GS').clicked()
+check("an Insert button's escape is a change to the value",
+      ff_heard == ['insert'], ff_heard)
+check("each element finds the builder of its own rows",
+      [gtk_editors.form_builder(e).__name__ for e in
+       (document.add_time_element(), ff_pdf, ff_oval)]
+      == ['time_form', 'barcode_form', 'ellipse_form'])
+document.elements.pop()
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)
