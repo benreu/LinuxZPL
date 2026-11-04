@@ -4271,6 +4271,19 @@ _ff_maxi.body.findChild(_QPushButton, 'insert_GS').click()
 check("an Insert button's escape is a change to the value",
       _ff_heard == ['insert'], _ff_heard)
 
+# An editor window sizes itself to the screen it is on. Asked through
+# QWidget.screen(), PySide2 hung the QScreen on the window, and a window later
+# swept up by the garbage collector took the application's only screen with
+# it: every window opened afterwards aborted the program ("Cannot create
+# window: no screens available").
+import gc as _sgc
+_s_dlg = qt_dialogs.edit_frame_dialog(None, FrameElement())
+_s_dlg.findChild(qt_dialogs.QScrollArea).sizeHint()
+check("an editor window sizing itself leaves the screen held by nothing of its own",
+      not any(isinstance(r, qt_dialogs.QDialog)
+              for r in _sgc.get_referrers(QApplication.primaryScreen())))
+_s_dlg.reject()
+
 # --- commands that used to lose what they carried ---------------------------
 
 # ^CF: a field with no ^A of its own prints in whatever ^CF last set. Requiring

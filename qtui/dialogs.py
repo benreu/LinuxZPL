@@ -170,15 +170,17 @@ class _FittingScrollArea(QScrollArea):
 
     Asked at show time rather than fixed when built: an editor shows and hides
     rows as its fields change, so a size taken early is too small by then.
+
+    The screen is looked up by where the window is, not with QWidget.screen():
+    PySide2 hangs the QScreen it returns on the widget, and a window that
+    later goes out in a garbage collection takes the application's screen
+    with it - after which nothing can open a window at all.
     """
 
-    def __init__(self, dialog):
-        super().__init__()
-        self._dialog = dialog
-
     def sizeHint(self):
-        screen = (self._dialog.screen() if hasattr(self._dialog, "screen")
-                  else None) or QApplication.primaryScreen()
+        window = self.window()
+        screen = (QApplication.screenAt(window.frameGeometry().center())
+                  or QApplication.primaryScreen())
         avail = screen.availableGeometry()
         hint = self.widget().sizeHint()
         bar = self.verticalScrollBar().sizeHint().width() + 4
@@ -211,7 +213,7 @@ def _make_scrollable(dialog):
         else:
             body_layout.addItem(item)
 
-    scroll = _FittingScrollArea(dialog)
+    scroll = _FittingScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.NoFrame)
     scroll.setWidget(body)
