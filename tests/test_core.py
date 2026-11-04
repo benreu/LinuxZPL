@@ -11049,6 +11049,211 @@ check("properties.py names no GUI toolkit",
       not any(t in _props_src for t in
               ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
 
+# --- the Print window's settings: print_settings ---------------------------
+# Everything the Print window edits that is saved with the label: ^PQ, ^PO,
+# ^PM, ^LR, ^CV and the five printer set-up commands, which the document
+# carries verbatim. Opening the window and accepting it unchanged must never
+# rewrite a label, so a value left alone keeps its spelling.
+
+from zplcore import print_settings as zpl_ps
+from zplcore.print_settings import AsWritten, PrintSettings
+
+def _ps_doc(header):
+    return zpl_parser.parse_zpl(
+        "^XA" + header + "^FO1,1^A0N,9,9^FDx^FS^XZ")[0]
+
+def _ps_media(doc):
+    return list(doc.media_settings.items())
+
+_ps_full = _ps_doc("^PRC,D,A^MD8.30^MMP,Y^MNM,30^MTD^PQ50,10,1,Y,N"
+                   "^POI^PMY^LRY^CVY")
+_ps_read = PrintSettings.read(_ps_full)
+check("print settings: read gives every value a row shows",
+      _ps_read == PrintSettings(
+          quantity=50, pause_count=10, replicates=1, override_pause=True,
+          cut_on_error=False, invert=True, mirror=True, reverse=True,
+          code_validation=True, darkness=8.3, print_speed=4, slew_speed=6,
+          backfeed_speed=2, print_mode='P', prepeel=True,
+          media_tracking='M', mark_offset=30, media_type='D'), _ps_read)
+_ps_before = _ps_full.to_zpl()
+check("applied unchanged, nothing changes and nothing is reported",
+      not _ps_read.copy().apply(_ps_full)
+      and _ps_full.to_zpl() == _ps_before)
+check("and the letters and the trailing zero are still as the file spelled "
+      "them", _ps_media(_ps_full)
+      == [('^PR', 'C,D,A'), ('^MD', '8.30'), ('^MM', 'P,Y'),
+          ('^MN', 'M,30'), ('^MT', 'D')], _ps_media(_ps_full))
+
+_ps_none = _ps_doc("")
+check("a label with none of them reads as the printer's setting throughout",
+      PrintSettings.read(_ps_none) == PrintSettings(),
+      PrintSettings.read(_ps_none))
+check("and applied unchanged writes none",
+      not PrintSettings.read(_ps_none).apply(_ps_none)
+      and _ps_none.media_settings == {})
+
+# One row changed rewrites that command alone, canonically.
+_ps_dark = _ps_doc("^PRC,D,A^MD8.30^MTD")
+_ps_set = PrintSettings.read(_ps_dark)
+_ps_set.darkness = -12.5
+check("a changed darkness is reported as a change",
+      _ps_set.apply(_ps_dark))
+check("and rewrites ^MD alone, in its place",
+      _ps_media(_ps_dark) == [('^PR', 'C,D,A'), ('^MD', '-12.5'),
+                              ('^MT', 'D')], _ps_media(_ps_dark))
+_ps_set.darkness = 10.0
+_ps_set.apply(_ps_dark)
+check("a whole darkness is written without a decimal",
+      _ps_dark.media_settings['^MD'] == '10', _ps_dark.media_settings)
+_ps_set.print_speed = 6
+_ps_set.apply(_ps_dark)
+check("a changed speed is written as its number, slew and backfeed with it",
+      _ps_dark.media_settings['^PR'] == '6,6,2', _ps_dark.media_settings)
+_ps_set.darkness = None
+_ps_set.apply(_ps_dark)
+check("the printer's setting takes the command out",
+      _ps_media(_ps_dark) == [('^PR', '6,6,2'), ('^MT', 'D')],
+      _ps_media(_ps_dark))
+
+# New ones join in the parser's order, after those already carried.
+_ps_new = _ps_doc("^MTT")
+_ps_add = PrintSettings.read(_ps_new)
+(_ps_add.media_type, _ps_add.print_mode, _ps_add.darkness,
+ _ps_add.print_speed, _ps_add.media_tracking) = ('D', 'C', 3.0, 2, 'N')
+_ps_add.apply(_ps_new)
+check("added commands follow those carried, in ^PR ^MD ^MM ^MN order",
+      _ps_media(_ps_new) == [('^MT', 'D'), ('^PR', '2'), ('^MD', '3'),
+                             ('^MM', 'C'), ('^MN', 'N')], _ps_media(_ps_new))
+check("and print as they save, on the explicit path too",
+      [l for l in _ps_new.to_zpl(explicit_flips=True).split('\n')
+       if l[:3] in zpl_parser.MEDIA_SETTINGS]
+      == ['^MTD', '^PR2', '^MD3', '^MMC', '^MNN'])
+
+# ^PR is a chain: slew only after print speed, backfeed only after slew.
+_ps_chain = PrintSettings(print_speed=4, slew_speed=None, backfeed_speed=2)
+_ps_cdoc = _ps_doc("")
+_ps_chain.apply(_ps_cdoc)
+check("a backfeed with no slew before it is not written - no ^PR4,,2",
+      _ps_cdoc.media_settings == {'^PR': '4'}, _ps_cdoc.media_settings)
+_ps_chain2 = PrintSettings(print_speed=None, slew_speed=6)
+_ps_cdoc2 = _ps_doc("")
+_ps_chain2.apply(_ps_cdoc2)
+check("and a slew with no print speed writes no ^PR at all",
+      _ps_cdoc2.media_settings == {}, _ps_cdoc2.media_settings)
+_ps_gap = _ps_doc("^PR4,,2")
+check("a file's own ^PR4,,2 reads as written and survives unchanged",
+      PrintSettings.read(_ps_gap).backfeed_speed == 2
+      and not PrintSettings.read(_ps_gap).apply(_ps_gap)
+      and _ps_gap.media_settings == {'^PR': '4,,2'})
+check("slew and backfeed are not offered 1 in/s, print speed is",
+      zpl_ps.PRINT_SPEEDS[0] == 1 and zpl_ps.FEED_SPEEDS[0] == 2
+      and PrintSettings.read(_ps_doc("^PR1,1")).slew_speed == AsWritten('1'))
+check("a speed is labelled with its letter where it has one",
+      zpl_ps.speed_label(4) == '4 in/s (C)' and zpl_ps.speed_label(5) == '5 in/s')
+
+# What no row offers is kept as written until its row is changed.
+_ps_odd = _ps_doc("^PR15,Z^MD8.25^MMU^MNX,9999^MTQ")
+_ps_oread = PrintSettings.read(_ps_odd)
+check("values no row offers come back as written",
+      (_ps_oread.print_speed, _ps_oread.slew_speed, _ps_oread.darkness,
+       _ps_oread.print_mode, _ps_oread.media_tracking,
+       _ps_oread.mark_offset, _ps_oread.media_type)
+      == (AsWritten('15'), AsWritten('Z'), AsWritten('8.25'),
+          AsWritten('U'), AsWritten('X'), AsWritten('9999'),
+          AsWritten('Q')), _ps_oread)
+check("and applied unchanged, stay exactly as the file had them",
+      not _ps_oread.copy().apply(_ps_odd)
+      and _ps_media(_ps_odd) == [('^PR', '15,Z'), ('^MD', '8.25'),
+                                 ('^MM', 'U'), ('^MN', 'X,9999'),
+                                 ('^MT', 'Q')], _ps_media(_ps_odd))
+_ps_oread.slew_speed = 6
+_ps_oread.apply(_ps_odd)
+check("a row changed beside one as written writes the other back as it was",
+      _ps_odd.media_settings['^PR'] == '15,6', _ps_odd.media_settings)
+check("darkness out of range, or with two decimals, is as written",
+      PrintSettings.read(_ps_doc("^MD31")).darkness == AsWritten('31')
+      and PrintSettings.read(_ps_doc("^MD-30")).darkness == -30.0)
+check("a row offers the printer's setting first, then the carried value",
+      zpl_ps.choices(zpl_ps.MEDIA_TYPES, AsWritten('Q'))[:3]
+      == [(zpl_ps.PRINTER_SETTING, None), ("As written: Q", AsWritten('Q')),
+          ('Thermal transfer (T)', 'T')])
+check("and offers no as-written choice for a value it already lists",
+      zpl_ps.choices(zpl_ps.MEDIA_TYPES, 'T')[1] == ('Thermal transfer (T)', 'T'))
+check("reserved print modes L and U are not offered",
+      not {'L', 'U'} & {code for _, code in zpl_ps.PRINT_MODES})
+
+# Prepeel rides on the print mode, the mark offset on mark sensing.
+_ps_mm = PrintSettings(print_mode=None, prepeel=True)
+_ps_mmdoc = _ps_doc("")
+check("prepeel with no print mode writes nothing and changes nothing",
+      not _ps_mm.apply(_ps_mmdoc) and _ps_mmdoc.media_settings == {})
+_ps_mn = _ps_doc("^MNM,30")
+_ps_mnset = PrintSettings.read(_ps_mn)
+_ps_mnset.media_tracking = 'W'
+_ps_mnset.apply(_ps_mn)
+check("leaving mark sensing drops the offset, which only it reads",
+      _ps_mn.media_settings == {'^MN': 'W'}, _ps_mn.media_settings)
+_ps_mnset.media_tracking = 'M'
+_ps_mnset.mark_offset = 0
+_ps_mnset.apply(_ps_mn)
+check("and an offset of 0, the default, is not spelled",
+      _ps_mn.media_settings == {'^MN': 'M'}, _ps_mn.media_settings)
+
+# ^PQ, ^CV and the three flips.
+_ps_pq = _ps_doc("^LH30,40")
+_ps_pqset = PrintSettings.read(_ps_pq)
+(_ps_pqset.quantity, _ps_pqset.pause_count, _ps_pqset.replicates,
+ _ps_pqset.override_pause, _ps_pqset.cut_on_error) = (5, 2, 1, True, False)
+_ps_pqset.code_validation = True
+_ps_pqset.invert = True
+_ps_old_transform = _ps_pq.transform
+check("^PQ, ^CV and a flip changed are a change", _ps_pqset.apply(_ps_pq))
+check("^PQ is written with all five", '^PQ5,2,1,Y,N' in _ps_pq.to_zpl())
+check("^CV with it", '^CVY' in _ps_pq.to_zpl())
+check("a flip replaces the transform rather than editing the one an undo "
+      "snapshot may hold", _ps_pq.transform is not _ps_old_transform
+      and not _ps_old_transform.invert and _ps_pq.transform.invert)
+check("and keeps Label Settings' home", _ps_pq.transform.home == (30, 40),
+      _ps_pq.transform.home)
+_ps_plain = _ps_doc("")
+_ps_plain_transform = _ps_plain.transform
+PrintSettings.read(_ps_plain).apply(_ps_plain)
+check("no flip changed leaves the transform object alone",
+      _ps_plain.transform is _ps_plain_transform)
+_ps_explicit = _ps_plain.to_zpl(explicit_flips=True).split('\n')
+check("the print path still states ^PON ^PMN ^LRN ^CVN, and no set-up",
+      all(c in _ps_explicit for c in ('^PON', '^PMN', '^LRN', '^CVN'))
+      and not any(l[:3] in zpl_parser.MEDIA_SETTINGS for l in _ps_explicit),
+      _ps_explicit)
+
+# Undo: the snapshot now holds what the window edits.
+_ps_undo = _ps_doc("^MD5^PQ3")
+_ps_snap = _ps_undo.snapshot()
+_ps_uset = PrintSettings.read(_ps_undo)
+(_ps_uset.darkness, _ps_uset.pause_count, _ps_uset.code_validation,
+ _ps_uset.cut_on_error, _ps_uset.print_mode) = (-4.0, 7, True, False, 'T')
+_ps_uset.apply(_ps_undo)
+_ps_after = _ps_undo.snapshot()
+_ps_undo.restore(_ps_snap)
+check("undo brings back the media settings, ^PQ's options and ^CV",
+      (_ps_media(_ps_undo), _ps_undo.print_quantity,
+       _ps_undo.print_pause_count, _ps_undo.code_validation,
+       _ps_undo.print_cut_on_error)
+      == ([('^MD', '5')], 3, 0, False, True),
+      (_ps_media(_ps_undo), _ps_undo.print_pause_count))
+_ps_undo.restore(_ps_after)
+check("and redo puts them back",
+      PrintSettings.read(_ps_undo) == _ps_uset, PrintSettings.read(_ps_undo))
+_ps_undo.media_settings['^MD'] = '9'
+check("the snapshot's media settings are a copy no later edit reaches",
+      _ps_after[-1]['^MD'] == '-4', _ps_after[-1])
+
+_ps_src = (Path(__file__).resolve().parent.parent
+           / 'zplcore' / 'print_settings.py').read_text()
+check("print_settings.py names no GUI toolkit",
+      not any(t in _ps_src for t in
+              ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

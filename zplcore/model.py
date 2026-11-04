@@ -2403,9 +2403,9 @@ class Document:
         self.transform = zpl_transforms.LabelTransform()
 
         # ^PQ - how many copies to print, and the pause/RFID/cutter options
-        # that ride along with it. Only quantity has an editor (Label Settings); the
-        # rest are carried the way ^LT is - present so a save does not
-        # silently drop them.
+        # that ride along with it. print_settings.PrintSettings reads and
+        # writes all five, for the Print window, so all five are in the undo
+        # snapshot.
         self.print_quantity = 1
         self.print_pause_count = 0
         self.print_replicates = 0
@@ -2414,15 +2414,16 @@ class Document:
 
         # ^CV - whether the printer checks each barcode's data as it prints
         # and prints INVALID - X in place of a bad one. A print-time check
-        # with nothing to draw, carried the way ^LT is so a save does not
-        # silently drop it. No editor, so it is not in the undo snapshot.
+        # with nothing to draw. Edited in the Print window (print_settings),
+        # so it is in the undo snapshot.
         self.code_validation = False
 
         # ^PR, ^MD, ^MM, ^MN and ^MT - the printer's speed, darkness, print
         # mode, media tracking and media type. Nothing to draw, and carried
         # verbatim so a save does not silently drop them: command -> its
         # parameters, in the order first seen, a repeated command taking the
-        # last value. No editor, so not in the undo snapshot.
+        # last value. print_settings parses them for the Print window and
+        # writes back a changed one, so they are in the undo snapshot.
         self.media_settings: Dict[str, str] = {}
 
         # ^CI, ^CW and ^FL - the encoding the field data is in, and the
@@ -3213,14 +3214,20 @@ class Document:
         # The field table is an object, so it is copied like a text element's
         # block: shared between snapshots, one edit would rewrite every undo
         # entry holding it.
+        # The print settings are plain values, bar the media settings' dict,
+        # which is copied for the same reason.
+        printing = (self.print_quantity, self.print_pause_count,
+                    self.print_replicates, self.print_override_pause,
+                    self.print_cut_on_error, self.code_validation)
         return (self.label_width, self.label_height,
                 [_copy_element(el) for el in self.elements], selected,
-                self.fields.copy(), self.transform.copy(), self.print_quantity)
+                self.fields.copy(), self.transform.copy(), printing,
+                dict(self.media_settings))
 
     def restore(self, snap):
         """Put the design back to a snapshot taken earlier."""
         (label_width, label_height, elements, selected, table, transform,
-         print_quantity) = snap
+         printing, media_settings) = snap
         # assigned directly rather than through set_label_size, which would
         # clamp elements that were already valid at this size
         self.label_width = label_width
@@ -3231,7 +3238,10 @@ class Document:
         self.selection = [self.elements[i] for i in selected]
         self.fields = table.copy()
         self.transform = transform.copy()
-        self.print_quantity = print_quantity
+        (self.print_quantity, self.print_pause_count, self.print_replicates,
+         self.print_override_pause, self.print_cut_on_error,
+         self.code_validation) = printing
+        self.media_settings = dict(media_settings)
         # The resolution is not part of the snapshot, so an undo across a
         # change of printer would otherwise bring back a MaxiCode drawn for
         # the old one.
