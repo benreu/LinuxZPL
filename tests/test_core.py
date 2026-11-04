@@ -10644,6 +10644,129 @@ check("printer_status.py names no GUI toolkit",
       not any(t in _status_src for t in
               ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
 
+# --- the Properties panel's rows: the header, and what a selection shares ---
+
+from zplcore import properties as zpl_props
+from zplcore.model import StoredGraphicElement as _PStored
+
+def _pkeys(elements):
+    return [prop.key for prop in zpl_props.shared_properties(elements)]
+
+_pd = Document(812, 1218)
+_pf1 = _pd.add_frame_element()
+_pf2 = _pd.add_frame_element()
+_pcircle = _pd.add_circle_element()
+_ptext = _pd.add_text_element("one")
+_pserial = _pd.add_serial_element("0001")
+check("shared rows: two frames share every frame row",
+      _pkeys([_pf1, _pf2]) == ['width', 'height', 'thickness', 'colour',
+                               'rounding', 'reverse_print'], _pkeys([_pf1, _pf2]))
+check("shared rows: a frame and a circle share only what both have",
+      _pkeys([_pf1, _pcircle]) == ['thickness', 'colour', 'reverse_print'],
+      _pkeys([_pf1, _pcircle]))
+check("shared rows: a frame and a text share Reverse alone",
+      _pkeys([_pf1, _ptext]) == ['reverse_print'], _pkeys([_pf1, _ptext]))
+check("shared rows: plain and serial text share the font and its turn",
+      _pkeys([_ptext, _pserial]) == ['font_height', 'font_width', 'orientation',
+                                     'reverse_print'], _pkeys([_ptext, _pserial]))
+check("shared rows: a stored graphic has no Reverse, so it shares nothing",
+      _pkeys([_pf1, _PStored()]) == [], _pkeys([_pf1, _PStored()]))
+_pqr = BarcodeElement(symbology='qr')
+_paztec = BarcodeElement(symbology='aztec')
+_p128 = BarcodeElement(symbology='code128')
+_pmaxi = BarcodeElement(symbology='maxicode')
+check("shared rows: a QR code has no bar height to share with a Code 128",
+      _pkeys([_pqr, _p128]) == ['module_width', 'orientation', 'reverse_print'],
+      _pkeys([_pqr, _p128]))
+check("shared rows: a MaxiCode has neither module width nor orientation",
+      _pkeys([_pmaxi, _p128]) == ['reverse_print'], _pkeys([_pmaxi, _p128]))
+_pmodule = zpl_props.find('module_width')
+check("module width takes the barcodes' own name when they agree on one",
+      (_pmodule.title([_pqr, _paztec]), _pmodule.title([_pqr, _p128]))
+      == ("Magnification:", "Module Width:"))
+check("the header is X, Y and Print This Element, and nothing for no selection",
+      [p.key for p in zpl_props.header_properties([_ptext])]
+      == ['x', 'y', 'print_enabled'] and zpl_props.header_properties([]) == ())
+
+_pthick = zpl_props.find('thickness')
+_pf1.thickness, _pf2.thickness = 2, 4
+check("a value the elements disagree on is MIXED, one they share is itself",
+      _pthick.value(_pd, [_pf1, _pf2]) is zpl_props.MIXED
+      and zpl_props.find('colour').value(_pd, [_pf1, _pf2]) == 'B')
+_pf2.print_enabled = False
+check("Print This Element is MIXED when only some print",
+      zpl_props.PRINT.value(_pd, [_pf1, _pf2]) is zpl_props.MIXED)
+zpl_props.PRINT.write(_pd, [_pf1, _pf2], True)
+check("...and writing it prints them all", _pf1.print_enabled and _pf2.print_enabled)
+
+_poval = EllipseElement(0, 0, 30, 20, 2)
+check("a shared range is the narrowest: a 30x20 ellipse holds the frame's "
+      "thickness to 10", _pthick.limits(_pd, [_pf1, _poval]) == (1, 10),
+      _pthick.limits(_pd, [_pf1, _poval]))
+check("...and the frame editor's 10-800 width is narrower than ^GE's",
+      zpl_props.find('width').limits(_pd, [_pf1, _poval]) == (10, 800),
+      zpl_props.find('width').limits(_pd, [_pf1, _poval]))
+_pthick.write(_pd, [_pf1, _pf2], 3)
+check("writing a shared value writes it to every element",
+      (_pf1.thickness, _pf2.thickness) == (3, 3))
+_pf1.thickness = 40
+zpl_props.find('width').write(_pd, [_pf1], 20)
+check("narrowing a frame holds its border under the new half-side, as its "
+      "editor does", (_pf1.width, _pf1.thickness) == (20, 10),
+      (_pf1.width, _pf1.thickness))
+_pcircle.thickness = 70
+zpl_props.find('diameter').write(_pd, [_pcircle], 40)
+check("a new diameter is the circle's box too, and holds its border",
+      (_pcircle.width, _pcircle.height, _pcircle.thickness) == (40, 40, 20),
+      (_pcircle.width, _pcircle.height, _pcircle.thickness))
+
+zpl_props.find('font_height').write(_pd, [_ptext, _pserial], 60)
+_pfresh = _pd.add_text_element("one")
+_pfresh.font_height = 60
+_pd.sync_text_width(_pfresh)
+check("a shared font height re-measures each text box, as Edit Text does",
+      (_ptext.font_height, _pserial.font_height) == (60, 60)
+      and (_ptext.width, _ptext.height) == (_pfresh.width, _pfresh.height),
+      ((_ptext.width, _ptext.height), (_pfresh.width, _pfresh.height)))
+_pwide = (_ptext.width, _ptext.height)
+zpl_props.find('orientation').write(_pd, [_ptext], 'R')
+check("a shared turn swaps a text box's sides",
+      (_ptext.width, _ptext.height) == (_pwide[1], _pwide[0]),
+      ((_ptext.width, _ptext.height), _pwide))
+
+# X and Y move the selection as one box, by the move a drag makes.
+_pg = Document(812, 1218)
+_pa, _pb = _pg.add_frame_element(), _pg.add_frame_element()
+_pa.x, _pa.y, _pb.x, _pb.y = 100, 100, 300, 250
+_pg.select_many([_pa, _pb])
+_pg.group_selected()
+_pgroup = list(_pg.selection)
+check("X and Y read the selection's box",
+      (zpl_props.X.value(_pg, _pgroup), zpl_props.Y.value(_pg, _pgroup)) == (100, 100))
+_pbox = geometry.selection_bounds(_pgroup)
+check("X's range keeps the whole box on the label",
+      zpl_props.X.limits(_pg, _pgroup) == (0, 812 - _pbox[2]),
+      zpl_props.X.limits(_pg, _pgroup))
+zpl_props.X.write(_pg, _pgroup, 130)
+zpl_props.Y.write(_pg, _pgroup, 90)
+check("writing X and Y moves the group as one, keeping its shape",
+      [(e.x, e.y) for e in (_pa, _pb)] == [(130, 90), (330, 240)],
+      [(e.x, e.y) for e in (_pa, _pb)])
+_pdrag = Document(812, 1218)
+_pc, _pe = _pdrag.add_frame_element(), _pdrag.add_frame_element()
+(_pc.x, _pc.y), (_pe.x, _pe.y) = (_pa.x, _pa.y), (_pb.x, _pb.y)
+geometry.move_selection(_pdrag, [_pc, _pe], 5000, 0)
+zpl_props.X.write(_pg, _pgroup, 5000)
+check("an X past the edge stops where a drag would",
+      [(e.x, e.y) for e in (_pa, _pb)] == [(e.x, e.y) for e in (_pc, _pe)],
+      ([(e.x, e.y) for e in (_pa, _pb)], [(e.x, e.y) for e in (_pc, _pe)]))
+
+_props_src = (Path(__file__).resolve().parent.parent
+              / 'zplcore' / 'properties.py').read_text()
+check("properties.py names no GUI toolkit",
+      not any(t in _props_src for t in
+              ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
