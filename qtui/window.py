@@ -511,6 +511,12 @@ class ZPLDesignerWindow(QMainWindow):
         view_menu.addAction(self.fit_label_action)
         view_menu.addAction(self.fit_width_action)
         view_menu.addAction(self.actual_size_action)
+        view_menu.addSeparator()
+        # The dock's own show/hide action, so it stays ticked to match the
+        # panel however it was shown or closed
+        self.panel_action = self.properties.toggleViewAction()
+        self.panel_action.setText("Properties &Panel")
+        view_menu.addAction(self.panel_action)
 
         printer_menu = menubar.addMenu("&Printer")
         printer_menu.addAction(self.printer_graphics_action)

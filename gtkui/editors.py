@@ -11,6 +11,7 @@ The Qt frontend builds the same editors in qtui/dialogs.py; the two are kept
 row for row alike, and FUNCTIONAL_SPEC.md section 7 lists them.
 """
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import gi
@@ -56,13 +57,26 @@ class EditorForm:
         self.after_show = lambda: None
         self.fit = lambda: None
         self._listeners = []
+        self._muted = 0
 
     def on_change(self, callback) -> None:
         self._listeners.append(callback)
 
     def changed(self, *_args) -> None:
+        if self._muted:
+            return
         for callback in list(self._listeners):
             callback()
+
+    @contextmanager
+    def muted(self):
+        """Rows set inside this are not changes: the form putting itself back
+        in step with the element, not the user editing it."""
+        self._muted += 1
+        try:
+            yield
+        finally:
+            self._muted -= 1
 
     def watch(self, root: Gtk.Widget) -> None:
         """Report every change to an input at or under `root` as a change to
@@ -215,9 +229,16 @@ def _reverse_hint() -> Gtk.Label:
     return hint
 
 
-def _text_format_rows(window, editor, content, element):
+def _text_format_rows(window, editor, content, element, show_text=None):
     """The rows every text-like editor shares: ^FP direction and gap, ^FR,
     the font, and the ^FB/^TB wrap block.
+
+    `apply()` can change the element beyond what these rows say - a line
+    break typed with Wrap clear gets a block, and clearing Wrap joins the
+    lines - and then puts the rows, and through `show_text` the caller's own
+    text row, back in step with it. A window applies once and closes, but the
+    Properties panel applies on every change, and rows left behind would
+    undo the block on the next keystroke.
 
     Edit Text and Edit Time Field both call this, so a clock field is
     styled the same way a plain one is. The caller adds its own text row,
@@ -388,6 +409,20 @@ def _text_format_rows(window, editor, content, element):
         return (wrap_check.get_active()
                 and kind_codes[kind_combo.get_active()] == 'TB')
 
+    def show_block(new_block):
+        """Tick Wrap and show a field block the element was just given."""
+        with editor.muted():
+            wrap_check.set_active(True)
+            kind_combo.set_active(kind_codes.index('FB'))
+            block_width_spin.set_value(new_block.width)
+            max_lines_spin.set_value(new_block.max_lines)
+            spacing_spin.set_value(new_block.line_spacing)
+            justify_combo.set_active(
+                justify_codes.index(new_block.justification)
+                if new_block.justification in justify_codes else 0)
+            indent_spin.set_value(new_block.indent)
+        on_wrap_toggled(wrap_check)
+
     def apply():
         element.direction = direction_codes[direction_combo.get_active()]
         element.char_gap = int(gap_spin.get_value())
@@ -413,12 +448,16 @@ def _text_format_rows(window, editor, content, element):
             # joined rather than abandoned to the printer.
             element.text = textraster.join_lines(element.text)
             element.block = None
+            if show_text is not None:
+                with editor.muted():
+                    show_text()
         elif textraster.FORCED_BREAK in element.text:
             # A break typed into an element that never had a block
             # still needs one, for the same reason. Sized to the
             # longest line, so nothing moves.
             element.block = element.default_block(
                 document.font_path, document.dpi)
+            show_block(element.block)
 
         window.design_canvas.sync_text_width(element)
 
@@ -482,7 +521,8 @@ def time_form(window, content, element) -> EditorForm:
         ORIENTATIONS, element.orientation)
     make_row("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(window, editor, content, element)
+    fmt = _text_format_rows(window, editor, content, element,
+                            show_text=lambda: text_entry.set_text(element.text))
 
     clock_check = Gtk.CheckButton(
         label="Comes from the printer's clock (^FC)")
@@ -562,7 +602,8 @@ def serial_form(window, content, element) -> EditorForm:
         ORIENTATIONS, element.orientation)
     make_row("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(window, editor, content, element)
+    fmt = _text_format_rows(window, editor, content, element,
+                            show_text=lambda: text_entry.set_text(element.text))
 
     serial_check = Gtk.CheckButton(
         label="Auto-increments each print (^SN)")
@@ -650,7 +691,8 @@ def numbered_form(window, content, element) -> EditorForm:
         ORIENTATIONS, element.orientation)
     make_row("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(window, editor, content, element)
+    fmt = _text_format_rows(window, editor, content, element,
+                            show_text=lambda: text_entry.set_text(element.text))
 
     variable_check = Gtk.CheckButton(
         label="Data comes from a numbered field (^FN)")
@@ -722,7 +764,9 @@ def text_form(window, content, element) -> EditorForm:
         ORIENTATIONS, element.orientation)
     make_row("Orientation:", orientation_combo)
 
-    fmt = _text_format_rows(window, editor, content, element)
+    fmt = _text_format_rows(window, editor, content, element,
+                            show_text=lambda: text_view.get_buffer().set_text(
+                                textraster.to_editor(element.text)))
 
     apply_name = _make_name_row(content, element)
 

@@ -4335,6 +4335,13 @@ check("...and with a selection shows it, on that selection",
 pp.hide()
 pw.on_element_double_clicked(p_oval)
 check("a double click shows it too", not pp.isHidden())
+_p_was_hidden = pp.isHidden()
+pw.panel_action.trigger()
+_p_toggled = pp.isHidden()
+pw.panel_action.trigger()
+check("View > Properties Panel hides it, and shows it again",
+      pw.panel_action.text() == "Properties &Panel" and not _p_was_hidden
+      and _p_toggled and not pp.isHidden())
 
 # The right-click menu runs its own event loop, so the canvas is handed one
 # that answers at once with Properties, noting what it offered. A subclass in

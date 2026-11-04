@@ -43,7 +43,7 @@ frame = document.add_frame_element()
 
 # --- a child of the designer, and not a modal one ---------------------------
 
-window.on_element_double_clicked(None, text)
+window.open_editor_window(text)
 first = window._editors[id(text)]
 check("an editor opens without blocking its caller", first.get_visible())
 check("it is transient for the designer, so it floats above it",
@@ -53,12 +53,12 @@ check("and it is not modal, so the designer stays usable",
 
 # --- one editor per element -------------------------------------------------
 
-window.on_element_double_clicked(None, text)
-check("a second double-click raises the open editor rather than opening another",
+window.open_editor_window(text)
+check("opening a second editor on one element raises the open one instead",
       window._editors[id(text)] is first and len(window._editors) == 1,
       len(window._editors))
 
-window.on_element_double_clicked(None, frame)
+window.open_editor_window(frame)
 check("a different element gets an editor of its own alongside",
       len(window._editors) == 2, len(window._editors))
 
@@ -72,7 +72,7 @@ check("OK applies the edit and records one history entry",
 check("and accepting closes that editor",
       id(frame) not in window._editors)
 
-window.on_element_double_clicked(None, frame)
+window.open_editor_window(frame)
 before = len(window._undo_stack)
 window._editors[id(frame)].response(Gtk.ResponseType.CANCEL)
 check("Cancel leaves the document untouched and records no history",
@@ -102,7 +102,7 @@ for build, describe in ((lambda: document.add_text_element('reversible'), 'text'
                         (lambda: document.add_graphic_symbol_element('A'), 'symbol'),
                         (lambda: document.add_barcode_element(), 'barcode')):
     element = build()
-    window.on_element_double_clicked(None, element)
+    window.open_editor_window(element)
     dialog = window._editors[id(element)]
     fr_check = _find_checkbutton(dialog.get_content_area(), "Reverse print (^FR)")
     check(f"the {describe} editor offers a reverse print checkbox",
@@ -129,7 +129,7 @@ def _spin_buttons(dialog):
 
 
 circle = document.add_circle_element()
-window.on_element_double_clicked(None, circle)
+window.open_editor_window(circle)
 circle_dialog = window._editors[id(circle)]
 diameter_spin, thickness_spin = _spin_buttons(circle_dialog)
 diameter_spin.set_value(80)
@@ -140,7 +140,7 @@ check("OK in Edit Circle writes a round box and a thickness under the radius",
       == (80, 80, 80, 40),
       (circle.diameter, circle.width, circle.height, circle.thickness))
 
-window.on_element_double_clicked(None, circle)
+window.open_editor_window(circle)
 circle_dialog = window._editors[id(circle)]
 _spin_buttons(circle_dialog)[0].set_value(120)
 circle_dialog.response(Gtk.ResponseType.CANCEL)
@@ -156,7 +156,7 @@ def _combos(dialog):
 
 
 line = document.add_diagonal_element()
-window.on_element_double_clicked(None, line)
+window.open_editor_window(line)
 line_dialog = window._editors[id(line)]
 width_spin, height_spin, line_thickness_spin = _spin_buttons(line_dialog)
 width_spin.set_value(60)
@@ -172,7 +172,7 @@ check("OK in Edit Diagonal Line writes the box, a thickness held to the width, "
       == (60, 90, 60, 'W', 'L'),
       (line.width, line.height, line.thickness, line.colour, line.direction))
 
-window.on_element_double_clicked(None, line)
+window.open_editor_window(line)
 line_dialog = window._editors[id(line)]
 _combos(line_dialog)[1].set_active(0)
 line_dialog.response(Gtk.ResponseType.CANCEL)
@@ -182,9 +182,9 @@ document.elements.remove(line)
 # --- Edit Ellipse: two sides, and a thickness under half the shorter --------
 
 oval = document.add_ellipse_element()
-window.on_element_double_clicked(None, oval)
+window.open_editor_window(oval)
 oval_dialog = window._editors[id(oval)]
-check("a double-click on an ellipse opens Edit Ellipse",
+check("an ellipse's editor is Edit Ellipse",
       oval_dialog.get_title() == "Edit Ellipse", oval_dialog.get_title())
 width_spin, height_spin, oval_thickness_spin = _spin_buttons(oval_dialog)
 width_spin.set_value(60)
@@ -197,7 +197,7 @@ check("OK in Edit Ellipse writes the box, a thickness under half the shorter "
       (oval.width, oval.height, oval.thickness, oval.colour) == (60, 90, 30, 'W'),
       (oval.width, oval.height, oval.thickness, oval.colour))
 
-window.on_element_double_clicked(None, oval)
+window.open_editor_window(oval)
 oval_dialog = window._editors[id(oval)]
 _spin_buttons(oval_dialog)[0].set_value(120)
 oval_dialog.response(Gtk.ResponseType.CANCEL)
@@ -278,9 +278,9 @@ check("choosing UL adds a selected ^GS^FDD and one undo entry",
       (type(mark).__name__, getattr(mark, 'text', None),
        len(window._undo_stack) - _before))
 
-window.on_element_double_clicked(None, mark)
+window.open_editor_window(mark)
 mark_dialog = window._editors[id(mark)]
-check("a double-click on a symbol opens Edit Symbol",
+check("a symbol's editor is Edit Symbol",
       mark_dialog.get_title() == "Edit Symbol", mark_dialog.get_title())
 symbol_combo, turn_combo = _find_all(_editor_body(mark_dialog), Gtk.ComboBoxText)
 mark_height, mark_width = _find_all(_editor_body(mark_dialog), Gtk.SpinButton)
@@ -298,7 +298,7 @@ check("OK in Edit Symbol writes the symbol, both sizes and the turn, as one "
       (mark.text, mark.font_height, mark.font_width, mark.orientation,
        mark.width, mark.height, len(window._undo_stack) - _before))
 
-window.on_element_double_clicked(None, mark)
+window.open_editor_window(mark)
 mark_dialog = window._editors[id(mark)]
 _find_all(_editor_body(mark_dialog), Gtk.ComboBoxText)[0].set_active(4)
 _before = len(window._undo_stack)
@@ -310,7 +310,7 @@ document.elements.remove(mark)
 
 pair = GraphicSymbolElement(50, 50, 'AB', 5, 7000)
 document.elements.append(pair)
-window.on_element_double_clicked(None, pair)
+window.open_editor_window(pair)
 pair_dialog = window._editors[id(pair)]
 check("data that is not one of the five is offered first, as written",
       _find_all(_editor_body(pair_dialog),
@@ -379,7 +379,7 @@ def _named_button(content, name):
 maxi = document.add_barcode_element()
 maxi.barcode_value, maxi.orientation = 'A_B', 'R'
 maxi.sync_box()
-window.on_element_double_clicked(None, maxi)
+window.open_editor_window(maxi)
 maxi_dialog = window._editors[id(maxi)]
 maxi_content = _editor_body(maxi_dialog)
 _find_all(maxi_content, Gtk.ComboBoxText)[0].set_active(
@@ -407,7 +407,7 @@ check("OK makes it a MaxiCode with ^FH on, unturned",
       and "^BD\n^FH_^FDA_5FB_1D_04^FS" in maxi.to_zpl(),
       maxi.to_zpl().replace('\n', ' '))
 
-window.on_element_double_clicked(None, maxi)
+window.open_editor_window(maxi)
 _cancelled = window._editors[id(maxi)]
 _named_button(_editor_body(_cancelled), 'insert_RS').clicked()
 _cancelled.response(Gtk.ResponseType.CANCEL)
@@ -415,7 +415,7 @@ check("Cancel leaves the value as it was",
       maxi.barcode_value == 'A_5FB_1D_04', maxi.barcode_value)
 
 plain = document.add_barcode_element()
-window.on_element_double_clicked(None, plain)
+window.open_editor_window(plain)
 plain_content = _editor_body(window._editors[id(plain)])
 check("a Code 128 keeps its Orientation row and has no Insert",
       _row_for(plain_content, "Orientation:").get_visible()
@@ -430,7 +430,7 @@ micro = document.add_barcode_element()
 micro.symbology, micro.micro_mode, micro.bar_height = 'micropdf417', 33, 4
 micro.barcode_value = 'HELLO'
 micro.sync_box()
-window.on_element_double_clicked(None, micro)
+window.open_editor_window(micro)
 micro_dialog = window._editors[id(micro)]
 micro_content = _editor_body(micro_dialog)
 micro_size = next(c for c in _find_all(micro_content, Gtk.ComboBoxText)
@@ -456,7 +456,7 @@ series = zpl_parser.parse_zpl(
     "^XA^PW1218^LL2436^FM100,100,e,e,100,1200^BY2^BFN,4,22"
     f"^FD{'X' * 400}^FS^XZ")[0].elements[0]
 document.elements.append(series)
-window.on_element_double_clicked(None, series)
+window.open_editor_window(series)
 series_dialog = window._editors[id(series)]
 series_content = _editor_body(series_dialog)
 positions_view = next(v for v in _find_all(series_content, Gtk.TreeView)
@@ -482,7 +482,7 @@ tlc = zpl_parser.parse_zpl(
     "^XA^FO10,10^BT^FD123456,ABCd12345678901234,5551212,88899^FS^XZ"
 )[0].elements[0]
 document.elements.append(tlc)
-window.on_element_double_clicked(None, tlc)
+window.open_editor_window(tlc)
 tlc_dialog = window._editors[id(tlc)]
 tlc_content = _editor_body(tlc_dialog)
 row_height = next(s for s in _find_all(tlc_content, Gtk.SpinButton)
@@ -501,7 +501,7 @@ document.elements.remove(tlc)
 # over one would write its fields into a copy the document no longer has, and
 # the edit would vanish with nothing to show for it.
 
-window.on_element_double_clicked(None, text)
+window.open_editor_window(text)
 stale = window._editors[id(text)]
 window._apply_snapshot(window.design_canvas.snapshot())
 check("undo closes the editors, whose elements it has just replaced",
@@ -513,7 +513,7 @@ check("restoring really did replace the element it was editing",
 
 live = document.elements[0]
 document.selected_element = live
-window.on_element_double_clicked(None, live)
+window.open_editor_window(live)
 window.on_delete_clicked(None)
 check("deleting an element closes the editor open on it",
       not window._editors, len(window._editors))
@@ -524,7 +524,7 @@ check("deleting an element closes the editor open on it",
 
 pair = [document.add_text_element('one'), document.add_text_element('two')]
 for element in pair:
-    window.on_element_double_clicked(None, element)
+    window.open_editor_window(element)
 check("an editor is open on each of the two", len(window._editors) == 2,
       len(window._editors))
 document.select_many(pair)
@@ -632,22 +632,313 @@ check("Deselect All clears it and records nothing",
 for element in list(document.elements):
     document.elements.remove(element)
 
-# --- Properties: the editor, from the menus as well as a double click -------
+# --- the Properties panel ----------------------------------------------------
+# One panel shows the selection's rows and edits them as they are changed; a
+# burst of edits is one undo entry. A window of its own, so the editor windows
+# above have nothing to do with it.
 
-p_frame = document.add_frame_element()
-p_circle = document.add_circle_element()
-p_circle.x, p_circle.y = 400, 400
-document.select_many([p_frame, p_circle])
-document.group_selected()
-document.select(p_circle)          # what the right click itself does
+import configparser as _pconfig
+import time
+from gi.repository import Gdk as _PGdk
+from gtkui import properties as gtk_props
+from zplcore.model import ImageElement as _PImage
+from PIL import Image as _PILImage
+
+pw = ZPLViewerWindow()
+pw._save_settings = lambda *a: None
+pp = pw.properties
+pdoc = pw.design_canvas.document
+
+
+def _ppump(rounds=20):
+    """Let the main loop run a while: a paint waits for the frame clock."""
+    for _ in range(rounds):
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        time.sleep(0.01)
+
+
+def _pdepth():
+    return len(pw._undo_stack)
+
+
+def _pall(kind):
+    return _find_all(pp._area, kind)
+
+
+def _pnamed(name):
+    return next((w for w in gtk_props._descendants(pp._area) if w.get_name() == name), None)
+
+
+def _pkey(window, keyval, focus):
+    """A key pressed in `window` with the focus on `focus`, by the path a real
+    one takes: the window's own key handler first."""
+    if window.get_focus() is not focus:
+        # Not again if it is there already: an entry taking the focus
+        # selects all of itself, even from itself
+        window.set_focus(focus)
+    event = _PGdk.Event.new(_PGdk.EventType.KEY_PRESS)
+    event.keyval = keyval
+    event.window = window.get_window()
+    event.send_event = True
+    # Key bindings and shortcuts are matched by the hardware key, not the
+    # symbol, so an event without one would match nothing either way
+    keymap = _PGdk.Keymap.get_for_display(window.get_display())
+    found, keys = keymap.get_entries_for_keyval(keyval)
+    if found:
+        event.hardware_keycode = keys[0].keycode
+        event.group = keys[0].group
+    return window.emit("key-press-event", event)
+
+
+_ppump()
+check("the Properties panel starts docked beside the canvas, shown, its View "
+      "item ticked", pp.get_parent() is pw.paned and not pp.floating and pp.shown
+      and pw.panel_item.get_active())
+pp.sync()
+check("with nothing selected it says so",
+      pp._title.get_text() == "Nothing selected" and _pnamed('prop_x') is None)
+
+p_frame = pdoc.add_frame_element()
+pw.on_canvas_changed()
+pw.design_canvas.queue_draw()
+_ppump()
+check("a paint moves it to the selection: the frame just added, with X and Y "
+      "and the frame's own rows", pp._title.get_text() == "Frame"
+      and pp._bound == (p_frame,) and _pnamed('prop_x').get_value() == p_frame.x,
+      pp._title.get_text())
+
+# Live, and one undo entry a burst. The frame's rows after X and Y: width,
+# height, thickness, rounding; its one list is the colour.
+_pd = _pdepth()
+_pall(Gtk.ComboBoxText)[0].set_active(1)
+_pall(Gtk.SpinButton)[5].set_value(3)
+check("an edit reaches the element as it is made",
+      (p_frame.colour, p_frame.rounding) == ('W', 3))
+check("...and is not an undo entry yet, while a pause would end it",
+      _pdepth() == _pd and pp.pending and pp._quiet_source is not None)
+pp.finish_edit()
+check("the burst is one undo entry", _pdepth() == _pd + 1 and not pp.pending)
+pw.on_undo()
+pp.sync()
+check("undo takes the whole burst back, and the panel follows the restored element",
+      (pdoc.elements[0].colour, pdoc.elements[0].rounding) == ('B', 0)
+      and pp._bound == (pdoc.elements[0],) and pdoc.elements[0] is not p_frame)
+p_frame = pdoc.elements[0]
+
+_pd = _pdepth()
+_pall(Gtk.ComboBoxText)[0].set_active(1)
+_pkey(pw, _PGdk.KEY_Escape, _pnamed('prop_x'))
+pp.sync()
+check("Escape throws the burst away, records nothing, and stays on the element",
+      pdoc.elements[0].colour == 'B' and _pdepth() == _pd and not pp.pending
+      and pp._bound == (pdoc.elements[0],))
+p_frame = pdoc.elements[0]
+
+_pall(Gtk.ComboBoxText)[0].set_active(1)
+_pnamed('prop_x').activate()
+check("Enter ends the burst", _pdepth() == _pd + 1 and not pp.pending)
+_pall(Gtk.SpinButton)[5].set_value(2)
+pp._on_quiet()
+check("so does a pause", _pdepth() == _pd + 2 and not pp.pending)
+_pall(Gtk.SpinButton)[5].set_value(4)
+pw.set_focus(pw.design_canvas)
+check("so does the focus leaving the panel", _pdepth() == _pd + 3 and not pp.pending)
+_pall(Gtk.SpinButton)[5].set_value(5)
+_press = _PGdk.Event.new(_PGdk.EventType.BUTTON_PRESS)
+_press.button, _press.x, _press.y = 1, 2, 2
+_press.window = pw.design_canvas.get_window()
+pw.design_canvas.on_button_press(pw.design_canvas, _press)
+check("so does a click on the canvas, before it acts",
+      _pdepth() == _pd + 4 and not pp.pending, _pdepth() - _pd)
+pdoc.select(p_frame)
+pp.sync()
+_pall(Gtk.SpinButton)[5].set_value(6)
+pw._edit_menu.emit("show")
+pw._edit_menu.emit("hide")
+check("so does a menu opening, before any command in it",
+      _pdepth() == _pd + 5 and not pp.pending)
+_pall(Gtk.SpinButton)[5].set_value(7)
+pw.set_focus(pw.design_canvas)
+_pd = _pdepth()
+_pall(Gtk.SpinButton)[5].set_value(8)
+check("a key that goes on to the window's shortcuts ends the burst first",
+      pw._on_window_key_press(pw, _PGdk.Event.new(_PGdk.EventType.KEY_PRESS)) is False
+      and _pdepth() == _pd + 1 and not pp.pending)
+
+# The window's shortcuts come after a panel box's own keys
+p_text = pdoc.add_text_element("words")
+pw.design_canvas.queue_draw()
+_ppump()
+_p_id = next(e for e in _pall(Gtk.Entry)
+             if e.get_placeholder_text()
+             and e.get_placeholder_text().startswith("optional - Python"))
+_p_id.set_text("abc")
+pp.finish_edit()
+_pd = _pdepth()
+# Focused first - a GTK entry selects all of itself when it takes the focus
+pw.set_focus(_p_id)
+_p_id.set_position(0)
+_pkey(pw, _PGdk.KEY_Delete, _p_id)
+check("Delete typed in a docked entry deletes a character, not the element",
+      _p_id.get_text() == "bc" and p_text in pdoc.elements,
+      (_p_id.get_text(), p_text in pdoc.elements))
+pp.finish_edit()
+_p_spare = pdoc.add_frame_element()
+pw.on_canvas_changed()
+_pkey(pw, _PGdk.KEY_Delete, pw.design_canvas)
+check("...where on the canvas the same key deletes the selection",
+      _p_spare not in pdoc.elements and p_text in pdoc.elements)
+pdoc.select(p_text)
+pp.sync()
+
+_p_buffer = _pall(Gtk.TextView)[0].get_buffer()
+_p_buffer.set_text("one\ntwo")
+_p_wrap = [b for b in _pall(Gtk.CheckButton)
+           if b.get_label() == "Wrap the text into a block"][0]
+check("a line break typed gets the text a block, and ticks Wrap",
+      p_text.block is not None and _p_wrap.get_active())
+_p_buffer.set_text("one\ntwos")
+check("...which the next keystroke keeps",
+      p_text.block is not None and p_text.text == 'one\\&twos', p_text.text)
+_p_wrap.set_active(False)
+_p_shown = _p_buffer.get_text(_p_buffer.get_start_iter(), _p_buffer.get_end_iter(), False)
+check("clearing Wrap joins the lines, and the text box shows them joined",
+      p_text.block is None and '\n' not in _p_shown, _p_shown)
+pp.finish_edit()
+
+# X and Y, on one element and on a group
+pdoc.select(p_frame)
+pp.sync()
+p_frame.x += 10           # as a drag in progress would
+pp.sync()
+check("X follows the element as it is dragged",
+      _pnamed('prop_x').get_value() == p_frame.x)
+_pnamed('prop_x').set_value(150)
+check("typing an X moves the element", p_frame.x == 150)
+pp.finish_edit()
+
+p_oval = pdoc.add_ellipse_element()
+p_oval.x, p_oval.y = 400, 400
+pdoc.select_many([p_frame, p_oval])
+pdoc.group_selected()
+pdoc.select(p_frame)
+pp.sync()
+check("a whole group is titled as one", pp._title.get_text() == "Group of 2",
+      pp._title.get_text())
+_p_before = [(e.x, e.y) for e in (p_frame, p_oval)]
+_pnamed('prop_x').set_value(190)
+check("X moves the whole group by the same amount",
+      [(e.x, e.y) for e in (p_frame, p_oval)]
+      == [(_p_before[0][0] + 40, _p_before[0][1]),
+          (_p_before[1][0] + 40, _p_before[1][1])],
+      [(e.x, e.y) for e in (p_frame, p_oval)])
+pp.finish_edit()
+check("the shared rows are what a frame and an ellipse both have",
+      _pnamed('prop_thickness') is not None and _pnamed('prop_rounding') is None
+      and _pnamed('properties_hint') is not None)
+pdoc.ungroup_selected()
+
+p_other = pdoc.add_frame_element()
+p_frame.thickness, p_other.thickness = 2, 6
+p_frame.print_enabled = False
+pdoc.select_many([p_frame, p_other])
+pw.on_canvas_changed()
+pp.sync()
+check("loose elements are counted, not called a group",
+      pp._title.get_text() == "2 elements", pp._title.get_text())
+check("a value they disagree on shows as Mixed",
+      _pnamed('prop_thickness').get_text() == "Mixed",
+      _pnamed('prop_thickness').get_text())
+check("...and so does Print This Element, as a half-ticked box",
+      _pnamed('prop_print_enabled').get_inconsistent())
+_pd = _pdepth()
+_pnamed('prop_thickness').set_value(4)
+_pnamed('prop_print_enabled').set_active(True)
+check("setting a shared row writes it to every element",
+      (p_frame.thickness, p_other.thickness) == (4, 4)
+      and p_frame.print_enabled and p_other.print_enabled)
+pp.finish_edit()
+check("...as one undo entry", _pdepth() == _pd + 1)
+
+# A clock field's rows give way to plain text's
+p_time = pdoc.add_time_element()
+pw.design_canvas.queue_draw()
+_ppump()
+check("a clock field shows its own rows", pp._title.get_text() == "Time Field",
+      pp._title.get_text())
+[b for b in _pall(Gtk.CheckButton)
+ if b.get_label() == "Comes from the printer's clock (^FC)"][0].set_active(False)
+_ppump()
+check("unticking the clock shows plain text's rows in their place",
+      pp._title.get_text() == "Text" and pp._bound == (p_time,), pp._title.get_text())
+pp.finish_edit()
+
+# A change made elsewhere is read back in
+pdoc.select(p_oval)
+pp.sync()
+p_oval.width = 333
+pw.on_canvas_changed()
+_ppump()
+check("a change made on the canvas shows in the rows",
+      _pall(Gtk.SpinButton)[2].get_value() == 333, _pall(Gtk.SpinButton)[2].get_value())
+
+# An image's one setting is its file
+p_image = _PImage(10, 10, 40, 40, _pil_image=_PILImage.new('RGB', (40, 40), (255, 255, 255)))
+pdoc.elements.append(p_image)
+pdoc.select(p_image)
+pp.sync()
+_p_replaced = []
+pw.replace_image = lambda element: _p_replaced.append(element)
+_pnamed('replace_image').clicked()
+del pw.replace_image
+check("an image shows Replace Image, which asks for the file of that image",
+      pp._title.get_text() == "Image" and _p_replaced == [p_image],
+      pp._title.get_text())
+
+pdoc.select(p_text)
+pw.on_delete_clicked(None)
+pp.sync()
+check("deleting the element empties the panel", pp._title.get_text() == "Nothing selected")
+
+# Floating, it waits to be asked for
+pp.set_floating(True)
+pp.set_shown(False)
+_ppump()
+check("floated, it is a window of its own beside the designer",
+      pp.floating and isinstance(pp.get_parent(), Gtk.Window)
+      and pp.get_parent().get_transient_for() is pw)
+check("closed, View > Properties Panel is unticked", not pw.panel_item.get_active())
+pdoc.clear_selection()
+pw.on_properties_clicked(None)
+check("Properties with nothing selected leaves a hidden panel hidden", not pp.shown)
+pdoc.select(p_oval)
+pw.on_properties_clicked(None)
+check("...and with a selection shows it, on that selection",
+      pp.shown and pp._bound == (p_oval,) and pw.panel_item.get_active())
+pp.set_shown(False)
+pw.on_element_double_clicked(None, p_oval)
+check("a double click shows it too", pp.shown)
+pw.panel_item.set_active(False)
+check("and View > Properties Panel hides it", not pp.shown)
+pp.set_floating(False)
+pw.panel_item.set_active(True)
+_ppump()
+check("docked again, it is back beside the canvas",
+      pp.get_parent() is pw.paned and pp.shown)
 
 # The right-click menu is popped up and left to the main loop, so it is caught
 # on its way up and its Properties item activated by hand.
+pdoc.select_many([p_frame, p_other])
+pdoc.group_selected()
+pdoc.clear_selection()
+pdoc.select(p_other)                # what the right click itself does
+pp.set_shown(False)
 p_menus = []
 p_real_popup = Gtk.Menu.popup_at_pointer
 Gtk.Menu.popup_at_pointer = lambda menu, _event: p_menus.append(menu)
 try:
-    window.design_canvas._show_context_menu(None, p_circle)
+    pw.design_canvas._show_context_menu(None, p_other)
 finally:
     Gtk.Menu.popup_at_pointer = p_real_popup
 p_items = [item for item in p_menus[0].get_children() if item.get_label()]
@@ -655,29 +946,38 @@ check("the right-click menu ends with Properties",
       [item.get_label() for item in p_items][-1:] == ["Properties"],
       [item.get_label() for item in p_items])
 p_items[-1].activate()
-check("right-click Properties opens the member right-clicked, not its group",
-      list(window._editors) == [id(p_circle)], list(window._editors))
-window._close_element_editors()
-
-document.select(p_frame, direct=True)
-window.on_properties_clicked(None)
-check("Edit > Properties opens the primary's editor",
-      list(window._editors) == [id(p_frame)], list(window._editors))
-window._close_element_editors()
+check("...which shows the panel on the selection the right click made",
+      pp.shown and pp._title.get_text() == "Group of 2", pp._title.get_text())
 check("Edit > Properties is on Alt+Enter",
-      window.accelerators.get(window.properties_item) == "<Alt>Return",
-      window.accelerators.get(window.properties_item))
-
-document.clear_selection()
-window.on_properties_clicked(None)
-check("Properties with nothing selected opens nothing", not window._editors)
-window._update_edit_menu(None)
-p_greyed = not window.properties_item.get_sensitive()
-window._release_edit_menu(None)
+      pw.accelerators.get(pw.properties_item) == "<Alt>Return",
+      pw.accelerators.get(pw.properties_item))
+pdoc.clear_selection()
+pw._update_edit_menu(None)
+p_greyed = not pw.properties_item.get_sensitive()
+pw._release_edit_menu(None)
 check("the Edit menu greys Properties with nothing selected, and lets go of "
-      "it once closed", p_greyed and window.properties_item.get_sensitive())
-for element in list(document.elements):
-    document.elements.remove(element)
+      "it once closed", p_greyed and pw.properties_item.get_sensitive())
+
+# Where it was left is where it comes back - and floating, hidden
+_p_saver = ZPLViewerWindow()
+_p_saver.properties.set_floating(True)
+_p_saver._save_settings()
+_p_next = ZPLViewerWindow()
+_ppump()
+check("a panel left floating comes back floating, and hidden until asked for",
+      _p_next.properties.floating and not _p_next.properties.shown)
+_p_cfg = _pconfig.ConfigParser()
+_p_cfg.read(gtk_main._config_path())
+_p_cfg.remove_section('docks')
+with open(gtk_main._config_path(), 'w') as _p_out:
+    _p_cfg.write(_p_out)
+_p_fresh = ZPLViewerWindow()
+_ppump()
+check("...and with nothing saved it is docked and shown",
+      not _p_fresh.properties.floating and _p_fresh.properties.shown)
+for _p_window in (_p_saver, _p_next, _p_fresh, pw):
+    _p_window.destroy()
+_ppump()
 
 # --- a wrapped block paints its lines where it wraps them -------------------
 # The conformance suite compares ZPL, and the ZPL for a block is right whether
@@ -767,7 +1067,7 @@ fp_el = document.add_text_element("ABCD")
 # The scalable font 0, whose rows are the height asked, which keeps the
 # arithmetic plain; the bitmap fonts' own cells are test_core's
 fp_el.font_code, fp_el.font_height, fp_el.font_width = '0', 30, 20
-window.on_element_double_clicked(None, fp_el)
+window.open_editor_window(fp_el)
 fp_dialog = window._editors[id(fp_el)]
 fp_combos = _find_all(_editor_body(fp_dialog), Gtk.ComboBoxText)
 fp_spins = _find_all(_editor_body(fp_dialog), Gtk.SpinButton)
@@ -834,7 +1134,7 @@ zpl_fonts._resident_cache['0'] = None
 tb_el = document.add_text_element("aaa bbb ccc ddd")
 tb_el.font_code, tb_el.font_height, tb_el.font_width = '0', 30, 20
 document.sync_text_width(tb_el)
-window.on_element_double_clicked(None, tb_el)
+window.open_editor_window(tb_el)
 tb_dialog = window._editors[id(tb_el)]
 tb_content = _editor_body(tb_dialog)
 
@@ -873,7 +1173,7 @@ check("and the box is the block",
 # A ^TB breaks no line at \&, so the dialog shows it as written, and a line
 # break typed into one is a space
 tb_el.text = r"aaa\&bbb"
-window.on_element_double_clicked(None, tb_el)
+window.open_editor_window(tb_el)
 tb_dialog = window._editors[id(tb_el)]
 tb_buffer = _find_all(_editor_body(tb_dialog), Gtk.TextView)[0].get_buffer()
 check(r"a ^TB's \& is shown as written",
@@ -884,7 +1184,7 @@ tb_dialog.response(Gtk.ResponseType.OK)
 check("and a line break typed into a ^TB is a space",
       tb_el.text == "top bottom" and isinstance(tb_el.block, TextBlock),
       tb_el.text)
-window.on_element_double_clicked(None, tb_el)
+window.open_editor_window(tb_el)
 tb_dialog = window._editors[id(tb_el)]
 tb_content = _editor_body(tb_dialog)
 check("reopened, the dialog shows the ^TB it made",
@@ -905,7 +1205,7 @@ document.elements.remove(tb_el)
 
 from zplcore import parser as zpl_parser
 tf_el = document.add_time_element()
-window.on_element_double_clicked(None, tf_el)
+window.open_editor_window(tf_el)
 tf_dialog = window._editors[id(tf_el)]
 tf_content = _editor_body(tf_dialog)
 tf_wrap = [b for b in _find_all(tf_content, Gtk.CheckButton)
@@ -936,7 +1236,7 @@ tf_back = zpl_parser.parse_zpl(document.to_zpl())[0]
 check("and it round-trips with its block",
       any(getattr(e, 'clock_format', False) and isinstance(e.block, FieldBlock)
           and e.block.width == 300 for e in tf_back.elements))
-window.on_element_double_clicked(None, tf_el)
+window.open_editor_window(tf_el)
 tf_dialog = window._editors[id(tf_el)]
 tf_wrap = [b for b in _find_all(_editor_body(tf_dialog), Gtk.CheckButton)
            if b.get_label() == "Wrap the text into a block"][0]
@@ -950,7 +1250,7 @@ document.elements.remove(tf_el)
 # --- Edit Serial Field: the same font, direction and wrap rows --------------
 
 sf_el = document.add_serial_element()
-window.on_element_double_clicked(None, sf_el)
+window.open_editor_window(sf_el)
 sf_dialog = window._editors[id(sf_el)]
 sf_content = _editor_body(sf_dialog)
 sf_wrap = [b for b in _find_all(sf_content, Gtk.CheckButton)
@@ -972,7 +1272,7 @@ document.elements.remove(sf_el)
 # --- Edit Numbered Field: the same font, direction and wrap rows ------------
 
 nf_el = document.add_numbered_element(7, 'Batch')
-window.on_element_double_clicked(None, nf_el)
+window.open_editor_window(nf_el)
 nf_dialog = window._editors[id(nf_el)]
 nf_content = _editor_body(nf_dialog)
 nf_wrap = [b for b in _find_all(nf_content, Gtk.CheckButton)
@@ -995,7 +1295,7 @@ document.elements.remove(nf_el)
 for nm_label, nm_el in (
         ("text", document.add_text_element("T")),
         ("numbered", document.add_numbered_element(8, 'Lot'))):
-    window.on_element_double_clicked(None, nm_el)
+    window.open_editor_window(nm_el)
     nm_dialog = window._editors[id(nm_el)]
     nm_row = _row_for(_editor_body(nm_dialog), "ID:")
     check(f"the {nm_label} editor has an ID row", nm_row is not None)

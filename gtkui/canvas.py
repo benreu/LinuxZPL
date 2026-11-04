@@ -106,13 +106,17 @@ class DesignCanvas(Gtk.DrawingArea):
         # the zoom moves everything, and the window owns the scrollbars, so the
         # window applies the whole thing.
         'zoom-at': (GObject.SignalFlags.RUN_FIRST, None, (float, float, bool)),
-        # 'cut', 'copy' or 'duplicate', chosen from the right-click menu. The
-        # window owns the clipboard and the editors a cut has to close, so it
-        # carries the command out.
+        # 'cut', 'copy', 'duplicate', 'delete' or 'properties', chosen from
+        # the right-click menu. The window owns the clipboard and the
+        # Properties panel, so it carries the command out.
         'edit-requested': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         # (kind, x, y in dots) - a palette button let go over the canvas. The
         # window adds the element, since it owns the + Image file chooser.
         'element-dropped': (GObject.SignalFlags.RUN_FIRST, None, (str, int, int)),
+        # A mouse button went down, before the canvas acts on it: the
+        # Properties panel records the edits it has made so far as their own
+        # undo entry.
+        'pressed': (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     # Cursor shown while hovering each resize handle
@@ -1238,6 +1242,7 @@ class DesignCanvas(Gtk.DrawingArea):
 
     def on_button_press(self, widget, event):
         """Handle mouse button press for element selection and double-click detection."""
+        self.emit('pressed')
         self.grab_focus()
         self.finish_nudge()
         lx, ly = self._screen_to_label(event.x, event.y)

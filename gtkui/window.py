@@ -26,7 +26,7 @@ from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import graphic_symbols
-from zplcore.model import STORED_GRAPHIC_DEVICES, Document, ImageElement
+from zplcore.model import STORED_GRAPHIC_DEVICES, Document
 from zplcore.renderer import ZPLRenderer
 
 from . import editors as gtk_editors
@@ -35,6 +35,7 @@ from .canvas import DesignCanvas, palette_targets, to_pixbuf
 # The row helpers every dialog here builds with, kept beside the element
 # editors that use them most
 from .editors import _make_combo, _make_row, _make_spin
+from .properties import DEFAULT_WIDTH as PANEL_WIDTH, PropertiesPanel
 from PIL import Image
 import io
 
@@ -329,6 +330,10 @@ class ZPLViewerWindow(Gtk.Window):
         # that can change between sessions.
         self.label_inches = DEFAULT_LABEL_INCHES
         self.saved_geometry = None
+        # Where the Properties panel was left: floating or docked, shown, its
+        # docked width and its floating window's place - see _restore_panel.
+        self.saved_panel = {'floating': False, 'shown': True,
+                            'width': PANEL_WIDTH, 'geometry': None}
         self._load_settings()
         # The persisted printer, snapshotted so a session-only override
         # (Printer Settings) can offer "Use Default" without re-reading the
@@ -359,6 +364,8 @@ class ZPLViewerWindow(Gtk.Window):
         # Keyboard shortcuts, shown in the menu and live window-wide
         accel_group = Gtk.AccelGroup()
         self.add_accel_group(accel_group)
+        # Shared with the Properties panel's window while it floats
+        self.accel_group = accel_group
         # What each item is bound to, kept as it is bound. PyGObject offers no
         # way to ask a menu item back: Gtk.AccelLabel.get_accel reports only
         # what set_accel put there, and the accel group's contents are not
@@ -467,8 +474,9 @@ class ZPLViewerWindow(Gtk.Window):
 
         # The clipboard holds ZPL (Document.copy_zpl), so what one window
         # copies another - this frontend's or the Qt one's - can paste. Like
-        # Ctrl+A, these keys are matched before any focused widget sees them,
-        # which the main window can afford only because it holds no entry.
+        # Ctrl+A, these keys would be matched before any focused widget saw
+        # them; while a Properties panel box has the focus, the box is offered
+        # them first instead (_on_window_key_press).
         self.cut_item = Gtk.MenuItem.new_with_mnemonic("Cu_t")
         self.cut_item.connect("activate", self.on_cut_clicked)
         add_accel(self.cut_item, "<Control>x")
@@ -497,9 +505,9 @@ class ZPLViewerWindow(Gtk.Window):
 
         edit_menu.append(Gtk.SeparatorMenuItem())
 
-        # Ctrl+A is matched before any focused widget sees it, so the main
-        # window must never hold a text entry of its own - the editors are
-        # windows of their own, and keep their select-all-text.
+        # Ctrl+A would be matched before any focused widget saw it. The
+        # Properties panel's text and number boxes keep their select-all-text
+        # because the window offers them the key first (_on_window_key_press).
         self.select_all_item = Gtk.MenuItem.new_with_mnemonic("_Select All")
         self.select_all_item.connect("activate", self.on_select_all_clicked)
         add_accel(self.select_all_item, "<Control>a")
@@ -607,6 +615,14 @@ class ZPLViewerWindow(Gtk.Window):
             if alias:
                 add_accel(item, alias, visible=False)
             view_menu.append(item)
+
+        view_menu.append(Gtk.SeparatorMenuItem())
+        # Shows and hides the Properties panel, docked or floating - and is
+        # kept ticked to match however it was shown or closed
+        self.panel_item = Gtk.CheckMenuItem.new_with_mnemonic("Properties _Panel")
+        self._panel_item_handler = self.panel_item.connect(
+            "toggled", lambda item: self.properties.set_shown(item.get_active()))
+        view_menu.append(self.panel_item)
 
         view_menu.show_all()
 
@@ -779,7 +795,13 @@ class ZPLViewerWindow(Gtk.Window):
         scrolled_canvas.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.ALWAYS)
         scrolled_canvas.connect("size-allocate", self._on_view_allocated)
         self.scrolled_canvas = scrolled_canvas
-        left_box.pack_start(scrolled_canvas, True, True, 0)
+        # The canvas and, docked beside it, the Properties panel
+        self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        self.paned.pack1(scrolled_canvas, True, False)
+        self.paned.connect("size-allocate", self._on_paned_allocated)
+        self._panel_unplaced = True
+        self.panel_width = self.saved_panel['width']
+        left_box.pack_start(self.paned, True, True, 0)
         
         self.design_canvas = DesignCanvas(on_change_callback=self.on_canvas_changed, 
                                          label_width=self.label_width, 
@@ -808,6 +830,21 @@ class ZPLViewerWindow(Gtk.Window):
             menu.connect("hide", lambda _m: self._release_align_items())
         self.design_canvas.connect("edit-requested", self._on_edit_requested)
 
+        # The selection's properties, edited live. A burst of its edits is
+        # recorded before anything else can act on what it edited: a key that
+        # reaches a shortcut, a menu opening, the focus leaving it.
+        self.properties = PropertiesPanel(self)
+        self.paned.pack2(self.properties, False, False)
+        self.properties.on_shown_changed = self._on_panel_shown
+        self.connect("key-press-event", self._on_window_key_press)
+        self.connect("set-focus", self._on_set_focus)
+        for top in menu_bar.get_children():
+            if top.get_submenu() is not None:
+                top.get_submenu().connect("show", self.properties.finish_edit)
+        for menu in self._align_menus:
+            menu.connect("show", self.properties.finish_edit)
+        self.add_symbol_button.get_popup().connect("show", self.properties.finish_edit)
+
         # Edit history: snapshots older than the current state, and newer ones
         self._undo_stack = []
         self._redo_stack = []
@@ -835,8 +872,83 @@ class ZPLViewerWindow(Gtk.Window):
         main_box.pack_end(status_row, False, False, 0)
 
         self.show_all()
+        self._restore_panel()
         self._update_zoom_readout()
         self.update_status("Ready")
+
+    # --- the Properties panel's place ------------------------------------------
+
+    def _restore_panel(self):
+        """Put the Properties panel where it was left, or docked on the right.
+
+        Floating, it starts hidden: it is asked for when wanted (a double
+        click, Properties), where docked it is part of the window.
+        """
+        saved = self.saved_panel
+        self.properties.floating_geometry = saved['geometry']
+        if saved['floating']:
+            self.properties.set_floating(True)
+            self.properties.set_shown(False)
+        elif not saved['shown']:
+            self.properties.set_shown(False)
+        self._on_panel_shown(self.properties.shown)
+
+    def _on_panel_shown(self, shown):
+        """Keep View > Properties Panel ticked to match the panel."""
+        self.panel_item.handler_block(self._panel_item_handler)
+        self.panel_item.set_active(shown)
+        self.panel_item.handler_unblock(self._panel_item_handler)
+
+    def docked_panel_width(self):
+        """How wide the docked panel is now, or was last."""
+        if (not self.properties.floating and self.properties.get_visible()
+                and self.paned.get_allocated_width() > 1 and not self._panel_unplaced):
+            return max(1, self.paned.get_allocated_width() - self.paned.get_position())
+        return self.panel_width
+
+    def place_panel(self):
+        """Give the docked panel its width, now or once the pane has one."""
+        width = self.paned.get_allocated_width()
+        if width > 1:
+            self.paned.set_position(max(100, width - self.panel_width))
+            self._panel_unplaced = False
+        else:
+            self._panel_unplaced = True
+
+    def _on_paned_allocated(self, _paned, allocation):
+        if self._panel_unplaced and allocation.width > 1:
+            self.place_panel()
+
+    def share_keys(self, other):
+        """Give another window of this one's - the floating panel - the same
+        shortcuts, and the same rule about whose key it is."""
+        other.add_accel_group(self.accel_group)
+        other.connect("key-press-event", self._on_window_key_press)
+
+    def _on_window_key_press(self, window, event):
+        """Whose key it is, while the focus is in the Properties panel.
+
+        A window matches its shortcuts before the focused widget sees the
+        key, which is why the designer held no text entry of its own before
+        the panel: Delete would have deleted the element rather than a
+        character, Ctrl+A selected the label rather than the text. So while
+        the focus is in one of the panel's text or number boxes, the box is
+        offered the key first, and only a key it leaves goes on to the
+        shortcuts. A key that reaches one ends the panel's burst first, so
+        the command is an undo entry of its own.
+        """
+        focus = window.get_focus()
+        if (focus is not None and self.properties.holds(focus)
+                and isinstance(focus, (Gtk.Editable, Gtk.TextView))):
+            if window.propagate_key_event(event):
+                return True
+        self.properties.finish_edit()
+        return False
+
+    def _on_set_focus(self, _window, widget):
+        """The focus is moving; leaving the panel ends its burst."""
+        if widget is None or not self.properties.holds(widget):
+            self.properties.finish_edit()
 
     # --- the view ------------------------------------------------------------
 
@@ -927,6 +1039,8 @@ class ZPLViewerWindow(Gtk.Window):
 
     def close_app(self, widget):
       """Handle quit app from Menu or Window close button."""
+      # An edit still in its burst is an unsaved change like any other
+      self.properties.finish_edit()
       if not self.check_unsaved_changes():
         return False
       # Where the window was left, so it opens there next time. Saved on the
@@ -2934,6 +3048,18 @@ class ZPLViewerWindow(Gtk.Window):
                 self.printer_font_device = font_device
             zpl_fonts.set_extra_font_dir(
                 parser.get('fonts', 'extra_dir', fallback=''))
+            # The Properties panel's place. Its own section, which the Qt
+            # frontend keeps its window state in too, under a key of its own
+            if parser.has_section('docks'):
+                panel = self.saved_panel
+                panel['floating'] = parser.getboolean('docks', 'floating',
+                                                      fallback=False)
+                panel['shown'] = parser.getboolean('docks', 'shown', fallback=True)
+                width = parser.getint('docks', 'width', fallback=PANEL_WIDTH)
+                panel['width'] = width if 100 <= width <= 3000 else PANEL_WIDTH
+                geometry = parser.get('docks', 'floating_geometry', fallback='')
+                parts = [int(v) for v in geometry.split(',') if v.strip()]
+                panel['geometry'] = tuple(parts) if len(parts) == 4 else None
             if parser.has_section('window'):
                 self.saved_geometry = tuple(
                     parser.getint('window', key) for key in ('x', 'y', 'width', 'height'))
@@ -2993,6 +3119,8 @@ class ZPLViewerWindow(Gtk.Window):
                     for key, value in zip(('x', 'y', 'width', 'height'),
                                           self.saved_geometry):
                         parser.set('window', key, str(int(value)))
+                if hasattr(self, 'properties'):
+                    self._save_panel(parser)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, 'w') as f:
                     parser.write(f)
@@ -3003,6 +3131,20 @@ class ZPLViewerWindow(Gtk.Window):
             except OSError as e:
                 last_error = e
         self.show_error_dialog(f"Could not save settings: {last_error}")
+
+    def _save_panel(self, parser):
+        """Where the Properties panel is, into [docks]."""
+        panel = self.properties
+        panel._remember_floating_geometry()
+        if not parser.has_section('docks'):
+            parser.add_section('docks')
+        parser.set('docks', 'floating', 'yes' if panel.floating else 'no')
+        if not panel.floating:
+            parser.set('docks', 'shown', 'yes' if panel.shown else 'no')
+        parser.set('docks', 'width', str(int(self.docked_panel_width())))
+        if panel.floating_geometry:
+            parser.set('docks', 'floating_geometry',
+                       ','.join(str(int(v)) for v in panel.floating_geometry))
 
     def on_default_printer_clicked(self, widget):
         """Handle Default Printer menu item click."""
@@ -3376,7 +3518,35 @@ class ZPLViewerWindow(Gtk.Window):
     UNDO_LIMIT = 50
 
     def on_canvas_changed(self):
-        """Handle canvas changes (drag, resize, etc.) and mark as unsaved."""
+        """A change made anywhere but the Properties panel: record it, and
+        have the panel read the document again."""
+        self.properties.document_changed()
+        self._record_change()
+
+    def record_panel_edit(self):
+        """The Properties panel's burst of edits, as one undo entry."""
+        self._record_change()
+
+    def revert_to_last_entry(self):
+        """Put the document back as the last undo entry left it - Escape in
+        the Properties panel, throwing its burst of edits away.
+
+        The selection stays what it is now, not what it was when that entry
+        was made: the edits were to the elements still being looked at. A
+        burst never adds or removes an element, so their places are the same
+        in the restored list.
+        """
+        doc = self.design_canvas.document
+        places = [doc.elements.index(el) for el in doc.selection
+                  if el in doc.elements]
+        self.design_canvas.restore(self._current_snapshot)
+        doc = self.design_canvas.document
+        doc.selection = [doc.elements[i] for i in places if i < len(doc.elements)]
+        self.design_canvas.sync_size()
+        self.design_canvas.queue_draw()
+
+    def _record_change(self):
+        """Record one undo entry and mark the document unsaved."""
         self.unsaved_changes = True
         # the snapshot standing before this change is what undo goes back to
         self._undo_stack.append(self._current_snapshot)
@@ -3387,7 +3557,9 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_undo(self, widget=None):
         """Step back to the state before the last change."""
-        # a nudge still held down is a change of its own, recorded first
+        # a burst in the Properties panel, or a nudge still held down, is a
+        # change of its own, recorded first
+        self.properties.finish_edit()
         self.design_canvas.finish_nudge()
         if not self._undo_stack:
             return
@@ -3398,7 +3570,9 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_redo(self, widget=None):
         """Step forward again after an undo."""
-        # a nudge still held down is a change of its own, recorded first
+        # a burst in the Properties panel, or a nudge still held down, is a
+        # change of its own, recorded first
+        self.properties.finish_edit()
         self.design_canvas.finish_nudge()
         if not self._redo_stack:
             return
@@ -3420,6 +3594,7 @@ class ZPLViewerWindow(Gtk.Window):
     def _reset_history(self):
         """Start a fresh history, so it never spans a file load."""
         self._close_element_editors()
+        self.properties.document_changed()
         self._undo_stack = []
         self._redo_stack = []
         self._current_snapshot = self.design_canvas.snapshot()
@@ -3605,6 +3780,8 @@ class ZPLViewerWindow(Gtk.Window):
         Once the drag has finished rather than inside it, so + Image's file
         chooser is not run while the drop is still being delivered.
         """
+        self.properties.finish_edit()
+
         def add():
             self._palette[kind](None, at=(x, y))
             return False
@@ -3724,11 +3901,10 @@ class ZPLViewerWindow(Gtk.Window):
          'properties': self.on_properties_clicked}[command](None)
 
     def on_properties_clicked(self, widget):
-        """Open the editor for the primary - the element a double click on it
-        would open, which in a group is the member last picked."""
-        element = self.design_canvas.document.selected_element
-        if element is not None:
-            self.on_element_double_clicked(None, element)
+        """Show the Properties panel on the selection - floating and hidden,
+        this is how it comes back."""
+        if self.design_canvas.document.selection:
+            self.properties.request()
 
     def on_canvas_draw(self, widget, context):
         """Canvas draw event handler - re-render when canvas changes."""
@@ -3772,50 +3948,57 @@ class ZPLViewerWindow(Gtk.Window):
         self._editors.clear()
 
     def on_element_double_clicked(self, widget, element):
-        """Open the editor for whichever element was double-clicked: its
-        rows (gtkui/editors.py) in a window of their own, applying on OK."""
+        """A double click asks for the Properties panel, which the first
+        click has already pointed at the element."""
+        self.properties.request()
+
+    def replace_image(self, element):
+        """Choose a new file for an image, as one undo entry - the Properties
+        panel's Replace Image."""
+        dialog = Gtk.FileChooserDialog(
+            title="Replace Image",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                           Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+
+        filter_img = Gtk.FileFilter()
+        filter_img.set_name("Image files (*.jpg, *.jpeg, *.png)")
+        for pat in ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG"):
+            filter_img.add_pattern(pat)
+        dialog.add_filter(filter_img)
+
+        filter_all = Gtk.FileFilter()
+        filter_all.set_name("All files")
+        filter_all.add_pattern("*")
+        dialog.add_filter(filter_all)
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            element.image_path = dialog.get_filename()
+            dialog.destroy()
+            element.reload()
+            self.design_canvas.queue_draw()
+            self.on_canvas_changed()
+        else:
+            dialog.destroy()
+
+    def open_editor_window(self, element):
+        """An element's rows in a window of their own, applying on OK - the
+        editor the designer opened before the Properties panel. Nothing in
+        the designer opens one any more; it is kept for driving a form whole,
+        OK and all, and still one per element. Returns the window, or None
+        for an element with no rows.
+        """
         open_editor = self._editors.get(id(element))
         if open_editor is not None:
-            # Already being edited. Raising the window it is in beats opening a
-            # second one onto the same element, where whichever was accepted
-            # last would silently undo the other.
             open_editor.present()
-            return
-
-        if isinstance(element, ImageElement):
-            dialog = Gtk.FileChooserDialog(
-                title="Replace Image",
-                parent=self,
-                action=Gtk.FileChooserAction.OPEN
-            )
-            dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                               Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
-
-            filter_img = Gtk.FileFilter()
-            filter_img.set_name("Image files (*.jpg, *.jpeg, *.png)")
-            for pat in ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG"):
-                filter_img.add_pattern(pat)
-            dialog.add_filter(filter_img)
-
-            filter_all = Gtk.FileFilter()
-            filter_all.set_name("All files")
-            filter_all.add_pattern("*")
-            dialog.add_filter(filter_all)
-
-            response = dialog.run()
-            if response == Gtk.ResponseType.OK:
-                element.image_path = dialog.get_filename()
-                dialog.destroy()
-                element.reload()
-                self.design_canvas.queue_draw()
-                self.on_canvas_changed()
-            else:
-                dialog.destroy()
-            return
+            return open_editor
 
         builder = gtk_editors.form_builder(element)
         if builder is None:
-            return
+            return None
         dialog = Gtk.Dialog(parent=self, flags=0)
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                            Gtk.STOCK_OK, Gtk.ResponseType.OK)
@@ -3844,6 +4027,7 @@ class ZPLViewerWindow(Gtk.Window):
         # form hid - so the rows that depend on another get their first
         # visibility pass only once it has run.
         form.after_show()
+        return dialog
 
     def _update_title(self):
         """Name the file being edited in the titlebar."""
