@@ -854,6 +854,13 @@ def barcode_form(window, content, element) -> EditorForm:
     # error correction and mask, and so on - built from the same
     # catalogue the parser and the model read, so a symbology cannot
     # arrive carrying a parameter no editor can reach.
+    #
+    # One row per attribute, however many symbologies have it: a Data
+    # Matrix and a PDF417 both have columns and rows. The label and the
+    # choices are each symbology's own, so fill_extra_rows puts the chosen
+    # one's in - now, for an editor driven rather than shown, and again
+    # whenever the symbology changes. A row left showing another
+    # symbology's choices would write one of them back on the next edit.
     extra_rows = {}
     for _symbology_key, rows in model.BARCODE_PARAMETERS.items():
         for attribute, row_label, choices in rows:
@@ -862,16 +869,43 @@ def barcode_form(window, content, element) -> EditorForm:
             if isinstance(choices, model.BarcodeSpin):
                 # A number with too many values to list - a TLC39's
                 # MicroPDF417 row height.
-                widget, codes = make_spin(
-                    getattr(element, attribute, None)
-                    or choices.lower, choices.lower,
-                    choices.upper), None
+                widget = make_spin(choices.lower, choices.lower,
+                                   choices.upper)
             else:
-                widget, codes = make_combo(
-                    choices, getattr(element, attribute, None))
+                widget = Gtk.ComboBoxText()
             widget.set_name(attribute)
-            row, _label = make_row(row_label + ":", widget)
-            extra_rows[attribute] = (widget, codes, row)
+            row, label = make_row(row_label + ":", widget)
+            # The codes a combo reads back with, and the choices it now
+            # offers, are the symbology's: filled in by fill_extra_rows
+            extra_rows[attribute] = SimpleNamespace(
+                widget=widget, label=label, row=row, codes=None,
+                choices=None)
+
+    def fill_extra_rows(chosen):
+        """Label each row the chosen symbology has as it does, offering its
+        choices, set to the element's value."""
+        for attribute, row_label, choices in model.BARCODE_PARAMETERS.get(
+                chosen, ()):
+            extra = extra_rows[attribute]
+            extra.label.set_text(row_label + ":")
+            current = getattr(element, attribute, None)
+            with editor.muted():
+                if isinstance(choices, model.BarcodeSpin):
+                    extra.widget.get_adjustment().configure(
+                        current if current is not None else choices.lower,
+                        choices.lower, choices.upper, 1, 10, 0)
+                    extra.choices = choices
+                    continue
+                if extra.choices is not choices:
+                    extra.widget.remove_all()
+                    for choice_label, _code in choices:
+                        extra.widget.append_text(choice_label)
+                    extra.codes = [code for _l, code in choices]
+                    extra.choices = choices
+                extra.widget.set_active(extra.codes.index(current)
+                                        if current in extra.codes else 0)
+
+    fill_extra_rows(element.symbology)
 
     ratio_spin = _make_ratio_spin(element.ratio, 2.0, 3.0)
     ratio_row, _ratio_label = make_row("Ratio:", ratio_spin)
@@ -1003,17 +1037,9 @@ def barcode_form(window, content, element) -> EditorForm:
         text_height_row.set_visible(bool(features['text']))
         wanted = [attribute for attribute, _l, _c
                   in model.BARCODE_PARAMETERS.get(chosen, ())]
-        for attribute, (widget, codes, row) in extra_rows.items():
-            row.set_visible(attribute in wanted)
-            if attribute not in wanted:
-                continue
-            current = getattr(element, attribute, None)
-            if codes is None:
-                if current is not None:
-                    widget.set_value(current)
-            else:
-                widget.set_active(codes.index(current)
-                                  if current in codes else 0)
+        for attribute, extra in extra_rows.items():
+            extra.row.set_visible(attribute in wanted)
+        fill_extra_rows(chosen)
         # Rows came and went: the window around them takes their new size
         editor.fit()
 
@@ -1033,10 +1059,10 @@ def barcode_form(window, content, element) -> EditorForm:
         # visible widgets at all.
         for attribute, _l, _c in model.BARCODE_PARAMETERS.get(
                 element.symbology, ()):
-            widget, codes, _row = extra_rows[attribute]
+            extra = extra_rows[attribute]
             setattr(element, attribute,
-                    int(widget.get_value()) if codes is None
-                    else codes[widget.get_active()])
+                    int(extra.widget.get_value()) if extra.codes is None
+                    else extra.codes[extra.widget.get_active()])
         apply_field_number(element)
         apply_name(element)
         element.check_digit = check_codes[check_combo.get_active()]

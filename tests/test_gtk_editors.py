@@ -449,6 +449,46 @@ check("OK makes it mode 18 and keeps its rows 4 dots tall, which a range "
       (micro.micro_mode, micro.bar_height))
 document.elements.remove(micro)
 
+# A Data Matrix and a PDF417 share the columns and rows rows. Each must show
+# its own label and choices: a PDF417 shown Data Matrix's lost its columns
+# to "Fit the data" on the next edit, and the panel applies every edit.
+cr = document.add_barcode_element()
+cr.symbology, cr.columns, cr.rows, cr.bar_height = 'pdf417', 3, 5, 3
+cr.barcode_value = 'HELLO'
+cr.sync_box()
+window.open_editor_window(cr)
+cr_dialog = window._editors[id(cr)]
+cr_content = _editor_body(cr_dialog)
+cr_combo = lambda name: next(c for c in _find_all(cr_content, Gtk.ComboBoxText)
+                             if c.get_name() == name)
+cr_cols, cr_rows = cr_combo('columns'), cr_combo('rows')
+check("a PDF417's Columns and Rows rows are its own, set to 3 and 5",
+      _row_for(cr_content, "Columns:").get_visible()
+      and _row_for(cr_content, "Rows:").get_visible()
+      and (cr_cols.get_active_text(), cr_rows.get_active_text()) == ('3', '5'),
+      (cr_cols.get_active_text(), cr_rows.get_active_text()))
+next(e for e in _find_all(cr_content, Gtk.Entry)
+     if not isinstance(e, Gtk.SpinButton)).set_text('HELLO AGAIN')
+cr_dialog.response(Gtk.ResponseType.OK)
+check("and OK after an edit to another row leaves its columns and rows alone",
+      (cr.columns, cr.rows) == (3, 5), (cr.columns, cr.rows))
+window.open_editor_window(cr)
+cr_content = _editor_body(window._editors[id(cr)])
+cr_cols = cr_combo('columns')
+cr_symbology = _find_all(cr_content, Gtk.ComboBoxText)[0]
+cr_codes = [code for _l, code in zpl_model.BARCODE_SYMBOLOGIES]
+cr_symbology.set_active(cr_codes.index('datamatrix'))
+cr_dm = (_row_for(cr_content, "Least Columns:") is not None,
+         cr_cols.get_model()[1][0])
+cr_symbology.set_active(cr_codes.index('pdf417'))
+check("switching to a Data Matrix and back relabels and refills them each way",
+      cr_dm == (True, '10')
+      and _row_for(cr_content, "Columns:") is not None
+      and cr_cols.get_model()[1][0] == '1',
+      (cr_dm, cr_cols.get_model()[1][0]))
+window._editors[id(cr)].response(Gtk.ResponseType.CANCEL)
+document.elements.remove(cr)
+
 # --- Edit Barcode: ^FM's Positions -------------------------------------------
 
 from zplcore import parser as zpl_parser

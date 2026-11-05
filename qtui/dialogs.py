@@ -1700,23 +1700,23 @@ def barcode_form(element) -> EditorForm:
     # parser and the model read, so a symbology cannot arrive with a
     # parameter no editor can reach. They go here, after the value, so the
     # rows above keep the positions other code looks for them in.
+    #
+    # One row per attribute, however many symbologies have it: a Data
+    # Matrix and a PDF417 both have columns and rows. The label and the
+    # choices are each symbology's own, so _load_extra_rows puts the chosen
+    # one's in; a row left showing another symbology's choices would write
+    # one of them back on the next edit.
     extra_rows = {}
     for symbology_key, rows in BARCODE_PARAMETERS.items():
         for attribute, label, choices in rows:
             if attribute in extra_rows:
                 continue
-            if isinstance(choices, BarcodeSpin):
-                # A number with too many values to list - a TLC39's
-                # MicroPDF417 row height.
-                widget = QSpinBox()
-                widget.setRange(choices.lower, choices.upper)
-            else:
-                widget = QComboBox()
-                for choice_label, value in choices:
-                    widget.addItem(choice_label, value)
+            widget = (QSpinBox() if isinstance(choices, BarcodeSpin)
+                      else QComboBox())
             widget.setObjectName(attribute)
             form.addRow(label + ":", widget)
-            extra_rows[attribute] = (widget, form.labelForField(widget), choices)
+            # [widget, its label, the choices it now offers]
+            extra_rows[attribute] = [widget, form.labelForField(widget), None]
 
     def _extra_value(attribute):
         widget = extra_rows[attribute][0]
@@ -1724,22 +1724,38 @@ def barcode_form(element) -> EditorForm:
                 else widget.currentData())
 
     def _load_extra_rows():
-        """Show each row the chosen symbology has, set to its value."""
-        wanted = dict((attribute, True) for attribute, _l, _c
-                      in BARCODE_PARAMETERS.get(symbology_combo.currentData(), ()))
-        for attribute, (widget, label, choices) in extra_rows.items():
-            shown = attribute in wanted
+        """Show each row the chosen symbology has, labelled and offering
+        that symbology's choices, set to the element's value."""
+        own = dict((attribute, (label, choices)) for attribute, label, choices
+                   in BARCODE_PARAMETERS.get(symbology_combo.currentData(), ()))
+        for attribute, row in extra_rows.items():
+            widget, label = row[0], row[1]
+            shown = attribute in own
             widget.setVisible(shown)
             label.setVisible(shown)
             if not shown:
                 continue
+            text, choices = own[attribute]
+            label.setText(text + ":")
             current = getattr(element, attribute, None)
-            if isinstance(widget, QSpinBox):
-                widget.setValue(current if current is not None
-                                else choices.lower)
-                continue
-            values = [value for _l, value in choices]
-            widget.setCurrentIndex(values.index(current) if current in values else 0)
+            # Filling a row in is not an edit of it
+            widget.blockSignals(True)
+            try:
+                if isinstance(widget, QSpinBox):
+                    widget.setRange(choices.lower, choices.upper)
+                    widget.setValue(current if current is not None
+                                    else choices.lower)
+                else:
+                    if row[2] is not choices:
+                        widget.clear()
+                        for choice_label, value in choices:
+                            widget.addItem(choice_label, value)
+                    values = [value for _l, value in choices]
+                    widget.setCurrentIndex(values.index(current)
+                                           if current in values else 0)
+            finally:
+                widget.blockSignals(False)
+            row[2] = choices
 
     ratio_spin = QDoubleSpinBox()
     ratio_spin.setRange(2.0, 3.0)

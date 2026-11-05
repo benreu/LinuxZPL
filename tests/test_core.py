@@ -2117,6 +2117,19 @@ check("every symbology has a dialog entry, and every command a parameter list",
       and set(zpl_symbology.COMMAND.values()) <= set(zpl_symbology.COMMAND_PARAMS),
       (sorted(set(BARCODE_FEATURES) ^ set(zpl_symbology.SYMBOLOGIES)),
        sorted(set(zpl_symbology.COMMAND.values()) - set(zpl_symbology.COMMAND_PARAMS))))
+# The editors build one row per parameter and give it each symbology's own
+# label and choices, so a parameter two symbologies share must be the same
+# kind of row in both: a list in one and a number box in the other would
+# need two widgets.
+_param_kinds = {}
+for _sym, _params in zpl_symbology.BARCODE_PARAMETERS.items():
+    for _attr, _label, _choices in _params:
+        _param_kinds.setdefault(_attr, set()).add(
+            isinstance(_choices, zpl_symbology.Spin))
+check("a parameter two symbologies share is a list in both or a number box "
+      "in both",
+      all(len(kinds) == 1 for kinds in _param_kinds.values()),
+      sorted(a for a, kinds in _param_kinds.items() if len(kinds) > 1))
 check("only Code 128 offers a mode, since no other symbology has one",
       [name for name, feat in BARCODE_FEATURES.items() if feat['mode']] == ['code128'],
       [n for n, f in BARCODE_FEATURES.items() if f['mode']])
@@ -3561,6 +3574,36 @@ _qt_pdf_dialog = qt_dialogs.edit_barcode_dialog(None, _qt_pdf)
 _qt_pdf_dialog.findChild(_QDialogButtonBox).button(_QDialogButtonBox.Ok).click()
 check("and a PDF417's row height of 3 modules survives an OK unchanged",
       _qt_pdf.bar_height == 3, _qt_pdf.bar_height)
+
+# A Data Matrix and a PDF417 share the columns and rows rows. Each must show
+# its own label and choices: a PDF417 shown Data Matrix's lost its columns
+# to "Fit the data" on the next edit, and the panel applies every edit.
+_qt_cr = BarcodeElement(40, 40, 3, 'HELLO', symbology='pdf417')
+_qt_cr.columns, _qt_cr.rows = 3, 5
+_qt_cr_form = qt_dialogs.barcode_form(_qt_cr)
+_qt_cr_cols = _qt_cr_form.body.findChild(_QComboBox, 'columns')
+_qt_cr_rows = _qt_cr_form.body.findChild(_QComboBox, 'rows')
+_qt_cr_label = lambda w: _qt_cr_form.rows.labelForField(w).text()
+check("a PDF417's Columns and Rows rows are its own, set to 3 and 5",
+      (_qt_cr_label(_qt_cr_cols), _qt_cr_cols.currentData(),
+       _qt_cr_label(_qt_cr_rows), _qt_cr_rows.currentData())
+      == ("Columns:", 3, "Rows:", 5)
+      and _qt_cr_cols.itemText(0) == "Fit the aspect",
+      (_qt_cr_label(_qt_cr_cols), _qt_cr_cols.currentText(),
+       _qt_cr_label(_qt_cr_rows), _qt_cr_rows.currentText()))
+_qt_cr_form.body.findChild(_QLineEdit, 'value').setText('HELLO AGAIN')
+_qt_cr_form.apply()
+check("and an edit to another row leaves its columns and rows alone",
+      (_qt_cr.columns, _qt_cr.rows) == (3, 5), (_qt_cr.columns, _qt_cr.rows))
+_qt_cr_sym = _qt_cr_form.body.findChild(_QComboBox, 'symbology')
+_qt_cr_sym.setCurrentIndex(_qt_cr_sym.findData('datamatrix'))
+_qt_cr_dm = (_qt_cr_label(_qt_cr_cols), _qt_cr_cols.itemText(1))
+_qt_cr_sym.setCurrentIndex(_qt_cr_sym.findData('pdf417'))
+check("switching to a Data Matrix and back relabels and refills them each way",
+      _qt_cr_dm == ("Least Columns:", "10")
+      and (_qt_cr_label(_qt_cr_cols), _qt_cr_cols.itemText(1))
+      == ("Columns:", "1"),
+      (_qt_cr_dm, _qt_cr_label(_qt_cr_cols), _qt_cr_cols.itemText(1)))
 
 # Edit Barcode: ^FM's Positions, for the two symbologies it places.
 from PySide2.QtWidgets import QTableWidget as _QTableWidget
