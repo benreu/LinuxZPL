@@ -256,6 +256,8 @@ zplcore/    no GUI toolkit, runs headless
                  the rulers' marks and the pointer readout
   snap.py        where a drag lands: on the grid, against other elements,
                  held to one axis; the guides that show it
+  tips.py        what each hard-to-grasp row means, in the words its
+                 tooltip shows in either frontend
   textraster.py  the text raster both canvases blit
   graphic_symbols.py  the ^GS symbols, drawn, since there is no file for
                  the printer's GS font
