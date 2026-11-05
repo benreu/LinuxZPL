@@ -136,6 +136,8 @@ arrange.
 GNOME, Cinnamon and MATE. Without it, LinuxZPL makes each page into a PDF, kept
 in `~/.cache/linuxzpl/help/`, and opens it in your PDF viewer; the PDFs link to
 one another as the pages do. With neither, it says where the pages are.
+Each window's **Help** button, or F1 inside it, opens the page about that
+window.
 
 ### From Python
 

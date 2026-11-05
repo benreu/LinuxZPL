@@ -11200,6 +11200,70 @@ try:
 finally:
     _hd.launch, qt_dialogs.QMessageBox = _hd_real_launch, _hd_real_box
 
+# --- each window's Help: its own page, on a Help button and on F1 -----------
+# PySide2 here has no QtTest to press a key, so F1 is checked as the window's
+# shortcut and fired as one.
+from PySide2.QtWidgets import (QAbstractButton as _WhButton,
+                               QShortcut as _WhShortcut)
+from zplcore import grid as _wh_grid
+_wh_real_help = qt_dialogs.show_help
+_wh_asked, _wh_seen = [], {}
+_wh_doc = zpl_parser.parse_zpl("^XA^FO10,10^A0N,30,30^FDhi^FS^XZ")[0]
+
+
+def _wh_press(key, window):
+    """Press `window`'s Help button, then its F1, and note what each opened
+    and whether the window stayed open."""
+    button = window.findChild(_WhButton, "help")
+    f1 = [s for s in window.findChildren(_WhShortcut) if s.key().toString() == "F1"]
+    del _wh_asked[:]
+    if button is not None:
+        button.click()
+    clicked, still_open = list(_wh_asked), window.isVisible()
+    del _wh_asked[:]
+    for shortcut in f1:
+        shortcut.activated.emit()
+    _wh_seen[key] = (clicked, still_open, list(_wh_asked), len(f1))
+
+
+def _wh_modal(key, open_window, close=lambda window: window.reject()):
+    """Run open_window(), which shows a window modally, press its Help while
+    it is up, then close it."""
+    def act(tries=[0]):
+        window = QApplication.activeModalWidget()
+        if window is None:
+            tries[0] += 1
+            if tries[0] < 100:
+                QTimer.singleShot(30, act)
+            return
+        _wh_press(key, window)
+        close(window)
+    QTimer.singleShot(30, act)
+    open_window()
+
+
+try:
+    qt_dialogs.show_help = lambda parent, topic: _wh_asked.append(topic)
+    _wh_modal("label_settings",
+              lambda: qt_dialogs.label_size_dialog(None, _wh_doc, 203))
+    _wh_modal("grid_settings",
+              lambda: qt_dialogs.grid_settings_dialog(None, _wh_grid.Grid(), 203))
+    _wh_modal("default_printer", lambda: qt_dialogs.printer_settings_dialog(
+        None, "10.0.0.1", 9100, 203, "E"))
+    _wh_modal("print", lambda: qt_dialogs.print_dialog(
+        None, _wh_doc, _PW_PRINTER, _PW_DEFAULT))
+    _wh_modal("local_fonts", lambda: qt_dialogs.LocalFontsDialog(None).exec_())
+finally:
+    qt_dialogs.show_help = _wh_real_help
+
+for _wh_key, _wh_topic in sorted(_hd.WINDOW_HELP.items()):
+    check(f"Qt {_wh_key}: Help opens {_wh_topic} and leaves the window open, "
+          f"and so does F1",
+          _wh_seen.get(_wh_key) == ([_wh_topic], True, [_wh_topic], 1),
+          _wh_seen.get(_wh_key))
+check("Qt: every window in the Help table was opened and tried",
+      set(_wh_seen) == set(_hd.WINDOW_HELP), sorted(set(_hd.WINDOW_HELP) ^ set(_wh_seen)))
+
 # Uploading a template to the printer's flash or RAM.
 _td = zpl_parser.parse_zpl("^XA^DFR:OLD.GRF^FS^FO10,10^A0N,30,30^FDhi^FS^XZ")[0]
 _flash = workflow.build_template_upload(_td, 'E', 'LABEL1')

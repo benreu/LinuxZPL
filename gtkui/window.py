@@ -88,6 +88,31 @@ def _dpi_from(combo: Gtk.ComboBoxText, fallback: int) -> int:
     return int(text) if text and text.isdigit() else fallback
 
 
+def add_help(window, dialog, key: str, row=None):
+    """Give a window its help: the page helpdocs.WINDOW_HELP names for `key`,
+    on a Help button and on F1, opened by `window`'s show_help. Without
+    `row`, `dialog` is a Gtk.Dialog and the button goes at the left of its
+    action area, as a plain button rather than a response, so it leaves
+    the dialog running. With `row`, a box built by hand, it goes at the
+    row's start. Either way it is named "help"."""
+    topic = helpdocs.WINDOW_HELP[key]
+    button = Gtk.Button.new_with_mnemonic("_Help")
+    button.set_name("help")
+    button.connect("clicked", lambda _b: window.show_help(dialog, topic))
+    if row is None:
+        action = dialog.get_action_area()
+        action.pack_start(button, False, False, 0)
+        action.set_child_secondary(button, True)
+    else:
+        row.pack_start(button, False, False, 0)
+    accel = Gtk.AccelGroup()
+    dialog.add_accel_group(accel)
+    button.add_accelerator("clicked", accel, Gdk.KEY_F1, 0,
+                           Gtk.AccelFlags.VISIBLE)
+    button.show()
+    return button
+
+
 class _PrinterRows:
     """Address, Port, DPI, Font memory and Test Connection, plus Use Default
     when there is a default to go back to. The GTK twin of
@@ -252,6 +277,7 @@ def _printer_picker_dialog(parent, title, address, port, dpi,
     rows = _PrinterRows(address, port, dpi, font_device)
     content.pack_start(rows.box, False, False, 0)
     rows.withhold((dialog.get_widget_for_response(Gtk.ResponseType.OK),))
+    add_help(parent, dialog, "default_printer")
     content.show_all()
 
     response = dialog.run()
@@ -311,6 +337,7 @@ def _build_print_dialog(parent, document, printer, default):
                        Gtk.STOCK_OK, Gtk.ResponseType.OK)
     print_btn = dialog.add_button("_Print", PRINT_RESPONSE)
     print_btn.set_name("print")
+    add_help(parent, dialog, "print")
     # Print is what the window is opened for, so it is the one Enter presses.
     dialog.set_default_response(PRINT_RESPONSE)
 
@@ -543,6 +570,7 @@ def _build_grid_dialog(parent, grid, dpi):
     dialog = Gtk.Dialog(title="Grid Settings", parent=parent, flags=0)
     dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                        Gtk.STOCK_OK, Gtk.ResponseType.OK)
+    add_help(parent, dialog, "grid_settings")
     dialog.set_default_response(Gtk.ResponseType.OK)
     content = dialog.get_content_area()
     content.set_spacing(8)
@@ -3772,6 +3800,7 @@ class ZPLViewerWindow(Gtk.Window):
         """
         dialog = Gtk.Dialog(title="Local Fonts", parent=self, flags=0)
         dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        add_help(self, dialog, "local_fonts")
         dialog.set_default_size(480, 420)
 
         content = dialog.get_content_area()
@@ -3880,6 +3909,7 @@ class ZPLViewerWindow(Gtk.Window):
         dialog = Gtk.Dialog(title="Label Settings", parent=self, flags=0)
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                           Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        add_help(self, dialog, "label_settings")
         
         content = dialog.get_content_area()
         content.set_spacing(10)

@@ -210,6 +210,39 @@ try:
 except ValueError:
     check("asking for a page that does not exist is an error", started == [])
 
+# --- a section of a page, and each window's Help -------------------------------
+
+check("a topic splits into its page and section",
+      helpdocs.split_topic("fonts#manager") == ("fonts", "manager")
+      and helpdocs.split_topic("fonts") == ("fonts", ""))
+check("the core finds a page's sections as the pages' own check does",
+      all(helpdocs.section_ids(helpdocs.PAGES / f"{t}.page") == section_ids(trees[t])
+          for t in pages))
+
+for key, topic in sorted(helpdocs.WINDOW_HELP.items()):
+    page, section = helpdocs.split_topic(topic)
+    check(f"window {key}'s Help names a page that exists: {topic}",
+          page in trees and (not section or section in section_ids(trees[page])),
+          (page, section))
+
+launched = run("fonts#manager", have=("yelp",))
+check("with Yelp, a topic with a section opens the page's file at that section",
+      argvs() == [["/usr/bin/yelp", str(helpdocs.PAGES / "fonts.page") + "#manager"]]
+      and launched.topic == "fonts#manager", started)
+
+launched = run("fonts#manager", have=("xdg-open",))
+check("with no Yelp, it opens the page's PDF, at its top",
+      launched.pdf is not None and launched.pdf.name == "fonts.pdf"
+      and argvs() == [["/usr/bin/xdg-open", str(launched.pdf)]], (launched, started))
+
+for bad in ("fonts#nowhere", "nowhere#manager", "nowhere"):
+    try:
+        run(bad, have=("yelp",))
+        raised = False
+    except ValueError:
+        raised = True
+    check(f"asking for {bad!r}, which does not exist, is an error", raised and not started)
+
 # --- watching the viewer for its first seconds ------------------------------------
 
 
@@ -261,6 +294,12 @@ following = follow(base._replace(process=Failed([]), viewer="yelp"), 0.5,
 check("a Yelp that failed hands over to the PDF",
       following.viewer == "xdg-open" and following.pdf.name == "firmware-update.pdf",
       following)
+
+following = follow(base._replace(process=Failed([]), viewer="yelp", topic="fonts#manager"),
+                   0.5, have=("yelp", "xdg-open"))
+check("and one asked for a section hands over that section's page",
+      following.viewer == "xdg-open" and following.pdf.name == "fonts.pdf"
+      and following.topic == "fonts#manager", following)
 
 # --- the PDFs -----------------------------------------------------------------------
 

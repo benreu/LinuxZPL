@@ -9,10 +9,13 @@ No help viewer is on every Linux system, so launch() tries in turn:
 1. Yelp, which ships with GNOME, Cinnamon and MATE. It is given the folder
    for the contents and a page's file for a topic; told a .page file, it
    still reads the whole folder as one document, so the page's links and
-   its trail back to the contents work.
+   its trail back to the contents work. A topic may name a section of its
+   page, "fonts#manager" as in a Mallard xref, and Yelp is given the file
+   with that fragment, which opens it scrolled to the section.
 2. A PDF of the page (helppdf.py), opened with xdg-open, so with whatever
    the desktop opens PDFs in, or else the first of the usual PDF viewers on
-   PATH. Nearly every desktop has one.
+   PATH. Nearly every desktop has one. It opens at the page's top: xdg-open
+   has no way to pass a place in the file.
 3. Neither: nothing is started, and a message for the frontend to show says
    what to install and where the pages are.
 
@@ -27,8 +30,9 @@ show a message in their own way.
 
 import shutil
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List, NamedTuple, Optional, Union
+from typing import List, NamedTuple, Optional, Set, Tuple, Union
 
 PAGES = Path(__file__).resolve().parent.parent / "help" / "C"
 MALLARD = "http://projectmallard.org/1.0/"
@@ -41,6 +45,18 @@ WATCH_SECONDS = 5.0
 POLL_MS = 250
 # follow()'s answer while the viewer is still starting: ask again.
 WATCHING = "watching"
+
+# The page, and the section of it, that each window's Help button and F1
+# open, by a key both frontends use for that window. Tests open every window
+# in both frontends and hold its Help to this table, and check each topic
+# names a page and a section that exist.
+WINDOW_HELP = {
+    "label_settings": "resolution#label-size",
+    "grid_settings": "view#grid",
+    "default_printer": "printing#default-printer",
+    "print": "printing#print-window",
+    "local_fonts": "fonts#which",
+}
 
 
 class Launch(NamedTuple):
@@ -58,6 +74,18 @@ def topics(pages: Path = PAGES) -> List[str]:
     """Every page's id: its file name without .page, which Mallard requires
     to match the id the page gives itself."""
     return sorted(p.stem for p in pages.glob("*.page"))
+
+
+def split_topic(topic: str) -> Tuple[str, str]:
+    """("fonts", "manager") for "fonts#manager"; ("fonts", "") for "fonts"."""
+    page, _hash, section = topic.partition("#")
+    return page, section
+
+
+def section_ids(page: Path) -> Set[str]:
+    """The ids of every section in a page, which a topic may name after #."""
+    return {el.get("id") for el in ET.parse(page).getroot().iter(f"{{{MALLARD}}}section")
+            if el.get("id")}
 
 
 INSTALL = "Install Yelp (the yelp package) or any PDF viewer, then try again."
@@ -97,12 +125,16 @@ def launch(topic: str = CONTENTS, pages: Path = PAGES,
            cache: Optional[Path] = None, start_after: str = "") -> Launch:
     """Show the help page `topic`, or the contents, with the first viewer in
     VIEWERS after `start_after` that is on PATH and starts. Never waits for
-    it. The PDFs are made, into `cache` (helppdf.cache_dir() if None), only
-    when it comes to a PDF viewer. Asking for a page that does not exist is
-    a programming error."""
-    page = pages / f"{topic}.page"
+    it. `topic` may name a section, "page#section", which Yelp opens at.
+    The PDFs are made, into `cache` (helppdf.cache_dir() if None), only
+    when it comes to a PDF viewer. Asking for a page or a section that does
+    not exist is a programming error."""
+    page_id, section = split_topic(topic)
+    page = pages / f"{page_id}.page"
     if not page.is_file():
-        raise ValueError(f"no help page {topic!r} in {pages}")
+        raise ValueError(f"no help page {page_id!r} in {pages}")
+    if section and section not in section_ids(page):
+        raise ValueError(f"no section {section!r} in help page {page_id!r}")
     names = VIEWERS[VIEWERS.index(start_after) + 1:] if start_after else VIEWERS
     pdf = None
     for name in names:
@@ -110,12 +142,13 @@ def launch(topic: str = CONTENTS, pages: Path = PAGES,
         if not path:
             continue
         if name == "yelp":
-            target = pages if topic == CONTENTS else page
+            target = (pages if topic == CONTENTS
+                      else f"{page}#{section}" if section else page)
         else:
             if pdf is None:
                 try:
                     from . import helppdf
-                    pdf = helppdf.build(pages, cache) / f"{topic}.pdf"
+                    pdf = helppdf.build(pages, cache) / f"{page_id}.pdf"
                 except Exception as e:  # the help must never take the designer down
                     return Launch(None, unmade_message(pages, e), topic, "",
                                   pages, None, cache)

@@ -16,7 +16,7 @@ from PIL import Image as PILImage
 
 from PySide2.QtCore import QSize, Qt, QTimer
 from PySide2.QtGui import (QFont, QFontMetrics, QGuiApplication,
-                          QPixmap)
+                          QKeySequence, QPixmap)
 from PySide2.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication,
                                QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
@@ -24,7 +24,7 @@ from PySide2.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication
                                QInputDialog,
                                QLabel, QLineEdit, QListWidget, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton,
-                               QScrollArea,
+                               QScrollArea, QShortcut,
                                QSpinBox, QDoubleSpinBox, QTableWidget,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
@@ -137,6 +137,29 @@ def _follow_help(parent, launched):
             _follow_help(QApplication.activeWindow(), following)
 
     QTimer.singleShot(helpdocs.POLL_MS, poll)
+
+
+def add_help(dialog, key: str, box: Optional[QDialogButtonBox] = None):
+    """Give a window its help: the page helpdocs.WINDOW_HELP names for `key`,
+    on a Help button and on F1. Given `box`, the button is that box's own
+    Help, which Qt's Linux layouts put at the left and which leaves the
+    window open; without one, the button is returned for a row built by
+    hand. Either way it is named "help"."""
+    topic = helpdocs.WINDOW_HELP[key]
+
+    def open_page():
+        show_help(dialog, topic)
+
+    if box is not None:
+        button = box.addButton(QDialogButtonBox.Help)
+        box.helpRequested.connect(open_page)
+    else:
+        button = QPushButton("&Help")
+        button.setAutoDefault(False)
+        button.clicked.connect(open_page)
+    button.setObjectName("help")
+    QShortcut(QKeySequence(Qt.Key_F1), dialog).activated.connect(open_page)
+    return button
 
 
 def _buttons(dialog, accept_text="OK"):
@@ -477,6 +500,7 @@ class LocalFontsDialog(QDialog):
 
         close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         close.rejected.connect(self.reject)
+        add_help(self, "local_fonts", close)
         layout.addWidget(close)
 
         self._rescan_btn.clicked.connect(lambda: self.refresh(rescan=True))
@@ -2128,7 +2152,9 @@ def label_size_dialog(parent, document: Document, dpi: int):
     dpi_combo.currentIndexChanged.connect(update_hint)
     update_hint()
 
-    layout.addWidget(_buttons(dialog))
+    buttons = _buttons(dialog)
+    add_help(dialog, "label_settings", buttons)
+    layout.addWidget(buttons)
     if dialog.exec_() != QDialog.Accepted:
         return None
     # Copied, not mutated: the document's own transform is what an undo
@@ -2202,7 +2228,9 @@ def grid_settings_dialog(parent, grid, dpi: int):
     unit_combo.currentIndexChanged.connect(on_unit_changed)
     spacing_spin.valueChanged.connect(update_hint)
 
-    layout.addWidget(_buttons(dialog))
+    buttons = _buttons(dialog)
+    add_help(dialog, "grid_settings", buttons)
+    layout.addWidget(buttons)
     if dialog.exec_() != QDialog.Accepted:
         return None
     chosen = grid.copy()
@@ -2362,6 +2390,7 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
     layout.addWidget(rows.box)
     buttons = _buttons(dialog)
     rows.withhold((buttons.button(QDialogButtonBox.Ok),))
+    add_help(dialog, "default_printer", buttons)
     layout.addWidget(buttons)
 
     accepted = dialog.exec_() == QDialog.Accepted
@@ -2600,6 +2629,7 @@ def print_dialog(parent, document: Document, printer, default):
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     rows.withhold((ok_btn, print_btn))
+    add_help(dialog, "print", buttons)
     layout.addWidget(buttons)
     _make_scrollable(dialog)
 

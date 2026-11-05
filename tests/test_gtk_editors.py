@@ -2413,6 +2413,76 @@ try:
 finally:
     helpdocs.launch, Gtk.MessageDialog.run = real_launch, real_run
 
+# --- each window's Help: its own page, on a Help button and on F1 -----------
+# Each window is looked at while run() would be waiting. F1 goes through the
+# window's accelerators, as a key press does.
+from gi.repository import Gdk
+from zplcore import parser as zpl_parser
+wh_asked, wh_seen = [], {}
+
+
+def wh_press(key, window):
+    """Press `window`'s Help button, then F1, and note what each opened,
+    whether the button answered the dialog (which would end run()), and
+    whether it sits at the left of its row."""
+    button = next((w for w in _pw_widgets(window) if w.get_name() == "help"), None)
+    responses = []
+    if isinstance(window, Gtk.Dialog):
+        window.connect("response", lambda _d, r: responses.append(r))
+    del wh_asked[:]
+    if button is not None:
+        button.clicked()
+    clicked = list(wh_asked)
+    del wh_asked[:]
+    # GTK runs an accelerator only for a widget on screen, as the window is
+    # whenever F1 can be pressed in it; run() would have shown it.
+    window.show()
+    while Gtk.events_pending():
+        Gtk.main_iteration_do(False)
+    Gtk.accel_groups_activate(window, Gdk.KEY_F1, 0)
+    row = button.get_parent() if button is not None else None
+    at_left = (row.get_child_secondary(button) if isinstance(row, Gtk.ButtonBox)
+               else row is not None and row.get_children()[0] is button)
+    wh_seen[key] = (clicked, responses, list(wh_asked), at_left)
+
+
+def wh_run(key, open_window):
+    """open_window() runs a dialog: press its Help instead of waiting, then
+    cancel it."""
+    def peek(dialog):
+        wh_press(key, dialog)
+        return Gtk.ResponseType.CANCEL
+    real = Gtk.Dialog.run
+    Gtk.Dialog.run = peek
+    try:
+        open_window()
+    finally:
+        Gtk.Dialog.run = real
+
+
+wh_win = ZPLViewerWindow()
+wh_win.show_help = lambda parent, topic: wh_asked.append(topic)
+wh_doc = zpl_parser.parse_zpl("^XA^FO10,10^A0N,30,30^FDhi^FS^XZ")[0]
+wh_run("label_settings", lambda: wh_win.on_label_settings_clicked(None))
+wh_run("default_printer", lambda: wh_win.on_default_printer_clicked(None))
+wh_run("local_fonts", lambda: wh_win.on_local_fonts_clicked(None))
+for wh_key, wh_dialog in (
+        ("grid_settings", gtk_main._build_grid_dialog(wh_win, wh_win.grid, 203)[0]),
+        ("print", gtk_main._build_print_dialog(wh_win, wh_doc, _PW_PRINTER,
+                                               _PW_DEFAULT)[0])):
+    wh_press(wh_key, wh_dialog)
+    wh_dialog.destroy()
+
+for wh_key, wh_topic in sorted(helpdocs.WINDOW_HELP.items()):
+    check(f"GTK {wh_key}: Help, at the left, opens {wh_topic} without ending "
+          f"the window, and so does F1",
+          wh_seen.get(wh_key) == ([wh_topic], [], [wh_topic], True),
+          wh_seen.get(wh_key))
+check("GTK: every window in the Help table was opened and tried",
+      set(wh_seen) == set(helpdocs.WINDOW_HELP),
+      sorted(set(helpdocs.WINDOW_HELP) ^ set(wh_seen)))
+wh_win.destroy()
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

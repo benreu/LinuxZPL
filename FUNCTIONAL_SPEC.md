@@ -1257,19 +1257,40 @@ effect of building elements while parsing.
 
 ### 6.8 Help
 
-The last menu in the bar. **Contents** (F1) opens LinuxZPL's help, and a
-window's own **Help** button - Firmware Update's (§10.8) - opens that
-window's page instead. The help is Mallard pages in `help/C/`, read where
-they are, so it works straight from the unpacked zip with nothing installed.
-It opens in a viewer of its own, never in a window of the designer's, and the
-designer does not wait for it:
+The last menu in the bar. **Contents** (F1) opens LinuxZPL's help.
+
+Each window has a **Help** button of its own that opens the page about that
+window, at the section about it, and F1 inside the window does the same. The
+button sits where the toolkit puts Help, at the start of the button row, and
+is never one of the window's answers: pressing it leaves the window open and
+its question unanswered. Which page each window opens is one table,
+`helpdocs.WINDOW_HELP`, that both frontends read and the tests hold them to:
+
+| Window | Opens (page#section) |
+|---|---|
+| Label Settings | `resolution#label-size` |
+| Grid Settings | `view#grid` |
+| Default Printer | `printing#default-printer` |
+| Print | `printing#print-window` |
+| Local Fonts | `fonts#which` |
+
+Firmware Update's Help (§10.8) opens its page too.
+
+The help is Mallard pages in `help/C/`, read where they are, so it works
+straight from the unpacked zip with nothing installed. It opens in a viewer
+of its own, never in a window of the designer's, and the designer does not
+wait for it:
 
 1. **Yelp**, given the folder for the contents and a page's file for a
    topic. Either way it reads the folder as one document, so a page's links
-   and its trail back to the contents work.
+   and its trail back to the contents work. A topic naming a section, as
+   `fonts#manager` does, is given as the page's file with that fragment, and
+   Yelp opens scrolled to the section.
 2. **A PDF of the page**, opened with `xdg-open` - so in whatever the desktop
    opens PDFs with - or, without it, in the first of evince, okular, atril,
-   xreader, qpdfview, zathura and mupdf on the PATH. Every page is its own
+   xreader, qpdfview, zathura and mupdf on the PATH. A PDF opens at its
+   page's top, section or not: `xdg-open` has no way to pass a place in the
+   file. Every page is its own
    PDF, named for the page's id, so a Help button opens just its topic. A
    link to another page opens that page's PDF beside it, the contents lists
    every topic as it does in Yelp, a topic starts with the trail back to the
@@ -2925,7 +2946,7 @@ treated as corrupt and falls back too.
 | Ctrl+R | Rulers |
 | Ctrl+' | Show Grid |
 | Ctrl+Shift+' | Snap to Grid |
-| F1 | Help Contents |
+| F1 | Help Contents; in a window, that window's help page |
 
 Three notes for a port:
 

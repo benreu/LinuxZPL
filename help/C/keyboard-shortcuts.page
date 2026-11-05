@@ -52,7 +52,7 @@
       <tr><td><p><keyseq><key>Ctrl</key><key>R</key></keyseq></p></td><td><p>Rulers</p></td></tr>
       <tr><td><p><keyseq><key>Ctrl</key><key>'</key></keyseq></p></td><td><p>Show Grid</p></td></tr>
       <tr><td><p><keyseq><key>Ctrl</key><key>Shift</key><key>'</key></keyseq></p></td><td><p>Snap to Grid</p></td></tr>
-      <tr><td><p><key>F1</key></p></td><td><p>Help</p></td></tr>
+      <tr><td><p><key>F1</key></p></td><td><p>Help: the contents, or in a window, that window's own page</p></td></tr>
     </tbody>
   </table>
 

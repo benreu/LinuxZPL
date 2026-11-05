@@ -52,6 +52,12 @@
     </item>
   </steps>
 
+  <note style="tip">
+    <p>Every window has a <gui>Help</gui> button that opens the page about
+    that window, and <key>F1</key> in a window does the same. Anywhere else,
+    <key>F1</key> opens the contents of this help.</p>
+  </note>
+
   <section id="files">
     <title>Open and save labels</title>
     <list>
