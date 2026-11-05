@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="firmware-update">
+  <info>
+    <link type="guide" xref="index#printer"/>
+    <desc>Send a printer a new firmware file, over the network or USB.</desc>
+  </info>
+
+  <title>Update a printer's firmware</title>
+
+  <p><guiseq><gui>Printer</gui><gui>Firmware Update…</gui></guiseq> shows the
+  firmware the printer runs now and sends it a new firmware file.</p>
+
+  <section id="connection">
+    <title>Choose the connection</title>
+    <terms>
+      <item>
+        <title><gui>Network</gui></title>
+        <p>Sends to this session's printer.</p>
+      </item>
+      <item>
+        <title><gui>USB</gui></title>
+        <p>Lists every USB printer this computer can see, by the name the
+        printer gives itself. Its <file>/dev/usb/lpN</file> number can change
+        when a printer restarts or is plugged in again, so
+        <gui>Refresh</gui> lists them again.</p>
+      </item>
+    </terms>
+  </section>
+
+  <section id="file">
+    <title>Choose the file</title>
+    <p>Zebra ships firmware as a <file>.zip</file>. Unpack it and choose the
+    <file>.zpl</file> file inside, such as <file>V75.20.21Z.zpl</file>. It is
+    sent exactly as it is.</p>
+  </section>
+
+  <section id="refused">
+    <title>If the printer refuses the file</title>
+    <p>The printer checks the file as it arrives, and shows
+    <gui>Download failed</gui> on its own display if it will not take it.
+    LinuxZPL cannot see that, and goes on sending to the end. Put the printer
+    in Forced Download Mode and send the file again:</p>
+    <steps>
+      <item><p>Switch the printer off.</p></item>
+      <item><p>Hold the top two menu buttons (ZT410, ZT420) or all three
+      (ZT411, ZT421). Other models differ; Zebra's support site has each
+      one's.</p></item>
+      <item><p>Switch it on, still holding them, until the display shows
+      <gui>Download New Firmware</gui> and <gui>USB: Active</gui>.</p></item>
+      <item><p>Press <gui>Refresh</gui>, choose the printer's USB entry, and
+      press <gui>Update</gui>. The current firmware may show as unavailable
+      in this mode; that does not stop the update.</p></item>
+    </steps>
+    <note>
+      <p>The printer's network is off in Forced Download Mode, so it has to
+      be USB.</p>
+    </note>
+  </section>
+
+  <section id="after">
+    <title>While it updates</title>
+    <p>Once the printer has the whole file it flashes it and restarts by
+    itself.</p>
+    <note style="warning">
+      <p>Do not switch the printer off before it has restarted.</p>
+    </note>
+  </section>
+
+  <section id="permission">
+    <title>No permission to open a USB printer</title>
+    <p>Add yourself to the group the message names (usually
+    <sys>lp</sys>), then log out and back in.</p>
+  </section>
+</page>

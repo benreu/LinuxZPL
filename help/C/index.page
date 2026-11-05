@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="guide" id="index">
+  <info>
+    <desc>Design Zebra labels and print them to a networked or USB Zebra
+    printer.</desc>
+  </info>
+
+  <title>LinuxZPL Help</title>
+
+  <p>LinuxZPL designs ZPL labels for Zebra thermal printers and sends them
+  straight to the printer. The canvas shows what the printer will print, in
+  the printer's own dots.</p>
+
+  <section id="printer">
+    <title>The printer</title>
+  </section>
+</page>
