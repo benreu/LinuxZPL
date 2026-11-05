@@ -119,6 +119,16 @@ pip install -r requirements-gtk.txt    # or -qt.txt, if not using system package
 
 In VS Code, press **F5**; the default configuration is the flagless one.
 
+`man ./help/linuxzpl.1` describes the command line, its exit statuses and the
+Python API below. To have `man linuxzpl` find it:
+
+```bash
+install -Dm644 help/linuxzpl.1 ~/.local/share/man/man1/linuxzpl.1
+```
+
+`man` looks there when `~/.local/bin` is on your `PATH`, as most distributions
+arrange.
+
 ### Help
 
 **Help → Contents** (F1) opens the help in Yelp. The pages are Mallard, in
@@ -257,6 +267,7 @@ zplcore/    no GUI toolkit, runs headless
   maxicode_map.py
                  barcode encoding, one file per symbology
 help/C/     the help, as Mallard pages
+help/linuxzpl.1  the man page: the command line and the Python API
 gtkui/      GTK3 frontend: Cairo painting, dialogs, menus
 qtui/       PySide2/Qt5 frontend: QPainter painting, dialogs, menus
 tests/      core checks, and the conformance suite the frontends must agree on

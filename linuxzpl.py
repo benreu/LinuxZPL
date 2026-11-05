@@ -52,7 +52,9 @@ def save_filled(path: str, out: str, pairs) -> int:
     return 0
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The command line, apart from main() so that the test suite can check
+    help/linuxzpl.1 names every option in it."""
     parser = argparse.ArgumentParser(
         description=__doc__.strip().split('\n')[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -75,7 +77,11 @@ def main() -> int:
                         help='write the template, with any --field data filled in, '
                              'to FILE and exit without opening a window or needing a GUI '
                              'toolkit (needs --load-file)')
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     path = args.load_file
     if path and not os.path.isfile(path):

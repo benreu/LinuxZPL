@@ -317,5 +317,36 @@ except helppdf.UnsupportedMallard as e:
 check("and a refused build leaves nothing half made",
       [d.name for d in out.iterdir()] == [rebuilt.name], [d.name for d in out.iterdir()])
 
+# --- the man page -------------------------------------------------------------------
+
+import linuxzpl  # noqa: E402
+
+MAN = helpdocs.PAGES.parent / "linuxzpl.1"
+man_source = MAN.read_text()
+# The words a reader sees: font changes dropped, and \- the hyphen it prints.
+man_words = re.sub(r"\\f[BIRP]", "", man_source).replace("\\-", "-")
+
+expected, options = [], set()
+for action in linuxzpl.build_parser()._actions:
+    for option in action.option_strings:
+        options.add(option)
+        takes = action.nargs != 0 and action.metavar
+        expected.append(f"{option} {action.metavar}" if takes else option)
+missing = [e for e in expected if e not in man_words]
+check("the man page names every option linuxzpl.py takes, with its value",
+      not missing and len(expected) >= 7, (missing, expected))
+stale = sorted(set(re.findall(r"(?<![\w-])--[a-z][a-z-]*", man_words)) - options)
+check("and no option linuxzpl.py does not take", not stale, stale)
+check("its SYNOPSIS names the program as it is run",
+      ".B linuxzpl.py" in man_source)
+
+if shutil.which("groff"):
+    warned = subprocess.run(["groff", "-man", "-ww", "-z", str(MAN)],
+                            capture_output=True, text=True)
+    check("groff finds nothing in the man page to warn about",
+          warned.returncode == 0 and not warned.stderr, warned.stderr)
+else:
+    print("SKIPPED: groff is not installed, so the man page is not set")
+
 print("ALL HELP CHECKS PASSED" if not failures else f"{failures} FAILED")
 sys.exit(1 if failures else 0)

@@ -1,0 +1,154 @@
+.\" The manual page for linuxzpl.py. Read it with: man ./help/linuxzpl.1
+.\" tests/test_help.py checks that it names every option linuxzpl.py takes,
+.\" and that groff finds nothing to warn about in it.
+.TH LINUXZPL 1 2026-11-05 "LinuxZPL 0.1.0" "User Commands"
+.\" Identifiers such as KeyError and --save-file are not to be split
+.nh
+.SH NAME
+linuxzpl \- design Zebra ZPL labels, and fill and save ZPL templates
+.SH SYNOPSIS
+.B linuxzpl.py
+[\fB\-\-gtk\fR | \fB\-\-qt\fR]
+[\fB\-\-load\-file\fR \fIFILE\fR
+[\fB\-\-field\fR \fIN=DATA\fR]...]
+.br
+.B linuxzpl.py
+\fB\-\-load\-file\fR \fIFILE\fR
+[\fB\-\-field\fR \fIN=DATA\fR]...
+\fB\-\-save\-file\fR \fIFILE\fR
+.SH DESCRIPTION
+LinuxZPL is a visual designer for labels in ZPL, the language of Zebra
+thermal printers.
+It prints them straight to a Zebra on the network, with no printing system
+in between.
+Everything on its canvas is measured in printer dots, and drawn as the
+printer will print it.
+.PP
+It has two frontends that behave the same and write the same ZPL: GTK 3
+(PyGObject) and Qt 5 (PySide2).
+With neither \fB\-\-gtk\fR nor \fB\-\-qt\fR, GTK is used when it is
+installed and Qt when it is not.
+.PP
+With \fB\-\-save\-file\fR, no window opens and no GUI toolkit is needed: the
+template is filled in with the \fB\-\-field\fR data and written out, for use
+from a script.
+.PP
+The designer's own help is under \fBHelp \(-> Contents\fR (F1).
+.SH OPTIONS
+.TP
+\fB\-\-gtk\fR
+Use the GTK 3 frontend.
+If PyGObject is not installed, says what to install and exits with status 1.
+.TP
+\fB\-\-qt\fR
+Use the Qt 5 frontend.
+If PySide2 is not installed, says what to install and exits with status 1.
+Not together with \fB\-\-gtk\fR.
+.TP
+\fB\-\-load\-file\fR \fIFILE\fR
+Open the ZPL template \fIFILE\fR, in the designer or for
+\fB\-\-save\-file\fR.
+.TP
+\fB\-\-field\fR \fIN=DATA\fR
+Give the template's \fB^FN\fR field \fIN\fR, from 1 to 9999, the data
+\fIDATA\fR.
+\fIDATA\fR is everything after the first \fB=\fR, so it may hold an
+\fB=\fR of its own.
+May be given more than once; a later one for the same \fIN\fR wins.
+Needs \fB\-\-load\-file\fR.
+.TP
+\fB\-\-save\-file\fR \fIFILE\fR
+Write the template, with any \fB\-\-field\fR data filled in, to \fIFILE\fR,
+and exit without opening a window.
+Anything in the template the file cannot keep is named on standard error.
+Needs \fB\-\-load\-file\fR, and is not taken with \fB\-\-gtk\fR or
+\fB\-\-qt\fR.
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Show a summary of the options and exit.
+.SH EXIT STATUS
+.TP
+.B 0
+Success: the window was closed, or \fB\-\-save\-file\fR wrote its file.
+.TP
+.B 1
+The template could not be read or saved; a \fB\-\-field\fR was not
+\fIN=DATA\fR; \fB\-\-field\fR or \fB\-\-save\-file\fR came without
+\fB\-\-load\-file\fR, or \fB\-\-save\-file\fR with \fB\-\-gtk\fR or
+\fB\-\-qt\fR; or the GUI toolkit needed is not installed.
+The message on standard error says which.
+.TP
+.B 2
+An option was not recognised or was missing its value, or \fB\-\-gtk\fR
+and \fB\-\-qt\fR were both given.
+.SH EXAMPLES
+Open a template in the designer:
+.PP
+.RS 4
+.nf
+linuxzpl.py \-\-load\-file label.zpl
+.fi
+.RE
+.PP
+Fill ^FN1 and ^FN2 and write the label to out.zpl, with no window:
+.PP
+.RS 4
+.nf
+linuxzpl.py \-\-load\-file label.zpl \-\-field 1=Hello \e
+    \-\-field 2=World \-\-save\-file out.zpl
+.fi
+.RE
+.SH PYTHON API
+The same filling-in is open to a Python program, with no GUI toolkit:
+.PP
+.RS 4
+.nf
+from zplcore import Label
+
+label = Label.load("shipping.zpl")   # or Label.from_zpl(text)
+label[1] = "Hello"                   # ^FN1
+label.fill({2: "World"}, f3="123")   # several at once
+label["customer"] = "ACME"           # the field whose ^FX ID is customer
+label.copies = 5                     # ^PQ
+label.save("out.zpl")                # what \-\-save\-file writes
+.fi
+.RE
+.PP
+\fBLabel.load\fR(\fIpath\fR) and \fBLabel.from_zpl\fR(\fItext\fR) read a
+template.
+A field is set by its \fB^FN\fR number, or by an ID given to it with a
+\fB^FXid:\fR\fIname\fR comment inside the field; \fBids\fR lists the IDs.
+\fBset_data\fR sets a field that has neither, by its data or its place,
+and \fBserial\fR makes one a \fB^SN\fR serial number.
+\fBto_zpl\fR(\fItemplate\fR=False) gives the ZPL, \fBrender\fR() a PIL
+image, \fBsave\fR(\fIpath\fR) and \fBsave_image\fR(\fIpath\fR) write them,
+and \fBdropped\fR lists what a save would not keep.
+The template itself is never changed, so one \fBLabel\fR can be filled again
+and again.
+Bad input raises ValueError, KeyError or IndexError; a file that cannot be
+read raises OSError.
+README.md, beside linuxzpl.py, has the whole of it.
+.SH FILES
+.TP
+.I ~/.config/linuxzpl/settings.ini
+The printer's address, port and resolution, the label size, the window's
+size and place, the files under File \(-> Open Recent, and the grid.
+Written as \fIsettings.ini\fR beside linuxzpl.py instead when the config
+directory refuses writes.
+.TP
+.I help/C/
+Beside linuxzpl.py: the designer's help, as Mallard pages, shown in
+.BR yelp (1).
+.TP
+.I ~/.cache/linuxzpl/help/
+The help made into PDF, when Yelp is not installed.
+.SH ENVIRONMENT
+.TP
+.B XDG_CONFIG_HOME
+Where the settings file goes, in place of \fI~/.config\fR.
+.TP
+.B XDG_CACHE_HOME
+Where the help's PDFs go, in place of \fI~/.cache\fR.
+.SH SEE ALSO
+.BR yelp (1),
+.BR xdg\-open (1)
