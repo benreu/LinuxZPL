@@ -38,7 +38,7 @@ from .busy import BusyBar
 from .canvas import DesignCanvas, palette_targets, to_pixbuf
 # The row helpers every dialog here builds with, kept beside the element
 # editors that use them most
-from .editors import _make_combo, _make_row, _make_spin
+from .editors import _make_combo, _make_row, _make_spin, set_tip
 from .properties import DEFAULT_WIDTH as PANEL_WIDTH, PropertiesPanel
 from .rulers import Ruler, RulerCorner
 from PIL import Image
@@ -394,9 +394,7 @@ def _build_print_dialog(parent, document, printer, default):
     _make_row(copies, "Pause every:", pause_row, 100)
     replicates = _make_spin(settings.replicates, *zpl_print.REPLICATE_RANGE)
     replicates.set_name("replicates")
-    replicates.set_tooltip_text(
-        "Copies of each serial number before it counts on")
-    _make_row(copies, "Replicates:", replicates, 100)
+    _make_row(copies, "Replicates:", replicates, 100, tip='replicates')
     override = check(copies, "override_pause", "Don't pause between groups",
                      settings.override_pause)
     cut = check(copies, "cut_on_error", "Cut after a voided RFID label",
@@ -418,7 +416,7 @@ def _build_print_dialog(parent, document, printer, default):
     # A number box has no "unset", so the darkness has a tick for it.
     darkness_set = Gtk.CheckButton()
     darkness_set.set_name("darkness_set")
-    darkness_set.set_tooltip_text("Clear for the printer's setting")
+    set_tip(darkness_set, 'darkness_set')
     darkness_set.set_active(settings.darkness is not None)
     darkness_spin = Gtk.SpinButton()
     darkness_spin.set_name("darkness")
@@ -1221,7 +1219,8 @@ class ZPLViewerWindow(Gtk.Window):
         # shows the symbol it adds, drawn by the same raster the canvas uses,
         # since UL and CSA have no character of their own to label them with.
         add_symbol_btn = Gtk.MenuButton(label="+ Symbol ▾")
-        add_symbol_btn.set_tooltip_text("Add a graphic symbol (^GS)")
+        add_symbol_btn.set_name("add_symbol")
+        set_tip(add_symbol_btn, 'add_symbol')
         add_symbol_btn.set_popup(self._build_symbol_menu())
         self.add_symbol_button = add_symbol_btn
         toolbar_box.pack_start(add_symbol_btn, False, False, 0)
@@ -1246,7 +1245,8 @@ class ZPLViewerWindow(Gtk.Window):
         # handlers and the enable rules are shared, and the conformance suite
         # diffs this menu against the Qt frontend's.
         align_button = Gtk.MenuButton(label="Align \u25be")
-        align_button.set_tooltip_text("Line the selection up (Edit \u25b8 Align)")
+        align_button.set_name("align")
+        set_tip(align_button, 'align')
         align_button.set_popup(self._build_align_menu())
         self.align_button = align_button
         align_button.set_margin_start(10)

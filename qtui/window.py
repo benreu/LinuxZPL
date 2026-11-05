@@ -697,7 +697,8 @@ class ZPLDesignerWindow(QMainWindow):
         # since UL and CSA have no character of their own to label them with.
         symbol_button = QToolButton(self)
         symbol_button.setText("+ Symbol ▾")
-        symbol_button.setToolTip("Add a graphic symbol (^GS)")
+        symbol_button.setObjectName("add_symbol")
+        qt_dialogs.set_tip(symbol_button, 'add_symbol')
         symbol_button.setPopupMode(QToolButton.InstantPopup)
         symbol_popup = QMenu(symbol_button)
         self.symbol_actions = []
@@ -743,7 +744,8 @@ class ZPLDesignerWindow(QMainWindow):
         align_button = QToolButton(strip)
         align_button.setAutoRaise(True)
         align_button.setText("Align \u25be")
-        align_button.setToolTip("Line the selection up (Edit \u25b8 Align)")
+        align_button.setObjectName("align")
+        qt_dialogs.set_tip(align_button, 'align')
         align_button.setPopupMode(QToolButton.InstantPopup)
         align_popup = QMenu(align_button)
         for action in self.align_actions:

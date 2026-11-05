@@ -2605,6 +2605,146 @@ check("GTK: every window in the Help table was opened and tried",
       sorted(set(helpdocs.WINDOW_HELP) ^ set(wh_seen)))
 wh_win.destroy()
 
+# --- tooltips: every one from zplcore.tips, on the field and on its label ----
+
+from zplcore import tips as zpl_tips
+from zplcore.model import Document as _TDocument
+
+
+def _gtk_tips(root):
+    """{key: widget} for every widget under `root` that has a tooltip, and
+    what doesn't fit the table: a tooltip on a widget it isn't the tip for,
+    or a label beside or above a field that doesn't say what the field says.
+    A row's label is the "Name:" before its field - beside it in a row box,
+    or above it where an editor stacks them."""
+    found, wrong = {}, []
+    for widget in gtk_props._descendants(root):
+        text = widget.get_tooltip_text()
+        parent = widget.get_parent()
+        siblings = parent.get_children() if isinstance(parent, Gtk.Box) else []
+        position = next((i for i, s in enumerate(siblings) if s is widget), None)
+        if isinstance(widget, Gtk.Label):
+            if text:
+                after = (siblings[position + 1] if position is not None
+                         and position + 1 < len(siblings) else None)
+                if after is None or after.get_tooltip_text() != text:
+                    wrong.append(('label', widget.get_text()))
+            continue
+        if not text:
+            continue
+        name = widget.get_name()
+        key = name[len('prop_'):] if name.startswith('prop_') else name
+        if key not in zpl_tips.TIPS or text != zpl_tips.TIPS[key]:
+            wrong.append(('widget', name, text[:40]))
+            continue
+        found[key] = widget
+        before = siblings[position - 1] if position else None
+        if (isinstance(before, Gtk.Label) and before.get_text().endswith(':')
+                and before.get_tooltip_text() != text):
+            wrong.append(('unlabelled', before.get_text(), name))
+    return found, wrong
+
+
+_tip_doc = _TDocument()
+_tip_elements = {
+    'text': _tip_doc.add_text_element(),
+    'time': _tip_doc.add_time_element(),
+    'serial': _tip_doc.add_serial_element(),
+    'numbered': _tip_doc.add_numbered_element(),
+    'frame': _tip_doc.add_frame_element(),
+    'circle': _tip_doc.add_circle_element(),
+    'ellipse': _tip_doc.add_ellipse_element(),
+    'diagonal': _tip_doc.add_diagonal_element(),
+    'symbol': _tip_doc.add_graphic_symbol_element(),
+    'stored_graphic': _tip_doc.add_stored_graphic_element(),
+    'barcode': _tip_doc.add_barcode_element(),
+}
+# What each editor explains, grown section by section of the tooltip work;
+# the Qt suite holds its editors to the same sets
+_tip_expected = dict((kind, {'reverse_print'}) for kind in _tip_elements)
+_tip_expected['stored_graphic'] = set()
+
+_tip_seen = set()
+_tip_found, _tip_wrong, _tip_notes = {}, {}, {}
+for _kind, _element in _tip_elements.items():
+    _box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    gtk_editors.editor_form(window, _box, _element)
+    _found, _wrong = _gtk_tips(_box)
+    _tip_found[_kind] = set(_found)
+    _tip_seen |= set(_found)
+    if _wrong:
+        _tip_wrong[_kind] = _wrong
+    _notes = [l.get_text() for l in _find_all(_box, Gtk.Label)
+              if l.get_text().startswith("Inverts")]
+    if _notes:
+        _tip_notes[_kind] = _notes
+check("GTK: every tooltip in an element editor is its row's tip from "
+      "zplcore.tips, on the field and on its label",
+      not _tip_wrong, _tip_wrong)
+check("GTK: each editor explains the rows it should",
+      _tip_found == _tip_expected,
+      dict((k, sorted(_tip_found[k] ^ _tip_expected[k])) for k in _tip_found
+           if _tip_found[k] != _tip_expected[k]))
+check("GTK: and no editor has a note under Reverse any more: it's the tooltip",
+      not _tip_notes, _tip_notes)
+
+tw = ZPLViewerWindow()
+tw._save_settings = lambda *a: None
+tdoc = tw.design_canvas.document
+_t_frame = tdoc.add_frame_element()
+tw.on_canvas_changed()
+tw.properties.sync()
+_t_found, _t_wrong = _gtk_tips(tw.properties)
+check("GTK: the Properties panel's Print This Element row and its header's "
+      "buttons have their tips",
+      {'print_enabled', 'close_panel', 'float_panel'} <= set(_t_found)
+      and not _t_wrong,
+      (sorted(_t_found), _t_wrong))
+_tip_seen |= set(_t_found)
+tw.properties.set_floating(True)
+check("GTK: floating, the float button's tip offers to dock it",
+      tw.properties._float_button.get_tooltip_text() == zpl_tips.TIPS['dock_panel'],
+      tw.properties._float_button.get_tooltip_text())
+_tip_seen.add('dock_panel')
+tw.properties.set_floating(False)
+_t_text = tdoc.add_text_element()
+tw.on_canvas_changed()
+tdoc.select(_t_frame)
+tdoc.select(_t_text, additive=True)
+tw.properties.sync()
+_t_found, _t_wrong = _gtk_tips(tw.properties)
+_t_untipped = [w.get_name() for w in gtk_props._descendants(tw.properties)
+               if w.get_name().startswith('prop_')
+               and zpl_tips.tip(w.get_name()[len('prop_'):]) is None
+               and w.get_tooltip_text()]
+check("GTK: a selection of several: each shared row with a tip in the table "
+      "has it, and the rest have none",
+      {'print_enabled', 'reverse_print'} <= set(_t_found)
+      and not _t_wrong and not _t_untipped,
+      (sorted(_t_found), _t_wrong, _t_untipped))
+_tip_seen |= set(_t_found)
+_t_window = {'add_symbol': tw.add_symbol_button, 'align': tw.align_button}
+check("GTK: the + Symbol and Align buttons take theirs from the table",
+      all(button.get_name() == key
+          and button.get_tooltip_text() == zpl_tips.TIPS[key]
+          for key, button in _t_window.items()),
+      [(b.get_name(), b.get_tooltip_text()) for b in _t_window.values()])
+_tip_seen |= set(_t_window)
+
+_t_dialog, _t_finish = gtk_main._build_print_dialog(
+    tw, _pw_doc, _PW_PRINTER, _PW_DEFAULT)
+_t_found, _t_wrong = _gtk_tips(_t_dialog)
+check("GTK: the Print window's tips are the table's, Replicates' label included",
+      {'replicates', 'darkness_set'} <= set(_t_found) and not _t_wrong,
+      (sorted(_t_found), _t_wrong))
+_tip_seen |= set(_t_found)
+_t_dialog.destroy()
+tw.unsaved_changes = False
+tw.destroy()
+
+check("GTK: every tip in the table is shown somewhere in the GTK frontend",
+      set(zpl_tips.TIPS) <= _tip_seen, sorted(set(zpl_tips.TIPS) - _tip_seen))
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

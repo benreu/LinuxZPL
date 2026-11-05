@@ -24,6 +24,7 @@ from zplcore import geometry
 from zplcore import graphic_store
 from zplcore import model
 from zplcore import textraster
+from zplcore import tips as zpl_tips
 from zplcore.model import (DIAGONAL_DIRECTIONS, FRAME_COLOURS, ORIENTATIONS,
                            STORED_GRAPHIC_COMMANDS, STORED_GRAPHIC_DEVICES,
                            TEXT_BLOCK_JUSTIFICATIONS, TEXT_BLOCKS,
@@ -111,8 +112,20 @@ class EditorForm:
         return self
 
 
-def _make_row(content, label_text, widget, label_width: int = 130):
-    """One labelled row in a dialog's content area.
+def set_tip(widget, key: str, label=None) -> None:
+    """Give `widget` the tip zplcore.tips holds for `key`, and its row's
+    `label` too, so hovering either explains it. GTK wraps a long tooltip
+    itself. A key the table doesn't have is a mistake here, and fails."""
+    text = zpl_tips.TIPS[key]
+    widget.set_tooltip_text(text)
+    if label is not None:
+        label.set_tooltip_text(text)
+
+
+def _make_row(content, label_text, widget, label_width: int = 130,
+              tip: str = None):
+    """One labelled row in a dialog's content area, explained by the tip
+    zplcore.tips holds for `tip`, on the field and its label, when given.
 
     Returns the row and its label, so a caller that needs to hide the row
     later (a barcode dialog whose fields depend on the symbology chosen) or
@@ -122,6 +135,8 @@ def _make_row(content, label_text, widget, label_width: int = 130):
     label = Gtk.Label(label=label_text)
     label.set_size_request(label_width, -1)
     label.set_halign(Gtk.Align.END)
+    if tip is not None:
+        set_tip(widget, tip, label)
     row.pack_start(label, False, False, 0)
     row.pack_start(widget, True, True, 0)
     content.pack_start(row, False, False, 0)
@@ -217,18 +232,6 @@ def _make_combo(choices, current):
     return combo, codes
 
 
-def _reverse_hint() -> Gtk.Label:
-    """The note under every Reverse (^FR) checkbox, worded the same way in
-    both frontends so neither editor promises something the other doesn't.
-    """
-    hint = Gtk.Label(
-        label="Inverts whatever's already printed here (e.g. a filled "
-             "frame); prints as normal ink where there's nothing yet.")
-    hint.set_halign(Gtk.Align.START)
-    hint.set_line_wrap(True)
-    return hint
-
-
 def _text_format_rows(window, editor, content, element, show_text=None):
     """The rows every text-like editor shares: ^FP direction and gap, ^FR,
     the font, and the ^FB/^TB wrap block.
@@ -249,8 +252,8 @@ def _text_format_rows(window, editor, content, element, show_text=None):
     typed one as. `sync()` must be called once the editor is shown, since
     its show_all() would otherwise re-show every row this hid.
     """
-    def make_row(lbl_text, widget):
-        return _make_row(content, lbl_text, widget)[0]
+    def make_row(lbl_text, widget, tip=None):
+        return _make_row(content, lbl_text, widget, tip=tip)[0]
 
     # ^FP: which way the characters run inside that turn, and how
     # far apart
@@ -263,9 +266,9 @@ def _text_format_rows(window, editor, content, element, show_text=None):
     make_row("Character Gap:", gap_spin)
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+    fr_check.set_name("reverse_print")
     fr_check.set_active(element.reverse_print)
-    make_row("Reverse:", fr_check)
-    make_row("", _reverse_hint())
+    make_row("Reverse:", fr_check, tip='reverse_print')
 
     # Font chooser (installed families only)
     selected_font = [element.font_path, element.font_family]
@@ -500,8 +503,8 @@ def time_form(window, content, element) -> EditorForm:
     content.set_margin_top(8)
     content.set_margin_bottom(8)
 
-    def make_row(label_text, widget):
-        _make_row(content, label_text, widget)
+    def make_row(label_text, widget, tip=None):
+        _make_row(content, label_text, widget, tip=tip)
 
     text_entry = Gtk.Entry()
     text_entry.set_text(element.text)
@@ -576,8 +579,8 @@ def serial_form(window, content, element) -> EditorForm:
     content.set_margin_top(8)
     content.set_margin_bottom(8)
 
-    def make_row(label_text, widget):
-        _make_row(content, label_text, widget)
+    def make_row(label_text, widget, tip=None):
+        _make_row(content, label_text, widget, tip=tip)
 
     text_entry = Gtk.Entry()
     text_entry.set_text(element.text)
@@ -662,8 +665,8 @@ def numbered_form(window, content, element) -> EditorForm:
     content.set_margin_top(8)
     content.set_margin_bottom(8)
 
-    def make_row(label_text, widget):
-        _make_row(content, label_text, widget)
+    def make_row(label_text, widget, tip=None):
+        _make_row(content, label_text, widget, tip=tip)
 
     text_entry = Gtk.Entry()
     text_entry.set_text(element.text)
@@ -735,8 +738,8 @@ def text_form(window, content, element) -> EditorForm:
     content.set_margin_top(8)
     content.set_margin_bottom(8)
 
-    def make_row(lbl_text, widget):
-        return _make_row(content, lbl_text, widget)[0]
+    def make_row(lbl_text, widget, tip=None):
+        return _make_row(content, lbl_text, widget, tip=tip)[0]
 
     # Text input. Multi-line, because ZPL's forced break is two
     # characters a user should never have to spell: Enter here becomes
@@ -803,8 +806,8 @@ def barcode_form(window, content, element) -> EditorForm:
     content.set_margin_top(8)
     content.set_margin_bottom(8)
 
-    def make_row(label_text, widget):
-        return _make_row(content, label_text, widget)
+    def make_row(label_text, widget, tip=None):
+        return _make_row(content, label_text, widget, tip=tip)
 
     make_spin, make_combo = _make_spin, _make_combo
 
@@ -933,9 +936,9 @@ def barcode_form(window, content, element) -> EditorForm:
     mode_row, _mode_label = make_row("Mode:", mode_combo)
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+    fr_check.set_name("reverse_print")
     fr_check.set_active(element.reverse_print)
-    make_row("Reverse:", fr_check)
-    make_row("", _reverse_hint())
+    make_row("Reverse:", fr_check, tip='reverse_print')
 
     # ^FM: an origin for each symbol of a series, for the two
     # symbologies it places, as label positions. No rows is a barcode
@@ -1099,8 +1102,8 @@ def stored_graphic_form(window, content, element) -> EditorForm:
     content.set_margin_top(8)
     content.set_margin_bottom(8)
 
-    def make_row(label_text, widget):
-        _make_row(content, label_text, widget)
+    def make_row(label_text, widget, tip=None):
+        _make_row(content, label_text, widget, tip=tip)
 
     command_combo, command_codes = _make_combo(
         STORED_GRAPHIC_COMMANDS, element.command)
@@ -1207,9 +1210,10 @@ def frame_form(window, content, element) -> EditorForm:
     content.pack_start(rounding_spin, False, False, 0)
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+    fr_check.set_name("reverse_print")
+    set_tip(fr_check, 'reverse_print')
     fr_check.set_active(element.reverse_print)
     content.pack_start(fr_check, False, False, 0)
-    content.pack_start(_reverse_hint(), False, False, 0)
 
     content.show_all()
 
@@ -1260,9 +1264,10 @@ def circle_form(window, content, element) -> EditorForm:
     content.pack_start(colour_combo, False, False, 0)
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+    fr_check.set_name("reverse_print")
+    set_tip(fr_check, 'reverse_print')
     fr_check.set_active(element.reverse_print)
     content.pack_start(fr_check, False, False, 0)
-    content.pack_start(_reverse_hint(), False, False, 0)
 
     content.show_all()
 
@@ -1290,8 +1295,8 @@ def graphic_symbol_form(window, content, element) -> EditorForm:
     content.set_margin_top(8)
     content.set_margin_bottom(8)
 
-    def make_row(label_text, widget):
-        _make_row(content, label_text, widget)
+    def make_row(label_text, widget, tip=None):
+        _make_row(content, label_text, widget, tip=tip)
 
     # The five, and whatever else the field already holds - see
     # graphic_symbol_choices - so OK on ^GS^FDAB leaves it AB.
@@ -1316,9 +1321,9 @@ def graphic_symbol_form(window, content, element) -> EditorForm:
     make_row("Orientation:", orientation_combo)
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+    fr_check.set_name("reverse_print")
     fr_check.set_active(element.reverse_print)
-    make_row("Reverse:", fr_check)
-    make_row("", _reverse_hint())
+    make_row("Reverse:", fr_check, tip='reverse_print')
 
     content.show_all()
 
@@ -1381,9 +1386,10 @@ def ellipse_form(window, content, element) -> EditorForm:
     content.pack_start(colour_combo, False, False, 0)
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+    fr_check.set_name("reverse_print")
+    set_tip(fr_check, 'reverse_print')
     fr_check.set_active(element.reverse_print)
     content.pack_start(fr_check, False, False, 0)
-    content.pack_start(_reverse_hint(), False, False, 0)
 
     content.show_all()
 
@@ -1446,9 +1452,10 @@ def diagonal_form(window, content, element) -> EditorForm:
     content.pack_start(direction_combo, False, False, 0)
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
+    fr_check.set_name("reverse_print")
+    set_tip(fr_check, 'reverse_print')
     fr_check.set_active(element.reverse_print)
     content.pack_start(fr_check, False, False, 0)
-    content.pack_start(_reverse_hint(), False, False, 0)
 
     content.show_all()
 

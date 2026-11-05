@@ -32,6 +32,7 @@ from gi.repository import Gdk, GLib, Gtk, Pango
 
 from zplcore import geometry, helpdocs
 from zplcore import properties as zpl_props
+from zplcore import tips as zpl_tips
 from zplcore.model import ImageElement
 
 from . import editors as gtk_editors
@@ -134,8 +135,8 @@ class PropertiesPanel(Gtk.Box):
         close = Gtk.Button.new_from_icon_name("window-close-symbolic",
                                               Gtk.IconSize.MENU)
         close.set_relief(Gtk.ReliefStyle.NONE)
-        close.set_tooltip_text("Close the panel (View ▸ Properties Panel)")
         close.set_name("close_panel")
+        gtk_editors.set_tip(close, 'close_panel')
         close.connect("clicked", lambda _b: self.set_shown(False))
         bar.pack_start(close, False, False, 0)
         self.pack_start(bar, False, False, 0)
@@ -265,9 +266,8 @@ class PropertiesPanel(Gtk.Box):
         return True         # hidden, not destroyed: it comes back as it was
 
     def _update_float_button(self):
-        self._float_button.set_tooltip_text(
-            "Dock the panel beside the canvas" if self.floating
-            else "Float the panel in a window of its own")
+        gtk_editors.set_tip(self._float_button,
+                            'dock_panel' if self.floating else 'float_panel')
 
     # --- following the selection --------------------------------------------
 
@@ -467,6 +467,8 @@ class PropertiesPanel(Gtk.Box):
 
     def _add_row(self, box, prop, selection):
         row = {'prop': prop, 'shown': None, 'mixed': False}
+        # The same words the row has in an element's own editor
+        tip = prop.key if zpl_tips.tip(prop.key) is not None else None
         if prop.kind == zpl_props.INT:
             widget = Gtk.SpinButton()
             widget.set_adjustment(Gtk.Adjustment(value=0, lower=0, upper=1,
@@ -475,17 +477,17 @@ class PropertiesPanel(Gtk.Box):
             row['handler'] = widget.connect(
                 "value-changed", lambda w: self._row_changed(row, w.get_value_as_int()))
             widget.connect("activate", self.finish_edit)
-            gtk_editors._make_row(box, prop.title(selection), widget)
+            gtk_editors._make_row(box, prop.title(selection), widget, tip=tip)
         elif prop.kind == zpl_props.BOOL:
             widget = Gtk.CheckButton(label=prop.title(selection))
             row['handler'] = widget.connect(
                 "toggled", lambda w: self._row_changed(row, w.get_active()))
-            gtk_editors._make_row(box, "", widget)
+            gtk_editors._make_row(box, "", widget, tip=tip)
         else:
             widget = Gtk.ComboBoxText()
             row['handler'] = widget.connect(
                 "changed", lambda w: self._row_changed(row, w.get_active()))
-            gtk_editors._make_row(box, prop.title(selection), widget)
+            gtk_editors._make_row(box, prop.title(selection), widget, tip=tip)
         widget.set_name("prop_" + prop.key)
         row['widget'] = widget
         self._rows.append(row)

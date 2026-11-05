@@ -12444,6 +12444,157 @@ try:
 finally:
     qt_main._config_path, qt_main._fallback_config_path = _rw_real
 
+# --- tooltips: every one from zplcore.tips, on the field and on its label ----
+
+from zplcore import tips as zpl_tips
+from PySide2.QtWidgets import (QWidget as _TWidget, QLabel as _TLabel,
+                               QFormLayout as _TForm)
+
+
+def _qt_tips(root):
+    """{key: widget} for every widget under `root` that has a tooltip, and
+    what doesn't fit the table: a tooltip on a widget it isn't the tip for,
+    or a form row's label that doesn't say what its field says."""
+    widgets = [root] + root.findChildren(_TWidget)
+    labels = {}
+    for rows in root.findChildren(_TForm):
+        for widget in widgets:
+            label = rows.labelForField(widget)
+            if label is not None:
+                labels[id(label)] = widget
+    found, wrong = {}, []
+    for widget in widgets:
+        if not widget.toolTip():
+            continue
+        if id(widget) in labels:
+            field = labels[id(widget)]
+            if widget.toolTip() != field.toolTip():
+                wrong.append(('label', widget.text(), field.objectName()))
+            continue
+        name = widget.objectName()
+        key = name[len('prop_'):] if name.startswith('prop_') else name
+        if (key not in zpl_tips.TIPS
+                or widget.toolTip() != qt_dialogs.tip_markup(zpl_tips.TIPS[key])):
+            wrong.append(('widget', name, widget.toolTip()[:40]))
+            continue
+        found[key] = widget
+    # A field with a tip and a label: the label has it too
+    for label_id, field in labels.items():
+        label = next(w for w in widgets if id(w) == label_id)
+        if field.toolTip() and label.toolTip() != field.toolTip():
+            wrong.append(('unlabelled', label.text(), field.objectName()))
+    return found, wrong
+
+
+_tip_doc = Document()
+_tip_elements = {
+    'text': _tip_doc.add_text_element(),
+    'time': _tip_doc.add_time_element(),
+    'serial': _tip_doc.add_serial_element(),
+    'numbered': _tip_doc.add_numbered_element(),
+    'frame': _tip_doc.add_frame_element(),
+    'circle': _tip_doc.add_circle_element(),
+    'ellipse': _tip_doc.add_ellipse_element(),
+    'diagonal': _tip_doc.add_diagonal_element(),
+    'symbol': _tip_doc.add_graphic_symbol_element(),
+    'stored_graphic': _tip_doc.add_stored_graphic_element(),
+    'barcode': _tip_doc.add_barcode_element(),
+}
+# What each editor explains, grown section by section of the tooltip work
+_tip_expected = dict((kind, {'reverse_print'}) for kind in _tip_elements)
+_tip_expected['stored_graphic'] = set()
+
+_tip_seen = set()
+_tip_found, _tip_wrong, _tip_notes = {}, {}, {}
+for _kind, _element in _tip_elements.items():
+    _form = qt_dialogs.editor_form(_element, _tip_doc)
+    _found, _wrong = _qt_tips(_form.body)
+    _tip_found[_kind] = set(_found)
+    _tip_seen |= set(_found)
+    if _wrong:
+        _tip_wrong[_kind] = _wrong
+    _notes = [l.text() for l in _form.body.findChildren(_TLabel)
+              if l.text().startswith("Inverts")]
+    if _notes:
+        _tip_notes[_kind] = _notes
+check("every tooltip in an element editor is its row's tip from zplcore.tips, "
+      "on the field and on its label",
+      not _tip_wrong, _tip_wrong)
+check("each editor explains the rows it should",
+      _tip_found == _tip_expected,
+      dict((k, sorted(_tip_found[k] ^ _tip_expected[k])) for k in _tip_found
+           if _tip_found[k] != _tip_expected[k]))
+check("and no editor has a note under Reverse any more: it's the tooltip",
+      not _tip_notes, _tip_notes)
+_rev_form = qt_dialogs.editor_form(_tip_elements['frame'], _tip_doc)
+_rev_check = _rev_form.body.findChild(QCheckBox, 'reverse_print')
+check("Reverse print's tip is a paragraph, so Qt wraps it, on the checkbox "
+      "and on its Reverse: label",
+      _rev_check.toolTip().startswith("<p>Prints white where it overlaps ink")
+      and _rev_form.rows.labelForField(_rev_check).toolTip()
+      == _rev_check.toolTip(),
+      _rev_check.toolTip())
+
+tw = qt_main.ZPLDesignerWindow()
+tw._save_settings = lambda *a: None
+tdoc = tw.document
+_t_frame = tdoc.add_frame_element()
+tw.canvas.commit()
+tw.properties.sync()
+_t_found, _t_wrong = _qt_tips(tw.properties._content)
+check("the Properties panel's Print This Element row has its tip",
+      'print_enabled' in _t_found and not _t_wrong,
+      (sorted(_t_found), _t_wrong))
+_tip_seen |= set(_t_found)
+_t_text = tdoc.add_text_element()
+tw.canvas.commit()
+tdoc.select(_t_frame)
+tdoc.select(_t_text, additive=True)
+tw.properties.sync()
+_t_found, _t_wrong = _qt_tips(tw.properties._content)
+_t_untipped = [w.objectName() for w in tw.properties._content.findChildren(_TWidget)
+               if w.objectName().startswith('prop_')
+               and zpl_tips.tip(w.objectName()[len('prop_'):]) is None
+               and w.toolTip()]
+check("a selection of several: each shared row with a tip in the table has "
+      "it, and the rest have none",
+      tw.properties._title.text() == "2 elements"
+      and {'print_enabled', 'reverse_print'} <= set(_t_found)
+      and not _t_wrong and not _t_untipped,
+      (tw.properties._title.text(), sorted(_t_found), _t_wrong, _t_untipped))
+_tip_seen |= set(_t_found)
+_t_window = {'add_symbol': tw.add_symbol_button, 'align': tw.align_button}
+check("the toolbar's + Symbol and Align buttons take theirs from the table",
+      all(button.objectName() == key
+          and button.toolTip() == qt_dialogs.tip_markup(zpl_tips.TIPS[key])
+          for key, button in _t_window.items()),
+      [(b.objectName(), b.toolTip()) for b in _t_window.values()])
+_tip_seen |= set(_t_window)
+tw.unsaved_changes = False
+tw.close()
+
+_t_print = {}
+
+def _t_print_look(d):
+    _found, _wrong = _qt_tips(d)
+    _t_print.update(found=set(_found), wrong=_wrong)
+
+_drive_print(_pw_doc, _t_print_look, button='cancel')
+check("the Print window's tips are the table's, Replicates' label included",
+      {'replicates', 'darkness_set'} <= _t_print['found']
+      and not _t_print['wrong'],
+      (sorted(_t_print['found']), _t_print['wrong']))
+_tip_seen |= _t_print['found']
+
+# The GTK panel draws its own header, with a close and a float button; Qt's
+# dock has a title bar for that.
+_tip_gtk_only = {'close_panel', 'float_panel', 'dock_panel'}
+check("every tip in the table is shown somewhere in the Qt frontend",
+      set(zpl_tips.TIPS) - _tip_gtk_only <= _tip_seen,
+      sorted(set(zpl_tips.TIPS) - _tip_gtk_only - _tip_seen))
+check("and none of them is empty",
+      all(text.strip() for text in zpl_tips.TIPS.values()))
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

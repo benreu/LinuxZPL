@@ -34,6 +34,7 @@ from PySide2.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox,
 
 from zplcore import geometry, helpdocs
 from zplcore import properties as zpl_props
+from zplcore import tips as zpl_tips
 from zplcore.model import ImageElement
 
 from . import dialogs as qt_dialogs
@@ -376,6 +377,9 @@ class PropertiesPanel(QDockWidget):
                 self._row_changed(prop, widget, widget.currentData()))
             layout.addRow(prop.title(selection), widget)
         widget.setObjectName("prop_" + prop.key)
+        # The same words the row has in an element's own editor
+        if zpl_tips.tip(prop.key) is not None:
+            qt_dialogs.set_tip(widget, prop.key, layout)
         row = [prop, widget, None]
         self._rows.append(row)
         self._show_row(row, selection)

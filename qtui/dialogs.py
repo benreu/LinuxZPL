@@ -7,6 +7,7 @@ status bar - the window owns those, so one action produces one history entry
 wherever it was started from.
 """
 
+import html
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,7 +33,8 @@ from zplcore import (fields as zpl_fields, firmware as zpl_firmware,
                      fonts as zpl_fonts, geometry, graphic_store, helpdocs,
                      grid as zpl_grid, local_port as zpl_local,
                      print_settings as zpl_print, printer_io,
-                     printer_objects, printer_status, textraster, workflow)
+                     printer_objects, printer_status, textraster,
+                     tips as zpl_tips, workflow)
 from zplcore.print_settings import AsWritten, PrintSettings
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
@@ -551,17 +553,27 @@ class LocalFontsDialog(QDialog):
         self._report.setPlainText("\n".join(lines))
 
 
-# --- element editing --------------------------------------------------------
+# --- tooltips ---------------------------------------------------------------
 
-def _reverse_hint(form):
-    """The note under every Reverse (^FR) checkbox, worded the same way in
-    both frontends so neither editor promises something the other doesn't.
-    """
-    hint = QLabel("Inverts whatever's already printed here (e.g. a filled "
-                  "frame); prints as normal ink where there's nothing yet.")
-    hint.setStyleSheet("color: gray;")
-    hint.setWordWrap(True)
-    form.addRow("", hint)
+def tip_markup(text: str) -> str:
+    """A tip as Qt shows it: as a paragraph, since Qt word-wraps only a
+    rich-text tooltip and a plain one runs off the screen."""
+    return "<p>" + html.escape(text, quote=False) + "</p>"
+
+
+def set_tip(widget, key: str, form=None) -> None:
+    """Give `widget` the tip zplcore.tips holds for `key`, and the label of
+    its row in `form` too, so hovering either explains it. A key the table
+    doesn't have is a mistake here, and fails."""
+    text = tip_markup(zpl_tips.TIPS[key])
+    widget.setToolTip(text)
+    if form is not None:
+        label = form.labelForField(widget)
+        if label is not None:
+            label.setToolTip(text)
+
+
+# --- element editing --------------------------------------------------------
 
 
 def _name_row(form, element):
@@ -679,7 +691,7 @@ def _text_format_rows(editor, form, element: TextElement,
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    set_tip(fr_check, 'reverse_print', form)
 
     chosen = {'path': element.font_path, 'family': element.font_family}
 
@@ -1270,7 +1282,7 @@ def frame_form(element) -> EditorForm:
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    set_tip(fr_check, 'reverse_print', form)
 
     def _apply():
         element.width = width_spin.value()
@@ -1332,7 +1344,7 @@ def circle_form(element) -> EditorForm:
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    set_tip(fr_check, 'reverse_print', form)
 
     def _apply():
         element.diameter = diameter_spin.value()
@@ -1401,7 +1413,7 @@ def ellipse_form(element) -> EditorForm:
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    set_tip(fr_check, 'reverse_print', form)
 
     def _apply():
         element.width = width_spin.value()
@@ -1474,7 +1486,7 @@ def diagonal_form(element) -> EditorForm:
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    set_tip(fr_check, 'reverse_print', form)
 
     def _apply():
         element.width = width_spin.value()
@@ -1537,7 +1549,7 @@ def graphic_symbol_form(element) -> EditorForm:
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    set_tip(fr_check, 'reverse_print', form)
 
     apply_name = _name_row(form, element)
 
@@ -1810,7 +1822,7 @@ def barcode_form(element) -> EditorForm:
     fr_check.setObjectName("reverse_print")
     fr_check.setChecked(element.reverse_print)
     form.addRow("Reverse:", fr_check)
-    _reverse_hint(form)
+    set_tip(fr_check, 'reverse_print', form)
 
     # ^FM: an origin for each symbol of a series, for the two symbologies it
     # places, as label positions. No rows is a barcode placed by ^FO like any
@@ -2542,8 +2554,8 @@ def print_dialog(parent, document: Document, printer, default):
     copies.addRow("Pause every:", pause)
     replicates = _count_spin("replicates", zpl_print.REPLICATE_RANGE,
                              settings.replicates)
-    replicates.setToolTip("Copies of each serial number before it counts on")
     copies.addRow("Replicates:", replicates)
+    set_tip(replicates, 'replicates', copies)
     override = QCheckBox("Don't pause between groups")
     override.setObjectName("override_pause")
     override.setChecked(settings.override_pause)
@@ -2581,7 +2593,7 @@ def print_dialog(parent, document: Document, printer, default):
     # A number box has no "unset", so the darkness has a tick for it.
     darkness_set = QCheckBox()
     darkness_set.setObjectName("darkness_set")
-    darkness_set.setToolTip("Clear for the printer's setting")
+    set_tip(darkness_set, 'darkness_set')
     darkness_set.setChecked(settings.darkness is not None)
     darkness_spin = QDoubleSpinBox()
     darkness_spin.setObjectName("darkness")
