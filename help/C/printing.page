@@ -45,15 +45,17 @@
         <title><gui>Copies (^PQ)</gui></title>
         <p>How many labels to print, and optionally a pause after every so
         many (<gui>Pause every</gui>, 0 for never). The printer prints the
-        copies itself. <gui>Replicates</gui> prints each serial number that
-        many times before moving to the next.</p>
+        copies itself. <gui>Replicates</gui> is how many replicates of each
+        serial number to print before it changes; 0, the default, changes it
+        on every label.</p>
       </item>
       <item>
         <title><gui>Label</gui></title>
         <p><gui>Print upside down</gui>, <gui>Mirror left to right</gui>,
         <gui>Reverse fields, white on black</gui>, and <gui>Check barcode
         data as printed</gui>, which has the printer check each barcode's data
-        and print an error message in place of one that is not valid.</p>
+        and print <sys>INVALID</sys> and an error code in place of one that is
+        not valid.</p>
       </item>
       <item>
         <title><gui>Printer setup sent with the label</gui></title>
@@ -61,7 +63,8 @@
         print mode (such as tear off, peel off or cutter), the media
         tracking and the media type. Each starts at <gui>Printer's
         setting</gui>, which sends nothing and leaves the printer as it was
-        set up.</p>
+        set up. A value you choose stays in effect on the printer after the
+        label has printed.</p>
       </item>
     </terms>
     <p>Everything but the printer is saved with the label, so the label

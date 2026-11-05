@@ -50,14 +50,16 @@
     <terms>
       <item>
         <title><gui>Bar Height</gui></title>
-        <p>The height of the bars, in dots. Two-dimensional codes have none:
-        their size comes from their data.</p>
+        <p>The height of the bars, in dots. For PDF417 and MicroPDF417 it is
+        the height of each row. QR Code, Data Matrix, Aztec Code and MaxiCode
+        have none: their size comes from their data.</p>
       </item>
       <item>
         <title><gui>Module Width</gui></title>
         <p>The width of the narrowest bar, in dots, 1 to 20. Everything else
-        in the symbol is a multiple of it. For a two-dimensional code it is
-        called <gui>Magnification</gui>, the size of each square.</p>
+        in the symbol is a multiple of it. QR Code and Aztec Code call it
+        <gui>Magnification</gui> and Data Matrix <gui>Module Size</gui>: the
+        size of each square. MaxiCode has none.</p>
       </item>
       <item>
         <title><gui>Ratio</gui></title>
@@ -72,10 +74,15 @@
         tall.</p>
       </item>
       <item>
-        <title><gui>Check Digit</gui></title>
-        <p>For Code 128, Code 39 and Interleaved 2 of 5 this adds a check
-        digit. For UPC-A, UPC-E, Code 93 and Plessey, which always carry one,
-        it only says whether the printed value shows it.</p>
+        <title>The check digit</title>
+        <p>Its row is named for the kind. <gui>UCC Check Digit</gui> (Code
+        128), <gui>Mod-43 Check Digit</gui> (Code 39) and <gui>Mod-10 Check
+        Digit</gui> (Interleaved 2 of 5) add one. UPC-A, UPC-E, Code 93 and
+        Plessey always carry one, so <gui>Print Check Digit</gui>,
+        <gui>Print Check Characters</gui> and <gui>Print Check Digits</gui>
+        only say whether the printed value shows it. MSI has <gui>Check
+        Digits</gui>, which of its checksums to add, and <gui>Show Check
+        Digits</gui>.</p>
       </item>
       <item>
         <title><gui>Mode</gui></title>

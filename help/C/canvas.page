@@ -117,8 +117,9 @@
     which holds the elements as ZPL. A paste lands where the copy came from,
     or a tenth of an inch down and to the right if something identical is
     already there. Paste also takes ZPL copied from anywhere else.
-    <gui>Duplicate</gui> copies the selection in place without using the
-    clipboard.</p>
+    <gui>Duplicate</gui> copies the selection without using the clipboard,
+    and puts the copy a tenth of an inch down and to the right, or further
+    while that spot is taken.</p>
   </section>
 
   <section id="print-this">

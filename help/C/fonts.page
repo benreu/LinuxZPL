@@ -24,7 +24,8 @@
     <p><guiseq><gui>Settings</gui><gui>Local Fonts…</gui></guiseq> shows how
     LinuxZPL finds this computer's fonts. It asks fontconfig first; where
     fontconfig is missing or finds nothing, it looks through the usual font
-    folders itself, and the window lists what it found there.
+    folders itself. The window says which is in use, and lists what the
+    folder search finds either way.
     <gui>Extra Font Folder…</gui> adds one folder of your own to that search,
     and <gui>Rescan</gui> looks again.</p>
   </section>

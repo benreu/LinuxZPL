@@ -29,8 +29,8 @@
       <item>
         <title><gui>Field Name</gui></title>
         <p>A name for it, such as <em>Ship to</em>. The canvas shows it as
-        «Ship to» until there are words, and a printer with a keypad shows
-        it when it asks for them.</p>
+        «Ship to» until there are words, and a Zebra KDU keypad attached to
+        the printer shows it when it asks for them.</p>
       </item>
       <item>
         <title><gui>Text</gui></title>
