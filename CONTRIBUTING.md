@@ -43,8 +43,11 @@ frontend, or GTK will have cached the real directory already.
 
 `test_core.py` and `test_deviations.py` run offscreen and need no display.
 `test_conformance.py` drives both frontends, and `test_gtk_editors.py` covers
-the GTK element editors that nothing else reaches; both need a display, using
-`$DISPLAY` if set, otherwise `xvfb-run` (`apt install xvfb`).
+the GTK element editors that nothing else reaches; both need a display. They
+run under `xvfb-run` (`apt install xvfb`), so their windows stay off your
+screen and can't take the keyboard while you work; without xvfb they use
+`$DISPLAY`. To watch them instead, run `LINUXZPL_TEST_DISPLAY=real
+./tests/run.sh`.
 
 Each suite is also a VS Code launch configuration, so it can be run under the
 debugger with F5. Note that `test_conformance.py` runs each frontend in its own

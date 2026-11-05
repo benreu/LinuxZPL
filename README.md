@@ -250,7 +250,9 @@ the behaviour they implement.
 `test_conformance.py` drives **both** frontends through the same scripted
 editing session and diffs the ZPL after every step, and `test_gtk_editors.py`
 covers the GTK element editors, which nothing else reaches. Those two need a
-display, using `$DISPLAY` if set and otherwise `xvfb-run` (`apt install xvfb`).
+display: they run under `xvfb-run` (`apt install xvfb`), so their windows stay
+off your screen, and use `$DISPLAY` when there is no xvfb.
+`LINUXZPL_TEST_DISPLAY=real ./tests/run.sh` puts them on `$DISPLAY` to watch.
 
 ## ZPL Commands Supported
 
