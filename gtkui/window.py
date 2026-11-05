@@ -18,6 +18,7 @@ from zplcore import firmware as zpl_firmware
 from zplcore import fonts as zpl_fonts
 from zplcore import graphic_store
 from zplcore import local_port as zpl_local
+from zplcore import print_settings as zpl_print
 from zplcore import printer_io
 from zplcore import printer_objects
 from zplcore import printer_status
@@ -27,6 +28,7 @@ from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import graphic_symbols
 from zplcore.model import STORED_GRAPHIC_DEVICES, Document
+from zplcore.print_settings import AsWritten, PrintSettings
 from zplcore.renderer import ZPLRenderer
 
 from . import editors as gtk_editors
@@ -61,10 +63,11 @@ ALIGN_ITEMS = (
 def _dpi_combo(dpi: int) -> Gtk.ComboBoxText:
     """The resolution choice, offered the same way wherever it is edited.
 
-    Label Settings and Printer Settings both write the one printer_dpi setting,
-    so they have to offer the same list - including the fallback: a resolution
-    the designer does not support can still be the one in force, and must be
-    shown rather than silently replaced with a supported one.
+    Label Settings and the printer rows (Default Printer, the Print window)
+    all set the printer's resolution, so they have to offer the same list -
+    including the fallback: a resolution the designer does not support can
+    still be the one in force, and must be shown rather than silently
+    replaced with a supported one.
     """
     combo = Gtk.ComboBoxText()
     for d in zpl_fonts.SUPPORTED_DPI:
@@ -82,101 +85,125 @@ def _dpi_from(combo: Gtk.ComboBoxText, fallback: int) -> int:
     return int(text) if text and text.isdigit() else fallback
 
 
-def _printer_picker_dialog(parent, title, address, port, dpi,
-                           font_device=None, default=None):
-    """Address/Port/DPI/Font memory picker with Test Connection.
+class _PrinterRows:
+    """Address, Port, DPI, Font memory and Test Connection, plus Use Default
+    when there is a default to go back to. The GTK twin of
+    qtui.dialogs._PrinterRows.
 
-    Shared by Default Printer and the session-only Printer Settings dialog, so
-    the two can't drift apart. `default`, when given, is the persisted
-    (address, port, dpi, font_device) offered via a "Use Default" button.
+    Default Printer and the Print window both build their printer from these
+    rows, so the two can't drift apart. `box` is the widget holding them.
+    `withhold(widgets)` adds the busy row, and the widgets it names are
+    withheld while a probe is out, so a half-finished one can't be accepted
+    as an answer.
 
-    Font memory belongs here rather than beside each text element: which
+    Font memory belongs here rather than beside each text element. Which
     memory a printer keeps its fonts in is a property of the printer being
     deployed to, not of one field on one label.
-
-    Returns (address, port, dpi, font_device), or None if cancelled.
     """
-    dialog = Gtk.Dialog(title=title, parent=parent, flags=0)
-    dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                       Gtk.STOCK_OK, Gtk.ResponseType.OK)
 
-    content = dialog.get_content_area()
-    content.set_spacing(4)
-    content.set_margin_start(8)
-    content.set_margin_end(8)
-    content.set_margin_top(8)
-    content.set_margin_bottom(8)
+    LABEL_WIDTH = 90
 
-    def make_row(lbl_text, widget):
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        lbl = Gtk.Label(label=lbl_text)
-        lbl.set_size_request(90, -1)
-        lbl.set_halign(Gtk.Align.END)
-        row.pack_start(lbl, False, False, 0)
-        row.pack_start(widget, True, True, 0)
-        content.pack_start(row, False, False, 0)
+    def __init__(self, address, port, dpi, font_device=None, default=None):
+        self._dpi = dpi
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
 
-    # Printer address
-    address_entry = Gtk.Entry()
-    address_entry.set_text(address)
-    make_row("Address:", address_entry)
+        self.address_entry = Gtk.Entry()
+        self.address_entry.set_name("address")
+        self.address_entry.set_text(address)
+        # Enter in the address is the dialog's default button.
+        self.address_entry.set_activates_default(True)
+        _make_row(self.box, "Address:", self.address_entry, self.LABEL_WIDTH)
 
-    # Printer port
-    port_spin = Gtk.SpinButton()
-    port_adj = Gtk.Adjustment(value=port, lower=1, upper=65535, step_increment=1)
-    port_spin.set_adjustment(port_adj)
-    port_spin.set_numeric(True)
-    make_row("Port:", port_spin)
+        self.port_spin = _make_spin(port, 1, 65535)
+        self.port_spin.set_name("port")
+        _make_row(self.box, "Port:", self.port_spin, self.LABEL_WIDTH)
 
-    # Printer resolution
-    dpi_combo = _dpi_combo(dpi)
-    make_row("DPI:", dpi_combo)
+        self.dpi_combo = _dpi_combo(dpi)
+        _make_row(self.box, "DPI:", self.dpi_combo, self.LABEL_WIDTH)
 
-    # Where a font this app assigns is written and uploaded. The same
-    # STORED_GRAPHIC_DEVICES the Store Graphic dialog offers, so a memory type
-    # reads identically everywhere, and Z: is absent for the reason it is
-    # there: ~DY cannot write it and ^ID will not delete it.
-    font_device_combo, font_device_codes = _make_combo(
-        STORED_GRAPHIC_DEVICES,
-        (font_device or zpl_fonts.DEFAULT_FONT_DEVICE).upper())
-    make_row("Font memory:", font_device_combo)
+        # Where a font this app assigns is written and uploaded. The same
+        # STORED_GRAPHIC_DEVICES the Store Graphic dialog offers, so a memory
+        # type reads identically everywhere, and Z: is absent for the reason
+        # it is there: ~DY cannot write it and ^ID will not delete it.
+        self.font_device_combo, self._font_device_codes = _make_combo(
+            STORED_GRAPHIC_DEVICES,
+            (font_device or zpl_fonts.DEFAULT_FONT_DEVICE).upper())
+        _make_row(self.box, "Font memory:", self.font_device_combo,
+                  self.LABEL_WIDTH)
 
-    def set_dpi_value(value):
-        try:
-            dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(value))
-        except ValueError:
-            model = dpi_combo.get_model()
-            for i, row in enumerate(model):
-                if row[0] == str(value):
-                    dpi_combo.set_active(i)
-                    return
-            dpi_combo.append_text(str(value))
-            dpi_combo.set_active(len(model) - 1)
+        self._test_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                                 spacing=8)
+        self.test_btn = Gtk.Button(label="Test Connection")
+        self.test_btn.connect("clicked", self._on_test)
+        self._test_row.pack_start(self.test_btn, False, False, 0)
+        if default is not None:
+            # What the persisted default printer is, for comparing against or
+            # going back to.
+            default_btn = Gtk.Button(label="Use Default")
+            default_btn.set_name("use_default")
+            default_btn.connect("clicked", lambda _b: self._fill(*default))
+            self._test_row.pack_start(default_btn, False, False, 0)
+        self.box.pack_start(self._test_row, False, False, 0)
 
-    # Connection test, which also asks the printer its resolution
-    result_label = Gtk.Label()
-    result_label.set_halign(Gtk.Align.START)
-    result_label.set_line_wrap(True)
+        self.result = Gtk.Label()
+        self.result.set_halign(Gtk.Align.START)
+        self.result.set_line_wrap(True)
+        self.box.pack_start(self.result, False, False, 0)
+        self.busy = None
 
-    def set_result(colour, text):
-        result_label.set_markup(
+    def withhold(self, widgets) -> None:
+        self.busy = BusyBar((self.test_btn, *widgets),
+                            lambda text: self._set_result("gray", text))
+        self._test_row.pack_end(self.busy, False, False, 0)
+
+    def abandon(self) -> None:
+        if self.busy is not None:
+            self.busy.abandon()
+
+    def value(self):
+        """(address, port, dpi, font_device), or None when no address is
+        given."""
+        address = self.address_entry.get_text().strip()
+        if not address:
+            return None
+        return (address, int(self.port_spin.get_value()),
+                _dpi_from(self.dpi_combo, self._dpi),
+                self._font_device_codes[self.font_device_combo.get_active()])
+
+    def _set_result(self, colour, text):
+        self.result.set_markup(
             f"<span foreground='{colour}'>"
             f"{GLib.markup_escape_text(text)}</span>")
 
-    test_btn = Gtk.Button(label="Test Connection")
-    # OK is withheld while a probe is out so a half-finished one can't be
-    # accepted as an answer.
-    busy = BusyBar((test_btn, dialog.get_widget_for_response(Gtk.ResponseType.OK)),
-                   lambda text: set_result("gray", text))
+    def _set_dpi(self, value):
+        try:
+            self.dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(value))
+        except ValueError:
+            model = self.dpi_combo.get_model()
+            for i, row in enumerate(model):
+                if row[0] == str(value):
+                    self.dpi_combo.set_active(i)
+                    return
+            self.dpi_combo.append_text(str(value))
+            self.dpi_combo.set_active(len(model) - 1)
 
-    def on_test_clicked(btn):
-        addr = address_entry.get_text().strip()
-        prt = int(port_spin.get_value())
+    def _fill(self, address, port, dpi, font_device):
+        self.address_entry.set_text(address)
+        self.port_spin.set_value(port)
+        self._set_dpi(dpi)
+        if font_device in self._font_device_codes:
+            self.font_device_combo.set_active(
+                self._font_device_codes.index(font_device))
+
+    def _on_test(self, _btn):
+        addr = self.address_entry.get_text().strip()
+        prt = int(self.port_spin.get_value())
         if not addr:
-            set_result("red", "Address is required")
+            self._set_result("red", "Address is required")
             return
-        set_result("gray", f"Connecting to {addr}:{prt}…")
+        self._set_result("gray", f"Connecting to {addr}:{prt}…")
         connected = f"✓ Connected to {addr}:{prt}"
+        busy = self.busy
 
         def probe(cancel):
             # Connect and send nothing: reachability first, on its own, so
@@ -187,58 +214,319 @@ def _printer_picker_dialog(parent, title, address, port, dpi,
 
         def done(reported, error):
             if isinstance(error, printer_io.Cancelled):
-                set_result("gray", "Test cancelled.")
+                self._set_result("gray", "Test cancelled.")
             elif error is not None:
-                set_result("red", f"✗ {error}")
+                self._set_result("red", f"✗ {error}")
             elif reported is None:
-                set_result("orange", f"{connected}, but it did not report its "
-                                     f"resolution; set the DPI manually.")
+                # No answer must leave the manual setting alone rather than
+                # substituting a guess.
+                self._set_result("orange",
+                                 f"{connected}, but it did not report its "
+                                 f"resolution; set the DPI manually.")
             elif reported in zpl_fonts.SUPPORTED_DPI:
-                dpi_combo.set_active(list(zpl_fonts.SUPPORTED_DPI).index(reported))
-                set_result("green", f"{connected} — {reported} dpi")
+                self.dpi_combo.set_active(
+                    list(zpl_fonts.SUPPORTED_DPI).index(reported))
+                self._set_result("green", f"{connected} — {reported} dpi")
             else:
-                set_result("orange", f"{connected} — reports {reported} dpi, "
-                                     f"which the designer does not support.")
+                self._set_result("orange",
+                                 f"{connected} — reports {reported} dpi, "
+                                 f"which the designer does not support.")
 
         busy.run(probe, done)
 
-    test_btn.connect("clicked", on_test_clicked)
-    test_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-    test_row.pack_start(test_btn, False, False, 0)
-    test_row.pack_end(busy, False, False, 0)
-    content.pack_start(test_row, False, False, 0)
-    content.pack_start(result_label, False, False, 0)
 
-    if default is not None:
-        def on_use_default(btn):
-            def_address, def_port, def_dpi, def_font_device = default
-            address_entry.set_text(def_address)
-            port_spin.set_value(def_port)
-            set_dpi_value(def_dpi)
-            if def_font_device in font_device_codes:
-                font_device_combo.set_active(
-                    font_device_codes.index(def_font_device))
-
-        default_btn = Gtk.Button(label="Use Default")
-        default_btn.connect("clicked", on_use_default)
-        content.pack_start(default_btn, False, False, 0)
-
+def _printer_picker_dialog(parent, title, address, port, dpi,
+                           font_device=None):
+    """Default Printer's dialog: (address, port, dpi, font_device), or None
+    if cancelled."""
+    dialog = Gtk.Dialog(title=title, parent=parent, flags=0)
+    dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                       Gtk.STOCK_OK, Gtk.ResponseType.OK)
+    content = dialog.get_content_area()
+    content.set_spacing(4)
+    for side in ("start", "end", "top", "bottom"):
+        getattr(content, "set_margin_" + side)(8)
+    rows = _PrinterRows(address, port, dpi, font_device)
+    content.pack_start(rows.box, False, False, 0)
+    rows.withhold((dialog.get_widget_for_response(Gtk.ResponseType.OK),))
     content.show_all()
 
     response = dialog.run()
-    busy.abandon()
-    result = None
-    if response == Gtk.ResponseType.OK:
-        new_address = address_entry.get_text().strip()
-        if not new_address:
+    rows.abandon()
+    result = rows.value() if response == Gtk.ResponseType.OK else None
+    dialog.destroy()
+    if response == Gtk.ResponseType.OK and result is None:
+        parent.show_error_dialog("Printer address cannot be empty.")
+    return result
+
+
+# The Print window's own button, beside OK and Cancel.
+PRINT_RESPONSE = 1
+
+
+class _NumberRow:
+    """A number box that can hold a carried value it cannot show.
+
+    An AsWritten is shown beside the box, and is what the row gives back
+    until the box is changed.
+    """
+
+    def __init__(self, spin, current, shown_instead):
+        self.spin = spin
+        self.note = Gtk.Label()
+        self._current = current
+        self._touched = False
+        if isinstance(current, AsWritten):
+            spin.set_value(shown_instead)
+            self.note.set_text(current.label())
+        else:
+            if current is not None:
+                spin.set_value(current)
+            self.note.set_no_show_all(True)
+        spin.connect("value-changed", self._on_changed)
+
+    def _on_changed(self, _spin):
+        self._touched = True
+        self.note.hide()
+
+    def value(self):
+        if isinstance(self._current, AsWritten) and not self._touched:
+            return self._current
+        return self.spin.get_value()
+
+
+def _build_print_dialog(parent, document, printer, default):
+    """The Print window, built but not run: (dialog, finish).
+
+    `finish(response)` reads the rows, destroys the window and returns what
+    _print_dialog does. Apart so the rows can be filled in and read without
+    a nested main loop.
+    """
+    settings = PrintSettings.read(document)
+    dialog = Gtk.Dialog(title="Print", parent=parent, flags=0)
+    dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                       Gtk.STOCK_OK, Gtk.ResponseType.OK)
+    print_btn = dialog.add_button("_Print", PRINT_RESPONSE)
+    print_btn.set_name("print")
+    # Print is what the window is opened for, so it is the one Enter presses.
+    dialog.set_default_response(PRINT_RESPONSE)
+
+    content = dialog.get_content_area()
+    content.set_spacing(8)
+    for side in ("start", "end", "top", "bottom"):
+        getattr(content, "set_margin_" + side)(8)
+    columns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    content.pack_start(columns, True, True, 0)
+    left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    columns.pack_start(left, True, True, 0)
+    columns.pack_start(right, True, True, 0)
+
+    def group(column, title):
+        frame = Gtk.Frame(label=title)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        for side in ("start", "end", "top", "bottom"):
+            getattr(inner, "set_margin_" + side)(6)
+        frame.add(inner)
+        column.pack_start(frame, False, False, 0)
+        return inner
+
+    def check(box, name, text, value):
+        button = Gtk.CheckButton(label=text)
+        button.set_name(name)
+        button.set_active(value)
+        box.pack_start(button, False, False, 0)
+        return button
+
+    def setup_combo(name, options, current):
+        combo, values = _make_combo(zpl_print.choices(options, current),
+                                    current)
+        combo.set_name(name)
+        return combo, values
+
+    rows = _PrinterRows(*printer, default=default)
+    group(left, "Printer (this session only)").pack_start(
+        rows.box, False, False, 0)
+
+    copies = group(left, "Copies (^PQ)")
+    quantity = _make_spin(settings.quantity, *zpl_print.QUANTITY_RANGE)
+    quantity.set_name("quantity")
+    _make_row(copies, "Copies:", quantity, 100)
+    pause = _make_spin(settings.pause_count, *zpl_print.PAUSE_RANGE)
+    pause.set_name("pause_count")
+    # 0 is ZPL's "no pause". The Qt window shows it as Never; a numeric
+    # GtkSpinButton refuses letters, and PyGObject cannot answer its "input"
+    # signal to read one back, so here the row says so beside the box.
+    pause_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    pause_row.pack_start(pause, True, True, 0)
+    pause_row.pack_start(Gtk.Label(label="labels (0 = never)"), False, False, 0)
+    _make_row(copies, "Pause every:", pause_row, 100)
+    replicates = _make_spin(settings.replicates, *zpl_print.REPLICATE_RANGE)
+    replicates.set_name("replicates")
+    replicates.set_tooltip_text(
+        "Copies of each serial number before it counts on")
+    _make_row(copies, "Replicates:", replicates, 100)
+    override = check(copies, "override_pause", "Don't pause between groups",
+                     settings.override_pause)
+    cut = check(copies, "cut_on_error", "Cut after a voided RFID label",
+                settings.cut_on_error)
+
+    # How the finished label is laid down, and checked, rather than where a
+    # field sits on it.
+    flags = group(right, "Label")
+    invert = check(flags, "invert", "Print upside down (^PO)", settings.invert)
+    mirror = check(flags, "mirror", "Mirror left to right (^PM)",
+                   settings.mirror)
+    reverse = check(flags, "reverse", "Reverse fields, white on black (^LR)",
+                    settings.reverse)
+    validate = check(flags, "code_validation",
+                     "Check barcode data as printed (^CV)",
+                     settings.code_validation)
+
+    setup = group(right, "Printer setup sent with the label")
+    # A number box has no "unset", so the darkness has a tick for it.
+    darkness_set = Gtk.CheckButton()
+    darkness_set.set_name("darkness_set")
+    darkness_set.set_tooltip_text("Clear for the printer's setting")
+    darkness_set.set_active(settings.darkness is not None)
+    darkness_spin = Gtk.SpinButton()
+    darkness_spin.set_name("darkness")
+    low, high = zpl_print.DARKNESS_RANGE
+    darkness_spin.set_adjustment(Gtk.Adjustment(
+        value=0, lower=low, upper=high, step_increment=1, page_increment=10))
+    darkness_spin.set_digits(zpl_print.DARKNESS_DECIMALS)
+    darkness_spin.set_numeric(True)
+    darkness = _NumberRow(darkness_spin, settings.darkness, 0.0)
+    darkness_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    darkness_row.pack_start(darkness_set, False, False, 0)
+    darkness_row.pack_start(darkness_spin, True, True, 0)
+    darkness_row.pack_start(darkness.note, False, False, 0)
+    _make_row(setup, "Darkness (^MD):", darkness_row)
+
+    print_speed, print_speeds = setup_combo(
+        "print_speed", zpl_print.PRINT_SPEED_CHOICES, settings.print_speed)
+    _make_row(setup, "Print speed (^PR):", print_speed)
+    slew_speed, slew_speeds = setup_combo(
+        "slew_speed", zpl_print.FEED_SPEED_CHOICES, settings.slew_speed)
+    _make_row(setup, "Slew speed:", slew_speed)
+    backfeed_speed, backfeed_speeds = setup_combo(
+        "backfeed_speed", zpl_print.FEED_SPEED_CHOICES,
+        settings.backfeed_speed)
+    _make_row(setup, "Backfeed speed:", backfeed_speed)
+
+    print_mode, print_modes = setup_combo(
+        "print_mode", zpl_print.PRINT_MODES, settings.print_mode)
+    _make_row(setup, "Print mode (^MM):", print_mode)
+    prepeel = Gtk.CheckButton(label="Prepeel")
+    prepeel.set_name("prepeel")
+    prepeel.set_active(settings.prepeel)
+    _make_row(setup, "", prepeel)
+
+    tracking, trackings = setup_combo(
+        "media_tracking", zpl_print.MEDIA_TRACKING, settings.media_tracking)
+    _make_row(setup, "Media tracking (^MN):", tracking)
+    offset_spin = _make_spin(0, *zpl_print.MARK_OFFSET_RANGE)
+    offset_spin.set_name("mark_offset")
+    offset = _NumberRow(offset_spin, settings.mark_offset, 0)
+    offset_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    offset_row.pack_start(offset_spin, True, True, 0)
+    offset_row.pack_start(Gtk.Label(label="dots"), False, False, 0)
+    offset_row.pack_start(offset.note, False, False, 0)
+    _make_row(setup, "Black mark offset:", offset_row)
+
+    media_type, media_types = setup_combo(
+        "media_type", zpl_print.MEDIA_TYPES, settings.media_type)
+    _make_row(setup, "Media type (^MT):", media_type)
+
+    note = Gtk.Label(label="Printer's setting sends nothing. A value set "
+                           "here stays in effect on the printer after this "
+                           "label.")
+    note.set_halign(Gtk.Align.START)
+    note.set_line_wrap(True)
+    note.set_max_width_chars(50)
+    setup.pack_start(note, False, False, 0)
+
+    def chosen(combo, values):
+        return values[combo.get_active()]
+
+    def follow(*_a):
+        # A row that only means something with another set is greyed out
+        # without it: ^PR is a chain, prepeel rides on a print mode, and the
+        # offset is only for mark sensing.
+        darkness_spin.set_sensitive(darkness_set.get_active())
+        slew_speed.set_sensitive(chosen(print_speed, print_speeds) is not None)
+        backfeed_speed.set_sensitive(
+            slew_speed.get_sensitive()
+            and chosen(slew_speed, slew_speeds) is not None)
+        prepeel.set_sensitive(chosen(print_mode, print_modes) is not None)
+        offset_spin.set_sensitive(
+            chosen(tracking, trackings) == zpl_print.MARK_SENSING)
+
+    darkness_set.connect("toggled", follow)
+    for combo in (print_speed, slew_speed, print_mode, tracking):
+        combo.connect("changed", follow)
+    follow()
+
+    rows.withhold((dialog.get_widget_for_response(Gtk.ResponseType.OK),
+                   print_btn))
+    _make_dialog_scrollable(dialog, parent)
+    content.show_all()
+
+    def finish(response):
+        rows.abandon()
+        if response not in (Gtk.ResponseType.OK, PRINT_RESPONSE):
             dialog.destroy()
+            return None
+        chosen_printer = rows.value()
+        result = settings.copy()
+        result.quantity = quantity.get_value_as_int()
+        result.pause_count = pause.get_value_as_int()
+        result.replicates = replicates.get_value_as_int()
+        result.override_pause = override.get_active()
+        result.cut_on_error = cut.get_active()
+        result.invert = invert.get_active()
+        result.mirror = mirror.get_active()
+        result.reverse = reverse.get_active()
+        result.code_validation = validate.get_active()
+        result.darkness = darkness.value() if darkness_set.get_active() else None
+        if isinstance(result.darkness, float):
+            result.darkness = round(result.darkness,
+                                    zpl_print.DARKNESS_DECIMALS)
+        result.print_speed = chosen(print_speed, print_speeds)
+        result.slew_speed = chosen(slew_speed, slew_speeds)
+        result.backfeed_speed = chosen(backfeed_speed, backfeed_speeds)
+        result.print_mode = chosen(print_mode, print_modes)
+        result.prepeel = prepeel.get_active()
+        result.media_tracking = chosen(tracking, trackings)
+        offset_value = offset.value()
+        result.mark_offset = (int(offset_value)
+                              if isinstance(offset_value, float)
+                              else offset_value)
+        result.media_type = chosen(media_type, media_types)
+        dialog.destroy()
+        if chosen_printer is None:
             parent.show_error_dialog("Printer address cannot be empty.")
             return None
-        result = (new_address, int(port_spin.get_value()),
-                  _dpi_from(dpi_combo, dpi),
-                  font_device_codes[font_device_combo.get_active()])
-    dialog.destroy()
-    return result
+        action = 'print' if response == PRINT_RESPONSE else 'ok'
+        return action, chosen_printer, result
+
+    return dialog, finish
+
+
+def _print_dialog(parent, document, printer, default):
+    """The Print window. Returns (action, printer, settings), or None if
+    cancelled.
+
+    `action` is 'print' or 'ok'. OK keeps the settings without printing.
+    `printer` is the (address, port, dpi, font_device) for this session, and
+    the window opens on the one in effect. `default` is the persisted printer
+    Use Default goes back to. `settings` is a print_settings.PrintSettings:
+    everything here that is saved with the label, for the caller to apply as
+    one undo entry. The rows come from print_settings, the same tables the Qt
+    window draws from.
+    """
+    dialog, finish = _build_print_dialog(parent, document, printer, default)
+    return finish(dialog.run())
 
 
 def _config_path() -> Path:
@@ -335,9 +623,9 @@ class ZPLViewerWindow(Gtk.Window):
         self.saved_panel = {'floating': False, 'shown': True,
                             'width': PANEL_WIDTH, 'geometry': None}
         self._load_settings()
-        # The persisted printer, snapshotted so a session-only override
-        # (Printer Settings) can offer "Use Default" without re-reading the
-        # settings file.
+        # The persisted printer, snapshotted so the Print window, whose
+        # printer is for this session only, can offer "Use Default" without
+        # re-reading the settings file.
         self._default_printer = (self.printer_address, self.printer_port,
                                  self.printer_dpi, self.printer_font_device)
         self._place_on_screen()
@@ -396,7 +684,8 @@ class ZPLViewerWindow(Gtk.Window):
                 ("_Save", self.on_save_clicked, "<Control>s"),
                 ("Save _as\u2026", self.on_save_as_clicked, "<Control><Shift>s"),
                 (None, None, None),
-                ("_Print", self.on_print_clicked, "<Control>p")):
+                ("_Print\u2026", self.on_print_dialog_clicked, "<Control>p"),
+                ("_Quick Print", self.on_print_clicked, "<Control><Shift>p")):
             if label is None:
                 file_menu.append(Gtk.SeparatorMenuItem())
                 continue
@@ -404,10 +693,14 @@ class ZPLViewerWindow(Gtk.Window):
             item.connect("activate", action)
             add_accel(item, accel)
             file_menu.append(item)
-            if action == self.on_print_clicked:
-                # Kept so the status bar's busy row can withhold it while a
-                # print is out.
+            # Kept so the status bar's busy row can withhold them while a
+            # print is out. Print... opens the Print window, whose own Print
+            # button sends; Quick Print sends at once with the settings
+            # already in force.
+            if action == self.on_print_dialog_clicked:
                 self.print_item = item
+            if action == self.on_print_clicked:
+                self.quick_print_item = item
             if action == self.on_load_file_clicked:
                 # Filled in by _rebuild_recent_menu, from the settings file.
                 self.recent_menu = Gtk.Menu()
@@ -429,19 +722,6 @@ class ZPLViewerWindow(Gtk.Window):
             upload_menu.append(item)
             self.upload_template_items.append(item)
         upload_menu.show_all()
-
-        # A submenu rather than a flat item: this is where printer-related
-        # actions beyond the one session override belong as they show up.
-        printer_settings_menu = Gtk.Menu()
-        printer_settings_item = Gtk.MenuItem.new_with_mnemonic("Prin_ter Settings")
-        printer_settings_item.set_submenu(printer_settings_menu)
-        file_menu.append(printer_settings_item)
-
-        session_printer_item = Gtk.MenuItem.new_with_mnemonic(
-            "_Set Printer for This Session\u2026")
-        session_printer_item.connect("activate", self.on_session_printer_clicked)
-        printer_settings_menu.append(session_printer_item)
-        printer_settings_menu.show_all()
 
         file_menu.append(Gtk.SeparatorMenuItem())
         quit_item = Gtk.MenuItem.new_with_mnemonic("_Quit")
@@ -866,7 +1146,8 @@ class ZPLViewerWindow(Gtk.Window):
         status_row.pack_end(self.zoom_label, False, False, 0)
         # Beside the zoom, for the one network call the main window makes
         # itself: Print.
-        self._busy = BusyBar((self.print_item, *self.upload_template_items), self.update_status)
+        self._busy = BusyBar((self.print_item, self.quick_print_item,
+                              *self.upload_template_items), self.update_status)
         self._busy.set_margin_end(8)
         status_row.pack_end(self._busy, False, False, 0)
         main_box.pack_end(status_row, False, False, 0)
@@ -3094,7 +3375,7 @@ class ZPLViewerWindow(Gtk.Window):
                     parser.add_section('printer')
                 # The persisted default, not self.printer_address/_port/_dpi:
                 # those are whatever is active for printing right now, which a
-                # session override (Printer Settings) deliberately changes
+                # session override (the Print window) deliberately changes
                 # without this ever running. Only Default Printer and Label
                 # Settings are allowed to move self._default_printer, and they
                 # do so before calling this.
@@ -3149,7 +3430,7 @@ class ZPLViewerWindow(Gtk.Window):
     def on_default_printer_clicked(self, widget):
         """Handle Default Printer menu item click."""
         # Opened with the persisted default, not the printer currently in
-        # effect: a session override (Printer Settings) must never leak into
+        # effect: a session override (the Print window) must never leak into
         # this dialog and get re-saved as the new default just by clicking OK.
         (default_address, default_port, default_dpi,
          default_font_device) = self._default_printer
@@ -3291,26 +3572,45 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
-    def on_session_printer_clicked(self, widget):
-        """Set the printer for this session only, without touching the persisted default."""
-        result = _printer_picker_dialog(
-            self, "Printer Settings", self.printer_address, self.printer_port,
-            self.printer_dpi, self.printer_font_device,
-            default=self._default_printer)
+    def on_print_dialog_clicked(self, widget):
+        """Print...: the printer for this session and the label's print
+        settings in one window, then the label itself, from its Print button.
+
+        The printer is for this session only, and never reaches the persisted
+        default. Everything else is saved with the label, so a visit that
+        changes any of it is one undo entry. A visit that changes none of it
+        records nothing and leaves the file as it was saved.
+        """
+        document = self.design_canvas.document
+        result = _print_dialog(
+            self, document,
+            (self.printer_address, self.printer_port, self.printer_dpi,
+             self.printer_font_device),
+            self._default_printer)
         if result is None:
             return
-        self.printer_address, self.printer_port, new_dpi, font_device = result
+        action, (address, port, dpi, font_device), settings = result
+        moved = (address, port) != (self.printer_address, self.printer_port)
         old_dpi = self.printer_dpi
-        self.printer_dpi = new_dpi
+        self.printer_address, self.printer_port, self.printer_dpi = address, port, dpi
         self._set_font_device(font_device)
-        self.update_status(
-            f"Printing to {self.printer_address}:{self.printer_port} for this session")
-        if self.printer_dpi != old_dpi:
+        # Settled before the settings go on, against the design the user was
+        # looking at, as Label Settings settles it.
+        note = None
+        if dpi != old_dpi:
             note = self._offer_dpi_rescale()
             self.design_canvas.sync_size()
-            if note:
-                self.on_canvas_changed()
-                self.update_status(note[0].upper() + note[1:])
+        changed = settings.apply(document)
+        if note or changed:
+            self.on_canvas_changed()      # one history entry for the whole visit
+        if note:
+            self.update_status(note[0].upper() + note[1:])
+        elif moved:
+            self.update_status(f"Printing to {address}:{port} for this session")
+        elif changed:
+            self.update_status("Print settings changed")
+        if action == 'print':
+            self.on_print_clicked(None)
 
     def on_label_settings_clicked(self, widget):
         """Handle label settings menu item click."""
@@ -3396,10 +3696,6 @@ class ZPLViewerWindow(Gtk.Window):
         dpi_combo = _dpi_combo(self.printer_dpi)
         dpi_box.pack_start(dpi_combo, True, True, 0)
 
-        quantity_spin = _make_spin(
-            self.design_canvas.document.print_quantity, 1, 99999999)
-        _make_row(content, "Copies (^PQ):", quantity_spin)
-
         # ^LH: the origin every field is placed from. Its use is preprinted
         # stock - moving the printable area below a pre-printed header - so it
         # belongs beside the size rather than among the printer settings.
@@ -3408,18 +3704,6 @@ class ZPLViewerWindow(Gtk.Window):
         _make_row(content, "Home X (dots):", home_x_spin)
         home_y_spin = _make_spin(transform.home[1], 0, 32000)
         _make_row(content, "Home Y (dots):", home_y_spin)
-
-        # How the finished label is laid down, rather than where a field sits
-        invert_check = Gtk.CheckButton(label="Print upside down (^PO)")
-        invert_check.set_active(transform.invert)
-        _make_row(content, "Orientation:", invert_check)
-        mirror_check = Gtk.CheckButton(label="Mirror left to right (^PM)")
-        mirror_check.set_active(transform.mirror)
-        _make_row(content, "Mirror:", mirror_check)
-        reverse_check = Gtk.CheckButton(
-            label="Reverse fields, white on black (^LR)")
-        reverse_check.set_active(transform.reverse)
-        _make_row(content, "Reverse:", reverse_check)
 
         # Info label
         info_label = Gtk.Label()
@@ -3462,19 +3746,17 @@ class ZPLViewerWindow(Gtk.Window):
         # Destroyed before anything modal can be raised over it, as the printer
         # dialog does before its own rescale prompt.
         # Copied, not mutated: the document's own transform is what an undo
-        # snapshot may still be holding.
+        # snapshot may still be holding. ^PO, ^PM and ^LR, which it also
+        # holds, are the Print window's, and pass through.
         chosen_transform = transform.copy()
         chosen_transform.home = (int(home_x_spin.get_value()),
                                  int(home_y_spin.get_value()))
-        chosen_transform.invert = invert_check.get_active()
-        chosen_transform.mirror = mirror_check.get_active()
-        chosen_transform.reverse = reverse_check.get_active()
         dialog.destroy()
         self.apply_label_settings(new_width, new_height, new_dpi, w_in, h_in,
-                                  chosen_transform, int(quantity_spin.get_value()))
+                                  chosen_transform)
 
     def apply_label_settings(self, width, height, dpi, w_in, h_in,
-                             transform=None, quantity=None):
+                             transform=None):
         """One accepted visit to Label Settings, whatever it changed.
 
         The resolution and the size can both have moved in the same visit, and
@@ -3489,15 +3771,13 @@ class ZPLViewerWindow(Gtk.Window):
         self.printer_dpi = dpi
         # Only the DPI slot of the default moves - address/port stay whatever
         # the persisted default already was, so a session override on those
-        # (Printer Settings) survives a Label Settings visit untouched.
+        # (the Print window) survives a Label Settings visit untouched.
         self._default_printer = (self._default_printer[0],
                                  self._default_printer[1], dpi,
                                  self._default_printer[3])
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.design_canvas.document.transform = transform
-        if quantity is not None:
-            self.design_canvas.document.print_quantity = quantity
         # Written before the prompt, as the printer dialog writes its own: the
         # prompt is modal and can be dismissed by the window manager, and the
         # choice the user already made should be on disk by then.

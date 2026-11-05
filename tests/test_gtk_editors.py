@@ -1558,9 +1558,19 @@ finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
 
-# --- Set Printer for This Session never touches the persisted default ------
-# The DPI is held fixed across both dialogs below so neither one takes the
+# --- the Print window's printer never touches the persisted default --------
+# The DPI is held fixed across the dialogs below so none of them takes the
 # rescale-prompt path, which would otherwise open a real (blocking) dialog.
+from zplcore.print_settings import PrintSettings as _PS
+
+def _print_window_returns(printer, action='ok', settings=None):
+    """Stand in for the Print window: accepted with this printer, and the
+    document's own print settings unless others are given."""
+    def fake(parent, document, current, default):
+        return action, printer, settings or _PS.read(document)
+    return fake
+
+real_print_dialog = gtk_main._print_dialog
 session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 gtk_main._config_path = lambda: session_path
 gtk_main._fallback_config_path = lambda: session_path
@@ -1571,13 +1581,13 @@ try:
     window._save_settings()
 
     real_dialog = gtk_main._printer_picker_dialog
-    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203, 'E')
+    gtk_main._print_dialog = _print_window_returns(('10.0.0.5', 9200, 203, 'E'))
     try:
-        window.on_session_printer_clicked(None)
+        window.on_print_dialog_clicked(None)
     finally:
-        gtk_main._printer_picker_dialog = real_dialog
+        gtk_main._print_dialog = real_print_dialog
 
-    check("Set Printer for This Session changes the printer in effect",
+    check("the Print window changes the printer in effect",
           (window.printer_address, window.printer_port) == ('10.0.0.5', 9200),
           (window.printer_address, window.printer_port))
 
@@ -1590,8 +1600,7 @@ try:
     # override just applied above - otherwise clicking OK on an unedited
     # dialog would silently promote the override into the new default.
     seen = {}
-    def capture_dialog(parent, title, address, port, dpi, font_device=None,
-                       default=None):
+    def capture_dialog(parent, title, address, port, dpi, font_device=None):
         seen['address'], seen['port'], seen['dpi'] = address, port, dpi
         seen['font_device'] = font_device
         return None  # cancel, so nothing else about window state changes
@@ -1631,12 +1640,11 @@ try:
                                window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
-    real_dialog = gtk_main._printer_picker_dialog
-    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203, 'E')
+    gtk_main._print_dialog = _print_window_returns(('10.0.0.8', 9400, 203, 'E'))
     try:
-        window.on_session_printer_clicked(None)
+        window.on_print_dialog_clicked(None)
     finally:
-        gtk_main._printer_picker_dialog = real_dialog
+        gtk_main._print_dialog = real_print_dialog
 
     # Stand in for what close_app does: it never touches _default_printer,
     # it just calls _save_settings() again on the way out.
@@ -1659,12 +1667,11 @@ try:
                                window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
-    real_dialog = gtk_main._printer_picker_dialog
-    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203, 'E')
+    gtk_main._print_dialog = _print_window_returns(('10.0.0.9', 9500, 203, 'E'))
     try:
-        window.on_session_printer_clicked(None)
+        window.on_print_dialog_clicked(None)
     finally:
-        gtk_main._printer_picker_dialog = real_dialog
+        gtk_main._print_dialog = real_print_dialog
 
     # Take the Keep Dots branch without a real dialog, the same trick
     # conformance_driver.py uses.
@@ -1687,6 +1694,229 @@ try:
 finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
+
+# --- the Print window -------------------------------------------------------
+# Its rows filled in and read back through finish(), the half of the window
+# that runs once dialog.run() has returned, so no nested main loop is needed.
+import time as _pw_time
+from zplcore.print_settings import AsWritten as _AW
+
+_PW_PRINTER = ('192.168.1.50', 9100, 203, 'E')
+_PW_DEFAULT = ('10.0.0.1', 9300, 203, 'R')
+pw = ZPLViewerWindow()
+
+def _pw_widgets(container):
+    for child in container.get_children():
+        yield child
+        if isinstance(child, Gtk.Container):
+            yield from _pw_widgets(child)
+
+def _pw_named(dialog, name):
+    return next(w for w in _pw_widgets(dialog) if w.get_name() == name)
+
+def _pw_build(document):
+    return gtk_main._build_print_dialog(pw, document, _PW_PRINTER, _PW_DEFAULT)
+
+def _pw_select(dialog, name, text):
+    combo = _pw_named(dialog, name)
+    combo.set_active([row[0] for row in combo.get_model()].index(text))
+
+_pw_doc = zpl_parser.parse_zpl(
+    "^XA^PRC,D,A^MD8.25^MMU^MNM,30^MTD^PQ50,10,1,Y^POI^CVY"
+    "^FO1,1^A0N,9,9^FDx^FS^XZ")[0]
+_pw_dialog, _pw_finish = _pw_build(_pw_doc)
+check("the Print window shows the label's settings as it carries them",
+      (_pw_dialog.get_title(), _pw_named(_pw_dialog, 'quantity').get_value_as_int(),
+       _pw_named(_pw_dialog, 'pause_count').get_value_as_int(),
+       _pw_named(_pw_dialog, 'invert').get_active(),
+       _pw_named(_pw_dialog, 'code_validation').get_active(),
+       _pw_named(_pw_dialog, 'print_speed').get_active_text(),
+       _pw_named(_pw_dialog, 'print_mode').get_active_text(),
+       _pw_named(_pw_dialog, 'mark_offset').get_value_as_int(),
+       _pw_named(_pw_dialog, 'mark_offset').get_sensitive())
+      == ('Print', 50, 10, True, True, '4 in/s (C)', 'As written: U', 30, True))
+_pw_notes = [w.get_text() for w in _pw_widgets(_pw_dialog)
+             if isinstance(w, Gtk.Label) and w.get_text().startswith('As written')
+             and w.get_visible()]
+check("a darkness no box can show is noted beside it, as written",
+      _pw_notes == ['As written: 8.25'], _pw_notes)
+check("it opens on the printer in effect, with Print as the default button",
+      _pw_named(_pw_dialog, 'address').get_text() == '192.168.1.50'
+      and _pw_named(_pw_dialog, 'print').has_default())
+_pw_plain = _pw_finish(gtk_main.PRINT_RESPONSE)
+check("Print pressed unchanged gives 'print', the same printer and the same "
+      "settings", _pw_plain[0] == 'print' and _pw_plain[1] == _PW_PRINTER
+      and _pw_plain[2] == _PS.read(_pw_doc), _pw_plain)
+check("and those settings, applied, change nothing",
+      not _pw_plain[2].apply(_pw_doc))
+
+for _pw_response in (Gtk.ResponseType.CANCEL, Gtk.ResponseType.DELETE_EVENT):
+    _pw_dialog, _pw_finish = _pw_build(_pw_doc)
+    check(f"{_pw_response.value_nick} gives None",
+          _pw_finish(_pw_response) is None)
+
+_pw_dialog, _pw_finish = _pw_build(_pw_doc)
+_pw_named(_pw_dialog, 'quantity').set_value(5)
+_pw_named(_pw_dialog, 'pause_count').set_value(0)
+check("the pause row says what 0 means, which Qt shows as Never",
+      'labels (0 = never)' in [w.get_text() for w in _pw_widgets(_pw_dialog)
+                               if isinstance(w, Gtk.Label)])
+_pw_named(_pw_dialog, 'mirror').set_active(True)
+_pw_named(_pw_dialog, 'cut_on_error').set_active(False)
+_pw_named(_pw_dialog, 'darkness').set_value(-12.5)
+_pw_select(_pw_dialog, 'print_speed', '6 in/s (D)')
+_pw_select(_pw_dialog, 'print_mode', 'Cutter (C)')
+_pw_named(_pw_dialog, 'prepeel').set_active(True)
+_pw_select(_pw_dialog, 'media_tracking', 'Non-continuous, web sensing (W)')
+_pw_select(_pw_dialog, 'media_type', "Printer's setting")
+_pw_edited = _pw_finish(Gtk.ResponseType.OK)
+_pw_set = _pw_edited[2]
+check("OK gives 'ok' and every row as edited",
+      _pw_edited[0] == 'ok'
+      and (_pw_set.quantity, _pw_set.pause_count, _pw_set.mirror,
+           _pw_set.cut_on_error, _pw_set.darkness, _pw_set.print_speed,
+           _pw_set.print_mode, _pw_set.prepeel, _pw_set.media_tracking,
+           _pw_set.media_type)
+      == (5, 0, True, False, -12.5, 6, 'C', True, 'W', None), _pw_set)
+_pw_target = zpl_parser.parse_zpl(_pw_doc.to_zpl())[0]
+_pw_set.apply(_pw_target)
+check("and applied, rewrites what changed and keeps the slew and backfeed",
+      list(_pw_target.media_settings.items())
+      == [('^PR', '6,6,2'), ('^MD', '-12.5'), ('^MM', 'C,Y'), ('^MN', 'W')],
+      _pw_target.media_settings)
+
+_pw_dialog, _pw_finish = _pw_build(_pw_doc)
+_pw_select(_pw_dialog, 'print_speed', "Printer's setting")
+_pw_select(_pw_dialog, 'media_tracking', 'Continuous (N)')
+_pw_named(_pw_dialog, 'darkness_set').set_active(False)
+_pw_chain = {name: _pw_named(_pw_dialog, name).get_sensitive()
+             for name in ('slew_speed', 'backfeed_speed', 'darkness',
+                          'mark_offset')}
+check("with no print speed, slew and backfeed are greyed out; so is the "
+      "darkness box with its tick clear, and the offset off mark sensing",
+      _pw_chain == dict.fromkeys(_pw_chain, False), _pw_chain)
+_pw_cleared = _pw_finish(Gtk.ResponseType.OK)[2]
+_pw_target = zpl_parser.parse_zpl(_pw_doc.to_zpl())[0]
+_pw_cleared.apply(_pw_target)
+check("and the printer's setting, applied, takes ^PR and ^MD out",
+      list(_pw_target.media_settings.items())
+      == [('^MM', 'U'), ('^MN', 'N'), ('^MT', 'D')], _pw_target.media_settings)
+
+_pw_dialog, _pw_finish = _pw_build(_pw_doc)
+_pw_named(_pw_dialog, 'use_default').clicked()
+check("Use Default refills the printer from the persisted default",
+      _pw_finish(Gtk.ResponseType.OK)[1] == _PW_DEFAULT)
+
+# Label Settings has lost Copies and the flips, and keeps the home. Its
+# dialog is run modally, so run() is stood in for while it is looked at.
+_ls_seen = {}
+def _ls_peek(dialog):
+    widgets = list(_pw_widgets(dialog))
+    _ls_seen['labels'] = [w.get_text() for w in widgets
+                          if isinstance(w, Gtk.Label)]
+    _ls_seen['checks'] = [w.get_label() for w in widgets
+                          if isinstance(w, Gtk.CheckButton)]
+    return Gtk.ResponseType.CANCEL
+_ls_real_run = Gtk.Dialog.run
+Gtk.Dialog.run = _ls_peek
+try:
+    pw.on_label_settings_clicked(None)
+finally:
+    Gtk.Dialog.run = _ls_real_run
+check("Label Settings no longer has Copies or ^PO/^PM/^LR, but keeps Home",
+      'Copies (^PQ):' not in _ls_seen['labels'] and not _ls_seen['checks']
+      and 'Home X (dots):' in _ls_seen['labels'], _ls_seen)
+
+# The window: one undo entry for a visit that changed the label, none for
+# one that did not, and Print sends after the settings go on.
+pw._save_settings = lambda *a: None
+pw.printer_address, pw.printer_port, pw.printer_dpi = '192.168.1.50', 9100, 203
+pw.design_canvas.document.dpi = 203
+pw.design_canvas.add_frame_element()
+pw.on_canvas_changed()
+pw.unsaved_changes = False
+_pw_undo = len(pw._undo_stack)
+_pw_printed = []
+pw.on_print_clicked = lambda _w: _pw_printed.append(
+    pw.design_canvas.document.print_quantity)
+
+gtk_main._print_dialog = _print_window_returns(_PW_PRINTER, 'print')
+try:
+    pw.on_print_dialog_clicked(None)
+finally:
+    gtk_main._print_dialog = real_print_dialog
+check("Print with nothing changed records no undo entry and leaves the file "
+      "saved", len(pw._undo_stack) == _pw_undo and not pw.unsaved_changes,
+      (len(pw._undo_stack), pw.unsaved_changes))
+check("and prints", _pw_printed == [1], _pw_printed)
+
+_pw_more = _PS.read(pw.design_canvas.document)
+_pw_more.quantity, _pw_more.darkness, _pw_more.invert = 3, 4.0, True
+gtk_main._print_dialog = _print_window_returns(_PW_PRINTER, 'print', _pw_more)
+try:
+    pw.on_print_dialog_clicked(None)
+finally:
+    gtk_main._print_dialog = real_print_dialog
+check("a visit that changes the label is one undo entry and unsaved",
+      len(pw._undo_stack) == _pw_undo + 1 and pw.unsaved_changes,
+      (len(pw._undo_stack), pw.unsaved_changes))
+check("and the settings are on before it prints", _pw_printed == [1, 3],
+      _pw_printed)
+pw.on_undo()
+_pw_back = pw.design_canvas.document
+check("undo takes the visit back",
+      (_pw_back.print_quantity, _pw_back.media_settings,
+       _pw_back.transform.invert) == (1, {}, False),
+      (_pw_back.print_quantity, _pw_back.media_settings))
+
+gtk_main._print_dialog = lambda *a, **k: None
+try:
+    pw.on_print_dialog_clicked(None)
+finally:
+    gtk_main._print_dialog = real_print_dialog
+check("Cancel changes nothing and prints nothing",
+      _pw_printed == [1, 3] and pw.design_canvas.document.print_quantity == 1)
+
+_pw_file = [i.get_label() for i in pw.print_item.get_parent().get_children()
+            if isinstance(i, Gtk.MenuItem) and i.get_label()]
+check("File has Print… and Quick Print, and no Printer Settings submenu",
+      '_Print\u2026' in _pw_file and '_Quick Print' in _pw_file
+      and not any('Printer Settings' in t.replace('_', '') for t in _pw_file),
+      _pw_file)
+check("Print… is Ctrl+P, Quick Print Ctrl+Shift+P",
+      pw.accelerators.get(pw.print_item) == '<Control>p'
+      and pw.accelerators.get(pw.quick_print_item) == '<Control><Shift>p')
+check("and the busy row withholds both while a job is out",
+      pw.print_item in pw._busy._blocked
+      and pw.quick_print_item in pw._busy._blocked)
+
+# Quick Print sends at once, with no window. A fresh window, since the one
+# above has its on_print_clicked stood in for.
+qw = ZPLViewerWindow()
+qw.design_canvas.add_frame_element()
+_qw_sent, _qw_windows = [], []
+def _qw_send(address, port, payload, timeout, read_reply=False, cancel=None):
+    _qw_sent.append(payload.decode('utf-8'))
+_qw_real_send = gtk_main.printer_io.send
+gtk_main.printer_io.send = _qw_send
+gtk_main._print_dialog = lambda *a, **k: _qw_windows.append(1)
+try:
+    qw.quick_print_item.activate()
+    _qw_until = _pw_time.monotonic() + 5
+    while ((not _qw_sent or qw._busy.running)
+           and _pw_time.monotonic() < _qw_until):
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        _pw_time.sleep(0.01)
+finally:
+    gtk_main.printer_io.send = _qw_real_send
+    gtk_main._print_dialog = real_print_dialog
+check("Quick Print sends the label without opening the Print window",
+      len(_qw_sent) == 1 and not _qw_windows
+      and '^PON' in _qw_sent[0] and '^GB' in _qw_sent[0],
+      (_qw_windows, _qw_sent))
+qw.destroy()
+pw.destroy()
 
 # --- File > Open Recent through the GTK window --------------------------------
 # A window of its own: the suite's first was destroyed further up, and a

@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 import _isolate  # a throwaway settings file, before any frontend is imported
 from PIL import Image
 from zplcore import graphic_store, transforms
+from zplcore.print_settings import PrintSettings
 FIXTURE_300 = ROOT / 'tests' / 'fixtures' / 'sample_300dpi.zpl'
 # ZPL as another tool writes it: ^A0, ^FB and two commands on one line
 FIXTURE_TEMPLATE = ROOT / 'tests' / 'fixtures' / 'product_barcode.zpl'
@@ -450,6 +451,19 @@ class GtkDriver:
         """One accepted Label Settings visit, through the frontend's handler."""
         self.window.apply_label_settings(w, h, dpi, w_in, h_in, transform)
 
+    def print_window(self, settings):
+        """One Print window visit accepted with OK, through the frontend's
+        handler: these settings, and the printer already in effect."""
+        from gtkui import window as gtk_window
+        current = (self.window.printer_address, self.window.printer_port,
+                   self.window.printer_dpi, self.window.printer_font_device)
+        real = gtk_window._print_dialog
+        gtk_window._print_dialog = lambda *a, **k: ('ok', current, settings)
+        try:
+            self.window.on_print_dialog_clicked(None)
+        finally:
+            gtk_window._print_dialog = real
+
     def label_size(self):
         return (self.canvas.label_width, self.canvas.label_height)
 
@@ -795,6 +809,19 @@ class QtDriver:
     def label_settings(self, w, h, dpi, w_in, h_in, transform=None):
         """One accepted Label Settings visit, through the frontend's handler."""
         self.window.apply_label_settings(w, h, dpi, w_in, h_in, transform)
+
+    def print_window(self, settings):
+        """One Print window visit accepted with OK, through the frontend's
+        handler: these settings, and the printer already in effect."""
+        from qtui import dialogs
+        current = (self.window.printer_address, self.window.printer_port,
+                   self.window.printer_dpi, self.window.printer_font_device)
+        real = dialogs.print_dialog
+        dialogs.print_dialog = lambda *a, **k: ('ok', current, settings)
+        try:
+            self.window.on_print_dialog()
+        finally:
+            dialogs.print_dialog = real
 
     def label_size(self):
         return (self.document.label_width, self.document.label_height)
@@ -1609,6 +1636,19 @@ def sequence(driver, record):
     _moved.invert = True
     driver.label_settings(406, 406, 203, 2.0, 2.0, _moved)
     record('move the label home and invert it')
+
+    # Everything the Print window saves with the label has to reach the file
+    # the same way in both, as one undo entry in both.
+    _depth = driver.undo_depth()
+    driver.print_window(PrintSettings(
+        quantity=3, pause_count=1, cut_on_error=False, invert=True,
+        mirror=True, code_validation=True, darkness=-5.5, print_speed=4,
+        slew_speed=6, print_mode='C', prepeel=True, media_tracking='M',
+        mark_offset=24, media_type='D'))
+    record('the Print window: copies, flips, ^CV and the printer set-up')
+    record('and it is one undo entry', str(driver.undo_depth() - _depth))
+    driver.undo()
+    record('and undoing it puts the label back')
 
     # Turning a literal field into a variable one has to reach the file the same
     # way in both frontends: a ^FN where the ^FD used to be.

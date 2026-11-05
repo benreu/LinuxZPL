@@ -128,7 +128,7 @@ def _buttons(dialog, accept_text="OK"):
 
 def _font_device_combo(device: str) -> QComboBox:
     """Which printer memory a font goes to, offered the same way wherever it
-    is chosen - Printer Settings, and the Fonts manager's own Upload.
+    is chosen - the printer rows, and the Fonts manager's own Upload.
 
     The same STORED_GRAPHIC_DEVICES the Store Graphic dialog offers, so a
     memory type reads identically everywhere ("E: (Flash)"), and Z: is absent
@@ -146,10 +146,11 @@ def _font_device_combo(device: str) -> QComboBox:
 def _dpi_combo(dpi: int) -> QComboBox:
     """The resolution choice, offered the same way wherever it is edited.
 
-    Label Settings and Printer Settings both write the one printer_dpi setting,
-    so they have to offer the same list - including the fallback: a resolution
-    the designer does not support can still be the one in force, and must be
-    shown rather than silently replaced with a supported one.
+    Label Settings and the printer rows (Default Printer, the Print window)
+    all set the printer's resolution, so they have to offer the same list -
+    including the fallback: a resolution the designer does not support can
+    still be the one in force, and must be shown rather than silently
+    replaced with a supported one.
     """
     combo = QComboBox()
     for d in zpl_fonts.SUPPORTED_DPI:
