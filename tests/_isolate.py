@@ -19,6 +19,9 @@ so a GTK import that got in first would keep the real one.
 
 A suite that needs a particular setting still sets it explicitly; this only
 decides what it starts from.
+
+The cache directory goes the same way, so the help's PDFs (zplcore/helppdf.py)
+made by a suite land in a throwaway folder and not in the user's own cache.
 """
 
 import os
@@ -26,3 +29,4 @@ import tempfile
 
 CONFIG_HOME = tempfile.mkdtemp(prefix='linuxzpl-test-')
 os.environ['XDG_CONFIG_HOME'] = CONFIG_HOME
+os.environ['XDG_CACHE_HOME'] = os.path.join(CONFIG_HOME, 'cache')
