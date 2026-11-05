@@ -137,11 +137,15 @@ class Grid:
         """Where line k is, in dots from the label's top or left edge."""
         return int(math.floor(k * self.spacing_dots(dpi) + 0.5))
 
-    def snap_value(self, value, dpi) -> int:
-        """The grid line nearest `value`, a tie going to the higher one."""
+    def nearest_line(self, value, dpi) -> int:
+        """The number of the line nearest `value`, a tie going to the higher."""
         k = int(math.floor(value / self.spacing_dots(dpi)))
         below, above = self.line_at(k, dpi), self.line_at(k + 1, dpi)
-        return below if value - below < above - value else above
+        return k if value - below < above - value else k + 1
+
+    def snap_value(self, value, dpi) -> int:
+        """The grid line nearest `value`, a tie going to the higher one."""
+        return self.line_at(self.nearest_line(value, dpi), dpi)
 
     def lines(self, low, high, scale, dpi) -> list:
         """The lines to draw across one axis, as (dots, is_major).

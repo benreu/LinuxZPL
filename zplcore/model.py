@@ -2745,7 +2745,16 @@ class Document:
 
     def _stagger(self, step: int) -> int:
         """Offset for a new element, so successive additions do not stack.
-        Only a click uses it: a dropped element goes where it was dropped."""
+        Only a click uses it: a dropped element goes where it was dropped.
+
+        None while new elements snap to the grid, where _append steps a whole
+        grid space per element instead: a 10-dot step on a 20-dot grid would
+        round two clicks in a row onto the same line, which is the stack the
+        stagger is there to prevent.
+        """
+        grid = self.snap_grid
+        if grid is not None and grid.snap:
+            return 0
         return len(self.elements) * step
 
     def add_text_element(self, text: str = "New Text", at=None) -> TextElement:
@@ -2849,6 +2858,17 @@ class Document:
         if at is not None:
             element.x = at[0] - element.width // 2
             element.y = at[1] - element.height // 2
+        # With Snap to Grid on its top-left corner goes to the nearest line, as
+        # a dragged one would - and a click's, with no stagger of its own, one
+        # line further down and right for every element already there. Not a
+        # drag's picture, which is held by its centre whatever the grid.
+        grid = self.snap_grid
+        if grid is not None and grid.snap and not self._previewing:
+            steps = len(self.elements) if at is None else 0
+            element.x = grid.line_at(grid.nearest_line(element.x, self.dpi) + steps,
+                                     self.dpi)
+            element.y = grid.line_at(grid.nearest_line(element.y, self.dpi) + steps,
+                                     self.dpi)
         self._fit_new_element_to_bounds(element)
         if self._previewing:
             return element
@@ -2858,6 +2878,12 @@ class Document:
 
     # Set only inside drop_preview, where _append builds without adding
     _previewing = False
+
+    # The window's grid (zplcore.grid.Grid) while the canvas showing this
+    # document has one, so a new element from the palette lands on it. A view
+    # setting, not part of the label: never written, never in a snapshot, and
+    # None for a document no canvas shows - a paste's fragment, a test's.
+    snap_grid = None
 
     def drop_preview(self, kind: str, at) -> DesignElement:
         """The element a palette drop of `kind` at `at` would add, without

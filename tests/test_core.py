@@ -11669,6 +11669,143 @@ try:
 finally:
     qt_main._config_path, qt_main._fallback_config_path = _gw_real
 
+# --- snapping: zplcore/snap.py, and where the palette puts new elements --------
+from zplcore import snap as zpl_snap
+
+_sdoc = Document(812, 1218, dpi=203)
+_sg = zpl_grid.Grid(snap=True)          # 0.1 in: lines at 0, 20, 41, 61, 81, 102
+_soff = zpl_grid.Grid()                 # the same grid with Snap to Grid off
+_sbox = (100, 100, 200, 150)
+check("without a grid to snap to, a move is the pointer's",
+      zpl_snap.move_delta(_sdoc, _sbox, 7, -3) == (7, -3)
+      and zpl_snap.move_delta(_sdoc, _sbox, 7, -3, _soff) == (7, -3))
+check("with one, the box's top-left corner goes to the nearest line",
+      zpl_snap.move_delta(_sdoc, _sbox, 0, 0, _sg) == (2, 2)
+      and zpl_snap.move_delta(_sdoc, _sbox, 33, 5, _sg) == (42, 2))
+check("Shift keeps the move along the axis the pointer has gone further",
+      zpl_snap.move_delta(_sdoc, _sbox, 33, 5, lock_axis=True) == (33, 0)
+      and zpl_snap.move_delta(_sdoc, _sbox, 4, -9, lock_axis=True) == (0, -9))
+check("and the locked axis stays where it was pressed rather than jumping to a line",
+      zpl_snap.move_delta(_sdoc, _sbox, 33, 5, _sg, lock_axis=True) == (42, 0))
+check("a physical grid follows the resolution",
+      zpl_snap.move_delta(Document(1200, 1800, dpi=300), (100, 100, 10, 10),
+                          33, 0, _sg) == (20, -10))
+check("a millimetre grid too",
+      zpl_snap.move_delta(_sdoc, (100, 100, 10, 10), 0, 0,
+                          zpl_grid.Grid('mm', 1, snap=True)) == (4, 4))
+
+def _drag_in_steps(document, elements, origin, total, steps, grid=None):
+    """A drag delivered a dot or a few at a time, as a pointer delivers it."""
+    for k in range(1, steps + 1):
+        zpl_snap.drag_selection(document, elements, origin,
+                                total[0] * k // steps, total[1] * k // steps, grid)
+
+_slow = _sdoc.add_frame_element()
+_fast = Document(812, 1218, dpi=203).add_frame_element()
+_slow.x = _slow.y = _fast.x = _fast.y = 102
+_drag_in_steps(_sdoc, [_slow], (102, 102, 200, 150), (47, 9), 47, _sg)
+zpl_snap.drag_selection(Document(812, 1218, dpi=203), [_fast], (102, 102, 200, 150),
+                        47, 9, _sg)
+check("a slow drag on the grid ends where a fast one does",
+      (_slow.x, _slow.y) == (_fast.x, _fast.y) == (142, 102),
+      ((_slow.x, _slow.y), (_fast.x, _fast.y)))
+_slow.x = _slow.y = 102
+_drag_in_steps(_sdoc, [_slow], (102, 102, 200, 150), (7, 7), 7, _sg)
+check("and a drag shorter than half a space leaves it on its line",
+      (_slow.x, _slow.y) == (102, 102))
+_sdoc.elements.remove(_slow)
+
+_pair = Document(812, 1218, dpi=203)
+_pa, _pb = _pair.add_frame_element(), _pair.add_frame_element()
+_pa.x, _pa.y, _pb.x, _pb.y = 100, 100, 150, 130
+zpl_snap.drag_selection(_pair, [_pa, _pb], geometry.selection_bounds([_pa, _pb]),
+                        33, 5, _sg)
+check("a group snaps its joint box and keeps its shape",
+      (_pa.x, _pa.y, _pb.x - _pa.x, _pb.y - _pa.y) == (142, 102, 50, 30),
+      (_pa.x, _pa.y, _pb.x, _pb.y))
+
+_edge = Document(812, 1218, dpi=203).add_frame_element()
+_edge.x, _edge.y = 500, 100
+_edoc = Document(812, 1218, dpi=203); _edoc.elements.append(_edge)
+_eorigin = geometry.selection_bounds([_edge])
+for _d in range(0, 401, 10):
+    zpl_snap.drag_selection(_edoc, [_edge], _eorigin, _d, 0)
+_held = _edge.x
+for _d in range(400, 49, -10):
+    zpl_snap.drag_selection(_edoc, [_edge], _eorigin, _d, 0)
+check("a drag pushed past the edge stops there",
+      _held == 812 - _edge.width, _held)
+check("and brought back keeps the point it grabbed under the pointer",
+      _edge.x == 550, _edge.x)
+
+_ro = {'x': 102, 'y': 102, 'width': 200, 'height': 150}
+check("a resize snaps the edges its handle moves: the right and bottom",
+      zpl_snap.resize_delta(_sdoc, _ro, 'br', 30, 17, _sg) == (23, 12))
+check("the left and top",
+      zpl_snap.resize_delta(_sdoc, _ro, 'tl', -26, -14, _sg) == (-21, -21))
+check("and a side handle only its own",
+      zpl_snap.resize_delta(_sdoc, _ro, 'mr', 30, 17, _sg) == (23, 17)
+      and zpl_snap.resize_delta(_sdoc, _ro, 'tm', 33, -14, _sg) == (33, -21))
+check("a tie between two lines goes to the higher one, and a corner snaps both "
+      "its edges however far each has moved",
+      zpl_snap.resize_delta(_sdoc, _ro, 'br', 33, 0, _sg) == (43, -8))
+check("without a grid to snap to, a resize is the pointer's",
+      zpl_snap.resize_delta(_sdoc, _ro, 'br', 33, 17, _soff) == (33, 17)
+      and zpl_snap.resize_delta(_sdoc, _ro, 'br', 33, 17) == (33, 17))
+
+_rframe = _sdoc.add_frame_element()
+_rframe.x, _rframe.y, _rframe.width, _rframe.height = 102, 102, 200, 150
+_rorigin = geometry.resize_origin(_rframe)
+geometry.resize_by_handle(_sdoc, _rframe, 'br',
+                          *zpl_snap.resize_delta(_sdoc, _rorigin, 'br', 30, 17, _sg),
+                          origin=_rorigin)
+check("a frame's dragged corner lands on the grid",
+      (_rframe.x + _rframe.width, _rframe.y + _rframe.height) == (325, 264),
+      (_rframe.x + _rframe.width, _rframe.y + _rframe.height))
+_sdoc.elements.remove(_rframe)
+_rtext = _sdoc.add_text_element('Snap')
+_rtext.x, _rtext.y = 102, 102
+_sdoc.sync_text_width(_rtext)
+_rright, _rbottom = _rtext.x + _rtext.width, _rtext.y + _rtext.height
+_rorigin = geometry.resize_origin(_rtext)
+geometry.resize_by_handle(_sdoc, _rtext, 'tl',
+                          *zpl_snap.resize_delta(_sdoc, _rorigin, 'tl', -30, -30, _sg),
+                          origin=_rorigin)
+check("a text box takes the size it prints at, and its opposite corner stays put",
+      (_rtext.x + _rtext.width, _rtext.y + _rtext.height) == (_rright, _rbottom),
+      ((_rtext.x, _rtext.y), (_rright, _rbottom)))
+_sdoc.elements.remove(_rtext)
+
+# Where the palette puts a new element
+_pdoc = Document(812, 1218, dpi=203)
+check("a document no canvas shows has no grid", _pdoc.snap_grid is None)
+_pdoc.snap_grid = _sg
+_dropped = _pdoc.add_frame_element(at=(333, 333))
+check("a drop with Snap to Grid on puts the top-left corner on the grid",
+      (_dropped.x, _dropped.y) == (223, 264), (_dropped.x, _dropped.y))
+_clicks = [_pdoc.add_text_element() for _ in range(3)]
+check("a click lands on the grid, each one a grid space on from the last",
+      [(e.x, e.y) for e in _clicks] == [(61, 61), (81, 81), (102, 102)],
+      [(e.x, e.y) for e in _clicks])
+check("not a drag's picture, which is held by its centre",
+      (_pdoc.drop_preview('frame', (0, 0)).x,
+       _pdoc.drop_preview('frame', (0, 0)).y) == (0, 0))
+_sg.snap = False
+_free = _pdoc.add_frame_element(at=(333, 333))
+check("with Snap to Grid off a drop is centred on the point, as before",
+      (_free.x, _free.y) == (233, 258), (_free.x, _free.y))
+_sg.snap = True
+_pasted = _pdoc.paste_zpl('^XA^FO7,9^GB30,30,2^FS^XZ')
+check("a paste keeps the place it was copied from",
+      [(e.x, e.y) for e in _pdoc.selection] == [(7, 9)],
+      [(e.x, e.y) for e in _pdoc.selection])
+check("and the grid is in no snapshot", 'Grid(' not in repr(_pdoc.snapshot()))
+
+_s_src = (Path(__file__).resolve().parent.parent / 'zplcore' / 'snap.py').read_text()
+check("snap.py names no GUI toolkit",
+      not any(t in _s_src for t in
+              ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
