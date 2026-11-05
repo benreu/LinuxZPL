@@ -31,8 +31,10 @@ from PySide2.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication
 
 from zplcore import (fields as zpl_fields, firmware as zpl_firmware,
                      fonts as zpl_fonts, geometry, graphic_store,
-                     local_port as zpl_local, printer_io, printer_objects,
-                     printer_status, textraster, workflow)
+                     local_port as zpl_local, print_settings as zpl_print,
+                     printer_io, printer_objects, printer_status, textraster,
+                     workflow)
+from zplcore.print_settings import AsWritten, PrintSettings
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
                            BARCODE_MODES, BARCODE_ORIENTATIONS,
@@ -2019,6 +2021,9 @@ def store_object_dialog(parent, default_name: str, default_ext: str):
 def label_size_dialog(parent, document: Document, dpi: int):
     """New (width, height, dpi, width_in, height_in, transform), or None.
 
+    The transform is the document's with the home typed here; ^PO, ^PM and
+    ^LR, which it also holds, are the Print window's, and pass through.
+
     The size is entered in inches and stored in dots, so the resolution belongs
     beside it: the dots are a consequence of both, and having to leave for
     another dialog to change one of the two halves is how a label ends up the
@@ -2055,12 +2060,6 @@ def label_size_dialog(parent, document: Document, dpi: int):
     dpi_combo = _dpi_combo(dpi)
     form.addRow("DPI:", dpi_combo)
 
-    quantity_spin = QSpinBox()
-    quantity_spin.setObjectName("quantity")
-    quantity_spin.setRange(1, 99999999)
-    quantity_spin.setValue(document.print_quantity)
-    form.addRow("Copies (^PQ):", quantity_spin)
-
     # ^LH: the origin every field is placed from. Its use is preprinted stock -
     # moving the printable area below a pre-printed header - so it belongs
     # beside the size rather than among the printer settings.
@@ -2075,22 +2074,6 @@ def label_size_dialog(parent, document: Document, dpi: int):
     home_y.setRange(0, 32000)
     home_y.setValue(document.transform.home[1])
     form.addRow("Home Y (dots):", home_y)
-
-    # How the finished label is laid down, rather than where a field sits on it
-    invert_check = QCheckBox("Print upside down (^PO)")
-    invert_check.setObjectName("invert")
-    invert_check.setChecked(document.transform.invert)
-    form.addRow("Orientation:", invert_check)
-
-    mirror_check = QCheckBox("Mirror left to right (^PM)")
-    mirror_check.setObjectName("mirror")
-    mirror_check.setChecked(document.transform.mirror)
-    form.addRow("Mirror:", mirror_check)
-
-    reverse_check = QCheckBox("Reverse fields, white on black (^LR)")
-    reverse_check.setObjectName("reverse")
-    reverse_check.setChecked(document.transform.reverse)
-    form.addRow("Reverse:", reverse_check)
 
     for text, w_in, h_in in PRESET_SIZES:
         btn = QPushButton(text)
@@ -2130,75 +2113,118 @@ def label_size_dialog(parent, document: Document, dpi: int):
     # snapshot may still be holding.
     transform = document.transform.copy()
     transform.home = (home_x.value(), home_y.value())
-    transform.invert = invert_check.isChecked()
-    transform.mirror = mirror_check.isChecked()
-    transform.reverse = reverse_check.isChecked()
     return to_dots() + (chosen_dpi(), width_spin.value(), height_spin.value(),
-                        transform, quantity_spin.value())
+                        transform)
 
 
-def printer_settings_dialog(parent, address: str, port: int, dpi: int,
-                            font_device: str = None,
-                            title: str = "Printer Settings", default=None):
-    """New (address, port, dpi, font_device), or None if cancelled.
+class _PrinterRows:
+    """Address, Port, DPI, Font memory and Test Connection, plus Use Default
+    when there is a default to go back to.
 
-    `default`, when given, is the persisted (address, port, dpi, font_device)
-    to offer via a "Use Default" button - for the session-only picker, which
-    is opened with whatever printer is currently in effect rather than the
-    default.
+    Default Printer and the Print window both build their printer from these
+    rows, so the two can't drift apart. `box` is the widget holding them.
+    `withhold(buttons)` adds the busy row, and the buttons it names are
+    withheld while a probe is out, so a half-finished one can't be accepted as
+    an answer.
 
-    Font memory belongs here rather than beside each text element: which
+    Font memory belongs here rather than beside each text element. Which
     memory a printer keeps its fonts in is a property of the printer being
     deployed to, not of one field on one label.
     """
-    dialog = QDialog(parent)
-    dialog.setWindowTitle(title)
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    layout.addLayout(form)
 
-    address_edit = QLineEdit(address)
-    form.addRow("Address:", address_edit)
+    def __init__(self, address: str, port: int, dpi: int,
+                 font_device: str = None, default=None):
+        self._dpi = dpi
+        self.box = QWidget()
+        layout = QVBoxLayout(self.box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        form = QFormLayout()
+        layout.addLayout(form)
 
-    port_spin = QSpinBox()
-    port_spin.setRange(1, 65535)
-    port_spin.setValue(port)
-    form.addRow("Port:", port_spin)
+        self.address_edit = QLineEdit(address)
+        self.address_edit.setObjectName("address")
+        form.addRow("Address:", self.address_edit)
 
-    dpi_combo = _dpi_combo(dpi)
-    form.addRow("DPI:", dpi_combo)
+        self.port_spin = QSpinBox()
+        self.port_spin.setObjectName("port")
+        self.port_spin.setRange(1, 65535)
+        self.port_spin.setValue(port)
+        form.addRow("Port:", self.port_spin)
 
-    font_device_combo = _font_device_combo(font_device)
-    form.addRow("Font memory:", font_device_combo)
+        self.dpi_combo = _dpi_combo(dpi)
+        form.addRow("DPI:", self.dpi_combo)
 
-    test_row = QHBoxLayout()
-    test_btn = QPushButton("Test Connection")
-    test_row.addWidget(test_btn)
-    test_row.addStretch(1)
-    layout.addLayout(test_row)
-    result = QLabel()
-    result.setWordWrap(True)
-    layout.addWidget(result)
+        self.font_device_combo = _font_device_combo(font_device)
+        form.addRow("Font memory:", self.font_device_combo)
 
-    def set_result(colour, text):
-        result.setStyleSheet(f"color: {colour};")
-        result.setText(text)
+        self._test_row = QHBoxLayout()
+        self.test_btn = QPushButton("Test Connection")
+        self._test_row.addWidget(self.test_btn)
+        if default is not None:
+            # What the persisted default printer is, for comparing against or
+            # going back to.
+            default_btn = QPushButton("Use Default")
+            default_btn.setObjectName("use_default")
+            default_btn.clicked.connect(lambda: self._fill(*default))
+            self._test_row.addWidget(default_btn)
+        self._test_row.addStretch(1)
+        layout.addLayout(self._test_row)
+        self.result = QLabel()
+        self.result.setWordWrap(True)
+        layout.addWidget(self.result)
+        self.busy = None
+        self.test_btn.clicked.connect(self._on_test)
 
-    buttons = _buttons(dialog)
-    # OK is withheld while a probe is out so a half-finished one can't be
-    # accepted as an answer.
-    busy = BusyBar((test_btn, buttons.button(QDialogButtonBox.Ok)),
-                   lambda text: set_result("gray", text), dialog)
-    test_row.addWidget(busy)
+    def withhold(self, buttons) -> None:
+        self.busy = BusyBar((self.test_btn, *buttons),
+                            lambda text: self._set_result("gray", text),
+                            self.box)
+        self._test_row.addWidget(self.busy)
 
-    def on_test():
-        addr = address_edit.text().strip()
-        prt = port_spin.value()
+    def abandon(self) -> None:
+        if self.busy is not None:
+            self.busy.abandon()
+
+    def value(self, parent):
+        """(address, port, dpi, font_device), or None when no address is
+        given, which is reported."""
+        address = self.address_edit.text().strip()
+        if not address:
+            show_error(parent, "Printer address cannot be empty.")
+            return None
+        return (address, self.port_spin.value(),
+                _dpi_from(self.dpi_combo, self._dpi),
+                self.font_device_combo.currentData())
+
+    def _set_result(self, colour, text):
+        self.result.setStyleSheet(f"color: {colour};")
+        self.result.setText(text)
+
+    def _fill(self, address, port, dpi, font_device):
+        index = self.font_device_combo.findData(font_device)
+        if index >= 0:
+            self.font_device_combo.setCurrentIndex(index)
+        self.address_edit.setText(address)
+        self.port_spin.setValue(port)
+        if dpi in zpl_fonts.SUPPORTED_DPI:
+            self.dpi_combo.setCurrentIndex(
+                list(zpl_fonts.SUPPORTED_DPI).index(dpi))
+        else:
+            index = self.dpi_combo.findText(str(dpi))
+            if index < 0:
+                self.dpi_combo.addItem(str(dpi))
+                index = self.dpi_combo.count() - 1
+            self.dpi_combo.setCurrentIndex(index)
+
+    def _on_test(self):
+        addr = self.address_edit.text().strip()
+        prt = self.port_spin.value()
         if not addr:
-            set_result("red", "Address is required")
+            self._set_result("red", "Address is required")
             return
-        set_result("gray", f"Connecting to {addr}:{prt}…")
+        self._set_result("gray", f"Connecting to {addr}:{prt}…")
         connected = f"✓ Connected to {addr}:{prt}"
+        busy = self.busy
 
         def probe(cancel):
             # Connect and send nothing: reachability first, on its own, so
@@ -2209,59 +2235,309 @@ def printer_settings_dialog(parent, address: str, port: int, dpi: int,
 
         def done(reported, error):
             if isinstance(error, printer_io.Cancelled):
-                set_result("gray", "Test cancelled.")
+                self._set_result("gray", "Test cancelled.")
             elif error is not None:
-                set_result("red", f"✗ {error}")
+                self._set_result("red", f"✗ {error}")
             elif reported is None:
                 # No answer must leave the manual setting alone rather than
                 # substituting a guess.
-                set_result("orange", f"{connected}, but it did not report its "
-                                     f"resolution; set the DPI manually.")
+                self._set_result("orange",
+                                 f"{connected}, but it did not report its "
+                                 f"resolution; set the DPI manually.")
             elif reported in zpl_fonts.SUPPORTED_DPI:
-                dpi_combo.setCurrentIndex(list(zpl_fonts.SUPPORTED_DPI).index(reported))
-                set_result("green", f"{connected} — {reported} dpi")
+                self.dpi_combo.setCurrentIndex(
+                    list(zpl_fonts.SUPPORTED_DPI).index(reported))
+                self._set_result("green", f"{connected} — {reported} dpi")
             else:
-                set_result("orange", f"{connected} — reports {reported} dpi, "
-                                     f"which the designer does not support.")
+                self._set_result("orange",
+                                 f"{connected} — reports {reported} dpi, "
+                                 f"which the designer does not support.")
 
         busy.run(probe, done)
 
-    test_btn.clicked.connect(on_test)
 
-    if default is not None:
-        default_btn = QPushButton("Use Default")
-        layout.addWidget(default_btn)
-
-        def on_use_default():
-            def_address, def_port, def_dpi, def_font_device = default
-            idx = font_device_combo.findData(def_font_device)
-            if idx >= 0:
-                font_device_combo.setCurrentIndex(idx)
-            address_edit.setText(def_address)
-            port_spin.setValue(def_port)
-            if def_dpi in zpl_fonts.SUPPORTED_DPI:
-                dpi_combo.setCurrentIndex(list(zpl_fonts.SUPPORTED_DPI).index(def_dpi))
-            else:
-                idx = dpi_combo.findText(str(def_dpi))
-                if idx < 0:
-                    dpi_combo.addItem(str(def_dpi))
-                    idx = dpi_combo.count() - 1
-                dpi_combo.setCurrentIndex(idx)
-
-        default_btn.clicked.connect(on_use_default)
-
+def printer_settings_dialog(parent, address: str, port: int, dpi: int,
+                            font_device: str = None,
+                            title: str = "Default Printer"):
+    """New (address, port, dpi, font_device), or None if cancelled."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(title)
+    layout = QVBoxLayout(dialog)
+    rows = _PrinterRows(address, port, dpi, font_device)
+    layout.addWidget(rows.box)
+    buttons = _buttons(dialog)
+    rows.withhold((buttons.button(QDialogButtonBox.Ok),))
     layout.addWidget(buttons)
 
     accepted = dialog.exec_() == QDialog.Accepted
-    busy.abandon()
+    rows.abandon()
     if not accepted:
         return None
-    new_address = address_edit.text().strip()
-    if not new_address:
-        show_error(parent, "Printer address cannot be empty.")
+    return rows.value(parent)
+
+
+def _value_combo(name: str, options) -> QComboBox:
+    """A choice row over (label, value) pairs. The values stay on the Python
+    side, `combo.value()`, rather than going through Qt's item data, and the
+    row starts on the first one."""
+    combo = QComboBox()
+    combo.setObjectName(name)
+    values = []
+    for label, value in options:
+        combo.addItem(label)
+        values.append(value)
+    combo.value = lambda: values[combo.currentIndex()]
+    combo.select = lambda value: combo.setCurrentIndex(
+        values.index(value) if value in values else 0)
+    return combo
+
+
+def _setup_combo(name: str, options, current) -> QComboBox:
+    """A set-up row: the printer's setting, then the carried value when no
+    option is it, then the options."""
+    combo = _value_combo(name, zpl_print.choices(options, current))
+    combo.select(current)
+    return combo
+
+
+def _count_spin(name: str, limits, value: int) -> QSpinBox:
+    spin = QSpinBox()
+    spin.setObjectName(name)
+    spin.setRange(*limits)
+    spin.setValue(value)
+    spin.setGroupSeparatorShown(True)
+    return spin
+
+
+class _NumberRow:
+    """A number box that can hold a carried value it cannot show.
+
+    An AsWritten is shown beside the box, and is what the row gives back
+    until the box is changed.
+    """
+
+    def __init__(self, spin, current, shown_instead):
+        self.spin = spin
+        self.note = QLabel()
+        self._current = current
+        self._touched = False
+        if isinstance(current, AsWritten):
+            spin.setValue(shown_instead)
+            self.note.setText(current.label())
+        else:
+            if current is not None:
+                spin.setValue(current)
+            self.note.hide()
+        spin.valueChanged.connect(self._on_changed)
+
+    def _on_changed(self, _value):
+        self._touched = True
+        self.note.hide()
+
+    def value(self):
+        if isinstance(self._current, AsWritten) and not self._touched:
+            return self._current
+        return self.spin.value()
+
+
+def print_dialog(parent, document: Document, printer, default):
+    """The Print window. Returns (action, printer, settings), or None if
+    cancelled.
+
+    `action` is 'print' or 'ok'. OK keeps the settings without printing.
+    `printer` is the (address, port, dpi, font_device) for this session, and
+    the window opens on the one in effect. `default` is the persisted printer
+    Use Default goes back to. `settings` is a print_settings.PrintSettings:
+    everything here that is saved with the label, for the caller to apply as
+    one undo entry. The rows come from print_settings, the same tables the
+    GTK window draws from.
+    """
+    settings = PrintSettings.read(document)
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Print")
+    layout = QVBoxLayout(dialog)
+    columns = QHBoxLayout()
+    layout.addLayout(columns)
+    left, right = QVBoxLayout(), QVBoxLayout()
+    columns.addLayout(left)
+    columns.addLayout(right)
+
+    printer_box = QGroupBox("Printer (this session only)")
+    rows = _PrinterRows(*printer, default=default)
+    QVBoxLayout(printer_box).addWidget(rows.box)
+    left.addWidget(printer_box)
+
+    copies_box = QGroupBox("Copies (^PQ)")
+    copies = QFormLayout(copies_box)
+    quantity = _count_spin("quantity", zpl_print.QUANTITY_RANGE,
+                           settings.quantity)
+    copies.addRow("Copies:", quantity)
+    pause = _count_spin("pause_count", zpl_print.PAUSE_RANGE,
+                        settings.pause_count)
+    pause.setSpecialValueText("Never")
+    pause.setSuffix(" labels")
+    copies.addRow("Pause every:", pause)
+    replicates = _count_spin("replicates", zpl_print.REPLICATE_RANGE,
+                             settings.replicates)
+    replicates.setToolTip("Copies of each serial number before it counts on")
+    copies.addRow("Replicates:", replicates)
+    override = QCheckBox("Don't pause between groups")
+    override.setObjectName("override_pause")
+    override.setChecked(settings.override_pause)
+    copies.addRow(override)
+    cut = QCheckBox("Cut after a voided RFID label")
+    cut.setObjectName("cut_on_error")
+    cut.setChecked(settings.cut_on_error)
+    copies.addRow(cut)
+    left.addWidget(copies_box)
+    left.addStretch(1)
+
+    # How the finished label is laid down, and checked, rather than where a
+    # field sits on it.
+    label_box = QGroupBox("Label")
+    flags = QVBoxLayout(label_box)
+
+    def flag(name, text, value):
+        check = QCheckBox(text)
+        check.setObjectName(name)
+        check.setChecked(value)
+        flags.addWidget(check)
+        return check
+
+    invert = flag("invert", "Print upside down (^PO)", settings.invert)
+    mirror = flag("mirror", "Mirror left to right (^PM)", settings.mirror)
+    reverse = flag("reverse", "Reverse fields, white on black (^LR)",
+                   settings.reverse)
+    validate = flag("code_validation", "Check barcode data as printed (^CV)",
+                    settings.code_validation)
+    right.addWidget(label_box)
+
+    setup_box = QGroupBox("Printer setup sent with the label")
+    setup = QFormLayout(setup_box)
+
+    # A number box has no "unset", so the darkness has a tick for it.
+    darkness_set = QCheckBox()
+    darkness_set.setObjectName("darkness_set")
+    darkness_set.setToolTip("Clear for the printer's setting")
+    darkness_set.setChecked(settings.darkness is not None)
+    darkness_spin = QDoubleSpinBox()
+    darkness_spin.setObjectName("darkness")
+    darkness_spin.setRange(*zpl_print.DARKNESS_RANGE)
+    darkness_spin.setDecimals(zpl_print.DARKNESS_DECIMALS)
+    darkness_spin.setSingleStep(1.0)
+    darkness = _NumberRow(darkness_spin, settings.darkness, 0.0)
+    darkness_row = QHBoxLayout()
+    darkness_row.addWidget(darkness_set)
+    darkness_row.addWidget(darkness_spin, 1)
+    darkness_row.addWidget(darkness.note)
+    setup.addRow("Darkness (^MD):", darkness_row)
+
+    print_speed = _setup_combo("print_speed", zpl_print.PRINT_SPEED_CHOICES,
+                               settings.print_speed)
+    setup.addRow("Print speed (^PR):", print_speed)
+    slew_speed = _setup_combo("slew_speed", zpl_print.FEED_SPEED_CHOICES,
+                              settings.slew_speed)
+    setup.addRow("Slew speed:", slew_speed)
+    backfeed_speed = _setup_combo("backfeed_speed",
+                                  zpl_print.FEED_SPEED_CHOICES,
+                                  settings.backfeed_speed)
+    setup.addRow("Backfeed speed:", backfeed_speed)
+
+    print_mode = _setup_combo("print_mode", zpl_print.PRINT_MODES,
+                              settings.print_mode)
+    setup.addRow("Print mode (^MM):", print_mode)
+    prepeel = QCheckBox("Prepeel")
+    prepeel.setObjectName("prepeel")
+    prepeel.setChecked(settings.prepeel)
+    setup.addRow("", prepeel)
+
+    tracking = _setup_combo("media_tracking", zpl_print.MEDIA_TRACKING,
+                            settings.media_tracking)
+    setup.addRow("Media tracking (^MN):", tracking)
+    offset_spin = QSpinBox()
+    offset_spin.setObjectName("mark_offset")
+    offset_spin.setRange(*zpl_print.MARK_OFFSET_RANGE)
+    offset_spin.setSuffix(" dots")
+    offset = _NumberRow(offset_spin, settings.mark_offset, 0)
+    offset_row = QHBoxLayout()
+    offset_row.addWidget(offset_spin, 1)
+    offset_row.addWidget(offset.note)
+    setup.addRow("Black mark offset:", offset_row)
+
+    media_type = _setup_combo("media_type", zpl_print.MEDIA_TYPES,
+                              settings.media_type)
+    setup.addRow("Media type (^MT):", media_type)
+
+    note = QLabel("Printer's setting sends nothing. A value set here stays "
+                  "in effect on the printer after this label.")
+    note.setWordWrap(True)
+    setup.addRow(note)
+    right.addWidget(setup_box)
+    right.addStretch(1)
+
+    def follow():
+        # A row that only means something with another set is greyed out
+        # without it: ^PR is a chain, prepeel rides on a print mode, and the
+        # offset is only for mark sensing.
+        darkness_spin.setEnabled(darkness_set.isChecked())
+        slew_speed.setEnabled(print_speed.value() is not None)
+        backfeed_speed.setEnabled(slew_speed.isEnabled()
+                                  and slew_speed.value() is not None)
+        prepeel.setEnabled(print_mode.value() is not None)
+        offset_spin.setEnabled(tracking.value() == zpl_print.MARK_SENSING)
+
+    darkness_set.toggled.connect(follow)
+    for combo in (print_speed, slew_speed, print_mode, tracking):
+        combo.currentIndexChanged.connect(follow)
+    follow()
+
+    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+                               parent=dialog)
+    print_btn = buttons.addButton("Print", QDialogButtonBox.AcceptRole)
+    print_btn.setObjectName("print")
+    ok_btn = buttons.button(QDialogButtonBox.Ok)
+    # Print is what the window is opened for, so it is the one Enter presses.
+    ok_btn.setAutoDefault(False)
+    print_btn.setDefault(True)
+    chosen = {}
+    buttons.clicked.connect(lambda button: chosen.update(
+        action='print' if button is print_btn else 'ok'))
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    rows.withhold((ok_btn, print_btn))
+    layout.addWidget(buttons)
+    _make_scrollable(dialog)
+
+    accepted = dialog.exec_() == QDialog.Accepted
+    rows.abandon()
+    if not accepted:
         return None
-    return (new_address, port_spin.value(), _dpi_from(dpi_combo, dpi),
-            font_device_combo.currentData())
+    chosen_printer = rows.value(parent)
+    if chosen_printer is None:
+        return None
+
+    result = settings.copy()
+    result.quantity = quantity.value()
+    result.pause_count = pause.value()
+    result.replicates = replicates.value()
+    result.override_pause = override.isChecked()
+    result.cut_on_error = cut.isChecked()
+    result.invert = invert.isChecked()
+    result.mirror = mirror.isChecked()
+    result.reverse = reverse.isChecked()
+    result.code_validation = validate.isChecked()
+    result.darkness = darkness.value() if darkness_set.isChecked() else None
+    if isinstance(result.darkness, float):
+        result.darkness = round(result.darkness, zpl_print.DARKNESS_DECIMALS)
+    result.print_speed = print_speed.value()
+    result.slew_speed = slew_speed.value()
+    result.backfeed_speed = backfeed_speed.value()
+    result.print_mode = print_mode.value()
+    result.prepeel = prepeel.isChecked()
+    result.media_tracking = tracking.value()
+    result.mark_offset = offset.value()
+    result.media_type = media_type.value()
+    return chosen.get('action', 'ok'), chosen_printer, result
 
 
 class PrinterFontsDialog(QDialog):

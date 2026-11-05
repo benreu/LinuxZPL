@@ -157,9 +157,11 @@ a save would not keep.
 2. Drag elements to position them, or drag the handles to resize
 3. Double-click an element to edit it - text, font, barcode value, image file
 4. Right-click an element for **Print This Element**, **Delete** and the z-order actions
-5. Set the printer address and resolution under **Settings -> Printer Settings**
+5. Set the printer address and resolution under **Settings -> Default Printer**
    (**Test Connection** also asks the printer what dpi it is, and fills it in)
-6. **File -> Print** to send the label
+6. **File -> Print...** to pick the printer for this session, the copies, how
+   the label is laid down and the printer's darkness, speed and media, then
+   send it - or **File -> Quick Print** to send it as it is
 
 Use **Settings -> Label Size** for the label dimensions - presets of 4x6, 5x7,
 6x4, 3x5 and 2x3 inches, or a custom size - **Printer -> Fonts...** to manage
@@ -180,7 +182,7 @@ Identical in both frontends.
 | Ctrl+O | Open | Ctrl+Shift+Z, Ctrl+Y | Redo |
 | Ctrl+S | Save | Delete | Delete element |
 | Ctrl+Shift+S | Save As | Ctrl+G / Ctrl+Shift+G | Group / Ungroup |
-| Ctrl+P | Print | Ctrl+] / Ctrl+Shift+] | Bring Forward / to Front |
+| Ctrl+P / Ctrl+Shift+P | Print... / Quick Print | Ctrl+] / Ctrl+Shift+] | Bring Forward / to Front |
 | Ctrl+Q | Quit | Ctrl+[ / Ctrl+Shift+[ | Send Backward / to Back |
 | Ctrl+A | Select All | Ctrl++ / Ctrl+- | Zoom In / Out |
 | Ctrl+Shift+A | Deselect All | Ctrl+0 / Ctrl+9 / Ctrl+1 | Fit Label / Fit Width / 1:1 |
@@ -283,9 +285,10 @@ Read when loading a file and written when saving:
 - `^IM` / `^XG` - Recall a stored graphic into a field (Image Move / Recall Graphic)
 - `^IL` / `^IS` - Load / save a stored graphic for a whole format (Image Load / Image Save)
 - `^PW` / `^LL` - Print width / label length
-- `^PQ` - Print quantity (copies), set from Label Settings
-- `^CV` - Code validation, kept through a save and stated when printing; the
-  check itself is the printer's, and nothing is drawn for it
+- `^PQ` - Print quantity (copies), with its pause, replicate and cut options,
+  set in the Print window
+- `^CV` - Code validation, set in the Print window and stated when printing;
+  the check itself is the printer's, and nothing is drawn for it
 - `^CI` - Encoding, kept through a save; a label holding any non-ASCII text
   is written `^CI28`, since what is written is UTF-8, and printing states it.
   A file that is not UTF-8 is read by the `^CI` it declares (CP850, the
@@ -293,8 +296,8 @@ Read when loading a file and written when saving:
 - `^CW` / `^FL` - Font identifier and font linking, kept through a save
   verbatim; the printer's font table, with nothing to draw
 - `^PR` / `^MD` / `^MM` / `^MN` / `^MT` - Print rate, darkness, print mode,
-  media tracking and media type, kept through a save verbatim; the printer's
-  own settings, with nothing to draw
+  media tracking and media type, set in the Print window or left to the
+  printer; kept through a save as written unless changed, with nothing to draw
 - `^FX` - Comment; the author's own are kept through a save, and the
   designer keeps its metadata in keys of its own
 - `^CC` / `^CT` / `^CD` - Redefined `^`, `~` and `,` characters are honoured

@@ -4945,9 +4945,19 @@ finally:
     qt_main._config_path = real_config_path
     qt_main._fallback_config_path = real_fallback_path
 
-# --- Set Printer for This Session never touches the persisted default ------
-# The DPI is held fixed across both dialogs below so neither one takes the
+# --- the Print window's printer never touches the persisted default --------
+# The DPI is held fixed across the dialogs below so none of them takes the
 # rescale-prompt path, which would otherwise open a real (blocking) dialog.
+from zplcore.print_settings import PrintSettings as _PS
+
+def _print_window_returns(printer, action='ok', settings=None):
+    """Stand in for the Print window: accepted with this printer, and the
+    document's own print settings unless others are given."""
+    def fake(parent, document, current, default):
+        return action, printer, settings or _PS.read(document)
+    return fake
+
+real_print_dialog = qt_dialogs.print_dialog
 session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 qt_main._config_path = lambda: session_path
 qt_main._fallback_config_path = lambda: session_path
@@ -4958,13 +4968,13 @@ try:
     zw._save_settings()
 
     real_dialog = qt_dialogs.printer_settings_dialog
-    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203, 'E')
+    qt_dialogs.print_dialog = _print_window_returns(('10.0.0.5', 9200, 203, 'E'))
     try:
-        zw.on_session_printer()
+        zw.on_print_dialog()
     finally:
-        qt_dialogs.printer_settings_dialog = real_dialog
+        qt_dialogs.print_dialog = real_print_dialog
 
-    check("Set Printer for This Session changes the printer in effect",
+    check("the Print window changes the printer in effect",
           (zw.printer_address, zw.printer_port) == ('10.0.0.5', 9200),
           (zw.printer_address, zw.printer_port))
 
@@ -5017,12 +5027,11 @@ try:
                            zw.printer_dpi, zw.printer_font_device)
     zw._save_settings()
 
-    real_dialog = qt_dialogs.printer_settings_dialog
-    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.8', 9400, 203, 'E')
+    qt_dialogs.print_dialog = _print_window_returns(('10.0.0.8', 9400, 203, 'E'))
     try:
-        zw.on_session_printer()
+        zw.on_print_dialog()
     finally:
-        qt_dialogs.printer_settings_dialog = real_dialog
+        qt_dialogs.print_dialog = real_print_dialog
 
     # Stand in for what closeEvent does: it never touches _default_printer,
     # it just calls _save_settings() again on the way out.
@@ -5045,12 +5054,11 @@ try:
                            zw.printer_dpi, zw.printer_font_device)
     zw._save_settings()
 
-    real_dialog = qt_dialogs.printer_settings_dialog
-    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.9', 9500, 203, 'E')
+    qt_dialogs.print_dialog = _print_window_returns(('10.0.0.9', 9500, 203, 'E'))
     try:
-        zw.on_session_printer()
+        zw.on_print_dialog()
     finally:
-        qt_dialogs.printer_settings_dialog = real_dialog
+        qt_dialogs.print_dialog = real_print_dialog
 
     qt_dialogs.ask_dpi_rescale = lambda *a, **k: 'keep'
     zw.apply_label_settings(900, 600, 300, 3.0, 2.0)
@@ -5114,6 +5122,246 @@ check("Keep Dots leaves the elements where they were",
 check("but the label still takes the size the dialog was accepted on",
       (kw.document.label_width, kw.document.label_height) == (900, 600),
       (kw.document.label_width, kw.document.label_height))
+
+# Copies and the three flips moved to the Print window; the home stays.
+_ls_rows = {}
+_drive_label_size(Document(812, 1218, dpi=203), 203, lambda d: _ls_rows.update(
+    quantity=d.findChild(QSpinBox, 'quantity') is not None,
+    flips=[d.findChild(QCheckBox, n) is not None
+           for n in ('invert', 'mirror', 'reverse')],
+    home=d.findChild(QSpinBox, 'home_x') is not None))
+check("Label Settings no longer has Copies or ^PO/^PM/^LR, but keeps Home",
+      _ls_rows == {'quantity': False, 'flips': [False] * 3, 'home': True},
+      _ls_rows)
+_ls_flipped = Document(812, 1218, dpi=203)
+_ls_flipped.transform.invert = _ls_flipped.transform.mirror = True
+_ls_back = _drive_label_size(_ls_flipped, 203,
+                             lambda d: d.findChild(QSpinBox, 'home_x').setValue(25))
+check("and a visit to it passes the flips through with the new home",
+      _ls_back[5].invert and _ls_back[5].mirror and _ls_back[5].home == (25, 0)
+      and len(_ls_back) == 6, _ls_back)
+
+# --- the Print window ------------------------------------------------------
+# One window for the printer this session prints to and every print-time
+# setting saved with the label. Driven for real: rows filled in, a button
+# pressed.
+import time
+from PySide2.QtWidgets import (QPushButton as _QPB, QLabel as _QLabel,
+                               QLineEdit)
+
+_PW_PRINTER = ('192.168.1.50', 9100, 203, 'E')
+_PW_DEFAULT = ('10.0.0.1', 9300, 203, 'R')
+
+def _drive_print(document, fill=lambda d: None, button='print'):
+    def act():
+        dialog = next((widget for widget in app.topLevelWidgets()
+                       if isinstance(widget, QDialog) and widget.isVisible()), None)
+        if dialog is None:
+            QTimer.singleShot(50, act)
+            return
+        fill(dialog)
+        box = dialog.findChild(QDialogButtonBox)
+        if button == 'print':
+            dialog.findChild(_QPB, 'print').click()
+        elif button == 'ok':
+            box.button(QDialogButtonBox.Ok).click()
+        else:
+            box.button(QDialogButtonBox.Cancel).click()
+
+    QTimer.singleShot(100, act)
+    return qt_dialogs.print_dialog(None, document, _PW_PRINTER, _PW_DEFAULT)
+
+def _pw_select(dialog, name, text):
+    combo = dialog.findChild(QComboBox, name)
+    combo.setCurrentIndex(combo.findText(text))
+
+_pw_doc = zpl_parser.parse_zpl(
+    "^XA^PRC,D,A^MD8.25^MMU^MNM,30^MTD^PQ50,10,1,Y^POI^CVY"
+    "^FO1,1^A0N,9,9^FDx^FS^XZ")[0]
+_pw_seen = {}
+
+def _pw_look(d):
+    _pw_seen.update(
+        title=d.windowTitle(),
+        quantity=d.findChild(QSpinBox, 'quantity').value(),
+        pause=d.findChild(QSpinBox, 'pause_count').text(),
+        invert=d.findChild(QCheckBox, 'invert').isChecked(),
+        validate=d.findChild(QCheckBox, 'code_validation').isChecked(),
+        speed=d.findChild(QComboBox, 'print_speed').currentText(),
+        mode=d.findChild(QComboBox, 'print_mode').currentText(),
+        offset=d.findChild(QSpinBox, 'mark_offset').value(),
+        offset_on=d.findChild(QSpinBox, 'mark_offset').isEnabled(),
+        notes=[l.text() for l in d.findChildren(_QLabel)
+               if l.text().startswith('As written') and l.isVisibleTo(d)],
+        address=d.findChild(QLineEdit, 'address').text(),
+        default=d.findChild(_QPB, 'print').isDefault())
+
+_pw_plain = _drive_print(_pw_doc, _pw_look)
+check("the Print window shows the label's settings as it carries them",
+      (_pw_seen['title'], _pw_seen['quantity'], _pw_seen['pause'],
+       _pw_seen['invert'], _pw_seen['validate'], _pw_seen['speed'],
+       _pw_seen['mode'], _pw_seen['offset'], _pw_seen['offset_on'])
+      == ('Print', 50, '10 labels', True, True, '4 in/s (C)',
+          'As written: U', 30, True), _pw_seen)
+check("a darkness no box can show is noted beside it, as written",
+      _pw_seen['notes'] == ['As written: 8.25'], _pw_seen['notes'])
+check("it opens on the printer in effect, with Print as the default button",
+      _pw_seen['address'] == '192.168.1.50' and _pw_seen['default'], _pw_seen)
+check("Print pressed unchanged gives 'print', the same printer and the same "
+      "settings", _pw_plain[0] == 'print' and _pw_plain[1] == _PW_PRINTER
+      and _pw_plain[2] == _PS.read(_pw_doc), _pw_plain)
+check("and those settings, applied, change nothing",
+      not _pw_plain[2].apply(_pw_doc))
+
+check("Cancel gives None", _drive_print(_pw_doc, button='cancel') is None)
+
+def _pw_edit(d):
+    d.findChild(QSpinBox, 'quantity').setValue(5)
+    d.findChild(QSpinBox, 'pause_count').setValue(0)
+    d.findChild(QCheckBox, 'mirror').setChecked(True)
+    d.findChild(QCheckBox, 'cut_on_error').setChecked(False)
+    d.findChild(QDoubleSpinBox, 'darkness').setValue(-12.5)
+    _pw_select(d, 'print_speed', '6 in/s (D)')
+    _pw_select(d, 'print_mode', 'Cutter (C)')
+    d.findChild(QCheckBox, 'prepeel').setChecked(True)
+    _pw_select(d, 'media_tracking', 'Non-continuous, web sensing (W)')
+    _pw_select(d, 'media_type', "Printer's setting")
+
+_pw_edited = _drive_print(_pw_doc, _pw_edit, button='ok')
+_pw_set = _pw_edited[2]
+check("OK gives 'ok' and every row as edited",
+      _pw_edited[0] == 'ok'
+      and (_pw_set.quantity, _pw_set.pause_count, _pw_set.mirror,
+           _pw_set.cut_on_error, _pw_set.darkness, _pw_set.print_speed,
+           _pw_set.print_mode, _pw_set.prepeel, _pw_set.media_tracking,
+           _pw_set.media_type)
+      == (5, 0, True, False, -12.5, 6, 'C', True, 'W', None), _pw_set)
+_pw_target = zpl_parser.parse_zpl(_pw_doc.to_zpl())[0]
+_pw_set.apply(_pw_target)
+check("and applied, rewrites what changed and keeps the slew and backfeed",
+      list(_pw_target.media_settings.items())
+      == [('^PR', '6,6,2'), ('^MD', '-12.5'), ('^MM', 'C,Y'), ('^MN', 'W')],
+      _pw_target.media_settings)
+
+_pw_chain = {}
+def _pw_clear_speed(d):
+    _pw_select(d, 'print_speed', "Printer's setting")
+    _pw_select(d, 'media_tracking', 'Continuous (N)')
+    d.findChild(QCheckBox, 'darkness_set').setChecked(False)
+    _pw_chain.update(
+        slew=d.findChild(QComboBox, 'slew_speed').isEnabled(),
+        backfeed=d.findChild(QComboBox, 'backfeed_speed').isEnabled(),
+        darkness=d.findChild(QDoubleSpinBox, 'darkness').isEnabled(),
+        offset=d.findChild(QSpinBox, 'mark_offset').isEnabled())
+
+_pw_cleared = _drive_print(_pw_doc, _pw_clear_speed, button='ok')[2]
+check("with no print speed, slew and backfeed are greyed out",
+      not _pw_chain['slew'] and not _pw_chain['backfeed'], _pw_chain)
+check("with the darkness tick clear, so is its box; and the offset off mark "
+      "sensing", not _pw_chain['darkness'] and not _pw_chain['offset'],
+      _pw_chain)
+_pw_target = zpl_parser.parse_zpl(_pw_doc.to_zpl())[0]
+_pw_cleared.apply(_pw_target)
+check("and the printer's setting, applied, takes ^PR and ^MD out",
+      list(_pw_target.media_settings.items())
+      == [('^MM', 'U'), ('^MN', 'N'), ('^MT', 'D')], _pw_target.media_settings)
+
+_pw_default = _drive_print(_pw_doc, lambda d: d.findChild(_QPB, 'use_default').click(),
+                           button='ok')
+check("Use Default refills the printer from the persisted default",
+      _pw_default[1] == _PW_DEFAULT, _pw_default[1])
+
+# The window: one undo entry for a visit that changed the label, none for
+# one that did not, and Print sends after the settings go on.
+pw = qt_main.ZPLDesignerWindow()
+pw._save_settings = lambda *a: None
+pw.printer_address, pw.printer_port, pw.printer_dpi = '192.168.1.50', 9100, 203
+pw.document.dpi = 203
+pw.on_add_frame()
+pw.unsaved_changes = False
+_pw_undo = len(pw._undo_stack)
+_pw_printed = []
+pw.on_print = lambda: _pw_printed.append(pw.document.print_quantity)
+
+qt_dialogs.print_dialog = _print_window_returns(_PW_PRINTER, 'print')
+try:
+    pw.on_print_dialog()
+finally:
+    qt_dialogs.print_dialog = real_print_dialog
+check("Print with nothing changed records no undo entry and leaves the file "
+      "saved", len(pw._undo_stack) == _pw_undo and not pw.unsaved_changes,
+      (len(pw._undo_stack), pw.unsaved_changes))
+check("and prints", _pw_printed == [1], _pw_printed)
+
+_pw_more = _PS.read(pw.document)
+_pw_more.quantity, _pw_more.darkness, _pw_more.invert = 3, 4.0, True
+qt_dialogs.print_dialog = _print_window_returns(_PW_PRINTER, 'print', _pw_more)
+try:
+    pw.on_print_dialog()
+finally:
+    qt_dialogs.print_dialog = real_print_dialog
+check("a visit that changes the label is one undo entry and unsaved",
+      len(pw._undo_stack) == _pw_undo + 1 and pw.unsaved_changes,
+      (len(pw._undo_stack), pw.unsaved_changes))
+check("and the settings are on before it prints", _pw_printed == [1, 3],
+      _pw_printed)
+pw.on_undo()
+check("undo takes the visit back",
+      (pw.document.print_quantity, pw.document.media_settings,
+       pw.document.transform.invert) == (1, {}, False),
+      (pw.document.print_quantity, pw.document.media_settings))
+
+qt_dialogs.print_dialog = lambda *a, **k: None
+try:
+    pw.on_print_dialog()
+finally:
+    qt_dialogs.print_dialog = real_print_dialog
+check("Cancel changes nothing and prints nothing",
+      _pw_printed == [1, 3] and pw.document.print_quantity == 1)
+
+# The File action held while its menu is read: PySide2 frees the menu's
+# wrapper along with a temporary one.
+_pw_file_action = pw.menuBar().actions()[0]
+_pw_texts = [a.text() for a in _pw_file_action.menu().actions()]
+check("File has Print… and Quick Print, and no Printer Settings submenu",
+      '&Print…' in _pw_texts and '&Quick Print' in _pw_texts
+      and not any('Printer Settings' in t.replace('&', '') for t in _pw_texts),
+      _pw_texts)
+check("Print… is Ctrl+P, Quick Print Ctrl+Shift+P",
+      pw.print_action.shortcut().toString() == 'Ctrl+P'
+      and pw.quick_print_action.shortcut().toString() == 'Ctrl+Shift+P')
+check("and the busy row withholds both while a job is out",
+      pw.print_action in pw._busy._blocked
+      and pw.quick_print_action in pw._busy._blocked)
+
+# Quick Print sends at once, with no window. A fresh window, since the one
+# above has its on_print stood in for.
+qw = qt_main.ZPLDesignerWindow()
+qw._save_settings = lambda *a: None
+qw.on_add_frame()
+_qw_sent, _qw_windows = [], []
+def _qw_send(address, port, payload, timeout, read_reply=False, cancel=None):
+    _qw_sent.append(payload.decode('utf-8'))
+from zplcore import printer_io as _qw_pio
+_qw_real_send = _qw_pio.send
+_qw_pio.send = _qw_send
+qt_dialogs.print_dialog = lambda *a, **k: _qw_windows.append(1)
+try:
+    qw.quick_print_action.trigger()
+    _qw_until = time.monotonic() + 5
+    while not _qw_sent and time.monotonic() < _qw_until:
+        app.processEvents()
+        time.sleep(0.01)
+    while qw._busy.running and time.monotonic() < _qw_until:
+        app.processEvents()
+        time.sleep(0.01)
+finally:
+    _qw_pio.send = _qw_real_send
+    qt_dialogs.print_dialog = real_print_dialog
+check("Quick Print sends the label without opening the Print window",
+      len(_qw_sent) == 1 and not _qw_windows
+      and '^PON' in _qw_sent[0] and '^GB' in _qw_sent[0],
+      (_qw_windows, _qw_sent))
 
 # --- the preview draws the design, it does not merely agree with it ---------
 # Tall enough for six lines of font F at 40 x 40, whose cell is 52 dots tall

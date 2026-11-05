@@ -904,13 +904,13 @@ pinned.
 | **Open Recent ▸** | The last 10 files opened or saved, newest first, numbered `1`–`9` then `0` as mnemonics. An entry reads as the file's name, plus its folder (home shown as `~`) when another entry has the same name; its tooltip is the full path. Opening or saving a file already listed moves it to the top. Choosing an entry whose file is gone takes it off the list and says so, *before* any prompt about unsaved changes; otherwise it prompts (§6.7) and opens like Open…. **Clear List**, under a separator, empties it. Greyed out while the list is empty. The list is kept in settings.ini (§13), not the desktop's recent files: those age out (after a week on some desktops) and include every `.zpl` any file chooser picked, firmware images among them. |
 | **Save** | Writes to the current path, or behaves as Save As if there is none. |
 | **Save as…** | File chooser, default name `untitled.zpl`. A name typed with no extension gets `.zpl`; one that already has an extension is left alone. Confirms before overwriting an existing file, and declining returns to the chooser. Adopts the chosen path as the current file. |
-| **Print** | §9. |
+| **Print…** | Opens the Print window (§7.3): the printer this session prints to and the label's print settings. Its Print button prints (§9). |
+| **Quick Print** | Prints at once with the settings already in force, without the window (§9). |
 | **Upload Template to Printer ▸ To Flash (E:)… / To RAM (R:)…** | Asks for a name (1–16 letters and digits, shown upper-case; offered from the document's `^DF`, else the file's name, else `TEMPLATE`), then sends the design to the printer with `^DF<device>:<NAME>.ZPL` in place of any `^DF` it had. The printer stores the format and prints nothing; recall it with `^XF`. Flash survives power-off, RAM does not. Refused for an empty document. Runs behind the busy row, and is withheld while another request is out, like Print. |
-| **Printer Settings ▸ Set Printer for This Session…** | §9. A submenu rather than a flat item, so further printer-related actions can join it later. |
 | **Quit** | Prompts about unsaved changes (§6.7). |
 
 **The menu is in four groups**, separated in this order: start a document
-(New, Open, Open Recent), persist it (Save, Save as), print it (Print, Upload Template, Printer Settings),
+(New, Open, Open Recent), persist it (Save, Save as), print it (Print…, Quick Print, Upload Template),
 leave. A port that runs them together is the thing this grouping exists to
 avoid.
 
@@ -1227,11 +1227,18 @@ each element's own, and only the panel for one element offers them.
 
 ### 7.3 Every editor, and the other dialogs
 
-- **Label Settings carries the label home and the three presentation flags** —
-  `^LH`'s x and y because preprinted stock is a design decision, and `^PO`,
-  `^PM` and `^LR` because they change the whole label. `^LS` and `^LT`
-  round-trip without being exposed: one is a dead Z-130 compatibility shim and
-  the other is printer calibration, and neither is a thing to design with.
+- **Label Settings carries the label home; the Print window carries what
+  prints it** — `^LH`'s x and y stay beside the size because preprinted stock
+  is a design decision. `^PO`, `^PM` and `^LR`, the copies and the rest of
+  `^PQ`, `^CV` and the printer set-up commands are in the Print window, beside
+  the printer they go to, so how a label prints is decided in one place. `^LS`
+  and `^LT` round-trip without being exposed: one is a dead Z-130
+  compatibility shim and the other is printer calibration, and neither is a
+  thing to design with.
+- **The GTK frontend does not have the Print window yet.** It still has File ▸
+  Printer Settings ▸ Set Printer for This Session… (address, port, DPI, font
+  memory, Test Connection, Use Default) for the session's printer, Copies and
+  the three flips in Label Size, and a Print that sends at once (§18).
 - **Edit Text and Edit Barcode both carry the same three `^FN` rows** — a tick
   for "data comes from a numbered field", the number, and the field name — built
   from one shared helper per frontend so the two editors cannot offer them
@@ -1245,8 +1252,8 @@ each element's own, and only the panel for one element offers them.
   and stored graphics carry no data to fill, so they have none. An empty box
   removes the ID.
 
-The remaining dialogs — Label Size, Default Printer, Printer Settings, the
-file choosers and the prompts — are modal.
+The remaining dialogs — Label Size, Default Printer, Print, the file
+choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
@@ -1258,9 +1265,9 @@ file choosers and the prompts — are modal.
 | **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse; ID | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
 | **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; ID; and the chosen symbology's own rows | Bar height 20–300 dots (1–9999 dots for PDF417 and MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a PDF417 with rows 3 dots tall and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert applies at once. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
-| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI | 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
-| **Default Printer** | Address; Port; DPI; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all three (§13). |
-| **Printer Settings** | Address; Port; DPI; Test Connection; Use Default | Same fields and ranges as Default Printer, pre-filled with whichever printer is currently in effect. Use Default re-fills the fields from the persisted default printer, for comparing against or reverting to it. Accepting changes only which printer `Print` uses for the rest of this session (§9) — it never writes to settings.ini (§13). |
+| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI; Home X and Y | Home is `^LH`, 0–32000 dots. 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
+| **Default Printer** | Address; Port; DPI; Font memory; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Font memory is §10.4.1's. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all four (§13). |
+| **Print** | **Printer**: Address; Port; DPI; Font memory; Test Connection; Use Default. **Copies (`^PQ`)**: Copies; Pause every; Replicates; Don't pause between groups; Cut after a voided RFID label. **Label**: Print upside down (`^PO`); Mirror left to right (`^PM`); Reverse fields, white on black (`^LR`); Check barcode data as printed (`^CV`). **Printer setup sent with the label**: Darkness (`^MD`); Print, Slew and Backfeed speed (`^PR`); Print mode (`^MM`) and Prepeel; Media tracking (`^MN`) and Black mark offset; Media type (`^MT`). Buttons Print, OK, Cancel | The printer rows are Default Printer's, built by the same helper, pre-filled with whichever printer is in effect, and for this session only: they never write settings.ini (§13), and Use Default re-fills them from the persisted default, for comparing against or going back to it. A DPI change runs §11's prompt. Everything else is saved with the label, and its rows come from one table both frontends share. `^PQ`'s own ranges: Copies 1–99,999,999, Pause every 0 (shown as Never) to 99,999,999 labels, Replicates 0–99,999,999. Darkness is −30 to 30 in tenths, relative to the printer's configured darkness, with a tick beside the box, since a number box has no "unset". Print speed is 1–14 in/s and slew and backfeed 2–14, each labelled with the letter A–E that also names it where there is one. Every set-up row's first choice is **Printer's setting**, which writes nothing (§9). Slew is greyed out until Print speed is set and Backfeed until Slew is, so no `^PR` goes out with a blank in the middle; Prepeel is greyed out without a print mode, and the offset, −240 to 566 dots, without mark sensing. A value the label carries that no row offers — a reserved print mode, a speed past the list, a darkness with two decimals — is offered first as "As written: …" and selected, or shown beside a number box, as Edit Symbol does with data it has no symbol for; and a command left alone keeps its spelling, so `^PRC` stays `^PRC`. Accepting the window unchanged never rewrites the label. **Print** applies and prints (§9), **OK** applies without printing and **Cancel** changes nothing. Print is the default button. A visit that changes the label is one undo entry, and one that changes nothing records none (§12). |
 
 ---
 
@@ -1882,7 +1889,10 @@ is re-drawn for this label's head (§3.3) whatever the text records.
 
 ## 9. Printing
 
-**File → Print**:
+**File → Print…** opens the Print window (§7.3) on the printer in effect and
+the label's print settings; its **Print** button applies them and then prints
+as below. **File → Quick Print** prints as below at once, with the settings
+already in force.
 
 1. Check the label's fonts against the printer (§10.3). If the user cancels,
    stop and report "Printing cancelled".
@@ -1917,7 +1927,8 @@ only in that last case, so an ASCII-only file stays as it was.
 not otherwise.** They are sticky at the printer too, but none has an "off" to
 state: the speed, darkness, print mode and media a label does not set are the
 printer's configured ones, which belong to whoever set the printer up. So Print
-sends exactly what Save writes.
+sends exactly what Save writes, and the Print window's **Printer's setting** is
+how a label stops carrying one.
 
 If the label carries a `^PQ`, it is sent as part of that ZPL like any other
 command, and the printer prints that many copies itself — this step does not
@@ -1926,8 +1937,8 @@ loop the send.
 Elements with `print_enabled` false are sent as `^FXDESIGNER_NOPRINT` comments
 rather than as fields, so the printer ignores them.
 
-**File → Printer Settings ▸ Set Printer for This Session…** changes the
-address, port and DPI that step 2 above uses, for every `Print` from then on,
+**The Print window's printer is for this session only.** It changes the
+address, port and DPI that step 2 above uses, for every print from then on,
 without writing them to settings.ini (§13) — the next launch starts back on
 the persisted default. If the DPI changes, it runs the same rescale prompt as
 Default Printer (§11), since a label's dot geometry has to stay consistent
@@ -2068,7 +2079,7 @@ drive, not ones this designer writes itself.
 
 #### 10.4.1 Font memory
 
-**Printer Settings** (and Default Printer) carry a **Font memory** choice
+**The Print window's printer rows** (and Default Printer) carry a **Font memory** choice
 alongside address, port and DPI: which memory a font *this app assigns* is
 written to and uploaded to. It is a printer setting rather than a per-element
 one because which memory a printer keeps its fonts in is a property of the
@@ -2309,8 +2320,8 @@ since it is most wanted while an upload is going wrong.
 ## 11. Print resolution
 
 The printer's resolution is a persisted setting (203, 300 or 600 dpi, default
-203). It is editable from **both** Printer Settings and Label Size, which offer
-the same choice and write the same one setting: label size is entered in inches
+203). It is editable from Label Size as well as from the printer rows of
+Default Printer and the Print window, which offer the same choice: label size is entered in inches
 but stored in dots, so the resolution is half of what the size means, and
 having to leave for another dialog to change that half is how a label ends up
 the wrong physical size. It can also be detected: the Test Connection button
@@ -2528,8 +2539,8 @@ take the place of the format's real home, so the transform readers reject
 anything that is not wholly a number.
 
 **`^PO`, `^PM` and `^LR` describe how the finished label is laid down** and
-round-trip unchanged. They are editable from Label Settings (§7), because they
-apply to the whole label rather than to any field on it.
+round-trip unchanged. They are editable from the Print window (§7.3), because
+they apply to the whole label rather than to any field on it.
 
 **`^FO`/`^FT`'s third parameter says which edge the origin names.** `z` is
 `0` left, `1` right, `2` auto; left is ZPL's default. The manual's Field
@@ -2623,6 +2634,11 @@ to come back as the group.
   object, and the Properties panel rebuilds its rows on the restored
   selection; deleting or cutting an element empties the rows it was showing.
 
+The Print window's rows other than the printer *are* part of the document:
+one visit that changes any of them is one history entry, and a visit that
+changes none — Print pressed on the window as it opened — records nothing and
+leaves the file unmodified.
+
 Changes that are *not* part of the document — printer address, port, resolution
 — are not undoable. This holds for a resolution changed through Label Size too:
 one visit to that dialog is one history entry, and undoing it restores the label
@@ -2674,8 +2690,8 @@ file2 = /home/you/labels/100%% off.zpl
 | `[docks]` | with the rest of the file | where the Properties panel is (§7.1). The GTK frontend writes `floating`, `shown` (docked), `width` (docked, in pixels) and `floating_geometry` (`x,y,width,height`); the Qt frontend keeps its own toolkit's saved window state in `state`, which also holds the panel's side. Each reads only its own keys. |
 | `[recent]` | whenever a file is opened or saved, an entry is dropped, or the list is cleared | File > Open Recent (§6.1) |
 
-**File → Printer Settings ▸ Set Printer for This Session…** (§9) deliberately
-never writes `[printer]` — only Default Printer and Label Size do.
+**The Print window's printer** (§9) deliberately never writes `[printer]` —
+only Default Printer and Label Size do.
 
 Writing re-reads the file first, so a section another version wrote survives.
 
@@ -2713,7 +2729,8 @@ treated as corrupt and falls back too.
 | Ctrl+O | Open |
 | Ctrl+S | Save |
 | Ctrl+Shift+S | Save As |
-| Ctrl+P | Print |
+| Ctrl+P | Print… (the Print window) |
+| Ctrl+Shift+P | Quick Print |
 | Ctrl+Q | Quit |
 | Ctrl+Z | Undo |
 | Ctrl+Shift+Z, Ctrl+Y | Redo |
@@ -2846,6 +2863,11 @@ message — never a swallowed exception or a placeholder.
 Behaviours in the current implementation that a port should treat as decisions
 rather than requirements:
 
+- **Only the Qt frontend has the Print window so far** (§7.3). The GTK
+  frontend's Print sends at once, its session printer is still File ▸ Printer
+  Settings ▸ Set Printer for This Session…, Copies and `^PO`/`^PM`/`^LR` are
+  still in its Label Size, and it has no editor for `^PQ`'s other options,
+  `^CV` or the printer set-up commands, which it carries through a save.
 - **Canvas text is truncated to the first 20 characters for display**, while
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is
@@ -3097,15 +3119,15 @@ rather than requirements:
   the finished image would turn the white background black, which is not what a
   printer does, so nothing is drawn for it in either the canvas or the preview.
 - **`^PQ`'s pause count, RFID replicates, override-pause flag and
-  cut-on-error flag round-trip but have no editor and are not otherwise acted
-  on.** Only quantity, the common case, is exposed in Label Settings; a file
-  from another tool that sets the other four keeps them through a save, the same treatment `^LT` gets.
+  cut-on-error flag are edited in the Print window but not otherwise acted
+  on.** The printer pauses, replicates and cuts; the canvas and the preview
+  show one label as they always did.
 - **`^CV` round-trips but is not simulated.** It asks the printer to check
   each barcode's data as it prints — character set, check digit, length — and
   to print `INVALID - X` in reverse image in place of a bad one. Nothing here
   checks a barcode or draws that message: the canvas and the preview show the
-  symbol as they always did, and the printer does the checking. It has no
-  editor. A `^CV` toggled part-way through a format — which a printer would
+  symbol as they always did, and the printer does the checking. It is the
+  Print window's Check barcode data tick. A `^CV` toggled part-way through a format — which a printer would
   honour from that point on, and which no generator writes — is written back
   as the one state the format ended on, at the top.
 - **`^CI`'s national sets and remap pairs are carried, not simulated.** Under
@@ -3138,8 +3160,8 @@ rather than requirements:
   like `^CV`, but there is no "off" to state: a link left behind by an earlier
   job only adds glyphs, so the print path sends the label's own `^FL`s and
   nothing more.
-- **`^PR`, `^MD`, `^MM`, `^MN` and `^MT` are carried, not simulated or
-  checked, and have no editor.** The preview draws at no particular speed or
+- **`^PR`, `^MD`, `^MM`, `^MN` and `^MT` are edited in the Print window, not
+  simulated or checked.** The preview draws at no particular speed or
   darkness and does not stretch for `^MNV`; a value the printer would reject,
   or one this model of printer does not support, is written back as it came.
   A setting changed part-way through a format — which a printer would honour
