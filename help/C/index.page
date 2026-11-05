@@ -12,6 +12,22 @@
   straight to the printer. The canvas shows what the printer will print, in
   the printer's own dots.</p>
 
+  <section id="start">
+    <title>Getting started</title>
+  </section>
+
+  <section id="design">
+    <title>Designing a label</title>
+  </section>
+
+  <section id="elements">
+    <title>What goes on a label</title>
+  </section>
+
+  <section id="printing">
+    <title>Printing</title>
+  </section>
+
   <section id="printer">
     <title>The printer</title>
   </section>

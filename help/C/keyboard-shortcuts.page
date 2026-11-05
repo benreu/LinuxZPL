@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="keyboard-shortcuts">
+  <info>
+    <link type="guide" xref="index#design"/>
+    <title type="sort">4</title>
+    <link type="seealso" xref="canvas"/>
+    <desc>Every keyboard shortcut, the same in both frontends.</desc>
+  </info>
+
+  <title>Keyboard shortcuts</title>
+
+  <p>The shortcuts work wherever the focus is in the main window. While a
+  box in the Properties panel has the focus, it gets the keys it uses first,
+  so <key>Delete</key>, <keyseq><key>Ctrl</key><key>A</key></keyseq> and the
+  clipboard keys work on its text.</p>
+
+  <table frame="all" rules="rows">
+    <thead>
+      <tr><td><p>Keys</p></td><td><p>Does</p></td></tr>
+    </thead>
+    <tbody>
+      <tr><td><p><keyseq><key>Ctrl</key><key>N</key></keyseq></p></td><td><p>New label</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>O</key></keyseq></p></td><td><p>Open</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>S</key></keyseq></p></td><td><p>Save</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Shift</key><key>S</key></keyseq></p></td><td><p>Save as</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>P</key></keyseq></p></td><td><p>Print… (the Print window)</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Shift</key><key>P</key></keyseq></p></td><td><p>Quick Print</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Q</key></keyseq></p></td><td><p>Quit</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Z</key></keyseq></p></td><td><p>Undo</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Shift</key><key>Z</key></keyseq>,
+      <keyseq><key>Ctrl</key><key>Y</key></keyseq></p></td><td><p>Redo</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>X</key></keyseq>,
+      <keyseq><key>Ctrl</key><key>C</key></keyseq>,
+      <keyseq><key>Ctrl</key><key>V</key></keyseq></p></td><td><p>Cut, Copy, Paste</p></td></tr>
+      <tr><td><p><key>Delete</key></p></td><td><p>Delete the selection</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>A</key></keyseq></p></td><td><p>Select All</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Shift</key><key>A</key></keyseq></p></td><td><p>Deselect All</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>G</key></keyseq></p></td><td><p>Group</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Shift</key><key>G</key></keyseq></p></td><td><p>Ungroup</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>]</key></keyseq></p></td><td><p>Bring Forward</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Shift</key><key>]</key></keyseq></p></td><td><p>Bring to Front</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>[</key></keyseq></p></td><td><p>Send Backward</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Shift</key><key>[</key></keyseq></p></td><td><p>Send to Back</p></td></tr>
+      <tr><td><p><keyseq><key>Alt</key><key>Enter</key></keyseq></p></td><td><p>Properties</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>+</key></keyseq>,
+      <keyseq><key>Ctrl</key><key>=</key></keyseq></p></td><td><p>Zoom In</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>-</key></keyseq></p></td><td><p>Zoom Out</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>0</key></keyseq></p></td><td><p>Fit Label</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>9</key></keyseq></p></td><td><p>Fit Width</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>1</key></keyseq></p></td><td><p>Actual Size</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>R</key></keyseq></p></td><td><p>Rulers</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>'</key></keyseq></p></td><td><p>Show Grid</p></td></tr>
+      <tr><td><p><keyseq><key>Ctrl</key><key>Shift</key><key>'</key></keyseq></p></td><td><p>Snap to Grid</p></td></tr>
+      <tr><td><p><key>F1</key></p></td><td><p>Help</p></td></tr>
+    </tbody>
+  </table>
+
+  <section id="canvas-keys">
+    <title>On the canvas</title>
+    <terms>
+      <item>
+        <title>Arrow keys</title>
+        <p>Move the selection one dot, or ten with <key>Shift</key>, once a
+        click has given the canvas the keyboard.</p>
+      </item>
+      <item>
+        <title><key>Ctrl</key> with the mouse wheel</title>
+        <p>Zoom about the pointer.</p>
+      </item>
+      <item>
+        <title><key>Alt</key> or <key>Shift</key> while dragging</title>
+        <p><key>Alt</key> stops snapping; <key>Shift</key> keeps a move along
+        one axis.</p>
+      </item>
+      <item>
+        <title><key>Escape</key> in the Properties panel</title>
+        <p>Throws away the changes you are in the middle of.</p>
+      </item>
+    </terms>
+  </section>
+</page>

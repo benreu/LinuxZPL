@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="canvas">
+  <info>
+    <link type="guide" xref="index#design"/>
+    <title type="sort">1</title>
+    <link type="seealso" xref="view"/>
+    <link type="seealso" xref="properties-panel"/>
+    <desc>Select, move, resize, group, align and stack the elements on a
+    label, and undo what you did.</desc>
+  </info>
+
+  <title>Select, move and arrange elements</title>
+
+  <section id="select">
+    <title>Select</title>
+    <terms>
+      <item>
+        <title>Click</title>
+        <p>Selects the topmost element under the pointer. A click on empty
+        canvas selects nothing.</p>
+      </item>
+      <item>
+        <title><keyseq><key>Shift</key></keyseq>-click</title>
+        <p>Adds an element to the selection, or takes it out again.</p>
+      </item>
+      <item>
+        <title>Drag on empty canvas</title>
+        <p>Draws a band. Everything the band touches is selected when you
+        let go, even an element only partly inside it. Hold
+        <key>Shift</key> to add to the selection instead of replacing
+        it.</p>
+      </item>
+    </terms>
+    <p><guiseq><gui>Edit</gui><gui>Select All</gui></guiseq>
+    (<keyseq><key>Ctrl</key><key>A</key></keyseq>),
+    <gui>Deselect All</gui>
+    (<keyseq><key>Ctrl</key><key>Shift</key><key>A</key></keyseq>) and
+    <gui>Invert Selection</gui> are in the <gui>Edit</gui> menu.</p>
+  </section>
+
+  <section id="move">
+    <title>Move</title>
+    <p>Drag the selection to move it; several elements move together. The
+    arrow keys move it by one dot, the finest step a printer can place, or
+    by ten with <key>Shift</key> held. The arrows work while the canvas has
+    the keyboard, which a click on it gives it.</p>
+    <p>Nothing can be moved off the label: an element pushed against an edge
+    stays against it.</p>
+  </section>
+
+  <section id="resize">
+    <title>Resize</title>
+    <p>A single selected element has eight handles, on its corners and the
+    middles of its sides. Drag one to resize the element.</p>
+    <p>Some elements come back to the size they will really print at, rather
+    than to the box you dragged:</p>
+    <list>
+      <item><p><em>Text</em> changes its font height and width, and its box
+      is then the width the text prints.</p></item>
+      <item><p>A <em>barcode</em> changes its bar height and the width of its
+      narrowest bar.</p></item>
+      <item><p>A <em>circle</em> stays round.</p></item>
+    </list>
+  </section>
+
+  <section id="group">
+    <title>Group</title>
+    <p>Select two or more elements and choose
+    <guiseq><gui>Edit</gui><gui>Group</gui></guiseq>
+    (<keyseq><key>Ctrl</key><key>G</key></keyseq>). From then on a click on
+    any of them selects them all, and they move, align and stack as one.
+    Groups are saved in the label file, and a group can hold other
+    groups.</p>
+    <list>
+      <item><p><keyseq><key>Ctrl</key></keyseq>-click one element of a group
+      to select it alone, to move or change it without ungrouping.</p></item>
+      <item><p><gui>Remove from Group</gui> takes the element you
+      <key>Ctrl</key>-clicked out of its group.</p></item>
+      <item><p><gui>Ungroup</gui>
+      (<keyseq><key>Ctrl</key><key>Shift</key><key>G</key></keyseq>) undoes
+      the outermost group, one level at a time.</p></item>
+      <item><p>A selected group has handles of its own. Dragging one scales
+      every element in the group.</p></item>
+    </list>
+  </section>
+
+  <section id="align">
+    <title>Align</title>
+    <p><guiseq><gui>Edit</gui><gui>Align</gui></guiseq>, or the
+    <gui>Align ▾</gui> button at the right of the menu bar, lines up the
+    selection's left edges, centres, right edges, tops, middles or bottoms.
+    With several things selected they line up with each other; with one
+    element or one group selected it lines up with the label, so
+    <gui>Centre Horizontally</gui> centres it across the label. A group
+    moves as one box.</p>
+  </section>
+
+  <section id="order">
+    <title>Put one element above another</title>
+    <p>Elements are stacked in the order they were added, the newest on top.
+    <gui>Bring to Front</gui>, <gui>Bring Forward</gui>,
+    <gui>Send Backward</gui> and <gui>Send to Back</gui>, in the
+    <gui>Edit</gui> menu and the right-click menu, move the element you
+    clicked last. Stacking decides what a click picks, and what an element
+    with <gui>Reverse</gui> ticked turns white, since it reverses what is
+    already printed beneath it. It hides nothing on paper: the printer
+    prints every element.</p>
+  </section>
+
+  <section id="copy">
+    <title>Copy, paste and duplicate</title>
+    <p><gui>Cut</gui>, <gui>Copy</gui> and <gui>Paste</gui>
+    (<keyseq><key>Ctrl</key><key>X</key></keyseq>,
+    <keyseq><key>Ctrl</key><key>C</key></keyseq>,
+    <keyseq><key>Ctrl</key><key>V</key></keyseq>) use the desktop clipboard,
+    which holds the elements as ZPL. A paste lands where the copy came from,
+    or a tenth of an inch down and to the right if something identical is
+    already there. Paste also takes ZPL copied from anywhere else.
+    <gui>Duplicate</gui> copies the selection in place without using the
+    clipboard.</p>
+  </section>
+
+  <section id="print-this">
+    <title>Keep an element off the printed label</title>
+    <p>Right-click an element and clear <gui>Print This Element</gui>. It
+    stays in the design and in the saved file, drawn faintly, but is not
+    printed. This is how to keep text from printing through an image laid
+    over it.</p>
+  </section>
+
+  <section id="undo">
+    <title>Undo and delete</title>
+    <p><gui>Undo</gui> (<keyseq><key>Ctrl</key><key>Z</key></keyseq>) and
+    <gui>Redo</gui> (<keyseq><key>Ctrl</key><key>Shift</key><key>Z</key></keyseq>
+    or <keyseq><key>Ctrl</key><key>Y</key></keyseq>) go back and forward up
+    to 50 changes, and are also the arrows at the right of the menu bar.
+    Opening a file starts the history afresh. <key>Delete</key> removes
+    everything selected.</p>
+  </section>
+</page>

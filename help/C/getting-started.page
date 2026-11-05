@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="getting-started">
+  <info>
+    <link type="guide" xref="index#start"/>
+    <title type="sort">1</title>
+    <link type="seealso" xref="canvas"/>
+    <link type="seealso" xref="printing"/>
+    <desc>Set up the printer, design a label, save it and print it.</desc>
+  </info>
+
+  <title>Design and print a first label</title>
+
+  <steps>
+    <item>
+      <p>Tell LinuxZPL where the printer is:
+      <guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq>. Type
+      its network <gui>Address</gui> and <gui>Port</gui> (Zebra printers
+      listen on 9100), then press <gui>Test Connection</gui>, which also asks
+      the printer its resolution and fills in <gui>DPI</gui>.</p>
+    </item>
+    <item>
+      <p>Set the label's size:
+      <guiseq><gui>Settings</gui><gui>Label Size…</gui></guiseq>. Pick one of
+      the sizes listed, or type a width and height in inches.</p>
+    </item>
+    <item>
+      <p>Add things to the label with the buttons down the left of the
+      canvas: <gui>+ Text</gui>, <gui>+ Frame</gui>, <gui>+ Barcode</gui>,
+      <gui>+ Image</gui> and the rest. Click a button to add at a spot of its
+      own, or drag it onto the canvas to drop the new element where you
+      want it.</p>
+    </item>
+    <item>
+      <p>Drag an element to move it, or drag its handles to resize it. The
+      <gui>Properties</gui> panel beside the canvas shows whatever is
+      selected: type a new text, size or barcode value there and the canvas
+      follows as you type.</p>
+    </item>
+    <item>
+      <p>Save the label with <guiseq><gui>File</gui><gui>Save</gui></guiseq>
+      (<keyseq><key>Ctrl</key><key>S</key></keyseq>). Labels are saved as ZPL,
+      in <file>.zpl</file> files any Zebra printer can be sent.</p>
+    </item>
+    <item>
+      <p>Print it with <guiseq><gui>File</gui><gui>Print…</gui></guiseq>
+      (<keyseq><key>Ctrl</key><key>P</key></keyseq>), which lets you choose
+      the copies, the darkness and the speed first, or with
+      <guiseq><gui>File</gui><gui>Quick Print</gui></guiseq>
+      (<keyseq><key>Ctrl</key><key>Shift</key><key>P</key></keyseq>), which
+      sends it as it is.</p>
+    </item>
+  </steps>
+
+  <section id="files">
+    <title>Open and save labels</title>
+    <list>
+      <item><p><guiseq><gui>File</gui><gui>Open…</gui></guiseq>
+      (<keyseq><key>Ctrl</key><key>O</key></keyseq>) opens any
+      <file>.zpl</file> file, and shows a picture of the label as you pick
+      one. <gui>Open Recent</gui> lists the last ten files opened or
+      saved.</p></item>
+      <item><p><gui>Save as…</gui>
+      (<keyseq><key>Ctrl</key><key>Shift</key><key>S</key></keyseq>) asks for
+      a name, and adds <file>.zpl</file> to a name typed without
+      one.</p></item>
+      <item><p>Before a new or opened label replaces unsaved changes, or
+      LinuxZPL closes with some, it asks whether to save them.</p></item>
+      <item><p>The file is plain ZPL. What only the designer needs, such as
+      groups and the resolution the label was made for, goes in comments
+      that printers ignore, so the file prints the same anywhere.</p></item>
+    </list>
+  </section>
+
+  <section id="canvas-is-proof">
+    <title>The canvas shows what will print</title>
+    <list>
+      <item><p>Everything is measured in the printer's dots. A 4 × 6 inch
+      label is 812 × 1218 dots on a 203 dpi printer.</p></item>
+      <item><p>A thermal printer only adds black; it cannot erase. An image
+      placed over text does not hide the text, which prints through the
+      image's white parts, and the canvas shows it that way.</p></item>
+      <item><p>Images are shown as the printer receives them: shrunk or
+      enlarged to their box and turned into black and white dots.</p></item>
+      <item><p>Text is drawn at the width it will print, in the font it will
+      print in.</p></item>
+    </list>
+  </section>
+</page>

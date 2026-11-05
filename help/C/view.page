@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="view">
+  <info>
+    <link type="guide" xref="index#design"/>
+    <title type="sort">3</title>
+    <link type="seealso" xref="canvas"/>
+    <desc>Zoom, show rulers and a grid, and snap what you drag to the grid
+    or to other elements.</desc>
+  </info>
+
+  <title>Zoom, rulers, grid and snapping</title>
+
+  <section id="zoom">
+    <title>Zoom</title>
+    <terms>
+      <item>
+        <title><gui>Fit Label</gui>
+        (<keyseq><key>Ctrl</key><key>0</key></keyseq>)</title>
+        <p>Shows the whole label. A label opens this way.</p>
+      </item>
+      <item>
+        <title><gui>Fit Width</gui>
+        (<keyseq><key>Ctrl</key><key>9</key></keyseq>)</title>
+        <p>Fills the width of the window; a tall label scrolls.</p>
+      </item>
+      <item>
+        <title><gui>Actual Size</gui>
+        (<keyseq><key>Ctrl</key><key>1</key></keyseq>)</title>
+        <p>One printer dot to one screen pixel.</p>
+      </item>
+      <item>
+        <title><gui>Zoom In</gui> and <gui>Zoom Out</gui></title>
+        <p><keyseq><key>Ctrl</key><key>+</key></keyseq> (or
+        <keyseq><key>Ctrl</key><key>=</key></keyseq>) and
+        <keyseq><key>Ctrl</key><key>-</key></keyseq>, from 5% to 800%. With
+        <key>Ctrl</key> held, the mouse wheel zooms about the
+        pointer.</p>
+      </item>
+    </terms>
+    <p>These are in the <gui>View</gui> menu, and <gui>−</gui>,
+    <gui>Fit</gui> and <gui>+</gui> are at the right of the menu bar. The
+    zoom is shown at the right of the status bar, with <gui>(fit)</gui>
+    while a fit is deciding it.</p>
+  </section>
+
+  <section id="rulers">
+    <title>Rulers and the pointer's position</title>
+    <p><guiseq><gui>View</gui><gui>Rulers</gui></guiseq>
+    (<keyseq><key>Ctrl</key><key>R</key></keyseq>) shows rulers along the
+    top and left of the canvas, measured from the label's top-left corner
+    in the grid's unit. A red mark on each follows the pointer.</p>
+    <p>Whether or not the rulers are shown, the status bar gives where the
+    pointer is on the label, in the same unit.</p>
+  </section>
+
+  <section id="grid">
+    <title>The grid</title>
+    <p><guiseq><gui>View</gui><gui>Show Grid</gui></guiseq>
+    (<keyseq><key>Ctrl</key><key>'</key></keyseq>) draws a grid over the
+    label. It is never printed. <gui>Grid Settings…</gui> sets its spacing in
+    inches, millimetres or dots, and how often a darker major line comes.
+    Changing the unit converts the spacing, so 0.1 inch becomes 2.54 mm.</p>
+  </section>
+
+  <section id="snap">
+    <title>Snapping</title>
+    <terms>
+      <item>
+        <title><gui>Snap to Grid</gui>
+        (<keyseq><key>Ctrl</key><key>Shift</key><key>'</key></keyseq>)</title>
+        <p>Puts what you drag on the grid, whether the grid is shown or not.
+        A moved selection's top-left corner goes to the nearest lines; a
+        resized edge goes to the nearest line. New elements are placed on
+        the grid too.</p>
+      </item>
+      <item>
+        <title><gui>Snap to Elements</gui></title>
+        <p>Lines what you drag up with the edges and centres of the other
+        elements and of the label, and draws magenta guides while it
+        does. Where an element is in reach it wins over the grid.</p>
+      </item>
+    </terms>
+    <p>While dragging, hold <key>Alt</key> to stop snapping for as long as it
+    is held, or <key>Shift</key> to keep a move along one axis. Only the
+    pointer snaps: the arrow keys, typed positions, <gui>Align</gui> and
+    <gui>Paste</gui> go exactly where they are told, so the arrows are the
+    way to place something between grid lines.</p>
+  </section>
+
+  <p>The rulers, the grid, its settings and both snaps are remembered from
+  one session to the next.</p>
+</page>

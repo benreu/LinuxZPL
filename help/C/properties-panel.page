@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="properties-panel">
+  <info>
+    <link type="guide" xref="index#design"/>
+    <title type="sort">2</title>
+    <link type="seealso" xref="canvas"/>
+    <desc>Change what is selected: its position, text, size, font and the
+    rest, applied as you type.</desc>
+  </info>
+
+  <title>The Properties panel</title>
+
+  <p>The <gui>Properties</gui> panel, beside the canvas, shows whatever is
+  selected and changes it. Every change applies as you make it, and the
+  canvas redraws as you type.</p>
+
+  <section id="rows">
+    <title>What it shows</title>
+    <list>
+      <item><p>At the top, what is selected: the kind of element, such as
+      <gui>Frame</gui>, or <gui>Group of 3</gui>, or <gui>3 elements</gui>.</p></item>
+      <item><p><gui>X</gui> and <gui>Y</gui>, the left and top of the
+      selection in dots. Typing a new value moves the whole
+      selection.</p></item>
+      <item><p><gui>Print This Element</gui>. Clear it to keep the selection
+      off the printed label while keeping it in the design.</p></item>
+      <item><p>For one element, all of its own settings: the pages under
+      <link xref="index#elements">What goes on a label</link> describe
+      each kind's.</p></item>
+      <item><p>For several elements, only the settings they all have, such
+      as <gui>Thickness</gui> for frames and circles or <gui>Font
+      Height</gui> for text. A value they do not share reads
+      <gui>Mixed</gui>, and a value you type is given to every one of
+      them. Text, barcode data and the like are each element's own:
+      <key>Ctrl</key>-click one element to change those.</p></item>
+    </list>
+  </section>
+
+  <section id="undo">
+    <title>Undo and Escape</title>
+    <p>A run of changes in the panel is one step for <gui>Undo</gui>. It ends
+    when you press <key>Enter</key>, leave the panel, pause for a second, or
+    select something else. <key>Escape</key> throws away the run you are in
+    the middle of.</p>
+  </section>
+
+  <section id="dock">
+    <title>Show, hide and float it</title>
+    <p>The panel is docked on the right of the window, and can be pulled off
+    to float in a window of its own, then docked again: in the Qt frontend
+    by its title bar, in the GTK frontend by the button in its own
+    header.</p>
+    <p>Docked, it always shows the selection. Floating, it stays away until
+    you ask for it, and then follows the selection until you close it. Bring
+    it back with any of:</p>
+    <list>
+      <item><p>a double click on an element</p></item>
+      <item><p><guiseq><gui>Edit</gui><gui>Properties</gui></guiseq> or
+      <gui>Properties</gui> in the right-click menu
+      (<keyseq><key>Alt</key><key>Enter</key></keyseq>)</p></item>
+      <item><p><guiseq><gui>View</gui><gui>Properties Panel</gui></guiseq></p></item>
+    </list>
+    <p>Its size and whether it floats are remembered.</p>
+  </section>
+</page>
