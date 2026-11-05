@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="printing">
+  <info>
+    <link type="guide" xref="index#printing"/>
+    <title type="sort">1</title>
+    <link type="seealso" xref="fonts"/>
+    <link type="seealso" xref="resolution"/>
+    <desc>Choose the printer, the copies, the darkness, speed and media, and
+    print.</desc>
+  </info>
+
+  <title>Print a label</title>
+
+  <p>LinuxZPL sends labels straight to a Zebra printer on the network, with
+  no printing system in between. The printer has to be reachable from this
+  computer at its address and port; if it is not, the error says why.</p>
+
+  <section id="default-printer">
+    <title>The printer you normally use</title>
+    <p><guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq> holds
+    the printer's <gui>Address</gui>, <gui>Port</gui> (usually 9100) and
+    <gui>DPI</gui>, its resolution. <gui>Test Connection</gui> checks the
+    printer can be reached and asks it its resolution. <gui>Font
+    memory</gui> says where on the printer fonts are kept: see
+    <link xref="fonts"/>. These are remembered from one session to the
+    next.</p>
+  </section>
+
+  <section id="print-window">
+    <title>The Print window</title>
+    <p><guiseq><gui>File</gui><gui>Print…</gui></guiseq>
+    (<keyseq><key>Ctrl</key><key>P</key></keyseq>) opens the Print window.
+    <gui>Print</gui> prints, <gui>OK</gui> keeps the settings without
+    printing, and <gui>Cancel</gui> changes nothing.</p>
+    <terms>
+      <item>
+        <title><gui>Printer</gui></title>
+        <p>The printer to print to. A change here lasts until LinuxZPL is
+        closed and is not remembered; <gui>Use Default</gui> fills in the
+        default printer again. This is how to print to another printer for
+        a while.</p>
+      </item>
+      <item>
+        <title><gui>Copies (^PQ)</gui></title>
+        <p>How many labels to print, and optionally a pause after every so
+        many (<gui>Pause every</gui>, 0 for never). The printer prints the
+        copies itself. <gui>Replicates</gui> prints each serial number that
+        many times before moving to the next.</p>
+      </item>
+      <item>
+        <title><gui>Label</gui></title>
+        <p><gui>Print upside down</gui>, <gui>Mirror left to right</gui>,
+        <gui>Reverse fields, white on black</gui>, and <gui>Check barcode
+        data as printed</gui>, which has the printer check each barcode's data
+        and print an error message in place of one that is not valid.</p>
+      </item>
+      <item>
+        <title><gui>Printer setup sent with the label</gui></title>
+        <p><gui>Darkness</gui>, the print, slew and backfeed speeds, the
+        print mode (such as tear off, peel off or cutter), the media
+        tracking and the media type. Each starts at <gui>Printer's
+        setting</gui>, which sends nothing and leaves the printer as it was
+        set up.</p>
+      </item>
+    </terms>
+    <p>Everything but the printer is saved with the label, so the label
+    prints the same way next time, and a change to it can be undone.</p>
+  </section>
+
+  <section id="quick-print">
+    <title>Quick Print</title>
+    <p><guiseq><gui>File</gui><gui>Quick Print</gui></guiseq>
+    (<keyseq><key>Ctrl</key><key>Shift</key><key>P</key></keyseq>) prints at
+    once, to the printer in use and with the label's settings as they
+    are.</p>
+  </section>
+
+  <section id="before">
+    <title>Before it prints</title>
+    <list>
+      <item><p>If the label uses fonts of its own, LinuxZPL asks the printer
+      whether it has them, and offers to send any it lacks: see
+      <link xref="fonts"/>.</p></item>
+      <item><p>Elements whose <gui>Print This Element</gui> is cleared are
+      not printed.</p></item>
+      <item><p>The label always tells the printer whether to print upside
+      down, mirrored or reversed, and which character set it is in, since a
+      printer otherwise keeps whatever the last job set.</p></item>
+    </list>
+  </section>
+</page>

@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="templates">
+  <info>
+    <link type="guide" xref="index#printing"/>
+    <title type="sort">4</title>
+    <link type="seealso" xref="text"/>
+    <link type="seealso" xref="barcode"/>
+    <desc>Labels with fields left to fill in: numbered fields, storing a
+    label on the printer, and filling one in from a script or a Python
+    program.</desc>
+  </info>
+
+  <title>Templates and fields filled in later</title>
+
+  <p>A template is a label with some of its text or barcodes left to be
+  filled in: a name and address, an order number. LinuxZPL makes templates
+  with ZPL's numbered fields, and can fill them in itself.</p>
+
+  <section id="numbered">
+    <title>Numbered fields</title>
+    <p><gui>+ Numbered</gui> adds text whose words are given later.</p>
+    <terms>
+      <item>
+        <title><gui>Field Number</gui></title>
+        <p>The number the words are given by. Every field with the same
+        number prints the same words.</p>
+      </item>
+      <item>
+        <title><gui>Field Name</gui></title>
+        <p>A name for it, such as <em>Ship to</em>. The canvas shows it as
+        «Ship to» until there are words, and a printer with a keypad shows
+        it when it asks for them.</p>
+      </item>
+      <item>
+        <title><gui>Text</gui></title>
+        <p>Words to use until others are given: optional, and shared with
+        every field of the same number.</p>
+      </item>
+    </terms>
+    <p>Clearing <gui>Variable</gui> turns the field into ordinary text. A
+    barcode can take its value from a numbered field the same way: tick
+    <gui>Variable</gui> among its settings.</p>
+  </section>
+
+  <section id="upload">
+    <title>Store the template on the printer</title>
+    <p><guiseq><gui>File</gui><gui>Upload Template to Printer</gui></guiseq>,
+    then <gui>To Flash (E:)…</gui> or <gui>To RAM (R:)…</gui>, asks for a name
+    of up to 16 letters and digits and stores the label on the printer
+    without printing it. Flash keeps it when the printer is switched off;
+    RAM does not. Another program, or a printer's keypad, can then print it
+    by name with the fields filled in, sending only the words for each
+    field.</p>
+  </section>
+
+  <section id="command-line">
+    <title>Fill it in from the command line</title>
+    <p>Without opening a window, <cmd>linuxzpl.py</cmd> can fill in a
+    template's numbered fields and save the label, ready to send:</p>
+    <screen>linuxzpl.py --load-file label.zpl --field 1=Hello --field 2=World --save-file out.zpl</screen>
+    <p><cmd>--field</cmd> takes a field number from 1 to 9999, then
+    <sys>=</sys>, then the words. The manual page,
+    <cmd>man ./help/linuxzpl.1</cmd>, has the rest.</p>
+  </section>
+
+  <section id="python">
+    <title>Fill it in from Python</title>
+    <p>A Python program can do the same, and more, with no window:</p>
+    <code>from zplcore import Label
+
+label = Label.load("shipping.zpl")
+label[1] = "Hello"              # numbered field 1
+label["customer"] = "ACME"      # the field whose ID is customer
+label.copies = 5
+label.save("out.zpl")</code>
+    <p>To fill a field that has no number from Python, give it a name in its
+    <gui>ID</gui> row. The ID is kept in the label as a comment the printer
+    ignores, so the printed label is unchanged. Every element that holds
+    words or data has an <gui>ID</gui> row: text, dates, serial numbers,
+    numbered fields, barcodes and symbols. The README beside
+    <file>linuxzpl.py</file> describes the rest of what a program can
+    do.</p>
+  </section>
+</page>

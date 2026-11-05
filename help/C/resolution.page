@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="resolution">
+  <info>
+    <link type="guide" xref="index#printing"/>
+    <title type="sort">3</title>
+    <link type="seealso" xref="printing"/>
+    <desc>203, 300 and 600 dpi printers, label sizes in inches, and moving a
+    design from one resolution to another.</desc>
+  </info>
+
+  <title>Label size and print resolution</title>
+
+  <p>A ZPL label is measured in printer dots, and a dot is a different size
+  on different printers: 203, 300 or 600 to the inch. A label 812 × 1218
+  dots is 4 × 6 inches on a 203 dpi printer, but 2.7 × 4.1 inches on a 300
+  dpi one. ZPL files do not say which they were made for, so LinuxZPL notes
+  the resolution in a comment of its own in the file, which printers
+  ignore.</p>
+
+  <section id="label-size">
+    <title>Set the label size</title>
+    <p><guiseq><gui>Settings</gui><gui>Label Size…</gui></guiseq> offers 4 × 6,
+    5 × 7, 6 × 4, 3 × 5 and 2 × 3 inches, or a width and height of your own,
+    0.5 to 25 inches. It shows the size in dots at the <gui>DPI</gui> chosen
+    beside it. <gui>Home X</gui> and <gui>Home Y</gui> move the whole design
+    on the label, for stock with printing on it already. Shrinking the label
+    pulls elements back inside it. The size is remembered for new
+    labels.</p>
+  </section>
+
+  <section id="dpi">
+    <title>Set the resolution</title>
+    <p>The resolution is in <gui>Label Size</gui>, in
+    <guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq> and in
+    the Print window; all three change the same setting.
+    <gui>Test Connection</gui> asks the printer what it is.</p>
+  </section>
+
+  <section id="rescale">
+    <title>When the design and the printer differ</title>
+    <p>When you open a label made for another resolution, or change the
+    resolution with a label open, LinuxZPL asks what to do:</p>
+    <terms>
+      <item>
+        <title><gui>Rescale</gui></title>
+        <p>Scales the whole design so it prints the same size on paper. Sizes
+        are rounded to whole dots, so a barcode's bars may come out a little
+        wider or narrower. This changes the label, so it then needs
+        saving.</p>
+      </item>
+      <item>
+        <title><gui>Keep Dots</gui></title>
+        <p>Leaves every dot where it is, so the label prints a different size
+        on paper; the question says what size.</p>
+      </item>
+      <item>
+        <title><gui>Cancel</gui></title>
+        <p>Also leaves the dots alone. The new resolution still applies.</p>
+      </item>
+    </terms>
+    <p>A file with no resolution noted in it, such as one from another
+    program, is taken to be 203 dpi, and the question says it was assumed.
+    A MaxiCode is always the same size on paper, so it is re-drawn for the
+    new resolution whichever you choose.</p>
+  </section>
+</page>

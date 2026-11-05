@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="fonts">
+  <info>
+    <link type="guide" xref="index#printing"/>
+    <title type="sort">2</title>
+    <link type="seealso" xref="text"/>
+    <link type="seealso" xref="printing"/>
+    <desc>Use this computer's TrueType fonts on a label, get them onto the
+    printer, and manage the fonts the printer holds.</desc>
+  </info>
+
+  <title>Fonts on the label and on the printer</title>
+
+  <p>Text can be printed in the printer's built-in fonts, or in any TrueType
+  font installed on this computer. A TrueType font has to be on the printer
+  as well, and LinuxZPL sends it there when it prints.</p>
+
+  <section id="which">
+    <title>Which fonts can be chosen</title>
+    <p>Only TrueType fonts, in <file>.ttf</file> files. OpenType, Type 1 and
+    font collections are left out on purpose: they cannot be sent to a Zebra
+    printer, and a label using one would print in some other font.</p>
+    <p><guiseq><gui>Settings</gui><gui>Local Fonts…</gui></guiseq> shows how
+    LinuxZPL finds this computer's fonts. It asks fontconfig first; where
+    fontconfig is missing or finds nothing, it looks through the usual font
+    folders itself, and the window lists what it found there.
+    <gui>Extra Font Folder…</gui> adds one folder of your own to that search,
+    and <gui>Rescan</gui> looks again.</p>
+  </section>
+
+  <section id="check">
+    <title>Before printing: does the printer have them?</title>
+    <p>Choosing a font never waits on the printer. When you print, LinuxZPL
+    asks the printer which fonts it holds and compares them with the ones the
+    label uses:</p>
+    <terms>
+      <item>
+        <title>Some are missing</title>
+        <p>It lists them. <gui>Upload &amp; Print</gui> sends each one and
+        then prints; <gui>Print Anyway</gui> prints without them, and the
+        printer then uses a font of its own in their place.</p>
+      </item>
+      <item>
+        <title>A font from an opened file</title>
+        <p>A label file names its fonts but does not contain them. When this
+        computer has no font file that matches, the font is marked
+        <gui>(source file unknown)</gui> and cannot be sent.</p>
+      </item>
+      <item>
+        <title>The printer does not answer</title>
+        <p>It says so, and offers <gui>Print Anyway</gui> or
+        <gui>Cancel</gui>.</p>
+      </item>
+    </terms>
+    <p>On the printer, a font is named from its file name: upper case, letters,
+    digits, <sys>_</sys> and <sys>-</sys> only, at most eight characters, so
+    <file>DejaVuSans.ttf</file> becomes <sys>DEJAVUSA.TTF</sys>. Two fonts
+    whose names would clash on one label get a number to tell them
+    apart.</p>
+  </section>
+
+  <section id="memory">
+    <title>Where on the printer fonts go</title>
+    <p><gui>Font memory</gui>, under
+    <guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq> and in the
+    Print window, chooses which of the printer's memories the fonts you pick
+    are sent to, such as Flash (<sys>E:</sys>), which keeps them when the
+    printer is switched off, or RAM (<sys>R:</sys>), which does not. Fonts in
+    a label you opened stay where that label says they are.</p>
+  </section>
+
+  <section id="manager">
+    <title>The fonts the printer holds</title>
+    <p><guiseq><gui>Printer</gui><gui>Fonts…</gui></guiseq> lists the
+    TrueType fonts stored on the printer, in each of its memories.
+    <gui>Upload…</gui> sends an installed font to the memory you choose,
+    <gui>Delete</gui> removes the selected one, and <gui>Refresh</gui> asks
+    again. The line at the bottom says which memories were empty and which
+    could not be read, so a short list is never mistaken for a complete
+    one.</p>
+  </section>
+
+  <section id="font-zero">
+    <title>The printer's scalable font 0</title>
+    <p>Labels made by other programs often use font 0, the printer's own
+    scalable font. LinuxZPL has no copy of it, and measures it with a
+    near match, Nimbus Sans Narrow Bold, when that is installed (on Debian and
+    Ubuntu, the <sys>fonts-urw-base35</sys> package). Without it, font 0 text
+    is drawn much wider than it prints.</p>
+  </section>
+</page>
