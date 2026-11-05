@@ -18,12 +18,12 @@ import math
 import time
 from typing import Optional
 
-from PySide2.QtCore import QLineF, QPointF, QRectF, QSize, Qt, Signal
+from PySide2.QtCore import QEvent, QLineF, QPointF, QRectF, QSize, Qt, Signal
 from PySide2.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter,
                            QPainterPath, QPen, QPixmap, QPolygonF)
 from PySide2.QtWidgets import QMenu, QWidget
 
-from zplcore import geometry, graphic_store, graphic_symbols, textraster, view
+from zplcore import geometry, graphic_store, graphic_symbols, snap, textraster, view
 from zplcore.model import DesignElement, Document
 
 # What a palette button carries while it is dragged onto the canvas: the kind
@@ -112,6 +112,14 @@ class DesignCanvas(QWidget):
         # snaps back to what the text or the symbol will print and a delta
         # smaller than that snap would be thrown away every event.
         self.resize_origin: Optional[dict] = None
+        # The selection's box when a move started. A move is measured from
+        # the press too, so a snap to the grid rounds the whole drag rather
+        # than rounding each motion event away to nothing.
+        self.move_origin = None
+        # The latest drag from the press, (dx, dy) in dots, so letting go of
+        # Shift or Alt mid-drag can redo it at once, without waiting for the
+        # pointer to move.
+        self._drag_delta = None
         # A rubber band being dragged over empty canvas: where it started and
         # where the pointer is now, both in dots, and whether it adds to the
         # selection rather than replacing it.
@@ -123,17 +131,30 @@ class DesignCanvas(QWidget):
         self.last_click_element = None
         self._cursor_shape = None
         # The window's grid (zplcore.grid.Grid), shared by reference so the View
-        # menu and Grid Settings change what is drawn here; None draws none.
-        self.grid = None
+        # menu and Grid Settings change what is drawn and snapped to here.
+        self._grid = None
 
     # --- document ------------------------------------------------------------
+
+    @property
+    def grid(self):
+        return self._grid
+
+    @grid.setter
+    def grid(self, grid):
+        # The document is told too, so the palette's new elements snap to it.
+        self._grid = grid
+        self.document.snap_grid = grid
 
     def set_document(self, document: Document):
         """Show a different document - a load, or File > New."""
         self.document = document
+        document.snap_grid = self._grid
         self.drag_start = None
         self.active_handle = None
         self.resize_origin = None
+        self.move_origin = None
+        self._drag_delta = None
         self.last_click_element = None
         self.band_origin = self.band_now = None
         self._sync_size()
@@ -984,6 +1005,7 @@ class DesignCanvas(QWidget):
         # pointer wandered before the button came back up.
         if clicked_element is not None and not additive:
             self.drag_start = (lx, ly)
+            self.move_origin = geometry.selection_bounds(doc.selection)
         self.update()
 
     def mouseDoubleClickEvent(self, event):
@@ -1005,24 +1027,61 @@ class DesignCanvas(QWidget):
             return
 
         lx, ly = self._screen_to_label(event.x(), event.y())
-        dx = lx - self.drag_start[0]
-        dy = ly - self.drag_start[1]
+        self._drag_to(lx - self.drag_start[0], ly - self.drag_start[1],
+                      event.modifiers())
 
+    def _drag_to(self, dx, dy, modifiers):
+        """Apply a drag of (dx, dy) from the press, with the keys now held.
+
+        Both a move and a resize are measured from the press: a resize because
+        the box snaps back to its printed size after every event, a move because
+        a snap to the grid rounds, and either, measured from the last event,
+        would throw a slow drag's small steps away. Alt held means no snapping;
+        Shift held keeps a move to one axis. Shift at the press means add to the
+        selection, and an additive click starts no drag, so the two never meet.
+        """
+        doc = self.document
+        self._drag_delta = (dx, dy)
+        grid = None if modifiers & Qt.AltModifier else self._grid
         if self.active_handle:
-            # Measured from the press, so the whole drag is still in the delta
-            # after the box has snapped back to its printed size.
+            dx, dy = snap.resize_delta(doc, self.resize_origin, self.active_handle,
+                                       dx, dy, grid)
             geometry.resize_by_handle(doc, doc.resize_target(),
                                       self.active_handle, dx, dy,
                                       origin=self.resize_origin)
         else:
             # The whole selection moves together, clamped as one box.
-            geometry.move_selection(doc, doc.selection, dx, dy)
-            # A move carries on from where the pointer is now; a resize keeps
-            # its press point, which is what its delta is measured from.
-            self.drag_start = (lx, ly)
-
+            snap.drag_selection(doc, doc.selection, self.move_origin, dx, dy, grid,
+                                lock_axis=bool(modifiers & Qt.ShiftModifier))
         self._drag_changed = True
         self.update()
+
+    def event(self, event):
+        # Alt held mid-drag is the snap's bypass. Let through, the window's
+        # menu bar takes a press and release of Alt as a request for the
+        # keyboard, and keeps the focus - and the Alt release - from then on.
+        # It decides on the ShortcutOverride, so the canvas keeps that one.
+        if (event.type() == QEvent.ShortcutOverride and self.drag_start
+                and event.key() == Qt.Key_Alt):
+            event.accept()
+            return True
+        return super().event(event)
+
+    def _redrag(self, event):
+        """Shift or Alt went down or up mid-drag: redo the drag with the keys
+        held now. True if there was a drag to redo."""
+        flag = {Qt.Key_Shift: Qt.ShiftModifier,
+                Qt.Key_Alt: Qt.AltModifier}.get(event.key())
+        if (flag is None or self._drag_delta is None or not self.drag_start
+                or not self.document.selection):
+            return False
+        # The key's own state from whether it went down or up: what a key
+        # event says of the modifier it is itself is not the same everywhere.
+        held = int(event.modifiers()) & ~int(flag)
+        if event.type() == QEvent.KeyPress:
+            held |= int(flag)
+        self._drag_to(*self._drag_delta, Qt.KeyboardModifiers(held))
+        return True
 
     def wheelEvent(self, event):
         """Ctrl+wheel zooms about the pointer; a plain wheel scrolls."""
@@ -1044,6 +1103,8 @@ class DesignCanvas(QWidget):
         self.drag_start = None
         self.active_handle = None
         self.resize_origin = None
+        self.move_origin = None
+        self._drag_delta = None
         if self._drag_changed:
             # A drag is one change, reported once it finishes, so it is one undo
             # entry rather than one per motion event.
@@ -1060,6 +1121,9 @@ class DesignCanvas(QWidget):
         Ctrl and Alt are left alone, and so is an arrow with nothing selected,
         so the scroll area behind the canvas still gets it.
         """
+        if self._redrag(event):
+            event.accept()
+            return
         signs = self._ARROWS.get(event.key())
         if (signs is None or not self.document.selection
                 or event.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
@@ -1073,6 +1137,9 @@ class DesignCanvas(QWidget):
         event.accept()
 
     def keyReleaseEvent(self, event):
+        if self._redrag(event):
+            event.accept()
+            return
         # A held key sends a release before each repeat; only the last one,
         # when the key really comes up, ends the press.
         if event.key() in self._ARROWS and not event.isAutoRepeat():

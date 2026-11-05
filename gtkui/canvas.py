@@ -24,7 +24,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gdk, GdkPixbuf, GObject, Gtk
 
-from zplcore import geometry, graphic_store, graphic_symbols, textraster, view
+from zplcore import geometry, graphic_store, graphic_symbols, snap, textraster, view
 from zplcore.model import (BarcodeElement, DesignElement, Document,
                            FrameElement, ImageElement, StoredGraphicElement,
                            TextElement)
@@ -155,6 +155,14 @@ class DesignCanvas(Gtk.DrawingArea):
         # snaps back to what the text or the symbol will print and a delta
         # smaller than that snap would be thrown away every event.
         self.resize_origin: Optional[dict] = None
+        # The selection's box when a move started. A move is measured from
+        # the press too, so a snap to the grid rounds the whole drag rather
+        # than rounding each motion event away to nothing.
+        self.move_origin = None
+        # The latest drag from the press, (dx, dy) in dots, so letting go of
+        # Shift or Alt mid-drag can redo it at once, without waiting for the
+        # pointer to move.
+        self._drag_delta = None
         # A rubber band being dragged over empty canvas: where it started and
         # where the pointer is now, both in dots, and whether it adds to the
         # selection rather than replacing it.
@@ -165,8 +173,8 @@ class DesignCanvas(Gtk.DrawingArea):
         self._cursor_name: Optional[str] = None   # cursor currently set
         self._cursor_cache = {}
         # The window's grid (zplcore.grid.Grid), shared by reference so the View
-        # menu and Grid Settings change what is drawn here; None draws none.
-        self.grid = None
+        # menu and Grid Settings change what is drawn and snapped to here.
+        self._grid = None
 
         self.connect("draw", self.on_draw)
         self.connect("scroll-event", self.on_scroll)
@@ -245,12 +253,25 @@ class DesignCanvas(Gtk.DrawingArea):
     def printer_font_name(self):
         return self.document.printer_font_name
 
+    @property
+    def grid(self):
+        return self._grid
+
+    @grid.setter
+    def grid(self, grid):
+        # The document is told too, so the palette's new elements snap to it.
+        self._grid = grid
+        self.document.snap_grid = grid
+
     def set_document(self, document: Document):
         """Show a different document - a load, or File > New."""
         self.document = document
+        document.snap_grid = self._grid
         self.drag_start = None
         self.active_handle = None
         self.resize_origin = None
+        self.move_origin = None
+        self._drag_delta = None
         self.last_click_element = None
         self.band_origin = self.band_now = None
         self.sync_size()
@@ -1381,6 +1402,7 @@ class DesignCanvas(Gtk.DrawingArea):
         # pointer wandered before the button came back up.
         if clicked_element and not additive:
             self.drag_start = (lx, ly)
+            self.move_origin = geometry.selection_bounds(self.document.selection)
         self.queue_draw()
     
     def on_button_release(self, widget, event):
@@ -1392,6 +1414,8 @@ class DesignCanvas(Gtk.DrawingArea):
             self.drag_start = None
             self.active_handle = None
             self.resize_origin = None
+            self.move_origin = None
+            self._drag_delta = None
             # a drag is one change, reported once it finishes, so that it is
             # one undo step rather than one per motion event
             if self._drag_changed:
@@ -1494,6 +1518,8 @@ class DesignCanvas(Gtk.DrawingArea):
         the focus to the next button, and the arrow after a Select All would
         walk the toolbar instead of nudging.
         """
+        if self._redrag(event):
+            return False
         signs = self._ARROWS.get(event.keyval)
         if signs is None:
             return False
@@ -1507,6 +1533,8 @@ class DesignCanvas(Gtk.DrawingArea):
         return True
 
     def on_key_release(self, widget, event):
+        if self._redrag(event):
+            return False
         if event.keyval in self._ARROWS:
             self.finish_nudge()
         return False
@@ -1539,22 +1567,55 @@ class DesignCanvas(Gtk.DrawingArea):
         
         # Calculate movement in label coordinates
         lx, ly = self._screen_to_label(event.x, event.y)
-        dx = lx - self.drag_start[0]
-        dy = ly - self.drag_start[1]
-        
-        # If a handle is active, resize instead of move
+        self._drag_to(lx - self.drag_start[0], ly - self.drag_start[1],
+                      bool(event.state & Gdk.ModifierType.SHIFT_MASK),
+                      bool(event.state & Gdk.ModifierType.MOD1_MASK))
+
+    def _drag_to(self, dx, dy, shift, alt):
+        """Apply a drag of (dx, dy) from the press, with the keys now held.
+
+        Both a move and a resize are measured from the press: a resize because
+        the box snaps back to its printed size after every event, a move because
+        a snap to the grid rounds, and either, measured from the last event,
+        would throw a slow drag's small steps away. Alt held means no snapping;
+        Shift held keeps a move to one axis. Shift at the press means add to the
+        selection, and an additive click starts no drag, so the two never meet.
+        """
+        doc = self.document
+        self._drag_delta = (dx, dy)
+        grid = None if alt else self._grid
         if self.active_handle:
-            # Measured from the press, so the whole drag is still in the delta
-            # after the box has snapped back to its printed size.
-            geometry.resize_by_handle(self.document, self.document.resize_target(),
+            dx, dy = snap.resize_delta(doc, self.resize_origin, self.active_handle,
+                                       dx, dy, grid)
+            geometry.resize_by_handle(doc, doc.resize_target(),
                                       self.active_handle, dx, dy,
                                       origin=self.resize_origin)
         else:
             # The whole selection moves together, clamped as one box.
-            geometry.move_selection(self.document, self.document.selection, dx, dy)
-            # A move carries on from where the pointer is now; a resize keeps
-            # its press point, which is what its delta is measured from.
-            self.drag_start = (lx, ly)
-        
+            snap.drag_selection(doc, doc.selection, self.move_origin, dx, dy, grid,
+                                lock_axis=shift)
         self._drag_changed = True
         self.queue_draw()
+
+    _SHIFT_KEYS = (Gdk.KEY_Shift_L, Gdk.KEY_Shift_R)
+    _ALT_KEYS = (Gdk.KEY_Alt_L, Gdk.KEY_Alt_R, Gdk.KEY_Meta_L, Gdk.KEY_Meta_R)
+
+    def _redrag(self, event):
+        """Shift or Alt went down or up mid-drag: redo the drag with the keys
+        held now. True if there was a drag to redo."""
+        keyval = event.keyval
+        if (keyval not in self._SHIFT_KEYS + self._ALT_KEYS
+                or self._drag_delta is None or not self.drag_start
+                or not self.document.selection):
+            return False
+        # A key event's state is the modifiers before it, so the key's own
+        # state comes from whether it went down or up.
+        pressed = event.type == Gdk.EventType.KEY_PRESS
+        shift = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
+        alt = bool(event.state & Gdk.ModifierType.MOD1_MASK)
+        if keyval in self._SHIFT_KEYS:
+            shift = pressed
+        else:
+            alt = pressed
+        self._drag_to(*self._drag_delta, shift, alt)
+        return True

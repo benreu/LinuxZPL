@@ -342,18 +342,24 @@ class GtkDriver:
         document = self.canvas.document
         return [document.elements.index(el) for el in document.selection]
 
-    def drag_pointer(self, from_x, from_y, dx, dy):
+    def drag_pointer(self, from_x, from_y, dx, dy, shift=False, alt=False):
         """Press, move and release - the path a user's drag actually takes.
 
         In steps, because a pointer arrives in steps. One motion event carrying
         the whole delta is the one case a resize never had trouble with: the
         box snaps back to what it will print, so a drag delivered in small
-        pieces used to lose every piece smaller than that snap.
+        pieces used to lose every piece smaller than that snap. `shift` and
+        `alt` are held from the first motion on, not at the press, where Shift
+        would make the click an additive one.
         """
+        from gi.repository import Gdk
         scale = self.canvas._scale()
+        state = ((Gdk.ModifierType.SHIFT_MASK if shift else 0)
+                 | (Gdk.ModifierType.MOD1_MASK if alt else 0))
         self.click(from_x, from_y)
         for x, y in _drag_path(from_x, from_y, dx, dy):
-            self.canvas.on_motion(self.canvas, self._Event(x * scale, y * scale))
+            self.canvas.on_motion(self.canvas,
+                                  self._Event(x * scale, y * scale, state=state))
         self.canvas.on_button_release(self.canvas,
                                       self._Event((from_x + dx) * scale,
                                                   (from_y + dy) * scale))
@@ -363,6 +369,10 @@ class GtkDriver:
 
     def move(self, element, dx, dy):
         self.geometry.move_element(self.canvas.document, element, dx, dy)
+
+    def set_snap(self, on):
+        """View > Snap to Grid, as the menu item sets it."""
+        self.window.snap_grid_item.set_active(on)
 
     def handles(self, element):
         return self.geometry.handles(element)
@@ -704,15 +714,22 @@ class QtDriver:
         return [self.document.elements.index(el)
                 for el in self.document.selection]
 
-    def drag_pointer(self, from_x, from_y, dx, dy):
+    def drag_pointer(self, from_x, from_y, dx, dy, shift=False, alt=False):
         """Press, move and release - the path a user's drag actually takes.
 
-        In steps, for the reason the GTK driver's does.
+        In steps, and with Shift or Alt held from the first motion on, for the
+        reasons the GTK driver's gives.
         """
-        from PySide2.QtCore import QEvent
+        from PySide2.QtCore import QEvent, Qt
+        modifiers = Qt.NoModifier
+        if shift:
+            modifiers |= Qt.ShiftModifier
+        if alt:
+            modifiers |= Qt.AltModifier
         self.click(from_x, from_y)
         for x, y in _drag_path(from_x, from_y, dx, dy):
-            self.canvas.mouseMoveEvent(self._event(QEvent.MouseMove, x, y))
+            self.canvas.mouseMoveEvent(self._event(QEvent.MouseMove, x, y,
+                                                   modifiers))
         self.canvas.mouseReleaseEvent(
             self._event(QEvent.MouseButtonRelease, from_x + dx, from_y + dy))
 
@@ -721,6 +738,11 @@ class QtDriver:
 
     def move(self, element, dx, dy):
         self.geometry.move_element(self.document, element, dx, dy)
+
+    def set_snap(self, on):
+        """View > Snap to Grid, as the menu item sets it."""
+        if self.window.snap_grid_action.isChecked() != on:
+            self.window.snap_grid_action.trigger()
 
     def handles(self, element):
         return self.geometry.handles(element)
@@ -1736,6 +1758,40 @@ def sequence(driver, record):
     driver.drop('text', 4, 4)
     record('drop text from the palette into the top left corner')
     driver.set_zoom(1.0)
+
+    # Snap to Grid, through each frontend's own drop, pointer and key paths.
+    # The grid is a tenth of an inch, so at 203 dpi its lines fall at 0, 20,
+    # 41, 61, 81, 102: not a whole number of dots apart, which is where two
+    # frontends rounding differently would part.
+    driver.set_snap(True)
+    driver.drop('frame', 333, 333)
+    record('drop a frame with Snap to Grid on, which lands on the grid')
+    _snapped = driver.elements[-1]
+    driver.fresh_gesture()
+    driver.drag_pointer(_snapped.x + 10, _snapped.y + 10, 7, 3)
+    record('drag it a few dots, which leaves it on its line')
+    driver.fresh_gesture()
+    driver.drag_pointer(_snapped.x + 10, _snapped.y + 10, 47, 29)
+    record('drag it with Snap to Grid on, which lands on the grid')
+    driver.fresh_gesture()
+    driver.drag_pointer(_snapped.x + 10, _snapped.y + 10, 47, 29, alt=True)
+    record('drag it with Alt held, which does not snap')
+    driver.fresh_gesture()
+    driver.drag_pointer(_snapped.x + 10, _snapped.y + 10, 52, 9, shift=True)
+    record('drag it with Shift held, which keeps it on one axis')
+    driver.select(_snapped)
+    driver.fresh_gesture()
+    _corner = driver.handles(_snapped)['br']
+    driver.drag_pointer(_corner[0], _corner[1], 33, 17)
+    record('stretch it by its corner, which takes that corner to the grid')
+    driver.fresh_gesture()
+    _corner = driver.handles(_snapped)['tl']
+    driver.drag_pointer(_corner[0], _corner[1], -26, -14)
+    record('stretch it by the opposite corner, leaving the other where it was')
+    driver.add_frame()
+    driver.add_frame()
+    record('add two frames with a click, each a grid space on from the last')
+    driver.set_snap(False)
 
 
 def main():

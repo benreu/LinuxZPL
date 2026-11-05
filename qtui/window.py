@@ -308,6 +308,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.grid.shown = bool(checked)
         self._grid_changed()
 
+    def on_snap_to_grid(self, checked):
+        self.grid.snap = bool(checked)
+        self._grid_changed()
+
     def on_grid_settings(self):
         chosen = qt_dialogs.grid_settings_dialog(self, self.grid, self.document.dpi)
         if chosen is None:
@@ -453,6 +457,15 @@ class ZPLDesignerWindow(QMainWindow):
         self.show_grid_action.setChecked(self.grid.shown)
         self.grid_settings_action = self._action("Grid Se&ttings…",
                                                  self.on_grid_settings)
+        self.snap_grid_action = self._action("S&nap to Grid", self.on_snap_to_grid,
+                                             "Ctrl+Shift+'", checkable=True)
+        self.snap_grid_action.setChecked(self.grid.snap)
+        # Ctrl+Shift+' arrives as Ctrl+" on layouts that report the shifted
+        # symbol, as Bring to Front's does; the alias works the visible item.
+        self._alt_snap_grid = self._action(
+            "Snap to Grid", lambda _checked=False: self.snap_grid_action.trigger(),
+            'Ctrl+"')
+        self._alt_snap_grid.setVisible(False)
 
         self.label_size_action = self._action("Label Size…", self.on_label_size)
         self.default_printer_action = self._action("Default Printer…", self.on_default_printer)
@@ -544,6 +557,8 @@ class ZPLDesignerWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(self.show_grid_action)
         view_menu.addAction(self.grid_settings_action)
+        view_menu.addSeparator()
+        view_menu.addAction(self.snap_grid_action)
         view_menu.addSeparator()
         # The dock's own show/hide action, so it stays ticked to match the
         # panel however it was shown or closed

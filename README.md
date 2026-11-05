@@ -78,7 +78,9 @@ disagree.
   — from the View menu, the header bar, or Ctrl with the wheel
 - **Grid**: View → Show Grid draws one over the label, spaced in inches,
   millimetres or dots (View → Grid Settings…), thinning out as you zoom out;
-  it is never printed
+  it is never printed. View → Snap to Grid puts what you drag, resize or add
+  from the palette on it - hold Alt mid-drag to place freely, Shift to keep a
+  move on one axis
 
 ## Requirements
 
@@ -189,7 +191,7 @@ Identical in both frontends.
 | Ctrl+Q | Quit | Ctrl+[ / Ctrl+Shift+[ | Send Backward / to Back |
 | Ctrl+A | Select All | Ctrl++ / Ctrl+- | Zoom In / Out |
 | Ctrl+Shift+A | Deselect All | Ctrl+0 / Ctrl+9 / Ctrl+1 | Fit Label / Fit Width / 1:1 |
-| | | Ctrl+' | Show Grid |
+| | | Ctrl+' / Ctrl+Shift+' | Show Grid / Snap to Grid |
 
 ## Settings
 
@@ -223,6 +225,7 @@ zplcore/    no GUI toolkit, runs headless
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   grid.py        the grid over the canvas: its unit, where its lines fall
+  snap.py        where a drag lands: on the grid, held to one axis
   textraster.py  the text raster both canvases blit
   graphic_symbols.py  the ^GS symbols, drawn, since there is no file for
                  the printer's GS font

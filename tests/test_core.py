@@ -11806,6 +11806,82 @@ check("snap.py names no GUI toolkit",
       not any(t in _s_src for t in
               ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
 
+# The Qt window: Snap to Grid, and a drag through the canvas's own events.
+_sw_ini = Path(tempfile.mkdtemp()) / 'settings.ini'
+_sw_real = qt_main._config_path, qt_main._fallback_config_path
+qt_main._config_path = qt_main._fallback_config_path = lambda: _sw_ini
+try:
+    sw = qt_main.ZPLDesignerWindow()
+    check("Snap to Grid starts off, and the document shares the window's grid",
+          not sw.grid.snap and not sw.snap_grid_action.isChecked()
+          and sw.document.snap_grid is sw.grid)
+    sw.snap_grid_action.trigger()
+    check("Snap to Grid turns snapping on and is remembered at once",
+          sw.grid.snap and zpl_grid.load_grid([_sw_ini]).snap)
+    check("it is on Ctrl+Shift+', with Ctrl+\" for layouts that shift the quote",
+          sw.snap_grid_action.shortcut().toString() == "Ctrl+Shift+'"
+          and sw._alt_snap_grid.shortcut().toString() == 'Ctrl+"'
+          and not sw._alt_snap_grid.isVisible())
+    sw._alt_snap_grid.trigger()
+    check("and the alias works the visible item",
+          not sw.grid.snap and not sw.snap_grid_action.isChecked())
+    sw.snap_grid_action.trigger()
+    sw.unsaved_changes = False
+    sw.on_new()
+    check("a new document shares the grid too", sw.document.snap_grid is sw.grid)
+
+    sc = sw.canvas
+    sc.set_zoom(1.0)
+    sf = sw.document.add_frame_element()
+    sf.x, sf.y = 102, 102
+    sc.commit()
+
+    def _sev(kind, x, y, mods=Qt.NoModifier):
+        return QMouseEvent(kind, QPoint(x, y), Qt.LeftButton, Qt.LeftButton, mods)
+
+    def _skey(kind, key, mods):
+        from PySide2.QtGui import QKeyEvent
+        event = QKeyEvent(kind, key, mods)
+        if kind == QEvent.KeyPress:
+            sc.keyPressEvent(event)
+        else:
+            sc.keyReleaseEvent(event)
+
+    sc.mousePressEvent(_sev(QEvent.MouseButtonPress, 112, 112))
+    for _k in range(1, 34):
+        sc.mouseMoveEvent(_sev(QEvent.MouseMove, 112 + _k, 112 + _k * 5 // 33))
+    check("a drag through the canvas snaps, a dot at a time",
+          (sf.x, sf.y) == (142, 102), (sf.x, sf.y))
+    sc.mouseMoveEvent(_sev(QEvent.MouseMove, 145, 117, Qt.AltModifier))
+    check("Alt held drops the snap", (sf.x, sf.y) == (135, 107), (sf.x, sf.y))
+    _skey(QEvent.KeyRelease, Qt.Key_Alt, Qt.NoModifier)
+    check("letting go of Alt snaps it again without the pointer moving",
+          (sf.x, sf.y) == (142, 102), (sf.x, sf.y))
+    _skey(QEvent.KeyPress, Qt.Key_Shift, Qt.NoModifier)
+    check("Shift going down holds it to the axis it has gone further along",
+          (sf.x, sf.y) == (142, 102), (sf.x, sf.y))
+    sc.mouseMoveEvent(_sev(QEvent.MouseMove, 120, 140, Qt.ShiftModifier))
+    check("and Shift held through a move keeps it there",
+          (sf.x, sf.y) == (102, 122), (sf.x, sf.y))
+    from PySide2.QtGui import QKeyEvent as _QKeyEvent
+    _override = _QKeyEvent(QEvent.ShortcutOverride, Qt.Key_Alt, Qt.AltModifier)
+    sc.event(_override)
+    check("mid-drag the canvas keeps Alt from the menu bar's keyboard navigation",
+          _override.isAccepted())
+    _undo_before = len(sw._undo_stack)
+    sc.mouseReleaseEvent(QMouseEvent(QEvent.MouseButtonRelease, QPoint(120, 140),
+                                     Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
+    check("the whole drag is one undo entry",
+          len(sw._undo_stack) == _undo_before + 1)
+    _override = _QKeyEvent(QEvent.ShortcutOverride, Qt.Key_Alt, Qt.AltModifier)
+    _override.ignore()
+    sc.event(_override)
+    check("but not once the drag is over", not _override.isAccepted())
+    sw.unsaved_changes = False      # closing would otherwise ask, modally
+    sw.close()
+finally:
+    qt_main._config_path, qt_main._fallback_config_path = _sw_real
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

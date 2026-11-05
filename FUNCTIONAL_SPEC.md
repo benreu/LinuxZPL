@@ -768,6 +768,40 @@ pinned.
   dragged together with the field it follows, it goes on following. A nudge,
   an align, a resize that moves its corner and a label shrunk under it are
   moves of their own the same way.
+- **A move is measured from the press**, as a resize is (below): each motion
+  puts the selection where the whole drag so far takes it, rather than adding
+  the latest step to wherever the last one left it. A drag pushed past the
+  label's edge and brought back therefore keeps the point it grabbed under the
+  pointer, instead of setting off again from the edge; and a snap, which
+  rounds, rounds the whole drag rather than rounding each small step away.
+- **Snap to Grid** (§6.3) puts what the pointer moves on the grid, whether the
+  grid is shown or not. A move takes the top-left corner of the selection's
+  box - a group's joint box, so the group keeps its shape - to the nearest line
+  on each axis. A resize takes the edge or edges its handle moves, a corner
+  handle both of its edges, and leaves the others alone. A box that snaps back
+  to what it will print (text, a barcode, a circle, a graphic symbol) is then
+  sized by its own rules below, so its dragged edge can come to rest off the
+  grid while the edge the drag left alone stays put; a frame, an ellipse, a
+  diagonal line, an image and a group's handles land exactly. A tie between
+  two lines goes to the higher. The clamp to the label comes after the snap,
+  so an element pushed against an edge that is not on a line stays against the
+  edge.
+  - **Alt**, held once a drag is under way, turns snapping off for as long as
+    it is held. A key for the middle of a drag, not the start: window
+    managers often take Alt with a button press for themselves. While a drag
+    is live, a press and release of Alt belong to the drag, never to the menu
+    bar's keyboard navigation, which in Qt would otherwise take the focus and
+    the Alt release with it.
+  - **Shift**, held once a drag is under way, keeps a move on whichever axis
+    the pointer has gone further along; the other axis stays exactly where it
+    was pressed rather than snapping to a line of its own. Shift at the press
+    is a shift-click, which adds to the selection and starts no drag, so the
+    two never meet. A resize ignores it.
+  - Pressing or letting go of either key redoes the drag at once, without
+    waiting for the pointer to move.
+  - **Only the pointer snaps.** Arrow-key nudges, a typed X or Y, Align and a
+    paste go exactly where they are told, and the arrows - a dot, or ten with
+    Shift - are how something is placed off the grid while snapping is on.
 - **Arrow keys nudge** the selection: one dot, the finest step a printer can
   place, or ten with **Shift** — the 10× most drawing programs use, fixed in
   dots at every resolution. A nudge is a move like a drag: one shared delta,
@@ -1076,8 +1110,10 @@ would be six more keys taken away from the canvas (§14).
 Zoom In, Zoom Out, then Fit Label, Fit Width, Actual Size — separated into
 those two groups. §5 describes what each does to the scale. Then, as a group
 of their own, **Show Grid** (Ctrl+'), a check item that shows and hides the
-grid (§5), and **Grid Settings…**, its spacing (§7.3); both are remembered
-the moment they change (§13). Then **Properties Panel**, a check item that
+grid (§5), and **Grid Settings…**, its spacing (§7.3). Then **Snap to Grid**
+(Ctrl+Shift+'), a check item that puts what the pointer drags, and what the
+palette adds, on the grid (§5, §6.5). All three are remembered the moment
+they change (§13). Then **Properties Panel**, a check item that
 shows and hides the Properties panel (§7.1), docked or floating, and is kept
 ticked to match it however it was shown or closed.
 
@@ -1103,6 +1139,14 @@ the staggered offset, and is brought fully onto the label the same way: a drop
 near an edge lands against that edge at full size. A dropped `+ Image` opens its
 file chooser once the drag has ended, and the image lands at the drop point. A
 drop is one undo entry, like a click.
+
+**With Snap to Grid on** (§5) a new element's top-left corner goes to the
+nearest grid line - a dropped one after it is centred on the point, a clicked
+one one grid space further down and right for every element already on the
+label. That grid space replaces the stagger: a 10-dot step on a 20-dot grid
+would round two clicks in a row onto the same line, which is the stack the
+stagger is there to prevent. Bringing the element onto the label comes last,
+so one that would overhang an edge still lands against it.
 
 While the drag is under way, the pointer carries the element itself. It is built
 by the same code the drop will run, drawn as the canvas draws it at the current
@@ -2719,7 +2763,7 @@ rulers = no
 | `[window]` | on quit | where the window opens (§2) |
 | `[docks]` | with the rest of the file | where the Properties panel is (§7.1). The GTK frontend writes `floating`, `shown` (docked), `width` (docked, in pixels) and `floating_geometry` (`x,y,width,height`); the Qt frontend keeps its own toolkit's saved window state in `state`, which also holds the panel's side. Each reads only its own keys. |
 | `[recent]` | whenever a file is opened or saved, an entry is dropped, or the list is cleared | File > Open Recent (§6.1) |
-| `[grid]` | the moment Show Grid or Grid Settings changes it | the grid (§5): `unit` (`in`, `mm` or `dots`), `spacing` in that unit, `major_every`, and `shown`. `snap`, `snap_elements` and `rulers` are kept for the grid's later commands and are all `no` until then. |
+| `[grid]` | the moment Show Grid, Snap to Grid or Grid Settings changes it | the grid (§5): `unit` (`in`, `mm` or `dots`), `spacing` in that unit, `major_every`, `shown` and `snap` (Snap to Grid). `snap_elements` and `rulers` are kept for the grid's later commands and are `no` until then. |
 
 **The Print window's printer** (§9) deliberately never writes `[printer]` —
 only Default Printer and Label Size do.
@@ -2791,6 +2835,7 @@ treated as corrupt and falls back too.
 | Ctrl+9 | Fit Width |
 | Ctrl+1 | Actual Size (1:1) |
 | Ctrl+' | Show Grid |
+| Ctrl+Shift+' | Snap to Grid |
 
 Three notes for a port:
 
@@ -2820,8 +2865,9 @@ Three notes for a port:
   there is nothing to do.
 - On toolkits that report the *shifted* key symbol, `Ctrl+Shift+]` arrives as
   `}` and will not match a binding declared on `]`; both forms may need
-  registering. `Ctrl++` has the same problem from the other side — it needs
-  Shift on most layouts — so `Ctrl+=` is registered alongside it.
+  registering, and `Ctrl+Shift+'` arrives as `"` the same way. `Ctrl++` has
+  the same problem from the other side — it needs Shift on most layouts — so
+  `Ctrl+=` is registered alongside it.
 
 ---
 

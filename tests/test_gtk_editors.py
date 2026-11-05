@@ -2154,6 +2154,64 @@ finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
 
+# --- Snap to Grid, and a drag through the canvas's own handlers ----------------
+from gi.repository import Gdk
+
+snap_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: snap_path
+gtk_main._fallback_config_path = lambda: snap_path
+try:
+    sw = ZPLViewerWindow()
+    sc = sw.design_canvas
+    check("Snap to Grid starts off, and the document shares the window's grid",
+          not sw.grid.snap and not sw.snap_grid_item.get_active()
+          and sc.document.snap_grid is sw.grid)
+    sw.snap_grid_item.set_active(True)
+    check("Snap to Grid turns snapping on and is remembered at once",
+          sw.grid.snap and zpl_grid.load_grid([snap_path]).snap)
+    check("it is on Ctrl+Shift+', with Ctrl+Shift+\" for layouts that shift the quote",
+          sw.accelerators.get(sw.snap_grid_item) == "<Control><Shift>apostrophe")
+    from zplcore.model import Document as _Doc
+    sc.set_document(_Doc(812, 1218, dpi=203))
+    check("a new document shares the grid too", sc.document.snap_grid is sw.grid)
+
+    class SnapEvent:
+        def __init__(self, x, y, state=0, button=1):
+            self.x, self.y, self.state, self.button = float(x), float(y), state, button
+
+    class SnapKey:
+        def __init__(self, keyval, kind, state=0):
+            self.keyval, self.type, self.state = keyval, kind, state
+
+    sc.set_zoom(1.0)
+    sf = sc.add_frame_element()
+    sf.x, sf.y = 102, 102
+    heard = []
+    sc.on_change_callback = lambda: heard.append('change')
+    sc.on_button_press(sc, SnapEvent(112, 112))
+    for k in range(1, 34):
+        sc.on_motion(sc, SnapEvent(112 + k, 112 + k * 5 // 33))
+    check("a drag through the canvas snaps, a dot at a time",
+          (sf.x, sf.y) == (142, 102), (sf.x, sf.y))
+    sc.on_motion(sc, SnapEvent(145, 117, Gdk.ModifierType.MOD1_MASK))
+    check("Alt held drops the snap", (sf.x, sf.y) == (135, 107), (sf.x, sf.y))
+    sc.on_key_release(sc, SnapKey(Gdk.KEY_Alt_L, Gdk.EventType.KEY_RELEASE,
+                                  Gdk.ModifierType.MOD1_MASK))
+    check("letting go of Alt snaps it again without the pointer moving",
+          (sf.x, sf.y) == (142, 102), (sf.x, sf.y))
+    sc.on_key_press(sc, SnapKey(Gdk.KEY_Shift_L, Gdk.EventType.KEY_PRESS))
+    check("Shift going down holds it to the axis it has gone further along",
+          (sf.x, sf.y) == (142, 102), (sf.x, sf.y))
+    sc.on_motion(sc, SnapEvent(120, 140, Gdk.ModifierType.SHIFT_MASK))
+    check("and Shift held through a move keeps it there",
+          (sf.x, sf.y) == (102, 122), (sf.x, sf.y))
+    sc.on_button_release(sc, SnapEvent(120, 140))
+    check("the whole drag is one change", heard == ['change'], heard)
+    sw.destroy()
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

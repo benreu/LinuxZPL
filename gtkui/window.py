@@ -1020,6 +1020,16 @@ class ZPLViewerWindow(Gtk.Window):
         view_menu.append(grid_settings_item)
 
         view_menu.append(Gtk.SeparatorMenuItem())
+        self.snap_grid_item = Gtk.CheckMenuItem.new_with_mnemonic("S_nap to Grid")
+        self.snap_grid_item.set_active(self.grid.snap)
+        self.snap_grid_item.connect("toggled", self.on_snap_to_grid_toggled)
+        # Shift+' arrives as quotedbl on a US layout, as Shift+] does as
+        # braceright, so the shifted keyval goes on as an unshown alias.
+        add_accel(self.snap_grid_item, "<Control><Shift>apostrophe")
+        add_accel(self.snap_grid_item, "<Control><Shift>quotedbl", visible=False)
+        view_menu.append(self.snap_grid_item)
+
+        view_menu.append(Gtk.SeparatorMenuItem())
         # Shows and hides the Properties panel, docked or floating - and is
         # kept ticked to match however it was shown or closed
         self.panel_item = Gtk.CheckMenuItem.new_with_mnemonic("Properties _Panel")
@@ -1442,6 +1452,10 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_show_grid_toggled(self, item):
         self.grid.shown = item.get_active()
+        self._grid_changed()
+
+    def on_snap_to_grid_toggled(self, item):
+        self.grid.snap = item.get_active()
         self._grid_changed()
 
     def on_grid_settings_clicked(self, *_args):
