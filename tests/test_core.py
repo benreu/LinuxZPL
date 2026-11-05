@@ -12033,6 +12033,47 @@ try:
 finally:
     qt_main._config_path, qt_main._fallback_config_path = _ew_real
 
+# --- the rulers' marks and the pointer readout ---------------------------------
+_rt = zpl_grid.ruler_ticks('in', 203, 1.0, 0, 812)
+check("an inch ruler at 1:1 numbers every half inch from the edge",
+      [(d, n) for d, lv, n in _rt if lv == 0]
+      == [(0.0, '0'), (101.5, '0.5'), (203.0, '1'), (304.5, '1.5'), (406.0, '2'),
+          (507.5, '2.5'), (609.0, '3'), (710.5, '3.5'), (812.0, '4')],
+      [(d, n) for d, lv, n in _rt if lv == 0])
+check("with a longer mark half-way between and short ones every twentieth",
+      _rt[5] == (50.75, 1, None) and _rt[1] == (10.15, 2, None))
+check("zoomed out it numbers whole inches",
+      [n for _, lv, n in zpl_grid.ruler_ticks('in', 203, 0.3, 0, 812) if lv == 0]
+      == ['0', '1', '2', '3', '4'])
+check("a millimetre ruler numbers centimetres at 1:1",
+      [n for _, lv, n in zpl_grid.ruler_ticks('mm', 203, 1.0, 0, 812)
+       if lv == 0][:4] == ['0', '10', '20', '30'])
+check("a dot ruler numbers dots, the same at every resolution",
+      [(d, n) for d, lv, n in zpl_grid.ruler_ticks('dots', 600, 1.0, 0, 200)
+       if lv == 0] == [(0.0, '0'), (50.0, '50'), (100.0, '100'), (150.0, '150'),
+                       (200.0, '200')])
+_rgaps = []
+for _unit in zpl_grid.UNITS:
+    for _scale in (0.05, 0.1, 0.25, 0.5, 0.67, 1.0, 2.0, 4.0, 8.0):
+        _marks = zpl_grid.ruler_ticks(_unit, 203, _scale, 0, 2436)
+        _numbered = [d for d, lv, _ in _marks if lv == 0]
+        _all = [d for d, _, _ in _marks]
+        if any((b - a) * _scale < zpl_grid.MIN_LABEL_GAP - 1e-6
+               for a, b in zip(_numbered, _numbered[1:])):
+            _rgaps.append(('numbers', _unit, _scale))
+        if len(_all) > len(_numbered) and any(
+                (b - a) * _scale < zpl_grid.MIN_TICK_GAP - 1e-6
+                for a, b in zip(_all, _all[1:])):
+            _rgaps.append(('marks', _unit, _scale))
+check("at every zoom and in every unit, numbers and marks keep their distance",
+      _rgaps == [], _rgaps)
+check("only the marks inside the range asked for",
+      all(300 <= d <= 400 for d, _, _ in zpl_grid.ruler_ticks('in', 203, 1.0, 300, 400)))
+check("the readout gives inches to the thousandth, millimetres to the tenth",
+      zpl_grid.format_point(254, 162, 'in', 203) == '1.251, 0.798 in'
+      and zpl_grid.format_point(254, 162, 'mm', 203) == '31.8, 20.3 mm'
+      and zpl_grid.format_point(254, 162, 'dots', 203) == '254, 162 dots')
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

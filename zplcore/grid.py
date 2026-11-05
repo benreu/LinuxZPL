@@ -43,6 +43,68 @@ DEFAULT_MAJOR = 10
 # they too would be this close.
 MIN_LINE_GAP = 5
 
+# --- the rulers and the pointer readout ----------------------------------------
+#
+# Both are in the grid's unit, so the numbers along the edges, the readout and
+# the spacing in Grid Settings all speak the same language.
+
+# The steps a ruler numbers its marks at, in each unit: the smallest one whose
+# numbers come out at least MIN_LABEL_GAP pixels apart is used. Decimal inches,
+# as Label Size takes them, rather than the 1/16ths of a carpenter's rule.
+RULER_STEPS = {
+    'in': (0.1, 0.2, 0.5, 1, 2, 5, 10),
+    'mm': (1, 2, 5, 10, 20, 50, 100, 200),
+    'dots': (10, 20, 50, 100, 200, 500, 1000, 2000, 5000),
+}
+MIN_LABEL_GAP = 50     # pixels between two numbers on a ruler
+MIN_TICK_GAP = 5       # pixels between two unnumbered marks
+
+# How many places the readout gives in each unit: about one dot's worth at
+# 203 dpi, which is 0.005 in or 0.125 mm.
+READOUT_DECIMALS = {'in': 3, 'mm': 1, 'dots': 0}
+
+
+def ruler_ticks(unit: str, dpi, scale, low, high) -> list:
+    """The marks a ruler draws between dot `low` and dot `high`, as
+    (dots, level, number).
+
+    `scale` is display pixels per dot. Level 0 is a numbered mark, with its
+    `number` as the text to show; level 1 a half-way mark; level 2 the rest,
+    and those two have no number. The numbered step is the smallest in
+    RULER_STEPS that keeps the numbers MIN_LABEL_GAP pixels apart, and it is
+    split into tenths, fifths or halves - the finest that keeps the marks
+    MIN_TICK_GAP apart. Both rulers in both frontends ask here, so they
+    number the same marks at every zoom.
+    """
+    per_unit = dots_per_unit(unit, dpi) * max(1e-9, scale)
+    steps = RULER_STEPS[unit]
+    step = next((s for s in steps if s * per_unit >= MIN_LABEL_GAP), steps[-1])
+    parts = next((n for n in (10, 5, 2) if step / n * per_unit >= MIN_TICK_GAP), 1)
+    dots_per_mark = step / parts * dots_per_unit(unit, dpi)
+    marks = []
+    first = max(0, int(math.floor(low / dots_per_mark)))
+    last = int(math.floor(high / dots_per_mark + 1e-9))
+    for k in range(first, last + 1):
+        position = k * dots_per_mark
+        if position < low - 1e-9 or position > high + 1e-9:
+            continue
+        if k % parts == 0:
+            marks.append((position, 0, _format_number(k // parts * step, 3)))
+        elif parts % 2 == 0 and k % (parts // 2) == 0:
+            marks.append((position, 1, None))
+        else:
+            marks.append((position, 2, None))
+    return marks
+
+
+def format_point(x, y, unit: str, dpi) -> str:
+    """The pointer's position for the status bar, in `unit`: 1.250, 0.800 in."""
+    decimals = READOUT_DECIMALS[unit]
+    per_unit = dots_per_unit(unit, dpi)
+    return (f'{x / per_unit:.{decimals}f}, {y / per_unit:.{decimals}f} '
+            f'{UNIT_SUFFIX[unit]}')
+
+
 GRID_SECTION = 'grid'
 # The switches, every one off until the user turns it on
 FLAGS = ('shown', 'snap', 'snap_elements', 'rulers')
