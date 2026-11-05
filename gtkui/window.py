@@ -1211,6 +1211,8 @@ class ZPLViewerWindow(Gtk.Window):
         # measured against does not change when it appears - which would set
         # off a resize loop.
         scrolled_canvas.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.ALWAYS)
+        self._view_allocation = None      # the latest, for _apply_view_size
+        self._view_pending = False
         scrolled_canvas.connect("size-allocate", self._on_view_allocated)
         self.scrolled_canvas = scrolled_canvas
         # The canvas and, docked beside it, the Properties panel
@@ -1407,8 +1409,25 @@ class ZPLViewerWindow(Gtk.Window):
         return display.get_primary_monitor() or display.get_monitor(0)
 
     def _on_view_allocated(self, widget, allocation):
-        """Tell the canvas how much room it has, so a fit can follow it."""
-        self.design_canvas.set_view_size(allocation.width, allocation.height)
+        """Tell the canvas how much room it has, so a fit can follow it -
+        once the layout pass is over, not inside it.
+
+        A fit resizes the canvas, and a resize asked for while GTK is still
+        allocating is marked and never carried out: the canvas kept its old
+        size, overhanging the view, and every zoom after it stopped at the
+        stale mark and did nothing until the window itself was resized.
+        Dragging the Properties panel's divider did it, and showing the rulers.
+        One update per pass, with the latest size.
+        """
+        self._view_allocation = (allocation.width, allocation.height)
+        if not self._view_pending:
+            self._view_pending = True
+            GLib.idle_add(self._apply_view_size)
+
+    def _apply_view_size(self):
+        self._view_pending = False
+        self.design_canvas.set_view_size(*self._view_allocation)
+        return False
 
     def _update_zoom_readout(self, *_args):
         canvas = self.design_canvas

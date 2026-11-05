@@ -691,7 +691,13 @@ pinned.
   element geometry.
 - **The scale is a zoom level, or a fit.** A fit is measured against the
   *visible area*, never against the canvas itself: the canvas's own size is a
-  consequence of the scale, so measuring against it is a feedback loop.
+  consequence of the scale, so measuring against it is a feedback loop. The
+  visible area is handed on once the toolkit has finished laying out, not
+  from inside the layout: in GTK a resize asked for during the layout pass is
+  marked and never carried out, so a fit there left the canvas at its old
+  size, overhanging the view, and every zoom after it did nothing until the
+  window itself was resized. Moving the Properties panel's divider did it, and
+  showing the rulers.
   - **Fit Label** — the smaller of the two ratios, so the whole label is
     visible. This is the default, for a new document and after a load.
   - **Fit Width** — the label fills the width and a taller label scrolls.

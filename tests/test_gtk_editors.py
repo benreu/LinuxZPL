@@ -2248,6 +2248,37 @@ finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
 
+# --- a fit follows the view once GTK has finished laying out ------------------
+# A fit resized the canvas from inside GTK's layout pass, where the resize
+# was marked and never carried out: moving the Properties panel's divider
+# left the canvas overhanging the view, and no zoom took after it until the
+# window itself was resized.
+import time as _fit_time
+
+def fit_pump(seconds=0.5):
+    end = _fit_time.time() + seconds
+    while _fit_time.time() < end:
+        while Gtk.events_pending():
+            Gtk.main_iteration_do(False)
+        _fit_time.sleep(0.005)
+
+fw = ZPLViewerWindow()
+fw.resize(1000, 800)
+fw.show_all()
+fit_pump()
+fc = fw.design_canvas
+fw.paned.set_position(fw.paned.get_position() - 120)
+fit_pump()
+narrowed = fw.scrolled_canvas.get_allocation()
+check("moving the panel's divider fits the label to the narrower view",
+      fc.get_allocated_width() <= narrowed.width,
+      (fc.get_allocated_width(), narrowed.width))
+fc.set_zoom(2.0)
+fit_pump()
+check("and a zoom after it still takes", fc.get_allocated_width() == 1624,
+      fc.get_allocated_width())
+fw.destroy()
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)
