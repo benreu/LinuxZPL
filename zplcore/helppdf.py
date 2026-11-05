@@ -36,7 +36,7 @@ from xml.sax.saxutils import escape
 
 # Part of every cache key: change it whenever the PDFs made from unchanged
 # pages would come out differently.
-VERSION = "1"
+VERSION = "2"
 NS = "{http://projectmallard.org/1.0/}"
 # In a finished build only, so a build that died half way is never used.
 DONE = ".complete"
@@ -328,14 +328,17 @@ class _Writer:
         return out
 
     def block(self, el: ET.Element) -> list:
-        from reportlab.platypus import ListFlowable, ListItem, XPreformatted
+        from reportlab.platypus import (KeepTogether, ListFlowable, ListItem,
+                                        XPreformatted)
 
         tag = self.tag(el)
         if tag == "p":
             return [self.para(self.inline(el))]
         if tag in ("code", "screen"):
             markup = self.inline(el).lstrip("\n").rstrip()
-            return [XPreformatted(markup, self.styles["code"])]
+            # Kept on one page: a few lines of code split by a page break
+            # read as two fragments. One longer than a page still splits.
+            return [KeepTogether([XPreformatted(markup, self.styles["code"])])]
         if tag in ("list", "steps"):
             numbered = tag == "steps" or el.get("type") == "numbered"
             items = []
