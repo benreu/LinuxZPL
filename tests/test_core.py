@@ -11502,6 +11502,101 @@ check("print_settings.py names no GUI toolkit",
       not any(t in _ps_src for t in
               ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
 
+# --- the grid: zplcore/grid.py ------------------------------------------------
+from zplcore import grid as zpl_grid
+
+_g = zpl_grid.Grid()
+check("a new grid is a tenth of an inch, a major line every ten, everything off",
+      (_g.unit, _g.spacing, _g.major_every) == ('in', 0.1, 10)
+      and not any(getattr(_g, f) for f in zpl_grid.FLAGS), _g)
+check("a physical spacing follows the resolution",
+      [round(_g.spacing_dots(d), 2) for d in (203, 300, 600)] == [20.3, 30.0, 60.0])
+check("millimetres too",
+      round(zpl_grid.Grid('mm', 1).spacing_dots(203), 3) == 7.992
+      and round(zpl_grid.Grid('mm', 1).spacing_dots(300), 3) == 11.811)
+check("a dot spacing is the same at every resolution",
+      {zpl_grid.Grid('dots', 25).spacing_dots(d) for d in (203, 300, 600)} == {25.0})
+check("and no spacing comes out under one dot",
+      zpl_grid.Grid('mm', 0.1).spacing_dots(152) == 1.0)
+
+# Line k is k spacings rounded, not k rounded spacings, so a 1 mm grid at
+# 203 dpi (7.99 dots) is still on the millimetre at the end of a 25 in label.
+_mm = zpl_grid.Grid('mm', 1)
+check("a 1 mm grid at 203 dpi does not drift over 25 inches",
+      all(abs(_mm.line_at(k, 203) - k * 203 / 25.4) <= 0.5 for k in range(636)),
+      _mm.line_at(635, 203))
+check("snapping goes to the nearest line",
+      [_g.snap_value(v, 203) for v in (0, 9, 11, 30, 31, 52, 4999)]
+      == [0, 0, 20, 20, 41, 61, 4994])
+check("a tie goes to the higher line",
+      zpl_grid.Grid('dots', 10).snap_value(15, 203) == 20)
+check("snapping lands on a line the grid draws",
+      all(_mm.snap_value(v, 203) in {_mm.line_at(k, 203) for k in range(30)}
+          for v in range(0, 200)))
+
+# Thinning: minor lines go when under 5 px apart, then the major ones.
+_lines = _g.lines(0, 812, 1.0, 203)
+check("at 1:1 every line across a 4 in label is drawn, ends included",
+      len(_lines) == 41 and _lines[0] == (0, True) and _lines[-1] == (812, True)
+      and [p for p, major in _lines if major] == [0, 203, 406, 609, 812], _lines[:3])
+check("zoomed out, the minor lines go and the major ones stay",
+      _g.lines(0, 812, 0.2, 203) == [(0, True), (203, True), (406, True),
+                                     (609, True), (812, True)])
+check("and further out the major lines go too",
+      _g.lines(0, 812, 0.02, 203) == [])
+check("only the lines inside the range asked for",
+      _g.lines(100, 200, 1.0, 203) == [(102, False), (122, False), (142, False),
+                                       (162, False), (183, False)],
+      _g.lines(100, 200, 1.0, 203))
+
+check("switching unit keeps the grid's size",
+      zpl_grid.convert_spacing(0.1, 'in', 'mm', 203) == 2.54
+      and zpl_grid.convert_spacing(0.1, 'in', 'dots', 203) == 20
+      and zpl_grid.convert_spacing(20, 'dots', 'in', 300) == 0.067)
+check("as far as the new unit's range allows",
+      zpl_grid.convert_spacing(400, 'dots', 'in', 100) == 2.0
+      and zpl_grid.convert_spacing(0.1, 'mm', 'dots', 203) == 1)
+check("the dialog's hint gives a physical spacing in dots, and dots in inches",
+      zpl_grid.spacing_hint('in', 0.1, 203) == '20.3 dots at 203 dpi'
+      and zpl_grid.spacing_hint('mm', 1, 203) == '7.99 dots at 203 dpi'
+      and zpl_grid.spacing_hint('dots', 30, 300) == '0.1 in at 300 dpi')
+
+# [grid] in settings.ini
+_gdir = Path(tempfile.mkdtemp())
+_gini = _gdir / 'settings.ini'
+_gini.write_text("[recent]\nfile1 = /t/100%% off.zpl\n\n[label]\nwidth_in = 4.00\n")
+check("no [grid] section is the defaults", zpl_grid.load_grid([_gini]) == zpl_grid.Grid())
+_gsaved = zpl_grid.Grid('mm', 2.5, 4, shown=True, rulers=True)
+check("a grid is written", zpl_grid.save_grid([_gini], _gsaved))
+check("and read back as it was", zpl_grid.load_grid([_gini]) == _gsaved,
+      zpl_grid.load_grid([_gini]))
+check("leaving the other sections as they were",
+      _wf.load_recent([_gini]) == ['/t/100% off.zpl']
+      and 'width_in = 4.00' in _gini.read_text())
+check("a write falls through to the next file when the first cannot be written",
+      zpl_grid.save_grid([Path('/proc/nope/settings.ini'), _gini], zpl_grid.Grid())
+      and zpl_grid.load_grid([_gini]) == zpl_grid.Grid())
+
+def _grid_from(text):
+    _gini.write_text("[grid]\n" + text)
+    return zpl_grid.load_grid([_gini])
+
+_gbad = _grid_from("unit = mm\nspacing = 900\nmajor_every = many\n"
+                   "shown = perhaps\nsnap = yes\n")
+check("a damaged value falls back alone, without taking the rest with it",
+      (_gbad.unit, _gbad.spacing, _gbad.major_every, _gbad.shown, _gbad.snap)
+      == ('mm', 1.0, 10, False, True), _gbad)
+check("an unknown unit is the default unit and its default spacing",
+      _grid_from("unit = furlongs\nspacing = 3\n") == zpl_grid.Grid())
+_gini.write_text("[grid\nunit = mm\n")
+check("a file that cannot be parsed is the defaults",
+      zpl_grid.load_grid([_gini]) == zpl_grid.Grid())
+
+_g_src = (Path(__file__).resolve().parent.parent / 'zplcore' / 'grid.py').read_text()
+check("grid.py names no GUI toolkit",
+      not any(t in _g_src for t in
+              ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
