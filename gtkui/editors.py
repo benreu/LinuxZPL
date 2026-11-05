@@ -116,7 +116,12 @@ def set_tip(widget, key: str, label=None) -> None:
     """Give `widget` the tip zplcore.tips holds for `key`, and its row's
     `label` too, so hovering either explains it. GTK wraps a long tooltip
     itself. A key the table doesn't have is a mistake here, and fails."""
-    text = zpl_tips.TIPS[key]
+    set_tip_text(widget, zpl_tips.TIPS[key], label)
+
+
+def set_tip_text(widget, text: str, label=None) -> None:
+    """set_tip for a tip looked up some other way - a barcode row's, which
+    depends on the symbology (zplcore.tips.PARAMETERS, CHECK_DIGIT)."""
     widget.set_tooltip_text(text)
     if label is not None:
         label.set_tooltip_text(text)
@@ -882,19 +887,26 @@ def barcode_form(window, content, element) -> EditorForm:
     for label, code in model.BARCODE_CONTROL_CHARACTERS:
         button = Gtk.Button(label=label)
         button.set_name(f"insert_{label}")
+        set_tip(button, f"insert_{label}")
         button.connect('clicked', on_insert, code)
         control_box.pack_start(button, False, False, 0)
-    control_row, _control_label = make_row("Insert:", control_box)
+    control_box.set_name("insert")
+    control_row, _control_label = make_row("Insert:", control_box,
+                                           tip='insert')
 
     # Wide until the symbology's own range is known
     # (on_symbology_changed), so a height below 20 - a PDF417 or
     # MicroPDF417 row - is not clamped to 20 before that range can
     # allow it, and written back on OK.
     height_spin = make_spin(element.bar_height, 1, 32000)
-    height_row, _height_label = make_row("Bar Height:", height_spin)
+    height_spin.set_name("bar_height")
+    height_row, _height_label = make_row("Bar Height:", height_spin,
+                                         tip='bar_height')
 
     module_spin = make_spin(element.module_width, 1, 20)
-    module_row, module_label = make_row("Module Width:", module_spin)
+    module_spin.set_name("module_width")
+    module_row, module_label = make_row("Module Width:", module_spin,
+                                        tip='module_width')
 
     # The rows a symbology adds for its own parameters - a QR code's
     # error correction and mask, and so on - built from the same
@@ -934,6 +946,8 @@ def barcode_form(window, content, element) -> EditorForm:
                 chosen, ()):
             extra = extra_rows[attribute]
             extra.label.set_text(row_label + ":")
+            set_tip_text(extra.widget, zpl_tips.PARAMETERS[(chosen, attribute)],
+                         extra.label)
             current = getattr(element, attribute, None)
             with editor.muted():
                 if isinstance(choices, model.BarcodeSpin):
@@ -954,7 +968,8 @@ def barcode_form(window, content, element) -> EditorForm:
     fill_extra_rows(element.symbology)
 
     ratio_spin = _make_ratio_spin(element.ratio, 2.0, 3.0)
-    ratio_row, _ratio_label = make_row("Ratio:", ratio_spin)
+    ratio_spin.set_name("ratio")
+    ratio_row, _ratio_label = make_row("Ratio:", ratio_spin, tip='ratio')
 
     orientation_combo, orientation_codes = make_combo(
         model.BARCODE_ORIENTATIONS,
@@ -966,18 +981,31 @@ def barcode_form(window, content, element) -> EditorForm:
     text_combo, text_codes = make_combo(
         model.BARCODE_TEXT_CHOICES,
         (element.show_text, element.text_above))
-    text_row, _text_label = make_row("Value Text:", text_combo)
+    text_combo.set_name("value_text")
+    text_row, _text_label = make_row("Value Text:", text_combo,
+                                     tip='value_text')
 
     font_spin = make_spin(int((element.font or element.DEFAULT_FONT)[1]), 6, 200)
     text_height_row, _font_label = make_row("Text Height:", font_spin)
 
     check_combo, check_codes = make_combo(model.BARCODE_CHECK_DIGIT,
                                           element.check_digit)
+    check_combo.set_name("check_digit")
     check_row, check_label = make_row("Check Digit:", check_combo)
+
+    def tip_check_digit(chosen):
+        """Three different checksums, or a choice of showing one, under one
+        row: the tip goes with the label the symbology gives it."""
+        name = model.BARCODE_FEATURES[chosen]['check_digit']
+        if name is not None:
+            set_tip_text(check_combo, zpl_tips.CHECK_DIGIT[name], check_label)
+
+    tip_check_digit(element.symbology)
 
     mode_combo, mode_codes = make_combo(model.BARCODE_MODES,
                                         element.mode)
-    mode_row, _mode_label = make_row("Mode:", mode_combo)
+    mode_combo.set_name("mode")
+    mode_row, _mode_label = make_row("Mode:", mode_combo, tip='mode')
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
     fr_check.set_name("reverse_print")
@@ -1046,8 +1074,9 @@ def barcode_form(window, content, element) -> EditorForm:
         button.connect('clicked', handler)
         positions_buttons.pack_start(button, False, False, 0)
     positions_box.pack_start(positions_buttons, False, False, 0)
+    positions_box.set_name("positions")
     positions_row, _positions_label = make_row("Positions (^FM):",
-                                               positions_box)
+                                               positions_box, tip='positions')
 
     apply_field_number = _make_field_number_rows(content, element)
     apply_name = _make_name_row(content, element)
@@ -1066,6 +1095,7 @@ def barcode_form(window, content, element) -> EditorForm:
         check_row.set_visible(features['check_digit'] is not None)
         if features['check_digit'] is not None:
             check_label.set_text(features['check_digit'] + ":")
+            tip_check_digit(chosen)
         # A matrix symbology's size is its own grid, so it has no bar
         # height to offer and its module width is a magnification of
         # that grid - and no interpretation line either.

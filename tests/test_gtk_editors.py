@@ -2611,14 +2611,27 @@ from zplcore import tips as zpl_tips
 from zplcore.model import Document as _TDocument
 
 
-def _gtk_tips(root):
+def _gtk_shown(widget, root):
+    """Whether `widget` would be on screen with `root`: it and every
+    container up to root are visible."""
+    while widget is not None and widget is not root:
+        if not widget.get_visible():
+            return False
+        widget = widget.get_parent()
+    return True
+
+
+def _gtk_tips(root, shown_only=False, expected=None):
     """{key: widget} for every widget under `root` that has a tooltip, and
     what doesn't fit the table: a tooltip on a widget it isn't the tip for,
     or a label beside or above a field that doesn't say what the field says.
     A row's label is the "Name:" before its field - beside it in a row box,
     or above it where an editor stacks them."""
     found, wrong = {}, []
+    expected = expected or {}
     for widget in gtk_props._descendants(root):
+        if shown_only and not _gtk_shown(widget, root):
+            continue
         text = widget.get_tooltip_text()
         parent = widget.get_parent()
         siblings = parent.get_children() if isinstance(parent, Gtk.Box) else []
@@ -2634,7 +2647,7 @@ def _gtk_tips(root):
             continue
         name = widget.get_name()
         key = name[len('prop_'):] if name.startswith('prop_') else name
-        if key not in zpl_tips.TIPS or text != zpl_tips.TIPS[key]:
+        if text != expected.get(key, zpl_tips.TIPS.get(key)):
             wrong.append(('widget', name, text[:40]))
             continue
         found[key] = widget
@@ -2657,7 +2670,6 @@ _tip_elements = {
     'diagonal': _tip_doc.add_diagonal_element(),
     'symbol': _tip_doc.add_graphic_symbol_element(),
     'stored_graphic': _tip_doc.add_stored_graphic_element(),
-    'barcode': _tip_doc.add_barcode_element(),
 }
 # What each editor explains, grown section by section of the tooltip work;
 # the Qt suite holds its editors to the same sets
@@ -2680,7 +2692,6 @@ _tip_expected = {
     'symbol': {'reverse_print', 'orientation', 'element_id'},
     'stored_graphic': {'command', 'device', 'name', 'extension',
                        'mag_x', 'mag_y'},
-    'barcode': {'reverse_print', 'orientation', 'element_id'} | _tip_fn_rows,
 }
 
 _tip_seen = set()
@@ -2707,6 +2718,75 @@ check("GTK: each editor explains the rows it should",
 check("GTK: and no editor has a note under Reverse or the time format any more: "
       "they're tooltips",
       not _tip_notes, _tip_notes)
+
+# A barcode's rows come and go with its symbology, and so do some of their
+# tips: each symbology's own rows and its Check Digit say what they are for
+# it. Only the rows it shows count; the Qt suite holds its editor to the same.
+from zplcore import symbology as _tip_sym
+
+
+def _tip_barcode(symbology):
+    """What the barcode editor should explain for `symbology`: the keys,
+    and the tips the table keys by symbology or label."""
+    features = _tip_sym.BARCODE_FEATURES[symbology]
+    keys = {'reverse_print', 'element_id'} | _tip_fn_rows
+    keys |= {key for key, on in (
+        ('orientation', features['orientation']),
+        ('bar_height', features['height'] is not None),
+        ('module_width', features['module_width'] is not None),
+        ('ratio', features['ratio']), ('value_text', features['text']),
+        ('check_digit', features['check_digit']), ('mode', features['mode']),
+        ('positions', symbology in _tip_sym.SERIES)) if on}
+    if features['control_chars']:
+        keys |= {'insert'} | {f"insert_{label}"
+                              for label, _code in _tip_sym.CONTROL_CHARACTERS}
+    expected = dict((attribute, zpl_tips.PARAMETERS[(symbology, attribute)])
+                    for attribute, _l, _c
+                    in _tip_sym.BARCODE_PARAMETERS.get(symbology, ()))
+    if features['check_digit']:
+        expected['check_digit'] = zpl_tips.CHECK_DIGIT[features['check_digit']]
+    return keys | set(expected), expected
+
+
+def _tip_barcode_form(symbology):
+    element = _tip_doc.add_barcode_element()
+    element.symbology = symbology
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    form = gtk_editors.editor_form(window, box, element)
+    # As a host shows it: every row, then the symbology's pass hides some
+    box.show_all()
+    form.after_show()
+    return box
+
+
+_tip_bc_wrong, _tip_bc_rows = {}, {}
+for _symbology in _tip_sym.SYMBOLOGIES:
+    _box = _tip_barcode_form(_symbology)
+    _keys, _expected = _tip_barcode(_symbology)
+    _found, _wrong = _gtk_tips(_box, shown_only=True, expected=_expected)
+    _tip_seen |= set(_found)
+    if _wrong:
+        _tip_bc_wrong[_symbology] = _wrong
+    if set(_found) != _keys:
+        _tip_bc_rows[_symbology] = sorted(set(_found) ^ _keys)
+check("GTK: every barcode symbology's shown rows carry their tips, its own "
+      "rows and its Check Digit the ones for it",
+      not _tip_bc_wrong and not _tip_bc_rows, (_tip_bc_wrong, _tip_bc_rows))
+
+# One editor switched from symbology to symbology: a row two of them share
+# (a Data Matrix's columns, a PDF417's) takes the new one's tip
+_box = _tip_barcode_form('code128')
+_bc_combo = _find_all(_box, Gtk.ComboBoxText)[0]
+_bc_codes = [code for _l, code in zpl_model.BARCODE_SYMBOLOGIES]
+_bc_switched = {}
+for _symbology in ('datamatrix', 'pdf417', 'code39', 'upca'):
+    _bc_combo.set_active(_bc_codes.index(_symbology))
+    _keys, _expected = _tip_barcode(_symbology)
+    _found, _wrong = _gtk_tips(_box, shown_only=True, expected=_expected)
+    if _wrong or set(_found) != _keys:
+        _bc_switched[_symbology] = (_wrong, sorted(set(_found) ^ _keys))
+check("GTK: and switching one editor's symbology takes the tips along with it",
+      not _bc_switched, _bc_switched)
 
 tw = ZPLViewerWindow()
 tw._save_settings = lambda *a: None
@@ -2747,15 +2827,19 @@ _tip_seen |= set(_t_found)
 _t_frame2, _t_text2 = tdoc.add_frame_element(), tdoc.add_text_element()
 tw.on_canvas_changed()
 _t_shared = {}
+_t_codes = (tdoc.add_barcode_element(), tdoc.add_barcode_element())
+tw.on_canvas_changed()
 for _pair, _wanted in (((_t_frame, _t_frame2), {'thickness', 'colour', 'rounding'}),
-                       ((_t_text, _t_text2), {'font_width', 'orientation'})):
+                       ((_t_text, _t_text2), {'font_width', 'orientation'}),
+                       (_t_codes, {'bar_height', 'module_width', 'orientation'})):
     tdoc.select(_pair[0])
     tdoc.select(_pair[1], additive=True)
     tw.properties.sync()
     _found, _wrong = _gtk_tips(tw.properties)
     _t_shared[type(_pair[0]).__name__] = (sorted(_wanted - set(_found)), _wrong)
     _tip_seen |= set(_found)
-check("GTK: two frames' and two texts' shared rows carry their editors' tips",
+check("GTK: two frames', two texts' and two barcodes' shared rows carry "
+      "their editors' tips",
       all(not missing and not wrong for missing, wrong in _t_shared.values()),
       _t_shared)
 _t_window = {'add_symbol': tw.add_symbol_button, 'align': tw.align_button}

@@ -565,12 +565,18 @@ def set_tip(widget, key: str, form=None) -> None:
     """Give `widget` the tip zplcore.tips holds for `key`, and the label of
     its row in `form` too, so hovering either explains it. A key the table
     doesn't have is a mistake here, and fails."""
-    text = tip_markup(zpl_tips.TIPS[key])
-    widget.setToolTip(text)
+    set_tip_text(widget, zpl_tips.TIPS[key], form)
+
+
+def set_tip_text(widget, text: str, form=None) -> None:
+    """set_tip for a tip looked up some other way - a barcode row's, which
+    depends on the symbology (zplcore.tips.PARAMETERS, CHECK_DIGIT)."""
+    markup = tip_markup(text)
+    widget.setToolTip(markup)
     if form is not None:
         label = form.labelForField(widget)
         if label is not None:
-            label.setToolTip(text)
+            label.setToolTip(markup)
 
 
 # --- element editing --------------------------------------------------------
@@ -1739,11 +1745,14 @@ def barcode_form(element) -> EditorForm:
     for label, code in BARCODE_CONTROL_CHARACTERS:
         button = QPushButton(label)
         button.setObjectName(f"insert_{label}")
+        set_tip(button, f"insert_{label}")
         button.setAutoDefault(False)
         button.clicked.connect(lambda _checked=False, code=code: _insert(code))
         control_layout.addWidget(button)
     control_layout.addStretch(1)
+    control_row.setObjectName("insert")
     form.addRow("Insert:", control_row)
+    set_tip(control_row, 'insert', form)
     control_label = form.labelForField(control_row)
 
     height_spin = QSpinBox()
@@ -1752,13 +1761,17 @@ def barcode_form(element) -> EditorForm:
     # 20 before that range can allow it, and written back on OK.
     height_spin.setRange(1, 32000)
     height_spin.setValue(element.bar_height)
+    height_spin.setObjectName("bar_height")
     form.addRow("Bar Height:", height_spin)
+    set_tip(height_spin, 'bar_height', form)
     height_label = form.labelForField(height_spin)
 
     module_spin = QSpinBox()
     module_spin.setRange(1, 20)
     module_spin.setValue(element.module_width)
+    module_spin.setObjectName("module_width")
     form.addRow("Module Width:", module_spin)
+    set_tip(module_spin, 'module_width', form)
     module_label = form.labelForField(module_spin)
 
     # The rows a symbology adds for its own parameters - a QR code's error
@@ -1803,6 +1816,8 @@ def barcode_form(element) -> EditorForm:
                 continue
             text, choices = own[attribute]
             label.setText(text + ":")
+            set_tip_text(widget, zpl_tips.PARAMETERS[
+                (symbology_combo.currentData(), attribute)], form)
             current = getattr(element, attribute, None)
             # Filling a row in is not an edit of it
             widget.blockSignals(True)
@@ -1828,7 +1843,9 @@ def barcode_form(element) -> EditorForm:
     ratio_spin.setDecimals(1)
     ratio_spin.setSingleStep(0.1)
     ratio_spin.setValue(element.ratio)
+    ratio_spin.setObjectName("ratio")
     form.addRow("Ratio:", ratio_spin)
+    set_tip(ratio_spin, 'ratio', form)
 
     orientation_combo = QComboBox()
     orientation_combo.setObjectName("orientation")
@@ -1849,7 +1866,9 @@ def barcode_form(element) -> EditorForm:
             (element.show_text, element.text_above))
         if (element.show_text, element.text_above)
         in [flags for _l, flags in BARCODE_TEXT_CHOICES] else 0)
+    text_combo.setObjectName("value_text")
     form.addRow("Value Text:", text_combo)
+    set_tip(text_combo, 'value_text', form)
 
     font_spin = QSpinBox()
     font_spin.setRange(6, 200)
@@ -1860,6 +1879,7 @@ def barcode_form(element) -> EditorForm:
     for label, flag in BARCODE_CHECK_DIGIT:
         check_combo.addItem(label, flag)
     check_combo.setCurrentIndex(1 if element.check_digit else 0)
+    check_combo.setObjectName("check_digit")
     form.addRow("Check Digit:", check_combo)
     check_label = form.labelForField(check_combo)
 
@@ -1869,7 +1889,9 @@ def barcode_form(element) -> EditorForm:
     mode_combo.setCurrentIndex(
         [c for _l, c in BARCODE_MODES].index(element.mode)
         if element.mode in [c for _l, c in BARCODE_MODES] else 0)
+    mode_combo.setObjectName("mode")
     form.addRow("Mode:", mode_combo)
+    set_tip(mode_combo, 'mode', form)
     mode_label = form.labelForField(mode_combo)
     ratio_label = form.labelForField(ratio_spin)
 
@@ -1937,7 +1959,9 @@ def barcode_form(element) -> EditorForm:
         positions_buttons.addWidget(button)
     positions_buttons.addStretch(1)
     positions_layout.addLayout(positions_buttons)
+    positions_box.setObjectName("positions")
     form.addRow("Positions (^FM):", positions_box)
+    set_tip(positions_box, 'positions', form)
     positions_label = form.labelForField(positions_box)
 
     apply_field_number = _field_number_rows(form, element)
@@ -1959,6 +1983,10 @@ def barcode_form(element) -> EditorForm:
             widget.setVisible(check_visible)
         if check_visible:
             check_label.setText(features['check_digit'] + ":")
+            # Three different checksums, or a choice of showing one, under
+            # one row: the tip goes with the label
+            set_tip_text(check_combo,
+                         zpl_tips.CHECK_DIGIT[features['check_digit']], form)
         # A matrix symbology's size is its own grid, so it has no bar height
         # to offer and its module width is a magnification of that grid.
         for widget in (height_spin, height_label):

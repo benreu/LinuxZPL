@@ -12451,11 +12451,15 @@ from PySide2.QtWidgets import (QWidget as _TWidget, QLabel as _TLabel,
                                QFormLayout as _TForm)
 
 
-def _qt_tips(root):
+def _qt_tips(root, shown_only=False, expected=None):
     """{key: widget} for every widget under `root` that has a tooltip, and
     what doesn't fit the table: a tooltip on a widget it isn't the tip for,
-    or a form row's label that doesn't say what its field says."""
-    widgets = [root] + root.findChildren(_TWidget)
+    or a form row's label that doesn't say what its field says.
+    `shown_only` passes over the rows a barcode's symbology hides, and
+    `expected` gives the tip for a name the table keys some other way."""
+    widgets = [root] + [w for w in root.findChildren(_TWidget)
+                        if not shown_only or w.isVisibleTo(root)]
+    expected = expected or {}
     labels = {}
     for rows in root.findChildren(_TForm):
         for widget in widgets:
@@ -12473,8 +12477,8 @@ def _qt_tips(root):
             continue
         name = widget.objectName()
         key = name[len('prop_'):] if name.startswith('prop_') else name
-        if (key not in zpl_tips.TIPS
-                or widget.toolTip() != qt_dialogs.tip_markup(zpl_tips.TIPS[key])):
+        text = expected.get(key, zpl_tips.TIPS.get(key))
+        if text is None or widget.toolTip() != qt_dialogs.tip_markup(text):
             wrong.append(('widget', name, widget.toolTip()[:40]))
             continue
         found[key] = widget
@@ -12498,7 +12502,6 @@ _tip_elements = {
     'diagonal': _tip_doc.add_diagonal_element(),
     'symbol': _tip_doc.add_graphic_symbol_element(),
     'stored_graphic': _tip_doc.add_stored_graphic_element(),
-    'barcode': _tip_doc.add_barcode_element(),
 }
 # What each editor explains, grown section by section of the tooltip work
 _tip_text_rows = {'reverse_print', 'direction', 'char_gap', 'font', 'wrap',
@@ -12520,7 +12523,6 @@ _tip_expected = {
     'symbol': {'reverse_print', 'orientation', 'element_id'},
     'stored_graphic': {'command', 'device', 'name', 'extension',
                        'mag_x', 'mag_y'},
-    'barcode': {'reverse_print', 'orientation', 'element_id'} | _tip_fn_rows,
 }
 
 _tip_seen = set()
@@ -12546,6 +12548,66 @@ check("each editor explains the rows it should",
 check("and no editor has a note under Reverse or the time format any more: "
       "they're tooltips",
       not _tip_notes, _tip_notes)
+# A barcode's rows come and go with its symbology, and so do some of their
+# tips: each symbology's own rows and its Check Digit say what they are for
+# it. Only the rows it shows count.
+from zplcore import symbology as _tip_sym
+
+
+def _tip_barcode(symbology):
+    """What the barcode editor should explain for `symbology`: the keys,
+    and the tips the table keys by symbology or label."""
+    features = _tip_sym.BARCODE_FEATURES[symbology]
+    keys = {'reverse_print', 'element_id'} | _tip_fn_rows
+    keys |= {key for key, on in (
+        ('orientation', features['orientation']),
+        ('bar_height', features['height'] is not None),
+        ('module_width', features['module_width'] is not None),
+        ('ratio', features['ratio']), ('value_text', features['text']),
+        ('check_digit', features['check_digit']), ('mode', features['mode']),
+        ('positions', symbology in _tip_sym.SERIES)) if on}
+    if features['control_chars']:
+        keys |= {'insert'} | {f"insert_{label}"
+                              for label, _code in _tip_sym.CONTROL_CHARACTERS}
+    expected = dict((attribute, zpl_tips.PARAMETERS[(symbology, attribute)])
+                    for attribute, _l, _c
+                    in _tip_sym.BARCODE_PARAMETERS.get(symbology, ()))
+    if features['check_digit']:
+        expected['check_digit'] = zpl_tips.CHECK_DIGIT[features['check_digit']]
+    return keys | set(expected), expected
+
+
+_tip_bc_wrong, _tip_bc_rows = {}, {}
+for _symbology in _tip_sym.SYMBOLOGIES:
+    _bc = _tip_doc.add_barcode_element()
+    _bc.symbology = _symbology
+    _form = qt_dialogs.editor_form(_bc, _tip_doc)
+    _keys, _expected = _tip_barcode(_symbology)
+    _found, _wrong = _qt_tips(_form.body, shown_only=True, expected=_expected)
+    _tip_seen |= set(_found)
+    if _wrong:
+        _tip_bc_wrong[_symbology] = _wrong
+    if set(_found) != _keys:
+        _tip_bc_rows[_symbology] = sorted(set(_found) ^ _keys)
+check("every barcode symbology's shown rows carry their tips, its own rows "
+      "and its Check Digit the ones for it",
+      not _tip_bc_wrong and not _tip_bc_rows, (_tip_bc_wrong, _tip_bc_rows))
+
+# One editor switched from symbology to symbology: a row two of them share
+# (a Data Matrix's columns, a PDF417's) takes the new one's tip
+_bc = _tip_doc.add_barcode_element()
+_form = qt_dialogs.editor_form(_bc, _tip_doc)
+_bc_combo = _form.body.findChild(QComboBox, 'symbology')
+_bc_switched = {}
+for _symbology in ('datamatrix', 'pdf417', 'code39', 'upca'):
+    _bc_combo.setCurrentIndex(_bc_combo.findData(_symbology))
+    _keys, _expected = _tip_barcode(_symbology)
+    _found, _wrong = _qt_tips(_form.body, shown_only=True, expected=_expected)
+    if _wrong or set(_found) != _keys:
+        _bc_switched[_symbology] = (_wrong, sorted(set(_found) ^ _keys))
+check("and switching one editor's symbology takes the tips along with it",
+      not _bc_switched, _bc_switched)
+
 _rev_form = qt_dialogs.editor_form(_tip_elements['frame'], _tip_doc)
 _rev_check = _rev_form.body.findChild(QCheckBox, 'reverse_print')
 check("Reverse print's tip is a paragraph, so Qt wraps it, on the checkbox "
@@ -12587,15 +12649,19 @@ _tip_seen |= set(_t_found)
 _t_frame2, _t_text2 = tdoc.add_frame_element(), tdoc.add_text_element()
 tw.canvas.commit()
 _t_shared = {}
+_t_codes = (tdoc.add_barcode_element(), tdoc.add_barcode_element())
+tw.canvas.commit()
 for _pair, _wanted in (((_t_frame, _t_frame2), {'thickness', 'colour', 'rounding'}),
-                       ((_t_text, _t_text2), {'font_width', 'orientation'})):
+                       ((_t_text, _t_text2), {'font_width', 'orientation'}),
+                       (_t_codes, {'bar_height', 'module_width', 'orientation'})):
     tdoc.select(_pair[0])
     tdoc.select(_pair[1], additive=True)
     tw.properties.sync()
     _found, _wrong = _qt_tips(tw.properties._content)
     _t_shared[type(_pair[0]).__name__] = (sorted(_wanted - set(_found)), _wrong)
     _tip_seen |= set(_found)
-check("two frames' and two texts' shared rows carry their editors' tips",
+check("two frames', two texts' and two barcodes' shared rows carry their "
+      "editors' tips",
       all(not missing and not wrong for missing, wrong in _t_shared.values()),
       _t_shared)
 _t_window = {'add_symbol': tw.add_symbol_button, 'align': tw.align_button}

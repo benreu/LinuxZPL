@@ -134,6 +134,39 @@ TIPS = {
     'mag_x': "Enlarges the graphic 1 to 10 times across. Recall Graphic (^XG) only.",
     'mag_y': "Enlarges the graphic 1 to 10 times down. Recall Graphic (^XG) only.",
 
+    # --- a barcode
+    'bar_height':
+        "The bars' height in dots. For PDF417 and MicroPDF417, the height of "
+        "each row.",
+    'module_width':
+        "The size of the barcode's smallest part in dots: a narrow bar, or "
+        "one square of a matrix code. Bigger scans more easily (^BY).",
+    'ratio':
+        "How many times wider the wide bars are than the narrow ones, 2.0 to "
+        "3.0. Only barcodes with two bar widths have it (^BY).",
+    'value_text':
+        "Where the readable line of the value prints: under the bars, over "
+        "them, or not at all.",
+    'mode':
+        "How the data becomes Code 128. None uses the subset switches you "
+        "write (>: >; >5). Automatic chooses them, packing four or more "
+        "digits in pairs. UCC case takes 19 digits for a shipping case code. "
+        "UCC/EAN reads GS1 application identifiers in parentheses, which "
+        "print but aren't encoded.",
+    'insert':
+        "Control characters a UPS MaxiCode message is built from, which a "
+        "keyboard can't type. Each goes in at the cursor as a ^FH escape.",
+    'insert_GS':
+        "Group separator, between the fields of a message. Written _1D (^FH).",
+    'insert_RS':
+        "Record separator, between the formats of a message. Written _1E (^FH).",
+    'insert_EOT':
+        "End of transmission, which ends the message. Written _04 (^FH).",
+    'positions':
+        "Data too long for one symbol is split across several, which a "
+        "scanner joins back up; each row places one of them. Untick Print to "
+        "leave that symbol off (^FM).",
+
     # --- the main window
     'add_symbol': "Add a graphic symbol (^GS)",
     'align': "Line the selection up (Edit ▸ Align)",
@@ -152,11 +185,111 @@ TIPS = {
 # A barcode symbology's own rows, from symbology.BARCODE_PARAMETERS, keyed by
 # (symbology, attribute): one row serves every symbology with that attribute,
 # and a Data Matrix's columns are not a PDF417's.
-PARAMETERS = {}
+PARAMETERS = {
+    ('qr', 'quality'):
+        "How much damage the symbol survives: L about 7 %, M 15 %, Q 25 %, "
+        "H 30 %. More makes a bigger symbol.",
+    ('qr', 'qr_model'):
+        "Model 2 is the standard, and what the manual recommends. Model 1 is "
+        "the original, for old readers only.",
+    ('qr', 'qr_mask'):
+        "A pattern laid over the modules so that no area confuses a reader. "
+        "Every mask scans; change it only if a reader struggles. The "
+        "printer's own default is 7.",
+    ('datamatrix', 'aspect'):
+        "Square, or rectangular to fit a narrow space. Rectangular needs "
+        "printer firmware V60.16.5Z or later.",
+    ('datamatrix', 'quality_dm'):
+        "ECC 200 is the Data Matrix every modern reader expects, and what "
+        "the manual recommends. ECC 000 to 140 are older types, for a closed "
+        "system that reads only its own labels.",
+    ('datamatrix', 'columns'):
+        "Makes the symbol at least this many columns, so a row of them come "
+        "out alike. Data too big for that size prints no symbol at all. Fit "
+        "the data picks the smallest that holds it.",
+    ('datamatrix', 'rows'):
+        "Makes the symbol at least this many rows, so a row of them come out "
+        "alike. Data too big for that size prints no symbol at all. Fit the "
+        "data picks the smallest that holds it.",
+    ('pdf417', 'security'):
+        "How many error-correction codewords to add. 0 only detects damage; "
+        "each level up repairs more and makes the symbol bigger.",
+    ('pdf417', 'columns'):
+        "Data columns across the symbol, 1 to 30, which set its width. Fit "
+        "the aspect lets the printer choose.",
+    ('pdf417', 'rows'):
+        "Rows down the symbol, 3 to 90, which set its height. Fit the data "
+        "uses as many as the data needs.",
+    ('pdf417', 'truncate'):
+        "Leaves off the right-hand row indicators and stop pattern: "
+        "narrower, but less tolerant of damage.",
+    ('micropdf417', 'micro_mode'):
+        "The symbol's columns and rows. Each size holds a fixed amount of "
+        "data and error correction (^BF).",
+    ('tlc39', 'micro_width'):
+        "The module width of the small MicroPDF417 over the Code 39, in dots.",
+    ('tlc39', 'micro_height'):
+        "The row height of the small MicroPDF417 over the Code 39, in dots.",
+    ('aztec', 'aztec_size'):
+        "A percentage is the least error correction to add, and the printer "
+        "sizes the symbol to fit. A layer count fixes the size instead: "
+        "Compact up to 4 layers, Full range up to 32.",
+    ('codabar', 'start_char'):
+        "The start character, A to D. Any pair scans; some systems use the "
+        "letters to tell kinds of label apart.",
+    ('codabar', 'stop_char'):
+        "The stop character, A to D. Any pair scans; some systems use the "
+        "letters to tell kinds of label apart.",
+    ('code11', 'code11_check'):
+        "Code 11 normally carries two check digits; one is enough for 10 "
+        "digits or fewer.",
+    ('databar', 'databar_type'):
+        "Which GS1 DataBar to print. Omnidirectional and Stacked "
+        "Omnidirectional read from any angle; Truncated, Stacked and Limited "
+        "are smaller; Expanded holds GS1 application identifiers.",
+    ('databar', 'separator'):
+        "The height of the separator between a stacked or composite "
+        "symbol's parts, 1 or 2.",
+    ('postal', 'postal_type'):
+        "Postnet and PLANET are the older US mail barcodes; the USPS "
+        "Intelligent Mail barcode replaced them.",
+    ('maxicode', 'maxi_mode'):
+        "2 and 3 are UPS shipping labels, with a US numeric or an "
+        "international alphanumeric postal code; 4 is general data; 5 has "
+        "more error correction; 6 programs a reader.",
+    ('maxicode', 'symbol_number'):
+        "Data too long for one MaxiCode can be split over up to 8: which one "
+        "of them this is.",
+    ('maxicode', 'symbol_count'):
+        "How many MaxiCodes the data is split over, up to 8.",
+    ('msi', 'msi_check'):
+        "Which check digits the printer adds. They must match what the "
+        "scanner expects.",
+    ('msi', 'msi_show_check'): "Whether the readable line shows the check digits.",
+}
 
 # The Check Digit row, by the label BARCODE_FEATURES gives it: Code 128's,
 # Code 39's and a UPC's are three different things under one row.
-CHECK_DIGIT = {}
+CHECK_DIGIT = {
+    "UCC Check Digit":
+        "Adds a mod 10 check digit to the data, as UCC/EAN shipping labels "
+        "need. The symbol's own mod 103 check character is always there.",
+    "Mod-43 Check Digit":
+        "Adds a mod 43 check digit to the data. Use it only if the scanner "
+        "or the standard you're labelling for expects one.",
+    "Mod-10 Check Digit":
+        "Adds a mod 10 check digit to the data. Use it only if the scanner "
+        "or the standard you're labelling for expects one.",
+    "Print Check Digit":
+        "The symbol always carries its check digit; this is whether the "
+        "readable line shows it.",
+    "Print Check Characters":
+        "The printer always adds Code 93's two check characters; this is "
+        "whether the readable line shows them.",
+    "Print Check Digits":
+        "The printer always adds Plessey's check digits; this is whether the "
+        "readable line shows them.",
+}
 
 
 def tip(key: str) -> Optional[str]:
