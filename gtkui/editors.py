@@ -143,6 +143,16 @@ def _make_row(content, label_text, widget, label_width: int = 130,
     return row, label
 
 
+def _tip_stacked(content, widget, key: str) -> None:
+    """Name and tip a field an editor stacked under its label, and the label
+    above it too - the widget packed just before it."""
+    widget.set_name(key)
+    children = content.get_children()
+    at = children.index(widget)
+    label = children[at - 1] if at and isinstance(children[at - 1], Gtk.Label) else None
+    set_tip(widget, key, label)
+
+
 def _make_spin(value, lower, upper):
     """A whole-number spin button over a range."""
     spin = Gtk.SpinButton()
@@ -169,7 +179,8 @@ def _make_name_row(content, element, label_width: int = 130):
     entry = Gtk.Entry()
     entry.set_text(element.element_id)
     entry.set_placeholder_text("optional - Python fills this element in by ID")
-    _make_row(content, "ID:", entry, label_width)
+    entry.set_name("element_id")
+    _make_row(content, "ID:", entry, label_width, tip='element_id')
 
     def apply_to(target):
         target.element_id = entry.get_text()
@@ -194,15 +205,19 @@ def _make_field_number_rows(content, element, label_width: int = 130):
     """
     check = Gtk.CheckButton(label="Data comes from a numbered field (^FN)")
     check.set_active(element.field_number is not None)
-    _make_row(content, "Variable:", check, label_width)
+    check.set_name("variable")
+    _make_row(content, "Variable:", check, label_width, tip='variable')
 
     number = _make_spin(element.field_number or 0, 0, zpl_fields.MAX_NUMBER)
-    _make_row(content, "Field Number:", number, label_width)
+    number.set_name("field_number")
+    _make_row(content, "Field Number:", number, label_width,
+              tip='field_number')
 
     prompt = Gtk.Entry()
     prompt.set_text(element.field_prompt or '')
     prompt.set_placeholder_text("shown on the canvas and on a printer keypad")
-    _make_row(content, "Field Name:", prompt, label_width)
+    prompt.set_name("field_prompt")
+    _make_row(content, "Field Name:", prompt, label_width, tip='field_prompt')
 
     def on_toggled(button):
         number.set_sensitive(button.get_active())
@@ -259,11 +274,13 @@ def _text_format_rows(window, editor, content, element, show_text=None):
     # far apart
     direction_combo, direction_codes = _make_combo(
         TEXT_DIRECTIONS, element.direction)
-    make_row("Direction:", direction_combo)
+    direction_combo.set_name("direction")
+    make_row("Direction:", direction_combo, tip='direction')
 
     gap_spin = _make_spin(element.char_gap, 0, TextElement.MAX_CHAR_GAP)
     gap_spin.set_name("char_gap")
-    make_row("Character Gap:", gap_spin)
+    gap_spin.set_name("char_gap")
+    make_row("Character Gap:", gap_spin, tip='char_gap')
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
     fr_check.set_name("reverse_print")
@@ -296,6 +313,9 @@ def _text_format_rows(window, editor, content, element, show_text=None):
     clear_font_btn = Gtk.Button(label="Clear")
     font_row.pack_start(clear_font_btn, False, False, 0)
 
+    # On the row, so the label, the name and both buttons all show it
+    font_row.set_name("font")
+    set_tip(font_row, 'font')
     content.pack_start(font_row, False, False, 0)
 
     def on_choose_font(btn):
@@ -348,31 +368,38 @@ def _text_format_rows(window, editor, content, element, show_text=None):
 
     wrap_check = Gtk.CheckButton(label="Wrap the text into a block")
     wrap_check.set_active(element.block is not None)
-    make_row("Wrap:", wrap_check)
+    wrap_check.set_name("wrap")
+    make_row("Wrap:", wrap_check, tip='wrap')
 
     kind_combo, kind_codes = _make_combo(
         TEXT_BLOCKS,
         'TB' if isinstance(element.block, TextBlock) else 'FB')
     kind_combo.set_name("block_kind")
-    make_row("Block:", kind_combo)
+    kind_combo.set_name("block_kind")
+    make_row("Block:", kind_combo, tip='block_kind')
 
     block_width_spin = _make_spin((element.block or block).width,
                                   10, 2000)
-    make_row("Wrap Width:", block_width_spin)
+    block_width_spin.set_name("block_width")
+    make_row("Wrap Width:", block_width_spin, tip='block_width')
 
     block_height_spin = _make_spin(text_block.height, 1, 32000)
     block_height_spin.set_name("block_height")
-    height_row = make_row("Block Height:", block_height_spin)
+    block_height_spin.set_name("block_height")
+    height_row = make_row("Block Height:", block_height_spin, tip='block_height')
 
     max_lines_spin = _make_spin(block.max_lines, 1, 64)
-    lines_row = make_row("Max Lines:", max_lines_spin)
+    max_lines_spin.set_name("max_lines")
+    lines_row = make_row("Max Lines:", max_lines_spin, tip='max_lines')
 
     spacing_spin = _make_spin(block.line_spacing, -100, 100)
-    spacing_row = make_row("Line Spacing:", spacing_spin)
+    spacing_spin.set_name("line_spacing")
+    spacing_row = make_row("Line Spacing:", spacing_spin, tip='line_spacing')
 
     justify_combo, justify_codes = _make_combo(TEXT_JUSTIFICATIONS,
                                                block.justification)
-    justify_row = make_row("Justification:", justify_combo)
+    justify_combo.set_name("justification")
+    justify_row = make_row("Justification:", justify_combo, tip='justification')
 
     # A ^TB's lines align by the field's own justification, which
     # has neither a centre nor a justified
@@ -381,10 +408,12 @@ def _text_format_rows(window, editor, content, element, show_text=None):
         'R' if element.justify == geometry.JUSTIFY_RIGHT
         else 'L')
     text_justify_combo.set_name("text_justification")
-    text_justify_row = make_row("Justification:", text_justify_combo)
+    text_justify_combo.set_name("text_justification")
+    text_justify_row = make_row("Justification:", text_justify_combo, tip='text_justification')
 
     indent_spin = _make_spin(block.indent, 0, 2000)
-    indent_row = make_row("Indent:", indent_spin)
+    indent_spin.set_name("indent")
+    indent_row = make_row("Indent:", indent_spin, tip='indent')
 
     block_fields = (kind_combo, block_width_spin, block_height_spin,
                     max_lines_spin, spacing_spin, justify_combo,
@@ -508,21 +537,20 @@ def time_form(window, content, element) -> EditorForm:
 
     text_entry = Gtk.Entry()
     text_entry.set_text(element.text)
-    make_row("Format:", text_entry)
-
-    hint = Gtk.Label(label="e.g. %m/%d/%y → date, %H:%M:%S → time")
-    hint.set_halign(Gtk.Align.START)
-    content.pack_start(hint, False, False, 0)
+    text_entry.set_name("clock_text")
+    make_row("Format:", text_entry, tip='clock_text')
 
     height_spin = _make_spin(element.font_height, 8, 500)
     make_row("Font Height:", height_spin)
 
     width_spin = _make_spin(element.font_width, 8, 500)
-    make_row("Font Width:", width_spin)
+    width_spin.set_name("font_width")
+    make_row("Font Width:", width_spin, tip='font_width')
 
     orientation_combo, orientation_codes = _make_combo(
         ORIENTATIONS, element.orientation)
-    make_row("Orientation:", orientation_combo)
+    orientation_combo.set_name("orientation")
+    make_row("Orientation:", orientation_combo, tip='orientation')
 
     fmt = _text_format_rows(window, editor, content, element,
                             show_text=lambda: text_entry.set_text(element.text))
@@ -530,7 +558,8 @@ def time_form(window, content, element) -> EditorForm:
     clock_check = Gtk.CheckButton(
         label="Comes from the printer's clock (^FC)")
     clock_check.set_active(element.clock_format)
-    make_row("Clock:", clock_check)
+    clock_check.set_name("clock_format")
+    make_row("Clock:", clock_check, tip='clock_format')
 
     content.show_all()
 
@@ -584,26 +613,31 @@ def serial_form(window, content, element) -> EditorForm:
 
     text_entry = Gtk.Entry()
     text_entry.set_text(element.text)
-    make_row("Start Value:", text_entry)
+    text_entry.set_name("serial_start")
+    make_row("Start Value:", text_entry, tip='serial_start')
 
     increment_spin = _make_spin(
         element.serial_increment if element.serial_increment is not None
         else 1, -999999, 999999)
-    make_row("Increment:", increment_spin)
+    increment_spin.set_name("serial_increment")
+    make_row("Increment:", increment_spin, tip='serial_increment')
 
     leading_zero_check = Gtk.CheckButton(label="Add leading zeros")
     leading_zero_check.set_active(element.serial_leading_zero)
-    make_row("", leading_zero_check)
+    leading_zero_check.set_name("serial_leading_zero")
+    make_row("", leading_zero_check, tip='serial_leading_zero')
 
     height_spin = _make_spin(element.font_height, 8, 500)
     make_row("Font Height:", height_spin)
 
     width_spin = _make_spin(element.font_width, 8, 500)
-    make_row("Font Width:", width_spin)
+    width_spin.set_name("font_width")
+    make_row("Font Width:", width_spin, tip='font_width')
 
     orientation_combo, orientation_codes = _make_combo(
         ORIENTATIONS, element.orientation)
-    make_row("Orientation:", orientation_combo)
+    orientation_combo.set_name("orientation")
+    make_row("Orientation:", orientation_combo, tip='orientation')
 
     fmt = _text_format_rows(window, editor, content, element,
                             show_text=lambda: text_entry.set_text(element.text))
@@ -611,7 +645,8 @@ def serial_form(window, content, element) -> EditorForm:
     serial_check = Gtk.CheckButton(
         label="Auto-increments each print (^SN)")
     serial_check.set_active(element.serial_increment is not None)
-    make_row("Serial:", serial_check)
+    serial_check.set_name("serial_format")
+    make_row("Serial:", serial_check, tip='serial_format')
 
     content.show_all()
 
@@ -672,27 +707,32 @@ def numbered_form(window, content, element) -> EditorForm:
     text_entry.set_text(element.text)
     text_entry.set_placeholder_text(
         "optional - shared with every other field carrying the same number")
-    make_row("Text:", text_entry)
+    text_entry.set_name("numbered_text")
+    make_row("Text:", text_entry, tip='numbered_text')
 
     number_spin = _make_spin(element.field_number or 0, 0,
                              zpl_fields.MAX_NUMBER)
-    make_row("Field Number:", number_spin)
+    number_spin.set_name("field_number")
+    make_row("Field Number:", number_spin, tip='field_number')
 
     prompt_entry = Gtk.Entry()
     prompt_entry.set_text(element.field_prompt or '')
     prompt_entry.set_placeholder_text(
         "shown on the canvas and on a printer keypad")
-    make_row("Field Name:", prompt_entry)
+    prompt_entry.set_name("field_prompt")
+    make_row("Field Name:", prompt_entry, tip='field_prompt')
 
     height_spin = _make_spin(element.font_height, 8, 500)
     make_row("Font Height:", height_spin)
 
     width_spin = _make_spin(element.font_width, 8, 500)
-    make_row("Font Width:", width_spin)
+    width_spin.set_name("font_width")
+    make_row("Font Width:", width_spin, tip='font_width')
 
     orientation_combo, orientation_codes = _make_combo(
         ORIENTATIONS, element.orientation)
-    make_row("Orientation:", orientation_combo)
+    orientation_combo.set_name("orientation")
+    make_row("Orientation:", orientation_combo, tip='orientation')
 
     fmt = _text_format_rows(window, editor, content, element,
                             show_text=lambda: text_entry.set_text(element.text))
@@ -700,7 +740,8 @@ def numbered_form(window, content, element) -> EditorForm:
     variable_check = Gtk.CheckButton(
         label="Data comes from a numbered field (^FN)")
     variable_check.set_active(element.field_number is not None)
-    make_row("Variable:", variable_check)
+    variable_check.set_name("variable")
+    make_row("Variable:", variable_check, tip='variable')
 
     content.show_all()
 
@@ -761,11 +802,13 @@ def text_form(window, content, element) -> EditorForm:
     make_row("Font Height:", height_spin)
 
     width_spin = _make_spin(element.font_width, 8, 500)
-    make_row("Font Width:", width_spin)
+    width_spin.set_name("font_width")
+    make_row("Font Width:", width_spin, tip='font_width')
 
     orientation_combo, orientation_codes = _make_combo(
         ORIENTATIONS, element.orientation)
-    make_row("Orientation:", orientation_combo)
+    orientation_combo.set_name("orientation")
+    make_row("Orientation:", orientation_combo, tip='orientation')
 
     fmt = _text_format_rows(window, editor, content, element,
                             show_text=lambda: text_view.get_buffer().set_text(
@@ -916,8 +959,9 @@ def barcode_form(window, content, element) -> EditorForm:
     orientation_combo, orientation_codes = make_combo(
         model.BARCODE_ORIENTATIONS,
         (element.orientation or 'N').upper())
+    orientation_combo.set_name("orientation")
     orientation_row, _orientation_label = make_row(
-        "Orientation:", orientation_combo)
+        "Orientation:", orientation_combo, tip='orientation')
 
     text_combo, text_codes = make_combo(
         model.BARCODE_TEXT_CHOICES,
@@ -1107,26 +1151,32 @@ def stored_graphic_form(window, content, element) -> EditorForm:
 
     command_combo, command_codes = _make_combo(
         STORED_GRAPHIC_COMMANDS, element.command)
-    make_row("Command:", command_combo)
+    command_combo.set_name("command")
+    make_row("Command:", command_combo, tip='command')
 
     device, name, ext = graphic_store.split_device_spec(element.device_spec)
     device_combo, device_codes = _make_combo(STORED_GRAPHIC_DEVICES, device)
-    make_row("Device:", device_combo)
+    device_combo.set_name("device")
+    make_row("Device:", device_combo, tip='device')
 
     name_entry = Gtk.Entry()
     name_entry.set_text(name)
     name_entry.set_max_length(8)
-    make_row("Name:", name_entry)
+    name_entry.set_name("name")
+    make_row("Name:", name_entry, tip='name')
 
     ext_entry = Gtk.Entry()
     ext_entry.set_text(ext)
-    make_row("Extension:", ext_entry)
+    ext_entry.set_name("extension")
+    make_row("Extension:", ext_entry, tip='extension')
 
     mag_x_spin = _make_spin(element.mag_x, 1, 10)
-    make_row("Magnification X:", mag_x_spin)
+    mag_x_spin.set_name("mag_x")
+    make_row("Magnification X:", mag_x_spin, tip='mag_x')
 
     mag_y_spin = _make_spin(element.mag_y, 1, 10)
-    make_row("Magnification Y:", mag_y_spin)
+    mag_y_spin.set_name("mag_y")
+    make_row("Magnification Y:", mag_y_spin, tip='mag_y')
 
     def on_command_changed(_combo):
         # ^IM has no magnification of its own - always 1,1.
@@ -1189,6 +1239,7 @@ def frame_form(window, content, element) -> EditorForm:
     thickness_spin.set_adjustment(thickness_adj)
     thickness_spin.set_numeric(True)
     content.pack_start(thickness_spin, False, False, 0)
+    _tip_stacked(content, thickness_spin, 'thickness')
 
     def on_size_changed(_spin):
         # Shrinking the frame must not leave an illegal thickness selectable
@@ -1202,12 +1253,14 @@ def frame_form(window, content, element) -> EditorForm:
     content.pack_start(colour_label, False, False, 0)
     colour_combo, colour_codes = _make_combo(FRAME_COLOURS, element.colour)
     content.pack_start(colour_combo, False, False, 0)
+    _tip_stacked(content, colour_combo, 'colour')
 
     rounding_label = Gtk.Label(label="Corner Rounding:")
     content.pack_start(rounding_label, False, False, 0)
     rounding_spin = _make_spin(element.rounding, 0,
                                FrameElement.MAX_ROUNDING)
     content.pack_start(rounding_spin, False, False, 0)
+    _tip_stacked(content, rounding_spin, 'rounding')
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
     fr_check.set_name("reverse_print")
@@ -1250,6 +1303,7 @@ def circle_form(window, content, element) -> EditorForm:
     thickness_spin = _make_spin(min(element.thickness, max_thickness()),
                                 1, max_thickness())
     content.pack_start(thickness_spin, False, False, 0)
+    _tip_stacked(content, thickness_spin, 'thickness')
 
     def on_diameter_changed(_spin):
         # Shrinking the circle must not leave an illegal thickness
@@ -1262,6 +1316,7 @@ def circle_form(window, content, element) -> EditorForm:
     content.pack_start(Gtk.Label(label="Colour:"), False, False, 0)
     colour_combo, colour_codes = _make_combo(FRAME_COLOURS, element.colour)
     content.pack_start(colour_combo, False, False, 0)
+    _tip_stacked(content, colour_combo, 'colour')
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
     fr_check.set_name("reverse_print")
@@ -1318,7 +1373,8 @@ def graphic_symbol_form(window, content, element) -> EditorForm:
 
     orientation_combo, orientation_codes = _make_combo(
         ORIENTATIONS, element.orientation)
-    make_row("Orientation:", orientation_combo)
+    orientation_combo.set_name("orientation")
+    make_row("Orientation:", orientation_combo, tip='orientation')
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
     fr_check.set_name("reverse_print")
@@ -1371,6 +1427,7 @@ def ellipse_form(window, content, element) -> EditorForm:
     thickness_spin = _make_spin(min(element.thickness, max_thickness()),
                                 1, max_thickness())
     content.pack_start(thickness_spin, False, False, 0)
+    _tip_stacked(content, thickness_spin, 'thickness')
 
     def on_size_changed(_spin):
         # Shrinking the ellipse must not leave an illegal thickness
@@ -1384,6 +1441,7 @@ def ellipse_form(window, content, element) -> EditorForm:
     content.pack_start(Gtk.Label(label="Colour:"), False, False, 0)
     colour_combo, colour_codes = _make_combo(FRAME_COLOURS, element.colour)
     content.pack_start(colour_combo, False, False, 0)
+    _tip_stacked(content, colour_combo, 'colour')
 
     fr_check = Gtk.CheckButton(label="Reverse print (^FR)")
     fr_check.set_name("reverse_print")
@@ -1434,6 +1492,7 @@ def diagonal_form(window, content, element) -> EditorForm:
     thickness_spin = _make_spin(min(element.thickness, max_thickness()),
                                 1, max_thickness())
     content.pack_start(thickness_spin, False, False, 0)
+    _tip_stacked(content, thickness_spin, 'thickness')
 
     def on_width_changed(_spin):
         # Narrowing the line must not leave a thicker one selectable
@@ -1445,6 +1504,7 @@ def diagonal_form(window, content, element) -> EditorForm:
     content.pack_start(Gtk.Label(label="Colour:"), False, False, 0)
     colour_combo, colour_codes = _make_combo(FRAME_COLOURS, element.colour)
     content.pack_start(colour_combo, False, False, 0)
+    _tip_stacked(content, colour_combo, 'colour')
 
     content.pack_start(Gtk.Label(label="Direction:"), False, False, 0)
     direction_combo, direction_codes = _make_combo(DIAGONAL_DIRECTIONS,

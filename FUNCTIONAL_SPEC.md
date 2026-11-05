@@ -1404,7 +1404,7 @@ back where it was left: its size, and whether it floats (§13).
   plain sentences, ending with the ZPL command when the label doesn't show it.
   An explanation is a tooltip rather than a note under its row, which would
   cost the narrow panel a line on every element that has it: Reverse print's
-  is.
+  is, and so is the list of `%` codes a time field's format can use.
 - The font chooser opened from the text rows is modal to the window the panel
   is in, not to the application.
 

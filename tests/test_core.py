@@ -12501,8 +12501,27 @@ _tip_elements = {
     'barcode': _tip_doc.add_barcode_element(),
 }
 # What each editor explains, grown section by section of the tooltip work
-_tip_expected = dict((kind, {'reverse_print'}) for kind in _tip_elements)
-_tip_expected['stored_graphic'] = set()
+_tip_text_rows = {'reverse_print', 'direction', 'char_gap', 'font', 'wrap',
+                  'block_kind', 'block_width', 'block_height', 'max_lines',
+                  'line_spacing', 'justification', 'text_justification',
+                  'indent', 'font_width', 'orientation', 'element_id'}
+_tip_fn_rows = {'variable', 'field_number', 'field_prompt'}
+_tip_shape_rows = {'reverse_print', 'thickness', 'colour'}
+_tip_expected = {
+    'text': _tip_text_rows,
+    'time': _tip_text_rows | {'clock_text', 'clock_format'},
+    'serial': _tip_text_rows | {'serial_start', 'serial_increment',
+                                'serial_leading_zero', 'serial_format'},
+    'numbered': _tip_text_rows | _tip_fn_rows | {'numbered_text'},
+    'frame': _tip_shape_rows | {'rounding'},
+    'circle': _tip_shape_rows,
+    'ellipse': _tip_shape_rows,
+    'diagonal': _tip_shape_rows,
+    'symbol': {'reverse_print', 'orientation', 'element_id'},
+    'stored_graphic': {'command', 'device', 'name', 'extension',
+                       'mag_x', 'mag_y'},
+    'barcode': {'reverse_print', 'orientation', 'element_id'} | _tip_fn_rows,
+}
 
 _tip_seen = set()
 _tip_found, _tip_wrong, _tip_notes = {}, {}, {}
@@ -12514,7 +12533,7 @@ for _kind, _element in _tip_elements.items():
     if _wrong:
         _tip_wrong[_kind] = _wrong
     _notes = [l.text() for l in _form.body.findChildren(_TLabel)
-              if l.text().startswith("Inverts")]
+              if l.text().startswith(("Inverts", "e.g. %m"))]
     if _notes:
         _tip_notes[_kind] = _notes
 check("every tooltip in an element editor is its row's tip from zplcore.tips, "
@@ -12524,7 +12543,8 @@ check("each editor explains the rows it should",
       _tip_found == _tip_expected,
       dict((k, sorted(_tip_found[k] ^ _tip_expected[k])) for k in _tip_found
            if _tip_found[k] != _tip_expected[k]))
-check("and no editor has a note under Reverse any more: it's the tooltip",
+check("and no editor has a note under Reverse or the time format any more: "
+      "they're tooltips",
       not _tip_notes, _tip_notes)
 _rev_form = qt_dialogs.editor_form(_tip_elements['frame'], _tip_doc)
 _rev_check = _rev_form.body.findChild(QCheckBox, 'reverse_print')
@@ -12563,6 +12583,21 @@ check("a selection of several: each shared row with a tip in the table has "
       and not _t_wrong and not _t_untipped,
       (tw.properties._title.text(), sorted(_t_found), _t_wrong, _t_untipped))
 _tip_seen |= set(_t_found)
+# The shared rows say what the same row says in each element's own editor
+_t_frame2, _t_text2 = tdoc.add_frame_element(), tdoc.add_text_element()
+tw.canvas.commit()
+_t_shared = {}
+for _pair, _wanted in (((_t_frame, _t_frame2), {'thickness', 'colour', 'rounding'}),
+                       ((_t_text, _t_text2), {'font_width', 'orientation'})):
+    tdoc.select(_pair[0])
+    tdoc.select(_pair[1], additive=True)
+    tw.properties.sync()
+    _found, _wrong = _qt_tips(tw.properties._content)
+    _t_shared[type(_pair[0]).__name__] = (sorted(_wanted - set(_found)), _wrong)
+    _tip_seen |= set(_found)
+check("two frames' and two texts' shared rows carry their editors' tips",
+      all(not missing and not wrong for missing, wrong in _t_shared.values()),
+      _t_shared)
 _t_window = {'add_symbol': tw.add_symbol_button, 'align': tw.align_button}
 check("the toolbar's + Symbol and Align buttons take theirs from the table",
       all(button.objectName() == key

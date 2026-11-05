@@ -584,6 +584,7 @@ def _name_row(form, element):
     edit.setObjectName("element_id")
     edit.setPlaceholderText("optional - Python fills this element in by ID")
     form.addRow("ID:", edit)
+    set_tip(edit, 'element_id', form)
 
     def apply_to(target):
         target.element_id = edit.text()
@@ -610,17 +611,20 @@ def _field_number_rows(form, element):
     check.setObjectName("variable")
     check.setChecked(element.field_number is not None)
     form.addRow("Variable:", check)
+    set_tip(check, 'variable', form)
 
     number = QSpinBox()
     number.setObjectName("field_number")
     number.setRange(0, zpl_fields.MAX_NUMBER)
     number.setValue(element.field_number or 0)
     form.addRow("Field Number:", number)
+    set_tip(number, 'field_number', form)
 
     prompt = QLineEdit(element.field_prompt or '')
     prompt.setObjectName("field_prompt")
     prompt.setPlaceholderText("shown on the canvas and on a printer keypad")
     form.addRow("Field Name:", prompt)
+    set_tip(prompt, 'field_prompt', form)
 
     def sync():
         number.setEnabled(check.isChecked())
@@ -680,12 +684,14 @@ def _text_format_rows(editor, form, element: TextElement,
     direction_combo.setCurrentIndex(ways.index(element.direction)
                                     if element.direction in ways else 0)
     form.addRow("Direction:", direction_combo)
+    set_tip(direction_combo, 'direction', form)
 
     gap_spin = QSpinBox()
     gap_spin.setObjectName("char_gap")
     gap_spin.setRange(0, TextElement.MAX_CHAR_GAP)
     gap_spin.setValue(element.char_gap)
     form.addRow("Character Gap:", gap_spin)
+    set_tip(gap_spin, 'char_gap', form)
 
     fr_check = QCheckBox("Reverse print (^FR)")
     fr_check.setObjectName("reverse_print")
@@ -710,7 +716,9 @@ def _text_format_rows(editor, form, element: TextElement,
     font_layout.addWidget(font_label, 1)
     font_layout.addWidget(choose_btn)
     font_layout.addWidget(clear_btn)
+    font_row.setObjectName("font")
     form.addRow("Font:", font_row)
+    set_tip(font_row, 'font', form)
 
     def on_choose():
         # Modal to whichever window the rows are in, not to the application
@@ -743,6 +751,7 @@ def _text_format_rows(editor, form, element: TextElement,
     wrap_check.setObjectName("wrap")
     wrap_check.setChecked(element.block is not None)
     form.addRow("Wrap:", wrap_check)
+    set_tip(wrap_check, 'wrap', form)
 
     kind_combo = QComboBox()
     kind_combo.setObjectName("block_kind")
@@ -751,30 +760,35 @@ def _text_format_rows(editor, form, element: TextElement,
     kind_combo.setCurrentIndex(1 if isinstance(element.block, TextBlock)
                                else 0)
     form.addRow("Block:", kind_combo)
+    set_tip(kind_combo, 'block_kind', form)
 
     block_width = QSpinBox()
     block_width.setRange(10, 2000)
     block_width.setObjectName("block_width")
     block_width.setValue((element.block or block).width)
     form.addRow("Wrap Width:", block_width)
+    set_tip(block_width, 'block_width', form)
 
     block_height = QSpinBox()
     block_height.setRange(1, 32000)
     block_height.setObjectName("block_height")
     block_height.setValue(text_block.height)
     form.addRow("Block Height:", block_height)
+    set_tip(block_height, 'block_height', form)
 
     max_lines = QSpinBox()
     max_lines.setRange(1, 64)
     max_lines.setObjectName("max_lines")
     max_lines.setValue(block.max_lines)
     form.addRow("Max Lines:", max_lines)
+    set_tip(max_lines, 'max_lines', form)
 
     spacing_spin = QSpinBox()
     spacing_spin.setRange(-100, 100)
     spacing_spin.setObjectName("line_spacing")
     spacing_spin.setValue(block.line_spacing)
     form.addRow("Line Spacing:", spacing_spin)
+    set_tip(spacing_spin, 'line_spacing', form)
 
     justify_combo = QComboBox()
     justify_combo.setObjectName("justification")
@@ -784,6 +798,7 @@ def _text_format_rows(editor, form, element: TextElement,
     justify_combo.setCurrentIndex(codes.index(block.justification)
                                   if block.justification in codes else 0)
     form.addRow("Justification:", justify_combo)
+    set_tip(justify_combo, 'justification', form)
 
     # A ^TB's lines align by the field's own justification, which has
     # neither a centre nor a justified
@@ -794,12 +809,14 @@ def _text_format_rows(editor, form, element: TextElement,
     text_justify_combo.setCurrentIndex(
         1 if element.justify == geometry.JUSTIFY_RIGHT else 0)
     form.addRow("Justification:", text_justify_combo)
+    set_tip(text_justify_combo, 'text_justification', form)
 
     indent_spin = QSpinBox()
     indent_spin.setRange(0, 2000)
     indent_spin.setObjectName("indent")
     indent_spin.setValue(block.indent)
     form.addRow("Indent:", indent_spin)
+    set_tip(indent_spin, 'indent', form)
 
     field_block_only = (max_lines, spacing_spin, justify_combo, indent_spin)
     text_block_only = (block_height, text_justify_combo)
@@ -917,9 +934,11 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
     form.addRow("Font Height:", height_spin)
 
     width_spin = QSpinBox()
+    width_spin.setObjectName("font_width")
     width_spin.setRange(8, 500)
     width_spin.setValue(element.font_width)
     form.addRow("Font Width:", width_spin)
+    set_tip(width_spin, 'font_width', form)
 
     orientation_combo = QComboBox()
     orientation_combo.setObjectName("orientation")
@@ -929,6 +948,7 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
     orientation_combo.setCurrentIndex(turns.index(element.orientation)
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
+    set_tip(orientation_combo, 'orientation', form)
 
     fmt = _text_format_rows(
         editor, form, element, document,
@@ -976,12 +996,9 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
     form = editor.rows
 
     text_edit = QLineEdit(element.text)
-    text_edit.setObjectName("text")
+    text_edit.setObjectName("clock_text")
     form.addRow("Format:", text_edit)
-
-    hint = QLabel("e.g. %m/%d/%y → date, %H:%M:%S → time")
-    hint.setStyleSheet("color: gray;")
-    form.addRow("", hint)
+    set_tip(text_edit, 'clock_text', form)
 
     height_spin = QSpinBox()
     height_spin.setRange(8, 500)
@@ -989,9 +1006,11 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
     form.addRow("Font Height:", height_spin)
 
     width_spin = QSpinBox()
+    width_spin.setObjectName("font_width")
     width_spin.setRange(8, 500)
     width_spin.setValue(element.font_width)
     form.addRow("Font Width:", width_spin)
+    set_tip(width_spin, 'font_width', form)
 
     orientation_combo = QComboBox()
     orientation_combo.setObjectName("orientation")
@@ -1001,6 +1020,7 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
     orientation_combo.setCurrentIndex(turns.index(element.orientation)
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
+    set_tip(orientation_combo, 'orientation', form)
 
     fmt = _text_format_rows(
         editor, form, element, document,
@@ -1010,6 +1030,7 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
     clock_check.setObjectName("clock_format")
     clock_check.setChecked(element.clock_format)
     form.addRow("Clock:", clock_check)
+    set_tip(clock_check, 'clock_format', form)
 
     apply_name = _name_row(form, element)
 
@@ -1059,8 +1080,9 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
     form = editor.rows
 
     text_edit = QLineEdit(element.text)
-    text_edit.setObjectName("text")
+    text_edit.setObjectName("serial_start")
     form.addRow("Start Value:", text_edit)
+    set_tip(text_edit, 'serial_start', form)
 
     increment = QSpinBox()
     increment.setObjectName("serial_increment")
@@ -1068,11 +1090,13 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
     increment.setValue(element.serial_increment
                        if element.serial_increment is not None else 1)
     form.addRow("Increment:", increment)
+    set_tip(increment, 'serial_increment', form)
 
     leading_zero = QCheckBox("Add leading zeros")
     leading_zero.setObjectName("serial_leading_zero")
     leading_zero.setChecked(element.serial_leading_zero)
     form.addRow("", leading_zero)
+    set_tip(leading_zero, 'serial_leading_zero', form)
 
     height_spin = QSpinBox()
     height_spin.setRange(8, 500)
@@ -1080,9 +1104,11 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
     form.addRow("Font Height:", height_spin)
 
     width_spin = QSpinBox()
+    width_spin.setObjectName("font_width")
     width_spin.setRange(8, 500)
     width_spin.setValue(element.font_width)
     form.addRow("Font Width:", width_spin)
+    set_tip(width_spin, 'font_width', form)
 
     orientation_combo = QComboBox()
     orientation_combo.setObjectName("orientation")
@@ -1092,6 +1118,7 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
     orientation_combo.setCurrentIndex(turns.index(element.orientation)
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
+    set_tip(orientation_combo, 'orientation', form)
 
     fmt = _text_format_rows(
         editor, form, element, document,
@@ -1101,6 +1128,7 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
     serial_check.setObjectName("serial_format")
     serial_check.setChecked(element.serial_increment is not None)
     form.addRow("Serial:", serial_check)
+    set_tip(serial_check, 'serial_format', form)
 
     apply_name = _name_row(form, element)
 
@@ -1155,21 +1183,24 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
     form = editor.rows
 
     text_edit = QLineEdit(element.text)
-    text_edit.setObjectName("text")
+    text_edit.setObjectName("numbered_text")
     text_edit.setPlaceholderText("optional - shared with every other field "
                                  "carrying the same number")
     form.addRow("Text:", text_edit)
+    set_tip(text_edit, 'numbered_text', form)
 
     number = QSpinBox()
     number.setObjectName("field_number")
     number.setRange(0, zpl_fields.MAX_NUMBER)
     number.setValue(element.field_number or 0)
     form.addRow("Field Number:", number)
+    set_tip(number, 'field_number', form)
 
     prompt = QLineEdit(element.field_prompt or '')
     prompt.setObjectName("field_prompt")
     prompt.setPlaceholderText("shown on the canvas and on a printer keypad")
     form.addRow("Field Name:", prompt)
+    set_tip(prompt, 'field_prompt', form)
 
     height_spin = QSpinBox()
     height_spin.setRange(8, 500)
@@ -1177,9 +1208,11 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
     form.addRow("Font Height:", height_spin)
 
     width_spin = QSpinBox()
+    width_spin.setObjectName("font_width")
     width_spin.setRange(8, 500)
     width_spin.setValue(element.font_width)
     form.addRow("Font Width:", width_spin)
+    set_tip(width_spin, 'font_width', form)
 
     orientation_combo = QComboBox()
     orientation_combo.setObjectName("orientation")
@@ -1189,6 +1222,7 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
     orientation_combo.setCurrentIndex(turns.index(element.orientation)
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
+    set_tip(orientation_combo, 'orientation', form)
 
     fmt = _text_format_rows(
         editor, form, element, document,
@@ -1198,6 +1232,7 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
     variable_check.setObjectName("variable")
     variable_check.setChecked(element.field_number is not None)
     form.addRow("Variable:", variable_check)
+    set_tip(variable_check, 'variable', form)
 
     apply_name = _name_row(form, element)
 
@@ -1246,7 +1281,9 @@ def frame_form(element) -> EditorForm:
     form.addRow("Height:", height_spin)
 
     thickness_spin = QSpinBox()
+    thickness_spin.setObjectName("thickness")
     form.addRow("Thickness:", thickness_spin)
+    set_tip(thickness_spin, 'thickness', form)
 
     def max_thickness():
         # ^GB has no fixed limit; the useful maximum is half the smaller side,
@@ -1271,12 +1308,14 @@ def frame_form(element) -> EditorForm:
     colour_combo.setCurrentIndex(codes.index(element.colour)
                                  if element.colour in codes else 0)
     form.addRow("Colour:", colour_combo)
+    set_tip(colour_combo, 'colour', form)
 
     rounding_spin = QSpinBox()
     rounding_spin.setObjectName("rounding")
     rounding_spin.setRange(0, FrameElement.MAX_ROUNDING)
     rounding_spin.setValue(element.rounding)
     form.addRow("Corner Rounding:", rounding_spin)
+    set_tip(rounding_spin, 'rounding', form)
 
     fr_check = QCheckBox("Reverse print (^FR)")
     fr_check.setObjectName("reverse_print")
@@ -1317,6 +1356,7 @@ def circle_form(element) -> EditorForm:
     thickness_spin = QSpinBox()
     thickness_spin.setObjectName("thickness")
     form.addRow("Thickness:", thickness_spin)
+    set_tip(thickness_spin, 'thickness', form)
 
     def max_thickness():
         # The border meets in the middle at the radius, and fills solid.
@@ -1339,6 +1379,7 @@ def circle_form(element) -> EditorForm:
     colour_combo.setCurrentIndex(codes.index(element.colour)
                                  if element.colour in codes else 0)
     form.addRow("Colour:", colour_combo)
+    set_tip(colour_combo, 'colour', form)
 
     fr_check = QCheckBox("Reverse print (^FR)")
     fr_check.setObjectName("reverse_print")
@@ -1384,6 +1425,7 @@ def ellipse_form(element) -> EditorForm:
     thickness_spin = QSpinBox()
     thickness_spin.setObjectName("thickness")
     form.addRow("Thickness:", thickness_spin)
+    set_tip(thickness_spin, 'thickness', form)
 
     def max_thickness():
         # The border meets in the middle at half the shorter side, and the
@@ -1408,6 +1450,7 @@ def ellipse_form(element) -> EditorForm:
     colour_combo.setCurrentIndex(codes.index(element.colour)
                                  if element.colour in codes else 0)
     form.addRow("Colour:", colour_combo)
+    set_tip(colour_combo, 'colour', form)
 
     fr_check = QCheckBox("Reverse print (^FR)")
     fr_check.setObjectName("reverse_print")
@@ -1453,6 +1496,7 @@ def diagonal_form(element) -> EditorForm:
     thickness_spin = QSpinBox()
     thickness_spin.setObjectName("thickness")
     form.addRow("Thickness:", thickness_spin)
+    set_tip(thickness_spin, 'thickness', form)
 
     def sync_thickness_range():
         # Each row's run meets the far side at the full width, and the box
@@ -1472,6 +1516,7 @@ def diagonal_form(element) -> EditorForm:
     colour_combo.setCurrentIndex(codes.index(element.colour)
                                  if element.colour in codes else 0)
     form.addRow("Colour:", colour_combo)
+    set_tip(colour_combo, 'colour', form)
 
     direction_combo = QComboBox()
     direction_combo.setObjectName("direction")
@@ -1544,6 +1589,7 @@ def graphic_symbol_form(element) -> EditorForm:
     orientation_combo.setCurrentIndex(turns.index(element.orientation)
                                       if element.orientation in turns else 0)
     form.addRow("Orientation:", orientation_combo)
+    set_tip(orientation_combo, 'orientation', form)
 
     fr_check = QCheckBox("Reverse print (^FR)")
     fr_check.setObjectName("reverse_print")
@@ -1589,6 +1635,7 @@ def stored_graphic_form(element) -> EditorForm:
     command_combo.setCurrentIndex(command_codes.index(element.command)
                                   if element.command in command_codes else 0)
     form.addRow("Command:", command_combo)
+    set_tip(command_combo, 'command', form)
 
     device, name, ext = graphic_store.split_device_spec(element.device_spec)
     device_combo = QComboBox()
@@ -1599,25 +1646,32 @@ def stored_graphic_form(element) -> EditorForm:
     device_combo.setCurrentIndex(device_codes.index(device)
                                  if device in device_codes else 0)
     form.addRow("Device:", device_combo)
+    set_tip(device_combo, 'device', form)
 
     name_edit = QLineEdit(name)
     name_edit.setObjectName("name")
     name_edit.setMaxLength(8)
     form.addRow("Name:", name_edit)
+    set_tip(name_edit, 'name', form)
 
     ext_edit = QLineEdit(ext)
     ext_edit.setObjectName("extension")
     form.addRow("Extension:", ext_edit)
+    set_tip(ext_edit, 'extension', form)
 
     mag_x_spin = QSpinBox()
+    mag_x_spin.setObjectName("mag_x")
     mag_x_spin.setRange(1, 10)
     mag_x_spin.setValue(element.mag_x)
     form.addRow("Magnification X:", mag_x_spin)
+    set_tip(mag_x_spin, 'mag_x', form)
 
     mag_y_spin = QSpinBox()
+    mag_y_spin.setObjectName("mag_y")
     mag_y_spin.setRange(1, 10)
     mag_y_spin.setValue(element.mag_y)
     form.addRow("Magnification Y:", mag_y_spin)
+    set_tip(mag_y_spin, 'mag_y', form)
 
     def sync_magnification_enabled():
         # ^IM has no magnification of its own - always 1,1.
@@ -1785,6 +1839,7 @@ def barcode_form(element) -> EditorForm:
         max(0, [c for _l, c in BARCODE_ORIENTATIONS].index(current)
             if current in [c for _l, c in BARCODE_ORIENTATIONS] else 0))
     form.addRow("Orientation:", orientation_combo)
+    set_tip(orientation_combo, 'orientation', form)
 
     text_combo = QComboBox()
     for label, flags in BARCODE_TEXT_CHOICES:
