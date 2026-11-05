@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="circle-ellipse">
+  <info>
+    <link type="guide" xref="index#elements"/>
+    <title type="sort">5</title>
+    <link type="seealso" xref="frame"/>
+    <desc>Rings, ovals and solid discs.</desc>
+  </info>
+
+  <title>Circles and ellipses</title>
+
+  <p><gui>+ Circle</gui> adds a circle and <gui>+ Ellipse</gui> an
+  ellipse.</p>
+
+  <terms>
+    <item>
+      <title><gui>Diameter</gui></title>
+      <p>A circle's size in dots, 3 to 4095. A circle always stays round:
+      dragging any handle changes its diameter.</p>
+    </item>
+    <item>
+      <title><gui>Width</gui> and <gui>Height</gui></title>
+      <p>An ellipse's size in dots, 3 to 4095 each, set freely.</p>
+    </item>
+    <item>
+      <title><gui>Thickness</gui></title>
+      <p>The ring, drawn inward from the outline. At the radius (half the
+      shorter side, for an ellipse) the shape is solid black.</p>
+    </item>
+    <item>
+      <title><gui>Colour</gui> and <gui>Reverse</gui></title>
+      <p>As for a <link xref="frame">frame</link>: white prints only over
+      something black, and <gui>Reverse</gui> turns what is beneath the ring
+      white.</p>
+    </item>
+  </terms>
+</page>

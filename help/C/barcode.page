@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="barcode">
+  <info>
+    <link type="guide" xref="index#elements"/>
+    <title type="sort">2</title>
+    <link type="seealso" xref="templates"/>
+    <desc>Linear, postal and two-dimensional barcodes, drawn bar for bar as
+    the printer prints them.</desc>
+  </info>
+
+  <title>Barcodes</title>
+
+  <p><gui>+ Barcode</gui> adds a Code 128 barcode. Choose another kind with
+  <gui>Symbology</gui>, and type what it holds in <gui>Barcode
+  Value</gui>. The canvas draws the symbol module for module, so its size on
+  the canvas is its size on the label.</p>
+
+  <section id="kinds">
+    <title>The kinds offered</title>
+    <terms>
+      <item>
+        <title>Linear</title>
+        <p>Code 128, Code 39, Code 93, Code 11, Codabar, Interleaved 2 of 5,
+        Industrial 2 of 5, Standard 2 of 5, LOGMARS, MSI, Plessey, EAN-13,
+        EAN-8, UPC-A, UPC-E, the UPC/EAN Extension, and GS1 DataBar.</p>
+      </item>
+      <item>
+        <title>Postal</title>
+        <p>POSTAL (Postnet, PLANET and the USPS Intelligent Mail barcode)
+        and Planet Code.</p>
+      </item>
+      <item>
+        <title>Two-dimensional</title>
+        <p>QR Code, Data Matrix, PDF417, MicroPDF417, Aztec Code, MaxiCode
+        and TLC39.</p>
+      </item>
+    </terms>
+    <note>
+      <p>Of GS1 DataBar's twelve types, the canvas draws the UPC, EAN and
+      GS1-128 ones. The DataBar types themselves (Omnidirectional to
+      Expanded) are saved and sent to the printer, but the canvas shows only
+      their box.</p>
+    </note>
+  </section>
+
+  <section id="rows">
+    <title>Settings</title>
+    <p>Only the settings the chosen kind has are shown.</p>
+    <terms>
+      <item>
+        <title><gui>Bar Height</gui></title>
+        <p>The height of the bars, in dots. Two-dimensional codes have none:
+        their size comes from their data.</p>
+      </item>
+      <item>
+        <title><gui>Module Width</gui></title>
+        <p>The width of the narrowest bar, in dots, 1 to 20. Everything else
+        in the symbol is a multiple of it. For a two-dimensional code it is
+        called <gui>Magnification</gui>, the size of each square.</p>
+      </item>
+      <item>
+        <title><gui>Ratio</gui></title>
+        <p>How much wider the wide bars are than the narrow ones, for the
+        kinds that have both widths, such as Code 39 and Interleaved 2 of
+        5.</p>
+      </item>
+      <item>
+        <title><gui>Value Text</gui> and <gui>Text Height</gui></title>
+        <p>Whether the value is printed in words <gui>Below the bars</gui>,
+        <gui>Above the bars</gui>, or <gui>Not printed</gui>, and how
+        tall.</p>
+      </item>
+      <item>
+        <title><gui>Check Digit</gui></title>
+        <p>For Code 128, Code 39 and Interleaved 2 of 5 this adds a check
+        digit. For UPC-A, UPC-E, Code 93 and Plessey, which always carry one,
+        it only says whether the printed value shows it.</p>
+      </item>
+      <item>
+        <title><gui>Mode</gui></title>
+        <p>For Code 128. <gui>Automatic (uses subset C for digits)</gui>
+        packs runs of digits two to a symbol, making the barcode
+        shorter.</p>
+      </item>
+      <item>
+        <title><gui>Orientation</gui>, <gui>Reverse</gui> and <gui>ID</gui></title>
+        <p>As for <link xref="text">text</link>.</p>
+      </item>
+    </terms>
+    <p>Dragging a handle changes the module width and the bar height; the
+    barcode is never stretched to fill the box.</p>
+  </section>
+
+  <section id="fixed-length">
+    <title>Values the barcode changes</title>
+    <p>EAN-13 takes the last twelve digits of its value, padded on the left
+    with zeros if there are fewer, and adds its own check digit. The UPC/EAN
+    Extension fits its value to two digits or five in the same way. Neither
+    refuses a value of the wrong length. Interleaved 2 of 5 needs an even
+    number of digits, so a zero is put in front of an odd number. The canvas
+    and the printed value show the digits as the barcode holds them.</p>
+  </section>
+
+  <section id="special">
+    <title>Kinds with settings of their own</title>
+    <terms>
+      <item>
+        <title>MaxiCode</title>
+        <p>Always the same size, about an inch across, so it has no module
+        width, orientation or handles. <gui>Insert</gui> has buttons for the
+        GS, RS and EOT characters its message uses, which no keyboard
+        types.</p>
+      </item>
+      <item>
+        <title>PDF417 and MicroPDF417</title>
+        <p>Their <gui>Bar Height</gui> is the height of each row. A message
+        too long for one symbol can be split over several:
+        <gui>Positions (^FM)</gui> lists where each symbol goes, with
+        <gui>Add</gui> and <gui>Remove</gui>.</p>
+      </item>
+      <item>
+        <title>TLC39</title>
+        <p>A Code 39 and a small MicroPDF417 together. The usual rows set the
+        Code 39, and two more the MicroPDF417.</p>
+      </item>
+    </terms>
+  </section>
+
+  <p>A barcode whose value cannot be encoded, such as data too long for a QR
+  Code, keeps its place on the canvas but draws nothing, as the printer
+  would print nothing.</p>
+</page>

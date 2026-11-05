@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="symbol">
+  <info>
+    <link type="guide" xref="index#elements"/>
+    <title type="sort">7</title>
+    <link type="seealso" xref="text"/>
+    <desc>The ®, ©, ™, UL and CSA marks, from the printer's own symbol
+    font.</desc>
+  </info>
+
+  <title>Graphic symbols: ® © ™ UL CSA</title>
+
+  <p><gui>+ Symbol ▾</gui> opens a list of the five symbols every Zebra
+  printer carries, and adds the one you choose:</p>
+  <list>
+    <item><p>® Registered trademark</p></item>
+    <item><p>© Copyright</p></item>
+    <item><p>™ Trademark</p></item>
+    <item><p>UL, the Underwriters Laboratories approval mark</p></item>
+    <item><p>CSA, the Canadian Standards Association approval mark</p></item>
+  </list>
+
+  <terms>
+    <item>
+      <title><gui>Symbol</gui></title>
+      <p>Which of the five to print.</p>
+    </item>
+    <item>
+      <title><gui>Height</gui> and <gui>Width</gui></title>
+      <p>The symbols are made of dots and grow in whole steps of 24 dots:
+      24, 48, 72 and so on. Dragging a handle takes the largest step that
+      fits.</p>
+    </item>
+    <item>
+      <title><gui>Orientation</gui> and <gui>Reverse</gui></title>
+      <p>As for <link xref="text">text</link>.</p>
+    </item>
+  </terms>
+
+  <note>
+    <p>The printer draws these from a font of its own. The canvas shows
+    LinuxZPL's drawings of them, at the size and place the printer prints
+    them, so they may differ slightly in detail.</p>
+  </note>
+</page>

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="image">
+  <info>
+    <link type="guide" xref="index#elements"/>
+    <title type="sort">3</title>
+    <link type="seealso" xref="stored-graphics"/>
+    <desc>Logos and pictures from JPEG and PNG files, turned into the black
+    and white dots the printer prints.</desc>
+  </info>
+
+  <title>Images</title>
+
+  <p><gui>+ Image</gui> asks for a JPEG or PNG file and puts it on the label.
+  Dragged onto the canvas, it asks once you let go, and the image lands
+  there.</p>
+
+  <p>A thermal printer prints only black dots, so the image is resized to its
+  box and turned into a pattern of black and white dots. What the canvas
+  shows is that pattern: exactly what is saved in the file and sent to the
+  printer. Resizing the image makes the pattern again from the original
+  file, at the new size, so it never blurs from being resized twice.</p>
+
+  <p>To use another file in the same place and size, select the image and
+  press <gui>Replace Image…</gui> in the Properties panel.</p>
+
+  <note>
+    <p>White parts of an image are not white ink; they are simply not
+    printed. Anything beneath an image prints through its white parts, and
+    the canvas shows that. To keep something beneath from printing, clear
+    its <gui>Print This Element</gui>.</p>
+  </note>
+
+  <p>The picture is kept inside the label file. A logo used on many labels
+  can be stored on the printer once instead: see
+  <link xref="stored-graphics"/>.</p>
+</page>

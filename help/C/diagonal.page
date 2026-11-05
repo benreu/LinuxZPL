@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="diagonal">
+  <info>
+    <link type="guide" xref="index#elements"/>
+    <title type="sort">6</title>
+    <link type="seealso" xref="frame"/>
+    <desc>Slanting lines, from corner to corner of a box.</desc>
+  </info>
+
+  <title>Diagonal lines</title>
+
+  <p><gui>+ Diagonal</gui> adds a line from one corner of its box to the
+  opposite one. For a straight horizontal or vertical line, use a thin
+  <link xref="frame">frame</link>.</p>
+
+  <terms>
+    <item>
+      <title><gui>Width</gui> and <gui>Height</gui></title>
+      <p>The box the line crosses, in dots.</p>
+    </item>
+    <item>
+      <title><gui>Direction</gui></title>
+      <p><gui>Right-leaning ( / )</gui>, from bottom left to top right, or
+      <gui>Left-leaning ( \ )</gui>, from top left to bottom right.</p>
+    </item>
+    <item>
+      <title><gui>Thickness</gui></title>
+      <p>Measured across the box, along each row of dots, rather than square
+      to the line. So a shallow line looks thinner on paper than a steep one
+      of the same thickness.</p>
+    </item>
+    <item>
+      <title><gui>Colour</gui> and <gui>Reverse</gui></title>
+      <p>As for a <link xref="frame">frame</link>.</p>
+    </item>
+  </terms>
+</page>

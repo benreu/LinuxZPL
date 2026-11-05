@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="frame">
+  <info>
+    <link type="guide" xref="index#elements"/>
+    <title type="sort">4</title>
+    <link type="seealso" xref="circle-ellipse"/>
+    <link type="seealso" xref="diagonal"/>
+    <desc>Boxes, rules and solid black blocks, with square or rounded
+    corners.</desc>
+  </info>
+
+  <title>Frames, boxes and lines</title>
+
+  <p><gui>+ Frame</gui> adds a box. A frame is also how to draw a straight
+  horizontal or vertical rule (a frame a few dots tall or wide), and a solid
+  black block.</p>
+
+  <terms>
+    <item>
+      <title><gui>Width</gui> and <gui>Height</gui></title>
+      <p>The outside of the frame, in dots.</p>
+    </item>
+    <item>
+      <title><gui>Thickness</gui></title>
+      <p>The border, drawn inward from the outside edge. At half the shorter
+      side the border meets in the middle and the frame is solid black; the
+      thickness cannot go past that.</p>
+    </item>
+    <item>
+      <title><gui>Corner Rounding</gui></title>
+      <p>0 for square corners, up to 8, the roundest the printer draws.</p>
+    </item>
+    <item>
+      <title><gui>Colour</gui></title>
+      <p><gui>Black</gui> or <gui>White</gui>.</p>
+    </item>
+    <item>
+      <title><gui>Reverse</gui></title>
+      <p>Turns whatever is already printed beneath the frame's border white,
+      and the paper under it black, whatever the colour.</p>
+    </item>
+  </terms>
+
+  <note>
+    <p>A printer cannot print white: a <gui>White</gui> frame prints nothing
+    on bare labels. It shows only where it lies over something black, and
+    the canvas draws it that way.</p>
+  </note>
+</page>
