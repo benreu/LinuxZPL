@@ -11154,10 +11154,19 @@ class _HdBox(qt_dialogs.QMessageBox):
         return 0
 
 
+class _HdViewer:
+    """A viewer started: poll() gives its exit status, 0 once it handed on."""
+    def __init__(self, code):
+        self.code = code
+
+    def poll(self):
+        return self.code
+
+
 try:
     qt_dialogs.QMessageBox = _HdBox
     _hd.launch = lambda topic=_hd.CONTENTS: (_hd_asked.append(topic),
-                                             _hd.Launch(object(), None))[1]
+                                             _hd.Launch(_HdViewer(0), None))[1]
     _hd_win = qt_main.ZPLDesignerWindow()
     _hd_win.help_contents_action.trigger()
     check("Qt Help > Contents opens the contents page, on F1, and shows "
@@ -11169,6 +11178,23 @@ try:
     qt_dialogs.show_help(_hd_win, "firmware-update")
     check("Qt: with no viewer, Help says so in a message box",
           _hd_shown == [("Help", "No help viewer", "install yelp")], _hd_shown)
+
+    # xdg-open failing at once, with nothing after it in the list
+    _hd.launch = lambda topic=_hd.CONTENTS, pages=_hd.PAGES, cache=None, start_after="": (
+        _hd.Launch(None, f"nothing after {start_after}") if start_after
+        else _hd.Launch(_HdViewer(3), None, topic, "xdg-open"))
+    del _hd_shown[:]
+    import time as _hd_time
+    qt_dialogs.show_help(_hd_win, "firmware-update")
+    _hd_until = _hd_time.monotonic() + 3
+    while not _hd_shown and _hd_time.monotonic() < _hd_until:
+        QApplication.processEvents()
+        _hd_time.sleep(0.02)
+    check("Qt: a viewer that fails at once is caught, and what comes after it "
+          "is shown",
+          len(_hd_shown) == 1 and _hd_shown[0][2].startswith(
+              "xdg-open could not show the help (exit status 3).")
+          and _hd_shown[0][2].endswith("nothing after xdg-open"), _hd_shown)
     _hd_win.unsaved_changes = False
     _hd_win.close(); _hd_win.deleteLater()
 finally:

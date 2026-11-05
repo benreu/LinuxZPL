@@ -1264,16 +1264,34 @@ they are, so it works straight from the unpacked zip with nothing installed.
 It opens in a viewer of its own, never in a window of the designer's, and the
 designer does not wait for it:
 
-- **Yelp**, given the folder for the contents and a page's file for a topic.
-  Either way it reads the folder as one document, so a page's links and its
-  trail back to the contents work.
-- With no Yelp, or one that cannot be started, a message says no help viewer
-  was found, to install Yelp, and where the pages are.
+1. **Yelp**, given the folder for the contents and a page's file for a
+   topic. Either way it reads the folder as one document, so a page's links
+   and its trail back to the contents work.
+2. **A PDF of the page**, opened with `xdg-open` - so in whatever the desktop
+   opens PDFs with - or, without it, in the first of evince, okular, atril,
+   xreader, qpdfview, zathura and mupdf on the PATH. Every page is its own
+   PDF, named for the page's id, so a Help button opens just its topic. A
+   link to another page opens that page's PDF beside it, the contents lists
+   every topic as it does in Yelp, a topic starts with the trail back to the
+   contents, and a page's sections are the viewer's outline. The PDFs are
+   made from the Mallard pages (`zplcore/helppdf.py`, with reportlab), set in
+   DejaVu Sans when it is installed and the PDF base fonts when not, into the
+   user cache (`$XDG_CACHE_HOME/linuxzpl/help/`), once for each version of
+   the pages. A page using Mallard the converter does not know is refused
+   rather than shown with words missing; the test suite makes every shipped
+   page.
+3. **Neither:** a message says no help viewer was found, to install Yelp or
+   any PDF viewer, and where the pages are.
 
 No viewer is on every Linux system - Yelp comes with GNOME, Cinnamon and
-MATE, not with KDE or a minimal install - hence the message. The pages, the
-choice of viewer and the message are shared (`zplcore/helpdocs.py`); a
-frontend only shows the message.
+MATE, not with KDE or a minimal install; a PDF viewer comes with nearly
+every desktop - hence the list. A viewer that cannot show the help usually
+says so at once by exiting with an error, as `xdg-open` does with nothing
+set to open a PDF, so the one started is watched for its first five
+seconds, and an error hands over to the next way down the list; when none
+is left, the message says which failed and its exit status. The pages, the
+list, the watching and the messages are shared (`zplcore/helpdocs.py`); a
+frontend only runs the timer and shows the message.
 
 ---
 
@@ -3012,7 +3030,7 @@ message — never a swallowed exception or a placeholder.
 | Vector drawing | Canvas rendering with a uniform scale transform, translucency and alpha compositing | |
 | TCP sockets | All printer communication | Plain sockets; no printing subsystem is involved |
 | Registering a font at runtime | So a chosen font can be drawn before it is installed anywhere | Optional; without it the canvas may fall back to a default face |
-| Starting a program apart from this one | Showing the help in Yelp (§6.8) | Optional; without a viewer, a message says what to install |
+| Starting a program apart from this one | Showing the help in Yelp or a PDF viewer (§6.8) | Optional; without a viewer, a message says what to install |
 
 ---
 

@@ -2365,8 +2365,16 @@ from zplcore import helpdocs
 real_launch, real_run = helpdocs.launch, Gtk.MessageDialog.run
 asked, shown = [], []
 try:
+    class Viewer:
+        """A viewer started: poll() gives its exit status, 0 once it handed on."""
+        def __init__(self, code):
+            self.code = code
+
+        def poll(self):
+            return self.code
+
     helpdocs.launch = lambda topic=helpdocs.CONTENTS: (
-        asked.append(topic), helpdocs.Launch(object(), None))[1]
+        asked.append(topic), helpdocs.Launch(Viewer(0), None))[1]
     Gtk.MessageDialog.run = lambda self: (shown.append(
         (self.get_title(), self.props.text, self.props.secondary_text)),
         Gtk.ResponseType.OK)[1]
@@ -2383,6 +2391,24 @@ try:
     hw.show_help(hw, "firmware-update")
     check("GTK: with no viewer, Help says so in a message box",
           shown == [("Help", "No help viewer", "install yelp")], shown)
+
+    # xdg-open failing at once, with nothing after it in the list
+    helpdocs.launch = lambda topic=helpdocs.CONTENTS, pages=helpdocs.PAGES, cache=None, start_after="": (
+        helpdocs.Launch(None, f"nothing after {start_after}") if start_after
+        else helpdocs.Launch(Viewer(3), None, topic, "xdg-open"))
+    del shown[:]
+    import time
+    hw.show_help(hw, "firmware-update")
+    until = time.monotonic() + 3
+    while not shown and time.monotonic() < until:
+        while Gtk.events_pending():
+            Gtk.main_iteration_do(False)
+        time.sleep(0.02)
+    check("GTK: a viewer that fails at once is caught, and what comes after it "
+          "is shown",
+          len(shown) == 1 and shown[0][2].startswith(
+              "xdg-open could not show the help (exit status 3).")
+          and shown[0][2].endswith("nothing after xdg-open"), shown)
     hw.destroy()
 finally:
     helpdocs.launch, Gtk.MessageDialog.run = real_launch, real_run

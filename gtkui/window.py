@@ -4598,7 +4598,12 @@ class ZPLViewerWindow(Gtk.Window):
     def show_help(self, parent, topic: str = helpdocs.CONTENTS):
         """Open the help page `topic` in a viewer of its own
         (zplcore/helpdocs.py), or say why none could be started."""
-        launched = helpdocs.launch(topic)
+        self._follow_help(parent, helpdocs.launch(topic))
+
+    def _follow_help(self, parent, launched):
+        """Say why no viewer could be started, or watch the one that was for
+        its first few seconds: one that fails at once hands over to the next
+        (helpdocs.follow), which is watched the same way."""
         if launched.message:
             dialog = Gtk.MessageDialog(
                 parent=parent, flags=0, message_type=Gtk.MessageType.INFO,
@@ -4607,6 +4612,20 @@ class ZPLViewerWindow(Gtk.Window):
             dialog.format_secondary_text(launched.message)
             dialog.run()
             dialog.destroy()
+            return
+        started = time.monotonic()
+
+        def poll():
+            following = helpdocs.follow(launched, time.monotonic() - started)
+            if following is helpdocs.WATCHING:
+                return True
+            if following is not None:
+                # Not `parent`: the window that asked may have closed since.
+                active = [w for w in Gtk.Window.list_toplevels() if w.is_active()]
+                self._follow_help(active[0] if active else self, following)
+            return False
+
+        GLib.timeout_add(helpdocs.POLL_MS, poll)
 
 
 def main(filepath=None, fields=None):

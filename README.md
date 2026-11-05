@@ -123,8 +123,9 @@ In VS Code, press **F5**; the default configuration is the flagless one.
 
 **Help → Contents** (F1) opens the help in Yelp. The pages are Mallard, in
 `help/C/`, and are read from there, so nothing needs installing. Yelp comes with
-GNOME, Cinnamon and MATE. Elsewhere, `apt install yelp` (or your distribution's
-equivalent); without it, LinuxZPL says where the pages are.
+GNOME, Cinnamon and MATE. Without it, LinuxZPL makes each page into a PDF, kept
+in `~/.cache/linuxzpl/help/`, and opens it in your PDF viewer; the PDFs link to
+one another as the pages do. With neither, it says where the pages are.
 
 ### From Python
 
@@ -235,6 +236,8 @@ zplcore/    no GUI toolkit, runs headless
   firmware.py    the version ~HI reports, and a firmware file sent to the
                     printer for Printer -> Firmware Update...
   helpdocs.py    the help pages in help/C, and starting a viewer for them
+  helppdf.py     the help pages made into linked PDFs, for a system
+                 without Yelp
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   grid.py        the grid over the canvas: its unit, where its lines fall,

@@ -111,7 +111,13 @@ def show_error(parent, message: str):
 def show_help(parent, topic: str = helpdocs.CONTENTS):
     """Open the help page `topic` in a viewer of its own (zplcore/helpdocs.py),
     or say why none could be started."""
-    launched = helpdocs.launch(topic)
+    _follow_help(parent, helpdocs.launch(topic))
+
+
+def _follow_help(parent, launched):
+    """Say why no viewer could be started, or watch the one that was for its
+    first few seconds: one that fails at once hands over to the next
+    (helpdocs.follow), which is watched the same way."""
     if launched.message:
         box = QMessageBox(parent)
         box.setIcon(QMessageBox.Information)
@@ -119,6 +125,18 @@ def show_help(parent, topic: str = helpdocs.CONTENTS):
         box.setText("No help viewer")
         box.setInformativeText(launched.message)
         box.exec_()
+        return
+    started = time.monotonic()
+
+    def poll():
+        following = helpdocs.follow(launched, time.monotonic() - started)
+        if following is helpdocs.WATCHING:
+            QTimer.singleShot(helpdocs.POLL_MS, poll)
+        elif following is not None:
+            # Not `parent`: the window that asked may have closed since.
+            _follow_help(QApplication.activeWindow(), following)
+
+    QTimer.singleShot(helpdocs.POLL_MS, poll)
 
 
 def _buttons(dialog, accept_text="OK"):
