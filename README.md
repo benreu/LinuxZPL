@@ -76,6 +76,9 @@ disagree.
 - **Undo and redo** of every document change, 50 deep
 - **Zoom**: fit the whole label, fit its width, or pin a scale from 5% to 800%
   — from the View menu, the header bar, or Ctrl with the wheel
+- **Grid**: View → Show Grid draws one over the label, spaced in inches,
+  millimetres or dots (View → Grid Settings…), thinning out as you zoom out;
+  it is never printed
 
 ## Requirements
 
@@ -186,13 +189,14 @@ Identical in both frontends.
 | Ctrl+Q | Quit | Ctrl+[ / Ctrl+Shift+[ | Send Backward / to Back |
 | Ctrl+A | Select All | Ctrl++ / Ctrl+- | Zoom In / Out |
 | Ctrl+Shift+A | Deselect All | Ctrl+0 / Ctrl+9 / Ctrl+1 | Fit Label / Fit Width / 1:1 |
+| | | Ctrl+' | Show Grid |
 
 ## Settings
 
 Printer address, port and resolution are kept in
 `~/.config/linuxzpl/settings.ini`, shared by both frontends, along with the
-window's size and position from the last time it was closed and the files
-listed under File > Open Recent. A missing or
+window's size and position from the last time it was closed, the files
+listed under File > Open Recent, and the grid. A missing or
 corrupt file never blocks startup; the defaults are `192.168.50.21:9100` at
 203 dpi, and a window sized to the monitor it opens on.
 
@@ -218,6 +222,7 @@ zplcore/    no GUI toolkit, runs headless
                     printer for Printer -> Firmware Update...
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
+  grid.py        the grid over the canvas: its unit, where its lines fall
   textraster.py  the text raster both canvases blit
   graphic_symbols.py  the ^GS symbols, drawn, since there is no file for
                  the printer's GS font

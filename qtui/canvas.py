@@ -18,7 +18,7 @@ import math
 import time
 from typing import Optional
 
-from PySide2.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide2.QtCore import QLineF, QPointF, QRectF, QSize, Qt, Signal
 from PySide2.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter,
                            QPainterPath, QPen, QPixmap, QPolygonF)
 from PySide2.QtWidgets import QMenu, QWidget
@@ -122,6 +122,9 @@ class DesignCanvas(QWidget):
         self.last_click_time = 0.0
         self.last_click_element = None
         self._cursor_shape = None
+        # The window's grid (zplcore.grid.Grid), shared by reference so the View
+        # menu and Grid Settings change what is drawn here; None draws none.
+        self.grid = None
 
     # --- document ------------------------------------------------------------
 
@@ -224,6 +227,9 @@ class DesignCanvas(QWidget):
         # fields - not one of doc.elements, so drawn here rather than through
         # _draw_element.
         self._draw_image_load(painter)
+        # Over the background image and under every field, so the fields are
+        # never behind a line and the lines still show across the image.
+        self._draw_grid(painter, scale, event.rect())
 
         for element in doc.elements:
             selected = doc.is_selected(element)
@@ -241,6 +247,46 @@ class DesignCanvas(QWidget):
 
         painter.restore()
         self.painted.emit()
+
+    # Pale blue rather than grey: a grey hairline across the label reads as a
+    # printed rule, and the canvas shows what prints. Translucent, so a
+    # ^IL image beneath stays visible.
+    GRID_MINOR = QColor(70, 130, 230, 45)
+    GRID_MAJOR = QColor(70, 130, 230, 100)
+
+    def _draw_grid(self, painter, scale: float, exposed):
+        """The grid's lines across the label, those inside `exposed` only.
+
+        `exposed` is the repainted area in widget pixels; a line outside it
+        would be drawn and then thrown away. Cosmetic pens keep every line one
+        pixel wide at any zoom.
+        """
+        grid = self.grid
+        if grid is None or not grid.shown:
+            return
+        doc = self.document
+        s = max(1e-6, scale)
+        left = max(0.0, exposed.left() / s)
+        right = min(float(doc.label_width), (exposed.right() + 1) / s)
+        top = max(0.0, exposed.top() / s)
+        bottom = min(float(doc.label_height), (exposed.bottom() + 1) / s)
+        if left > right or top > bottom:
+            return
+        minor, major = [], []
+        for x, is_major in grid.lines(left, right, scale, doc.dpi):
+            (major if is_major else minor).append(QLineF(x, top, x, bottom))
+        for y, is_major in grid.lines(top, bottom, scale, doc.dpi):
+            (major if is_major else minor).append(QLineF(left, y, right, y))
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        for colour, lines in ((self.GRID_MINOR, minor), (self.GRID_MAJOR, major)):
+            if lines:
+                pen = QPen(colour)
+                pen.setCosmetic(True)
+                pen.setWidth(1)
+                painter.setPen(pen)
+                painter.drawLines(lines)
+        painter.restore()
 
     def _draw_element(self, painter, element: DesignElement, selected: bool):
         if element.element_type == 'text':

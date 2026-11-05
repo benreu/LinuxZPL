@@ -2069,6 +2069,91 @@ check("each element finds the builder of its own rows",
       == ['time_form', 'barcode_form', 'ellipse_form'])
 document.elements.pop()
 
+# --- the grid: Show Grid and Grid Settings --------------------------------------
+import cairo
+from zplcore import grid as zpl_grid
+
+grid_path = Path(tempfile.mkdtemp()) / 'settings.ini'
+gtk_main._config_path = lambda: grid_path
+gtk_main._fallback_config_path = lambda: grid_path
+try:
+    gw = ZPLViewerWindow()
+    gc = gw.design_canvas
+    check("the grid starts hidden, and Show Grid unticked",
+          not gw.grid.shown and not gw.show_grid_item.get_active()
+          and gc.grid is gw.grid)
+    gc.set_zoom(1.0)
+
+    def grid_pixel(x, y):
+        """The canvas's colour at a pixel, as (r, g, b) out of 255."""
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, x + 1, y + 1)
+        gc.on_draw(gc, cairo.Context(surface))
+        surface.flush()
+        stride, data = surface.get_stride(), surface.get_data()
+        b, g, r = data[y * stride + 4 * x: y * stride + 4 * x + 3]
+        return (r, g, b)
+
+    WHITE = (255, 255, 255)
+    check("hidden, nothing is drawn where a line would be",
+          grid_pixel(20, 700) == WHITE, grid_pixel(20, 700))
+    gw.show_grid_item.set_active(True)
+    check("Show Grid draws a line every tenth of an inch",
+          gw.grid.shown and grid_pixel(20, 700) != WHITE
+          and grid_pixel(30, 700) == WHITE,
+          (grid_pixel(20, 700), grid_pixel(30, 700)))
+    minor, major = grid_pixel(20, 700), grid_pixel(203, 700)
+    check("in pale blue, an inch line darker than a tenth",
+          minor[2] > minor[0] and major[0] < minor[0], (minor, major))
+    check("and is remembered at once", zpl_grid.load_grid([grid_path]).shown)
+    check("Show Grid is on Ctrl+'",
+          gw.accelerators.get(gw.show_grid_item) == "<Control>apostrophe")
+    gw2 = ZPLViewerWindow()
+    check("a new window opens with the grid shown and the item ticked",
+          gw2.grid.shown and gw2.show_grid_item.get_active())
+    gw2.destroy()
+
+    def grid_named(dialog, name):
+        return next(w for w in _pw_widgets(dialog) if w.get_name() == name)
+
+    g_dialog, g_finish = gtk_main._build_grid_dialog(gw, gw.grid, 203)
+    check("Grid Settings opens on the grid in force",
+          (grid_named(g_dialog, 'grid_unit').get_active_id(),
+           grid_named(g_dialog, 'grid_spacing').get_value()) == ('in', 0.1))
+    check("with the spacing in dots beside it",
+          grid_named(g_dialog, 'grid_hint').get_text() == '20.3 dots at 203 dpi',
+          grid_named(g_dialog, 'grid_hint').get_text())
+    grid_named(g_dialog, 'grid_unit').set_active_id('mm')
+    check("switching to millimetres converts the spacing",
+          grid_named(g_dialog, 'grid_spacing').get_value() == 2.54,
+          grid_named(g_dialog, 'grid_spacing').get_value())
+    grid_named(g_dialog, 'grid_spacing').set_value(5)
+    grid_named(g_dialog, 'grid_major').set_value(2)
+    chosen = g_finish(Gtk.ResponseType.OK)
+    check("and OK hands back the spacing and the major lines",
+          (chosen.unit, chosen.spacing, chosen.major_every) == ('mm', 5.0, 2)
+          and chosen.shown, chosen)
+    check("as a copy, leaving the window's grid until the window takes it",
+          gw.grid.unit == 'in')
+    g_dialog, g_finish = gtk_main._build_grid_dialog(gw, gw.grid, 203)
+    grid_named(g_dialog, 'grid_spacing').set_value(0.5)
+    check("Cancel hands back nothing", g_finish(Gtk.ResponseType.CANCEL) is None)
+
+    real_grid_dialog = gtk_main._grid_dialog
+    gtk_main._grid_dialog = lambda parent, grid, dpi: chosen
+    try:
+        gw.on_grid_settings_clicked(None)
+    finally:
+        gtk_main._grid_dialog = real_grid_dialog
+    check("the window takes the chosen spacing into the grid it shares",
+          gw.grid == chosen and gc.grid is gw.grid)
+    check("and remembers it", zpl_grid.load_grid([grid_path]) == chosen)
+    check("and draws it: at 203 dpi 5 mm is 40 dots",
+          grid_pixel(40, 700) != WHITE and grid_pixel(20, 700) == WHITE)
+    gw.destroy()
+finally:
+    gtk_main._config_path = real_config_path
+    gtk_main._fallback_config_path = real_fallback_path
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

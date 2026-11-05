@@ -19,6 +19,7 @@ from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QHBoxLayout, 
                                QToolBar, QToolButton, QWidget)
 
 from zplcore import fonts as zpl_fonts
+from zplcore import grid as zpl_grid
 from zplcore import parser as zpl_parser
 from zplcore import printer_io
 from zplcore import view as zpl_view
@@ -91,6 +92,9 @@ class ZPLDesignerWindow(QMainWindow):
         # floats - as saveState() gave it, or None for the default.
         self.saved_dock_state = None
         self._load_settings()
+        # The grid over the canvas and the switches that use it. Kept in its
+        # own section, written the moment it changes, like Open Recent.
+        self.grid = zpl_grid.load_grid(self._settings_files())
         # The persisted printer, snapshotted so the Print window, whose printer
         # is for this session only, can offer "Use Default" without re-reading
         # the settings file.
@@ -113,6 +117,7 @@ class ZPLDesignerWindow(QMainWindow):
                             dpi=self.printer_dpi)
         document.font_device = self.printer_font_device
         self.canvas = DesignCanvas(document)
+        self.canvas.grid = self.grid
         self.canvas.documentChanged.connect(self.on_canvas_changed)
         self.canvas.elementDoubleClicked.connect(self.on_element_double_clicked)
         self.canvas.editRequested.connect(self._on_edit_requested)
@@ -297,6 +302,24 @@ class ZPLDesignerWindow(QMainWindow):
     def on_actual_size(self):
         self.canvas.set_zoom(1.0)
 
+    # --- the grid --------------------------------------------------------------
+
+    def on_show_grid(self, checked):
+        self.grid.shown = bool(checked)
+        self._grid_changed()
+
+    def on_grid_settings(self):
+        chosen = qt_dialogs.grid_settings_dialog(self, self.grid, self.document.dpi)
+        if chosen is None:
+            return
+        self.grid.update(chosen)
+        self._grid_changed()
+
+    def _grid_changed(self):
+        """Show the grid as it now is, and remember it."""
+        zpl_grid.save_grid(self._settings_files(), self.grid)
+        self.canvas.update()
+
     # --- convenience ---------------------------------------------------------
 
     @property
@@ -425,6 +448,11 @@ class ZPLDesignerWindow(QMainWindow):
         self.fit_width_action = self._action("Fit &Width", self.on_fit_width, "Ctrl+9")
         self.actual_size_action = self._action("&Actual Size", self.on_actual_size,
                                                "Ctrl+1")
+        self.show_grid_action = self._action("Show &Grid", self.on_show_grid,
+                                             "Ctrl+'", checkable=True)
+        self.show_grid_action.setChecked(self.grid.shown)
+        self.grid_settings_action = self._action("Grid Se&ttings…",
+                                                 self.on_grid_settings)
 
         self.label_size_action = self._action("Label Size…", self.on_label_size)
         self.default_printer_action = self._action("Default Printer…", self.on_default_printer)
@@ -513,6 +541,9 @@ class ZPLDesignerWindow(QMainWindow):
         view_menu.addAction(self.fit_label_action)
         view_menu.addAction(self.fit_width_action)
         view_menu.addAction(self.actual_size_action)
+        view_menu.addSeparator()
+        view_menu.addAction(self.show_grid_action)
+        view_menu.addAction(self.grid_settings_action)
         view_menu.addSeparator()
         # The dock's own show/hide action, so it stays ticked to match the
         # panel however it was shown or closed
@@ -1186,9 +1217,13 @@ class ZPLDesignerWindow(QMainWindow):
 
     # --- File > Open Recent --------------------------------------------------
 
+    def _settings_files(self):
+        """The settings files, in the order a write tries them."""
+        return (_config_path(), _fallback_config_path())
+
     def _recent_candidates(self):
         """The settings files the list is read from and written to, in order."""
-        return (_config_path(), _fallback_config_path())
+        return self._settings_files()
 
     def _refresh_recent(self):
         """Rebuild Open Recent from what the settings file holds now."""

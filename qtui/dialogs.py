@@ -31,9 +31,9 @@ from PySide2.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication
 
 from zplcore import (fields as zpl_fields, firmware as zpl_firmware,
                      fonts as zpl_fonts, geometry, graphic_store,
-                     local_port as zpl_local, print_settings as zpl_print,
-                     printer_io, printer_objects, printer_status, textraster,
-                     workflow)
+                     grid as zpl_grid, local_port as zpl_local,
+                     print_settings as zpl_print, printer_io,
+                     printer_objects, printer_status, textraster, workflow)
 from zplcore.print_settings import AsWritten, PrintSettings
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
@@ -2116,6 +2116,79 @@ def label_size_dialog(parent, document: Document, dpi: int):
     transform.home = (home_x.value(), home_y.value())
     return to_dots() + (chosen_dpi(), width_spin.value(), height_spin.value(),
                         transform)
+
+
+def grid_settings_dialog(parent, grid, dpi: int):
+    """A copy of `grid` with the spacing chosen here, or None.
+
+    Only the spacing: the switches that use it are the View menu's. `dpi` is
+    the label's, for the hint and for converting between a physical unit and
+    dots when the unit is changed.
+    """
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Grid Settings")
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    layout.addLayout(form)
+
+    unit_combo = QComboBox()
+    unit_combo.setObjectName("grid_unit")
+    for unit in zpl_grid.UNITS:
+        unit_combo.addItem(zpl_grid.UNIT_NAMES[unit], unit)
+    unit_combo.setCurrentIndex(zpl_grid.UNITS.index(grid.unit))
+    form.addRow("Unit:", unit_combo)
+
+    spacing_spin = QDoubleSpinBox()
+    spacing_spin.setObjectName("grid_spacing")
+    form.addRow("Spacing:", spacing_spin)
+
+    major_spin = QSpinBox()
+    major_spin.setObjectName("grid_major")
+    major_spin.setRange(*zpl_grid.MAJOR_LIMITS)
+    major_spin.setValue(grid.major_every)
+    major_spin.setSuffix(" spaces")
+    form.addRow("Major line every:", major_spin)
+
+    hint = QLabel()
+    layout.addWidget(hint)
+
+    def set_unit(unit, spacing):
+        low, high = zpl_grid.SPACING_LIMITS[unit]
+        decimals = zpl_grid.SPACING_DECIMALS[unit]
+        spacing_spin.blockSignals(True)
+        spacing_spin.setDecimals(decimals)
+        spacing_spin.setRange(low, high)
+        spacing_spin.setSingleStep(10 ** -decimals if decimals else 1)
+        spacing_spin.setSuffix(" " + zpl_grid.UNIT_SUFFIX[unit])
+        spacing_spin.setValue(spacing)
+        spacing_spin.blockSignals(False)
+        update_hint()
+
+    def update_hint():
+        hint.setText(zpl_grid.spacing_hint(unit_combo.currentData(),
+                                           spacing_spin.value(), dpi))
+
+    shown_unit = [grid.unit]
+
+    def on_unit_changed(_index):
+        # The grid stays the size it was: 0.1 in becomes 2.54 mm, not 0.1 mm.
+        unit = unit_combo.currentData()
+        set_unit(unit, zpl_grid.convert_spacing(spacing_spin.value(),
+                                                shown_unit[0], unit, dpi))
+        shown_unit[0] = unit
+
+    set_unit(grid.unit, grid.spacing)
+    unit_combo.currentIndexChanged.connect(on_unit_changed)
+    spacing_spin.valueChanged.connect(update_hint)
+
+    layout.addWidget(_buttons(dialog))
+    if dialog.exec_() != QDialog.Accepted:
+        return None
+    chosen = grid.copy()
+    chosen.unit = unit_combo.currentData()
+    chosen.spacing = zpl_grid.clamp_spacing(chosen.unit, spacing_spin.value())
+    chosen.major_every = major_spin.value()
+    return chosen
 
 
 class _PrinterRows:

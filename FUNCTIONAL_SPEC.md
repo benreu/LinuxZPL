@@ -24,7 +24,9 @@ look right and print wrong.
 
 **Everything is measured in printer dots.** Element positions and sizes, font
 heights, frame thickness, bar widths — all integers, all dots. No pixels, no
-points, no millimetres are stored anywhere.
+points, no millimetres are stored anywhere. The grid (§5) may be measured in
+inches or millimetres, but it is a way of looking at the label, kept in the
+settings file (§13); nothing about it is stored in a label.
 
 **ZPL files record no resolution.** A label of 812 × 1218 dots is 4 × 6 inches
 on a 203 dpi printer and 2.7 × 4.1 inches on a 300 dpi one. The same file is
@@ -707,6 +709,21 @@ pinned.
   the scroll offsets so the dot that was under the pointer is still under it.
   A plain wheel scrolls.
 - White background; the label boundary is a light grey dashed rectangle.
+- **The grid**, shown by View ▸ Show Grid (§6.3) and hidden until it is, is
+  drawn over the white and over any `^IL` image, and under every element,
+  inside the label only. Its lines are one pixel wide at every zoom, in a
+  translucent pale blue: a grey hairline across the label would read as a
+  printed rule. Its spacing is set in Grid Settings (§7.3), in inches,
+  millimetres or dots; a physical spacing follows the label's resolution, as
+  the label size does. Line *k* is at *k* spacings rounded to the nearest dot,
+  never at *k* times a rounded spacing: 1 mm is 7.99 dots at 203 dpi, and
+  rounding the spacing first would put the last line of a 25 inch label five
+  dots short. Counting from the label's top and left edges, every *n*th line is
+  a major line, drawn darker. Lines that would be closer than 5 screen pixels
+  are left out — the minor ones first, then the major ones as well — so
+  zooming out thins the grid to its major lines and then to nothing, never to
+  a grey wash. The grid is a view, like the zoom: it is never in a preview or
+  on a printed label, and nothing written changes with it.
 - Elements are drawn in list order, bottom first.
 - An element with `print_enabled` false is drawn at 35% opacity — visible and
   fully editable, but marked as not printing.
@@ -1057,10 +1074,12 @@ would be six more keys taken away from the canvas (§14).
 ### 6.3 View
 
 Zoom In, Zoom Out, then Fit Label, Fit Width, Actual Size — separated into
-those two groups. §5 describes what each does to the scale. Then **Properties
-Panel**, a check item that shows and hides the Properties panel (§7.1),
-docked or floating, and is kept ticked to match it however it was shown or
-closed.
+those two groups. §5 describes what each does to the scale. Then, as a group
+of their own, **Show Grid** (Ctrl+'), a check item that shows and hides the
+grid (§5), and **Grid Settings…**, its spacing (§7.3); both are remembered
+the moment they change (§13). Then **Properties Panel**, a check item that
+shows and hides the Properties panel (§7.1), docked or floating, and is kept
+ticked to match it however it was shown or closed.
 
 ### 6.4 Settings
 
@@ -1248,8 +1267,8 @@ each element's own, and only the panel for one element offers them.
   and stored graphics carry no data to fill, so they have none. An empty box
   removes the ID.
 
-The remaining dialogs — Label Size, Default Printer, Print, the file
-choosers and the prompts — are modal.
+The remaining dialogs — Label Size, Default Printer, Print, Grid Settings, the
+file choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
@@ -1262,6 +1281,7 @@ choosers and the prompts — are modal.
 | **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; ID; and the chosen symbology's own rows | Bar height 20–300 dots (1–9999 dots for PDF417 and MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a PDF417 with rows 3 dots tall and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert applies at once. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI; Home X and Y | Home is `^LH`, 0–32000 dots. 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
+| **Grid Settings** | Unit; Spacing; Major line every | Unit is Inches, Millimetres or Dots. Spacing is 0.005–2 in to three decimals, 0.1–50 mm to two, or 1–400 dots; one that comes out under a dot at the label's resolution is held at one. Changing the unit converts the spacing, so the grid stays its size as far as the new unit's precision and range allow: 0.1 in becomes 2.54 mm, not 0.1 mm. Major line every is 1–100 spaces. A live hint gives a physical spacing in dots at the label's resolution, where a fraction means the lines are not evenly spaced, and a dot spacing in inches. Only the spacing is here; showing the grid is the View menu's (§6.3). Accepting redraws the grid and remembers it (§13). It changes nothing in the label and records no undo entry (§12). |
 | **Default Printer** | Address; Port; DPI; Font memory; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Font memory is §10.4.1's. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all four (§13). |
 | **Print** | **Printer**: Address; Port; DPI; Font memory; Test Connection; Use Default. **Copies (`^PQ`)**: Copies; Pause every; Replicates; Don't pause between groups; Cut after a voided RFID label. **Label**: Print upside down (`^PO`); Mirror left to right (`^PM`); Reverse fields, white on black (`^LR`); Check barcode data as printed (`^CV`). **Printer setup sent with the label**: Darkness (`^MD`); Print, Slew and Backfeed speed (`^PR`); Print mode (`^MM`) and Prepeel; Media tracking (`^MN`) and Black mark offset; Media type (`^MT`). Buttons Print, OK, Cancel | The printer rows are Default Printer's, built by the same helper, pre-filled with whichever printer is in effect, and for this session only: they never write settings.ini (§13), and Use Default re-fills them from the persisted default, for comparing against or going back to it. A DPI change runs §11's prompt. Everything else is saved with the label, and its rows come from one table both frontends share. `^PQ`'s own ranges: Copies 1–99,999,999, Pause every 0 to 99,999,999 labels, 0 never pausing (Qt shows it as Never; GTK, whose numeric spin button takes no letters, says "0 = never" beside the box), Replicates 0–99,999,999. Darkness is −30 to 30 in tenths, relative to the printer's configured darkness, with a tick beside the box, since a number box has no "unset". Print speed is 1–14 in/s and slew and backfeed 2–14, each labelled with the letter A–E that also names it where there is one. Every set-up row's first choice is **Printer's setting**, which writes nothing (§9). Slew is greyed out until Print speed is set and Backfeed until Slew is, so no `^PR` goes out with a blank in the middle; Prepeel is greyed out without a print mode, and the offset, −240 to 566 dots, without mark sensing. A value the label carries that no row offers — a reserved print mode, a speed past the list, a darkness with two decimals — is offered first as "As written: …" and selected, or shown beside a number box, as Edit Symbol does with data it has no symbol for; and a command left alone keeps its spelling, so `^PRC` stays `^PRC`. Accepting the window unchanged never rewrites the label. **Print** applies and prints (§9), **OK** applies without printing and **Cancel** changes nothing. Print is the default button. A visit that changes the label is one undo entry, and one that changes nothing records none (§12). |
 
@@ -2635,8 +2655,8 @@ one visit that changes any of them is one history entry, and a visit that
 changes none — Print pressed on the window as it opened — records nothing and
 leaves the file unmodified.
 
-Changes that are *not* part of the document — printer address, port, resolution
-— are not undoable. This holds for a resolution changed through Label Size too:
+Changes that are *not* part of the document — printer address, port,
+resolution, the zoom, the grid — are not undoable. This holds for a resolution changed through Label Size too:
 one visit to that dialog is one history entry, and undoing it restores the label
 size and the element positions a rescale moved, but not the resolution the
 document is stamped with.
@@ -2655,6 +2675,10 @@ and read back from there the same way on the next start.
 address = 192.168.50.21
 port = 9100
 dpi = 203
+font_device = E
+
+[fonts]
+extra_dir = /home/you/fonts
 
 [label]
 width_in = 4.00
@@ -2676,20 +2700,38 @@ state = AAAA/wAAAAD9AAAAAQAAAAEAAAGkAAADAPwCAAAAAfsAAAAU…
 [recent]
 file1 = /home/you/labels/shipping.zpl
 file2 = /home/you/labels/100%% off.zpl
+
+[grid]
+unit = in
+spacing = 0.1
+major_every = 10
+shown = no
+snap = no
+snap_elements = no
+rulers = no
 ```
 
 | Section | Written | Used by |
 |---|---|---|
-| `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion |
+| `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion; `font_device` is the font memory (§10.4.1), ignored unless it names a drive the program knows |
+| `[fonts]` | with `[printer]`, and when the extra font folder changes | `extra_dir`, a folder searched for fonts beside the installed ones; empty for none |
 | `[label]` | when Label Size is accepted | the label at startup and on File > New |
 | `[window]` | on quit | where the window opens (§2) |
 | `[docks]` | with the rest of the file | where the Properties panel is (§7.1). The GTK frontend writes `floating`, `shown` (docked), `width` (docked, in pixels) and `floating_geometry` (`x,y,width,height`); the Qt frontend keeps its own toolkit's saved window state in `state`, which also holds the panel's side. Each reads only its own keys. |
 | `[recent]` | whenever a file is opened or saved, an entry is dropped, or the list is cleared | File > Open Recent (§6.1) |
+| `[grid]` | the moment Show Grid or Grid Settings changes it | the grid (§5): `unit` (`in`, `mm` or `dots`), `spacing` in that unit, `major_every`, and `shown`. `snap`, `snap_elements` and `rulers` are kept for the grid's later commands and are all `no` until then. |
 
 **The Print window's printer** (§9) deliberately never writes `[printer]` —
 only Default Printer and Label Size do.
 
 Writing re-reads the file first, so a section another version wrote survives.
+
+**`[grid]` is read like `[recent]`** - from the first file with the section -
+and written the same way, at once. Each value stands alone: one that cannot
+be read, or a spacing outside its unit's range, falls back to its default
+without taking the others with it, and an unknown unit brings back the default
+unit and its spacing. Out of range is treated as damage rather than clamped,
+since clamping would quietly turn a typing slip into a grid nobody chose.
 
 **`[recent]` is written at once, not on quit,** and read again each time the
 File menu opens, so two windows - either frontend - share one list and a crash
@@ -2748,6 +2790,7 @@ treated as corrupt and falls back too.
 | Ctrl+0 | Fit Label |
 | Ctrl+9 | Fit Width |
 | Ctrl+1 | Actual Size (1:1) |
+| Ctrl+' | Show Grid |
 
 Three notes for a port:
 

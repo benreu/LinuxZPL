@@ -17,6 +17,7 @@ from pathlib import Path
 from zplcore import firmware as zpl_firmware
 from zplcore import fonts as zpl_fonts
 from zplcore import graphic_store
+from zplcore import grid as zpl_grid
 from zplcore import local_port as zpl_local
 from zplcore import print_settings as zpl_print
 from zplcore import printer_io
@@ -529,6 +530,115 @@ def _print_dialog(parent, document, printer, default):
     return finish(dialog.run())
 
 
+def _build_grid_dialog(parent, grid, dpi):
+    """Grid Settings, built but not run: (dialog, finish).
+
+    `finish(response)` reads the rows, destroys the window and returns a copy
+    of `grid` with the spacing chosen, or None if cancelled. Only the spacing:
+    the switches that use it are the View menu's. `dpi` is the label's, for
+    the hint and for converting between a physical unit and dots.
+    """
+    dialog = Gtk.Dialog(title="Grid Settings", parent=parent, flags=0)
+    dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                       Gtk.STOCK_OK, Gtk.ResponseType.OK)
+    dialog.set_default_response(Gtk.ResponseType.OK)
+    content = dialog.get_content_area()
+    content.set_spacing(8)
+    for side in ("start", "end", "top", "bottom"):
+        getattr(content, "set_margin_" + side)(8)
+
+    table = Gtk.Grid(column_spacing=8, row_spacing=6)
+    content.pack_start(table, False, False, 0)
+
+    def row(number, text, widget):
+        label = Gtk.Label(label=text)
+        label.set_halign(Gtk.Align.START)
+        table.attach(label, 0, number, 1, 1)
+        widget.set_hexpand(True)
+        table.attach(widget, 1, number, 1, 1)
+
+    unit_combo = Gtk.ComboBoxText()
+    unit_combo.set_name("grid_unit")
+    for unit in zpl_grid.UNITS:
+        unit_combo.append(unit, zpl_grid.UNIT_NAMES[unit])
+    unit_combo.set_active_id(grid.unit)
+    row(0, "Unit:", unit_combo)
+
+    spacing_spin = Gtk.SpinButton()
+    spacing_spin.set_name("grid_spacing")
+    spacing_spin.set_numeric(True)
+    spacing_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+    spacing_row.pack_start(spacing_spin, True, True, 0)
+    spacing_suffix = Gtk.Label()
+    spacing_row.pack_start(spacing_suffix, False, False, 0)
+    row(1, "Spacing:", spacing_row)
+
+    major_spin = Gtk.SpinButton.new_with_range(*zpl_grid.MAJOR_LIMITS, 1)
+    major_spin.set_name("grid_major")
+    major_spin.set_value(grid.major_every)
+    major_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+    major_row.pack_start(major_spin, True, True, 0)
+    major_row.pack_start(Gtk.Label(label="spaces"), False, False, 0)
+    row(2, "Major line every:", major_row)
+
+    hint = Gtk.Label()
+    hint.set_name("grid_hint")
+    hint.set_halign(Gtk.Align.START)
+    content.pack_start(hint, False, False, 0)
+
+    def update_hint(*_):
+        hint.set_text(zpl_grid.spacing_hint(unit_combo.get_active_id(),
+                                            spacing_spin.get_value(), dpi))
+
+    def set_unit(unit, spacing):
+        low, high = zpl_grid.SPACING_LIMITS[unit]
+        decimals = zpl_grid.SPACING_DECIMALS[unit]
+        step = 10 ** -decimals if decimals else 1
+        spacing_spin.set_digits(decimals)
+        spacing_spin.set_adjustment(Gtk.Adjustment(
+            value=spacing, lower=low, upper=high, step_increment=step,
+            page_increment=step * 10))
+        spacing_spin.set_value(spacing)
+        spacing_suffix.set_text(zpl_grid.UNIT_SUFFIX[unit])
+        update_hint()
+
+    shown_unit = [grid.unit]
+
+    def on_unit_changed(_combo):
+        # The grid stays the size it was: 0.1 in becomes 2.54 mm, not 0.1 mm.
+        unit = unit_combo.get_active_id()
+        set_unit(unit, zpl_grid.convert_spacing(spacing_spin.get_value(),
+                                                shown_unit[0], unit, dpi))
+        shown_unit[0] = unit
+
+    set_unit(grid.unit, grid.spacing)
+    spacing_spin.connect("value-changed", update_hint)
+    unit_combo.connect("changed", on_unit_changed)
+    dialog.show_all()
+
+    def finish(response):
+        # Whatever is half typed in the box counts, as it would on Enter.
+        spacing_spin.update()
+        major_spin.update()
+        chosen = None
+        if response == Gtk.ResponseType.OK:
+            chosen = grid.copy()
+            chosen.unit = unit_combo.get_active_id()
+            chosen.spacing = zpl_grid.clamp_spacing(chosen.unit,
+                                                    spacing_spin.get_value())
+            chosen.major_every = major_spin.get_value_as_int()
+        dialog.destroy()
+        return chosen
+
+    return dialog, finish
+
+
+def _grid_dialog(parent, grid, dpi):
+    """Grid Settings: a copy of `grid` with the spacing chosen, or None."""
+    dialog, finish = _build_grid_dialog(parent, grid, dpi)
+    return finish(dialog.run())
+
+
 def _config_path() -> Path:
     """Path to the persisted settings file."""
     return Path(GLib.get_user_config_dir()) / 'linuxzpl' / 'settings.ini'
@@ -623,6 +733,9 @@ class ZPLViewerWindow(Gtk.Window):
         self.saved_panel = {'floating': False, 'shown': True,
                             'width': PANEL_WIDTH, 'geometry': None}
         self._load_settings()
+        # The grid over the canvas and the switches that use it. Kept in its
+        # own section, written the moment it changes, like Open Recent.
+        self.grid = zpl_grid.load_grid(self._settings_files())
         # The persisted printer, snapshotted so the Print window, whose
         # printer is for this session only, can offer "Use Default" without
         # re-reading the settings file.
@@ -897,6 +1010,16 @@ class ZPLViewerWindow(Gtk.Window):
             view_menu.append(item)
 
         view_menu.append(Gtk.SeparatorMenuItem())
+        self.show_grid_item = Gtk.CheckMenuItem.new_with_mnemonic("Show _Grid")
+        self.show_grid_item.set_active(self.grid.shown)
+        self.show_grid_item.connect("toggled", self.on_show_grid_toggled)
+        add_accel(self.show_grid_item, "<Control>apostrophe")
+        view_menu.append(self.show_grid_item)
+        grid_settings_item = Gtk.MenuItem.new_with_mnemonic("Grid Se_ttings\u2026")
+        grid_settings_item.connect("activate", self.on_grid_settings_clicked)
+        view_menu.append(grid_settings_item)
+
+        view_menu.append(Gtk.SeparatorMenuItem())
         # Shows and hides the Properties panel, docked or floating - and is
         # kept ticked to match however it was shown or closed
         self.panel_item = Gtk.CheckMenuItem.new_with_mnemonic("Properties _Panel")
@@ -1087,6 +1210,7 @@ class ZPLViewerWindow(Gtk.Window):
                                          label_width=self.label_width, 
                                          label_height=self.label_height)
         self.design_canvas.dpi = self.printer_dpi
+        self.design_canvas.grid = self.grid
         self.design_canvas.document.font_device = self.printer_font_device
         # The element editors are non-modal, so more than one can be on screen
         # at once. One per element, keyed by id: an open editor holds its
@@ -1314,6 +1438,24 @@ class ZPLViewerWindow(Gtk.Window):
     def on_actual_size(self, *_args):
         self.design_canvas.set_zoom(1.0)
 
+    # --- the grid --------------------------------------------------------------
+
+    def on_show_grid_toggled(self, item):
+        self.grid.shown = item.get_active()
+        self._grid_changed()
+
+    def on_grid_settings_clicked(self, *_args):
+        chosen = _grid_dialog(self, self.grid, self.design_canvas.document.dpi)
+        if chosen is None:
+            return
+        self.grid.update(chosen)
+        self._grid_changed()
+
+    def _grid_changed(self):
+        """Show the grid as it now is, and remember it."""
+        zpl_grid.save_grid(self._settings_files(), self.grid)
+        self.design_canvas.queue_draw()
+
     def main_window_closed(self, widget, event):
       if not self.close_app(widget):
         return True
@@ -1454,9 +1596,13 @@ class ZPLViewerWindow(Gtk.Window):
 
     # --- File > Open Recent --------------------------------------------------
 
+    def _settings_files(self):
+        """The settings files, in the order a write tries them."""
+        return (_config_path(), _fallback_config_path())
+
     def _recent_candidates(self):
         """The settings files the list is read from and written to, in order."""
-        return (_config_path(), _fallback_config_path())
+        return self._settings_files()
 
     def _refresh_recent(self):
         """Rebuild Open Recent from what the settings file holds now."""

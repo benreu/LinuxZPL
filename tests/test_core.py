@@ -11597,6 +11597,78 @@ check("grid.py names no GUI toolkit",
       not any(t in _g_src for t in
               ('PySide2', 'import gi', 'from gi.', 'PyQt5', 'tkinter')))
 
+# The Qt window: Show Grid draws the grid and is remembered, and Grid
+# Settings changes the spacing.
+_gw_ini = Path(tempfile.mkdtemp()) / 'settings.ini'
+_gw_real = qt_main._config_path, qt_main._fallback_config_path
+qt_main._config_path = qt_main._fallback_config_path = lambda: _gw_ini
+try:
+    gw = qt_main.ZPLDesignerWindow()
+    check("the grid starts hidden, and Show Grid unticked",
+          not gw.grid.shown and not gw.show_grid_action.isChecked()
+          and gw.canvas.grid is gw.grid)
+    gw.canvas.set_zoom(1.0)
+    def _grid_pixel(x, y):
+        return gw.canvas.grab().toImage().pixelColor(x, y)
+    check("hidden, nothing is drawn where a line would be",
+          _grid_pixel(20, 700).name() == '#ffffff', _grid_pixel(20, 700).name())
+    gw.show_grid_action.trigger()
+    check("Show Grid draws a line every tenth of an inch",
+          gw.grid.shown and _grid_pixel(20, 700).name() != '#ffffff'
+          and _grid_pixel(30, 700).name() == '#ffffff',
+          (_grid_pixel(20, 700).name(), _grid_pixel(30, 700).name()))
+    _minor, _major = _grid_pixel(20, 700), _grid_pixel(203, 700)
+    check("in pale blue, an inch line darker than a tenth",
+          _minor.blue() > _minor.red() and _major.red() < _minor.red(),
+          (_minor.name(), _major.name()))
+    check("and is remembered at once",
+          zpl_grid.load_grid([_gw_ini]).shown)
+    gw2 = qt_main.ZPLDesignerWindow()
+    check("a new window opens with the grid shown and the item ticked",
+          gw2.grid.shown and gw2.show_grid_action.isChecked())
+    gw2.close()
+
+    def _drive_grid(fill):
+        def act():
+            dialog = next((widget for widget in app.topLevelWidgets()
+                           if isinstance(widget, QDialog) and widget.isVisible()), None)
+            if dialog is None:
+                QTimer.singleShot(50, act)
+                return
+            fill(dialog)
+            dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+        QTimer.singleShot(100, act)
+        gw.on_grid_settings()
+
+    _gseen = {}
+    def _fill_grid(dialog):
+        unit = dialog.findChild(QComboBox, 'grid_unit')
+        spacing = dialog.findChild(QDoubleSpinBox, 'grid_spacing')
+        _gseen['opened'] = (unit.currentData(), spacing.value())
+        unit.setCurrentIndex(zpl_grid.UNITS.index('mm'))
+        _gseen['converted'] = spacing.value()
+        spacing.setValue(5)
+        dialog.findChild(QSpinBox, 'grid_major').setValue(2)
+    _drive_grid(_fill_grid)
+    check("Grid Settings opens on the grid in force",
+          _gseen['opened'] == ('in', 0.1), _gseen)
+    check("switching to millimetres converts the spacing",
+          _gseen['converted'] == 2.54, _gseen)
+    check("and OK takes the spacing and the major lines",
+          (gw.grid.unit, gw.grid.spacing, gw.grid.major_every) == ('mm', 5.0, 2)
+          and gw.grid.shown, gw.grid)
+    check("which is remembered too",
+          zpl_grid.load_grid([_gw_ini]) == gw.grid, zpl_grid.load_grid([_gw_ini]))
+    check("and drawn: at 203 dpi 5 mm is 40 dots",
+          _grid_pixel(40, 700).name() != '#ffffff'
+          and _grid_pixel(20, 700).name() == '#ffffff')
+    gw.document.add_frame_element()
+    check("showing the grid changes nothing that is written",
+          'GRID' not in gw.document.to_zpl().upper())
+    gw.close()
+finally:
+    qt_main._config_path, qt_main._fallback_config_path = _gw_real
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

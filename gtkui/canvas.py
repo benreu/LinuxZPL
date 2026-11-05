@@ -164,6 +164,9 @@ class DesignCanvas(Gtk.DrawingArea):
         self.band_direct = False
         self._cursor_name: Optional[str] = None   # cursor currently set
         self._cursor_cache = {}
+        # The window's grid (zplcore.grid.Grid), shared by reference so the View
+        # menu and Grid Settings change what is drawn here; None draws none.
+        self.grid = None
 
         self.connect("draw", self.on_draw)
         self.connect("scroll-event", self.on_scroll)
@@ -525,6 +528,9 @@ class DesignCanvas(Gtk.DrawingArea):
         # fields - not one of self.elements, so drawn here rather than through
         # _draw_element.
         self._draw_image_load(context)
+        # Over the background image and under every field, so the fields are
+        # never behind a line and the lines still show across the image.
+        self._draw_grid(context, scale_factor)
 
         # Draw elements in label coordinates (context is scaled)
         for element in self.elements:
@@ -547,6 +553,54 @@ class DesignCanvas(Gtk.DrawingArea):
 
         context.restore()
     
+    # Pale blue rather than grey: a grey hairline across the label reads as a
+    # printed rule, and the canvas shows what prints. Translucent, so a ^IL
+    # image beneath stays visible.
+    GRID_MINOR = (70 / 255, 130 / 255, 230 / 255, 45 / 255)
+    GRID_MAJOR = (70 / 255, 130 / 255, 230 / 255, 100 / 255)
+
+    def _draw_grid(self, context, scale: float):
+        """The grid's lines across the label, those inside the clip only.
+
+        The clip is the area being repainted, already in dots because the
+        context is scaled; a line outside it would be drawn and thrown away.
+        Unantialiased at one pixel wide, so every line is crisp at any zoom.
+        """
+        grid = self.grid
+        if grid is None or not grid.shown:
+            return
+        x0, y0, x1, y1 = context.clip_extents()
+        left, right = max(0.0, x0), min(float(self.label_width), x1)
+        top, bottom = max(0.0, y0), min(float(self.label_height), y1)
+        if left > right or top > bottom:
+            return
+        dpi = self.document.dpi
+        minor, major = [], []
+        for x, is_major in grid.lines(left, right, scale, dpi):
+            (major if is_major else minor).append((x, top, x, bottom))
+        for y, is_major in grid.lines(top, bottom, scale, dpi):
+            (major if is_major else minor).append((left, y, right, y))
+        # A one-pixel line centred on a pixel boundary falls on the pixel
+        # before it, unantialiased; half a pixel over puts it on the column
+        # that starts at its dot, where Qt draws it too.
+        half = 0.5 / max(1e-6, scale)
+        context.save()
+        context.set_antialias(cairo.Antialias.NONE)
+        context.set_line_width(2 * half)
+        for colour, lines in ((self.GRID_MINOR, minor), (self.GRID_MAJOR, major)):
+            if not lines:
+                continue
+            context.set_source_rgba(*colour)
+            for ax, ay, bx, by in lines:
+                if ax == bx:
+                    context.move_to(ax + half, ay)
+                    context.line_to(bx + half, by)
+                else:
+                    context.move_to(ax, ay + half)
+                    context.line_to(bx, by + half)
+            context.stroke()
+        context.restore()
+
     def _draw_element(self, context, element: DesignElement, selected: bool):
         """Draw a single element."""
         if element.element_type == 'text':
