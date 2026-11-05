@@ -16,6 +16,7 @@ import configparser
 from pathlib import Path
 from zplcore import firmware as zpl_firmware
 from zplcore import fonts as zpl_fonts
+from zplcore import helpdocs
 from zplcore import graphic_store
 from zplcore import grid as zpl_grid
 from zplcore import local_port as zpl_local
@@ -1131,6 +1132,19 @@ class ZPLViewerWindow(Gtk.Window):
         settings_menu.append(local_fonts_item)
 
         settings_menu.show_all()
+
+        # Help menu, last in the bar
+        help_menu = Gtk.Menu()
+        help_menu_item = Gtk.MenuItem.new_with_mnemonic("_Help")
+        help_menu_item.set_submenu(help_menu)
+        menu_bar.append(help_menu_item)
+
+        help_contents_item = Gtk.MenuItem.new_with_mnemonic("_Contents")
+        help_contents_item.connect("activate", lambda _item: self.show_help(self))
+        add_accel(help_contents_item, "F1")
+        help_menu.append(help_contents_item)
+
+        help_menu.show_all()
 
         # Content box with padding
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -2663,8 +2677,8 @@ class ZPLViewerWindow(Gtk.Window):
         refresh_btn.connect("clicked", on_refresh)
         browse_btn.connect("clicked", on_browse)
         update_btn.connect("clicked", on_update)
-        help_btn.connect("clicked", lambda _b: self.show_help_dialog(
-            dialog, "Firmware Update", zpl_firmware.HELP))
+        help_btn.connect("clicked", lambda _b: self.show_help(
+            dialog, "firmware-update"))
         close_btn.connect("clicked", lambda _b: dialog.response(Gtk.ResponseType.CLOSE))
         dialog.show_all()
         ask_version()
@@ -4581,15 +4595,18 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
-    def show_help_dialog(self, parent, title: str, text: str):
-        """A window's Help: `text` is plain, shared with the Qt frontend."""
-        dialog = Gtk.MessageDialog(
-            parent=parent, flags=0, message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK, text=title)
-        dialog.set_title(f"{title} Help")
-        dialog.format_secondary_text(text)
-        dialog.run()
-        dialog.destroy()
+    def show_help(self, parent, topic: str = helpdocs.CONTENTS):
+        """Open the help page `topic` in a viewer of its own
+        (zplcore/helpdocs.py), or say why none could be started."""
+        launched = helpdocs.launch(topic)
+        if launched.message:
+            dialog = Gtk.MessageDialog(
+                parent=parent, flags=0, message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK, text="No help viewer")
+            dialog.set_title("Help")
+            dialog.format_secondary_text(launched.message)
+            dialog.run()
+            dialog.destroy()
 
 
 def main(filepath=None, fields=None):

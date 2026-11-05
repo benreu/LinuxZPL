@@ -549,6 +549,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_firmware_action = self._action(
             "Firmware Update…", self.on_printer_firmware)
         self.printer_status_action = self._action("Status…", self.on_printer_status)
+        self.help_contents_action = self._action("&Contents", self.on_help_contents, "F1")
 
     def _build_menus(self):
         menubar = self.menuBar()
@@ -653,6 +654,9 @@ class ZPLDesignerWindow(QMainWindow):
         settings_menu.addAction(self.label_size_action)
         settings_menu.addAction(self.default_printer_action)
         settings_menu.addAction(self.local_fonts_action)
+
+        help_menu = menubar.addMenu("&Help")
+        help_menu.addAction(self.help_contents_action)
 
     def _build_toolbar(self):
         toolbar = QToolBar("Elements", self)
@@ -1274,6 +1278,9 @@ class ZPLDesignerWindow(QMainWindow):
         dialog.destroyed.connect(lambda *_a: setattr(self, 'printer_status_dialog', None))
         self.printer_status_dialog = dialog
         dialog.show()
+
+    def on_help_contents(self):
+        qt_dialogs.show_help(self)
 
     # --- files ---------------------------------------------------------------
 

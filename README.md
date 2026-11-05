@@ -119,6 +119,13 @@ pip install -r requirements-gtk.txt    # or -qt.txt, if not using system package
 
 In VS Code, press **F5**; the default configuration is the flagless one.
 
+### Help
+
+**Help → Contents** (F1) opens the help in Yelp. The pages are Mallard, in
+`help/C/`, and are read from there, so nothing needs installing. Yelp comes with
+GNOME, Cinnamon and MATE. Elsewhere, `apt install yelp` (or your distribution's
+equivalent); without it, LinuxZPL says where the pages are.
+
 ### From Python
 
 `pip install -e .` makes the core importable. No GUI toolkit is needed:
@@ -196,6 +203,7 @@ Identical in both frontends.
 | Ctrl+A | Select All | Ctrl++ / Ctrl+- | Zoom In / Out |
 | Ctrl+Shift+A | Deselect All | Ctrl+0 / Ctrl+9 / Ctrl+1 | Fit Label / Fit Width / 1:1 |
 | Ctrl+R | Rulers | Ctrl+' / Ctrl+Shift+' | Show Grid / Snap to Grid |
+| F1 | Help Contents | | |
 
 ## Settings
 
@@ -226,6 +234,7 @@ zplcore/    no GUI toolkit, runs headless
   local_port.py  the same send/reply down a USB printer node, /dev/usb/lpN
   firmware.py    the version ~HI reports, and a firmware file sent to the
                     printer for Printer -> Firmware Update...
+  helpdocs.py    the help pages in help/C, and starting a viewer for them
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   grid.py        the grid over the canvas: its unit, where its lines fall,
@@ -244,6 +253,7 @@ zplcore/    no GUI toolkit, runs headless
   tlc39.py, aztec.py, maxicode.py, databar.py, pdf417_patterns.py,
   maxicode_map.py
                  barcode encoding, one file per symbology
+help/C/     the help, as Mallard pages
 gtkui/      GTK3 frontend: Cairo painting, dialogs, menus
 qtui/       PySide2/Qt5 frontend: QPainter painting, dialogs, menus
 tests/      core checks, and the conformance suite the frontends must agree on

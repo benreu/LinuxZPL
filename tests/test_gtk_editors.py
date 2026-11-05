@@ -2360,6 +2360,33 @@ check("and a zoom after it still takes", fc.get_allocated_width() == 1624,
       fc.get_allocated_width())
 fw.destroy()
 
+# Help > Contents, and what shows when no viewer could be started
+from zplcore import helpdocs
+real_launch, real_run = helpdocs.launch, Gtk.MessageDialog.run
+asked, shown = [], []
+try:
+    helpdocs.launch = lambda topic=helpdocs.CONTENTS: (
+        asked.append(topic), helpdocs.Launch(object(), None))[1]
+    Gtk.MessageDialog.run = lambda self: (shown.append(
+        (self.get_title(), self.props.text, self.props.secondary_text)),
+        Gtk.ResponseType.OK)[1]
+    hw = ZPLViewerWindow()
+    f1 = [item for item, accel in hw.accelerators.items() if accel == "F1"]
+    for item in f1:
+        item.activate()
+    check("GTK Help > Contents opens the contents page, on F1, and shows "
+          "nothing of its own when a viewer started",
+          len(f1) == 1 and f1[0].get_label() == "_Contents"
+          and asked == [helpdocs.CONTENTS] and shown == [], (asked, shown))
+    helpdocs.launch = lambda topic=helpdocs.CONTENTS: helpdocs.Launch(
+        None, "install yelp")
+    hw.show_help(hw, "firmware-update")
+    check("GTK: with no viewer, Help says so in a message box",
+          shown == [("Help", "No help viewer", "install yelp")], shown)
+    hw.destroy()
+finally:
+    helpdocs.launch, Gtk.MessageDialog.run = real_launch, real_run
+
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

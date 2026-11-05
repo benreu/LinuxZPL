@@ -30,7 +30,7 @@ from PySide2.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication
                                QWidget)
 
 from zplcore import (fields as zpl_fields, firmware as zpl_firmware,
-                     fonts as zpl_fonts, geometry, graphic_store,
+                     fonts as zpl_fonts, geometry, graphic_store, helpdocs,
                      grid as zpl_grid, local_port as zpl_local,
                      print_settings as zpl_print, printer_io,
                      printer_objects, printer_status, textraster, workflow)
@@ -108,14 +108,17 @@ def show_error(parent, message: str):
     box.exec_()
 
 
-def show_help(parent, title: str, text: str):
-    """A window's Help: `text` is plain, shared with the GTK frontend."""
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Information)
-    box.setWindowTitle(f"{title} Help")
-    box.setText(title)
-    box.setInformativeText(text)
-    box.exec_()
+def show_help(parent, topic: str = helpdocs.CONTENTS):
+    """Open the help page `topic` in a viewer of its own (zplcore/helpdocs.py),
+    or say why none could be started."""
+    launched = helpdocs.launch(topic)
+    if launched.message:
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("Help")
+        box.setText("No help viewer")
+        box.setInformativeText(launched.message)
+        box.exec_()
 
 
 def _buttons(dialog, accept_text="OK"):
@@ -3382,7 +3385,7 @@ class PrinterFirmwareDialog(QDialog):
         self._browse_btn.clicked.connect(self._on_browse)
         self._update_btn.clicked.connect(self._on_update)
         self._help_btn.clicked.connect(
-            lambda: show_help(self, "Firmware Update", zpl_firmware.HELP))
+            lambda: show_help(self, "firmware-update"))
         self._close_btn.clicked.connect(self.reject)
         QTimer.singleShot(0, self._ask_version)
 

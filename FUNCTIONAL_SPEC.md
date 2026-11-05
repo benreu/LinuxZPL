@@ -635,7 +635,7 @@ source at the new size — never from the previous bitmap.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ File Edit View Settings   Title  ↶ ↷  − Fit +  Align ▾ ✕│  header bar
+│ File Edit … Settings Help Title  ↶ ↷  − Fit +  Align ▾ ✕│  header bar
 ├────────────┬────────────────────────────────────────────┤
 │ [+ Text]   │in│0   1   2   3   4                         │  rulers, when shown
 │ [+ Time]   │──┼─────────────────────────────────────────│
@@ -1254,6 +1254,26 @@ Shown when loading a file or quitting with unsaved changes. Three choices:
 
 Loading a file must clear the modified flag, including any flag set as a side
 effect of building elements while parsing.
+
+### 6.8 Help
+
+The last menu in the bar. **Contents** (F1) opens LinuxZPL's help, and a
+window's own **Help** button - Firmware Update's (§10.8) - opens that
+window's page instead. The help is Mallard pages in `help/C/`, read where
+they are, so it works straight from the unpacked zip with nothing installed.
+It opens in a viewer of its own, never in a window of the designer's, and the
+designer does not wait for it:
+
+- **Yelp**, given the folder for the contents and a page's file for a topic.
+  Either way it reads the folder as one document, so a page's links and its
+  trail back to the contents work.
+- With no Yelp, or one that cannot be started, a message says no help viewer
+  was found, to install Yelp, and where the pages are.
+
+No viewer is on every Linux system - Yelp comes with GNOME, Cinnamon and
+MATE, not with KDE or a minimal install - hence the message. The pages, the
+choice of viewer and the message are shared (`zplcore/helpdocs.py`); a
+frontend only shows the message.
 
 ---
 
@@ -2419,11 +2439,11 @@ Whether to take a file is the printer's decision, and only its own display shows
 it: a printer that refuses one says "Download failed" and goes on accepting and
 discarding the rest, so this window sends to the end and reports it sent. A ZT410
 running a special build did exactly that with a standard V75 file, then took the
-same file over USB in forced download mode. **Help** explains the window in
-plain text both frontends share (`firmware.HELP`): the connections, unpacking the
-`.zpl` from Zebra's zip, forced download mode step by step with each model's
-buttons, and the `lp` group. Help is left out of the busy row's blocked buttons,
-since it is most wanted while an upload is going wrong.
+same file over USB in forced download mode. **Help** opens the Firmware Update
+help page (§6.8): the connections, unpacking the `.zpl` from Zebra's zip,
+forced download mode step by step with each model's buttons, and the `lp`
+group. Help is left out of the busy row's blocked buttons, since it is most
+wanted while an upload is going wrong.
 
 ---
 
@@ -2887,6 +2907,7 @@ treated as corrupt and falls back too.
 | Ctrl+R | Rulers |
 | Ctrl+' | Show Grid |
 | Ctrl+Shift+' | Snap to Grid |
+| F1 | Help Contents |
 
 Three notes for a port:
 
@@ -2991,6 +3012,7 @@ message — never a swallowed exception or a placeholder.
 | Vector drawing | Canvas rendering with a uniform scale transform, translucency and alpha compositing | |
 | TCP sockets | All printer communication | Plain sockets; no printing subsystem is involved |
 | Registering a font at runtime | So a chosen font can be drawn before it is installed anywhere | Optional; without it the canvas may fall back to a default face |
+| Starting a program apart from this one | Showing the help in Yelp (§6.8) | Optional; without a viewer, a message says what to install |
 
 ---
 
