@@ -56,6 +56,16 @@ WINDOW_HELP = {
     "default_printer": "printing#default-printer",
     "print": "printing#print-window",
     "local_fonts": "fonts#which",
+    "printer_fonts": "fonts#manager",
+    "upload_font_to": "fonts#memory",
+    "printer_graphics": "stored-graphics#store",
+    "store_graphic_as": "stored-graphics#store",
+    "printer_objects": "stored-graphics#objects",
+    "store_object_as": "stored-graphics#objects",
+    "upload_template": "templates#upload",
+    "printer_console": "printer-status#console",
+    "printer_status": "printer-status#status",
+    "firmware_update": "firmware-update",
 }
 
 

@@ -2473,6 +2473,30 @@ for wh_key, wh_dialog in (
     wh_press(wh_key, wh_dialog)
     wh_dialog.destroy()
 
+# The printer windows, opened from a window whose printer is a port on this
+# machine that nothing listens on, so what each asks on opening is refused
+# at once and no real printer is reached.
+import socket
+wh_sock = socket.socket()
+wh_sock.bind(("127.0.0.1", 0))
+wh_win.printer_address, wh_win.printer_port = "127.0.0.1", wh_sock.getsockname()[1]
+wh_sock.close()
+wh_run("printer_fonts", lambda: wh_win.on_printer_fonts_clicked(None))
+wh_run("printer_graphics", lambda: wh_win.on_printer_graphics_clicked(None))
+wh_run("printer_objects", lambda: wh_win.on_printer_objects_clicked(None))
+wh_run("firmware_update", lambda: wh_win.on_printer_firmware_clicked(None))
+wh_run("upload_font_to", lambda: wh_win._ask_font_device(wh_win))
+wh_run("store_graphic_as", lambda: wh_win._ask_device_spec(wh_win))
+wh_run("store_object_as", lambda: wh_win._ask_object_name(wh_win, "NOTES", "TXT"))
+wh_run("upload_template", lambda: wh_win._ask_template_name("E:", "LABEL1"))
+for wh_key, wh_open, wh_attr in (
+        ("printer_console", wh_win.on_printer_console_clicked, "printer_console_window"),
+        ("printer_status", wh_win.on_printer_status_clicked, "printer_status_window")):
+    wh_open(None)
+    wh_window = getattr(wh_win, wh_attr)
+    wh_press(wh_key, wh_window)
+    wh_window.destroy()
+
 for wh_key, wh_topic in sorted(helpdocs.WINDOW_HELP.items()):
     check(f"GTK {wh_key}: Help, at the left, opens {wh_topic} without ending "
           f"the window, and so does F1",

@@ -1273,8 +1273,22 @@ its question unanswered. Which page each window opens is one table,
 | Default Printer | `printing#default-printer` |
 | Print | `printing#print-window` |
 | Local Fonts | `fonts#which` |
+| Printer Fonts | `fonts#manager` |
+| Upload Font To | `fonts#memory` |
+| Printer Graphics | `stored-graphics#store` |
+| Store Graphic As | `stored-graphics#store` |
+| Printer Objects | `stored-graphics#objects` |
+| Store Object As | `stored-graphics#objects` |
+| Upload Template | `templates#upload` |
+| Printer Console | `printer-status#console` |
+| Printer Status | `printer-status#status` |
+| Firmware Update (§10.8) | `firmware-update` |
 
-Firmware Update's Help (§10.8) opens its page too.
+A window whose question was a stock one-line prompt is a small window of its
+own instead, so it can hold the button: Upload Template's name is asked for
+in a window titled Upload Template, with **Name in E:** (or R:), **Upload**
+and **Cancel**, and a name the printer won't take is asked for again with
+the reason above the field.
 
 The help is Mallard pages in `help/C/`, read where they are, so it works
 straight from the unpacked zip with nothing installed. It opens in a viewer
@@ -2478,8 +2492,8 @@ Whether to take a file is the printer's decision, and only its own display shows
 it: a printer that refuses one says "Download failed" and goes on accepting and
 discarding the rest, so this window sends to the end and reports it sent. A ZT410
 running a special build did exactly that with a standard V75 file, then took the
-same file over USB in forced download mode. **Help** opens the Firmware Update
-help page (§6.8): the connections, unpacking the `.zpl` from Zebra's zip,
+same file over USB in forced download mode. **Help**, or F1, opens the
+Firmware Update help page (§6.8): the connections, unpacking the `.zpl` from Zebra's zip,
 forced download mode step by step with each model's buttons, and the `lp`
 group. Help is left out of the busy row's blocked buttons, since it is most
 wanted while an upload is going wrong.

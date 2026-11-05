@@ -11253,8 +11253,73 @@ try:
     _wh_modal("print", lambda: qt_dialogs.print_dialog(
         None, _wh_doc, _PW_PRINTER, _PW_DEFAULT))
     _wh_modal("local_fonts", lambda: qt_dialogs.LocalFontsDialog(None).exec_())
+
+    # The printer windows, opened from a window whose printer is a port on
+    # this machine that nothing listens on, so what each asks on opening is
+    # refused at once and no real printer is reached.
+    import socket as _wh_socket
+    _wh_sock = _wh_socket.socket()
+    _wh_sock.bind(("127.0.0.1", 0))
+    _wh_dead = _wh_sock.getsockname()[1]
+    _wh_sock.close()
+    _wh_win = qt_main.ZPLDesignerWindow()
+    _wh_win.printer_address, _wh_win.printer_port = "127.0.0.1", _wh_dead
+    _wh_modal("printer_fonts", _wh_win.on_printer_fonts)
+    _wh_modal("printer_graphics", _wh_win.on_printer_graphics)
+    _wh_modal("printer_objects", _wh_win.on_printer_objects)
+    _wh_modal("firmware_update", _wh_win.on_printer_firmware)
+    _wh_modal("upload_font_to", lambda: qt_dialogs.font_device_dialog(None, "E"))
+    _wh_modal("store_graphic_as", lambda: qt_dialogs.store_graphic_dialog(None))
+    _wh_modal("store_object_as",
+              lambda: qt_dialogs.store_object_dialog(None, "NOTES", "TXT"))
+    _wh_modal("upload_template",
+              lambda: qt_dialogs.ask_template_name(None, "E:", "LABEL1"))
+    for _wh_key, _wh_open, _wh_attr in (
+            ("printer_console", _wh_win.on_printer_console, "printer_console_dialog"),
+            ("printer_status", _wh_win.on_printer_status, "printer_status_dialog")):
+        _wh_open()
+        _wh_dialog = getattr(_wh_win, _wh_attr)
+        _wh_press(_wh_key, _wh_dialog)
+        _wh_dialog.close()
+    _wh_win.unsaved_changes = False
+    _wh_win.close(); _wh_win.deleteLater()
 finally:
     qt_dialogs.show_help = _wh_real_help
+
+# Upload Template asks again, saying why, for a name the printer won't take,
+# and gives the name upper-cased.
+_wh_answers = iter(["bad name", "label2"])
+_wh_problems = []
+
+
+def _wh_fill(window):
+    labels = [w.text() for w in window.findChildren(qt_dialogs.QLabel)]
+    _wh_problems.append([t for t in labels if not t.startswith("Name in")])
+    window.findChild(qt_dialogs.QLineEdit, "template_name").setText(next(_wh_answers))
+    window.accept()
+
+
+def _wh_drive(times):
+    """Answer the next `times` windows that open modally with _wh_fill."""
+    def act():
+        window = QApplication.activeModalWidget()
+        if window is None:
+            QTimer.singleShot(30, act)
+            return
+        _wh_fill(window)
+        if times[0] > 1:
+            times[0] -= 1
+            QTimer.singleShot(30, act)
+    QTimer.singleShot(30, act)
+
+
+_wh_drive([2])
+_wh_named = qt_dialogs.ask_template_name(None, "E:", "LABEL1")
+check("Qt Upload Template asks again for a name the printer won't take, "
+      "saying why, and gives the next one upper-cased",
+      _wh_named == "LABEL2" and _wh_problems[0] == []
+      and _wh_problems[1] == [workflow.template_name_problem("BAD NAME")],
+      (_wh_named, _wh_problems))
 
 for _wh_key, _wh_topic in sorted(_hd.WINDOW_HELP.items()):
     check(f"Qt {_wh_key}: Help opens {_wh_topic} and leaves the window open, "

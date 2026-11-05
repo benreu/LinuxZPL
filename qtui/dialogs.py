@@ -21,7 +21,6 @@ from PySide2.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication
                                QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QFrame, QGroupBox, QHBoxLayout,
-                               QInputDialog,
                                QLabel, QLineEdit, QListWidget, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton,
                                QScrollArea, QShortcut,
@@ -1996,7 +1995,9 @@ def store_graphic_dialog(parent) -> Optional[str]:
     ext_edit = QLineEdit("GRF")
     form.addRow("Extension:", ext_edit)
 
-    layout.addWidget(_buttons(dialog))
+    buttons = _buttons(dialog)
+    add_help(dialog, "store_graphic_as", buttons)
+    layout.addWidget(buttons)
 
     if dialog.exec_() != QDialog.Accepted:
         return None
@@ -2023,7 +2024,9 @@ def font_device_dialog(parent, default_device: str) -> Optional[str]:
     combo = _font_device_combo(default_device)
     form.addRow("Memory:", combo)
 
-    layout.addWidget(_buttons(dialog))
+    buttons = _buttons(dialog)
+    add_help(dialog, "upload_font_to", buttons)
+    layout.addWidget(buttons)
     if dialog.exec_() != QDialog.Accepted:
         return None
     return combo.currentData()
@@ -2053,7 +2056,9 @@ def store_object_dialog(parent, default_name: str, default_ext: str):
     ext_edit = QLineEdit(default_ext)
     form.addRow("Extension:", ext_edit)
 
-    layout.addWidget(_buttons(dialog))
+    buttons = _buttons(dialog)
+    add_help(dialog, "store_object_as", buttons)
+    layout.addWidget(buttons)
 
     if dialog.exec_() != QDialog.Accepted:
         return None
@@ -2724,6 +2729,7 @@ class PrinterFontsDialog(QDialog):
 
         close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         close.rejected.connect(self.reject)
+        add_help(self, "printer_fonts", close)
         layout.addWidget(close)
 
         self._upload_btn.clicked.connect(self._on_upload)
@@ -2931,6 +2937,7 @@ class PrinterGraphicsDialog(QDialog):
 
         close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         close.rejected.connect(self.reject)
+        add_help(self, "printer_graphics", close)
         layout.addWidget(close)
 
         self._store_btn.clicked.connect(self._on_store)
@@ -3153,6 +3160,7 @@ class PrinterObjectsDialog(QDialog):
 
         close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         close.rejected.connect(self.reject)
+        add_help(self, "printer_objects", close)
         layout.addWidget(close)
 
         self._store_btn.clicked.connect(self._on_store)
@@ -3331,6 +3339,7 @@ class PrinterConsoleDialog(QDialog):
 
         close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         close.rejected.connect(self.reject)
+        add_help(self, "printer_console", close)
         layout.addWidget(close)
 
         self._send_btn.clicked.connect(self._on_send)
@@ -3413,7 +3422,7 @@ class PrinterFirmwareDialog(QDialog):
         row = QHBoxLayout()
         # Not one of the BusyBar's blocked buttons: Help is most wanted while
         # an upload is going wrong.
-        self._help_btn = QPushButton("Help")
+        self._help_btn = add_help(self, "firmware_update")
         row.addWidget(self._help_btn)
         self._update_btn = QPushButton("Update")
         self._update_btn.setEnabled(False)
@@ -3432,8 +3441,6 @@ class PrinterFirmwareDialog(QDialog):
         self._connection.currentIndexChanged.connect(self._ask_version)
         self._browse_btn.clicked.connect(self._on_browse)
         self._update_btn.clicked.connect(self._on_update)
-        self._help_btn.clicked.connect(
-            lambda: show_help(self, "firmware-update"))
         self._close_btn.clicked.connect(self.reject)
         QTimer.singleShot(0, self._ask_version)
 
@@ -3607,6 +3614,7 @@ class PrinterStatusDialog(QDialog):
 
         close = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         close.rejected.connect(self.reject)
+        add_help(self, "printer_status", close)
         layout.addWidget(close)
 
         # Parented to the dialog, so it is destroyed with it - unlike GTK's
@@ -3790,17 +3798,28 @@ class PrinterStatusDialog(QDialog):
 # --- prompts ----------------------------------------------------------------
 
 def ask_template_name(parent, memory: str, default: str) -> Optional[str]:
-    """The name to store a template under in `memory`, or None if cancelled."""
+    """The name to store a template under in `memory`, or None if cancelled.
+    A name the printer would not take is asked for again, saying why."""
     name, problem = default, None
     while True:
-        text = f"Name for the template in printer {memory}:"
+        dialog = QDialog(parent)
+        dialog.setWindowTitle("Upload Template")
+        layout = QVBoxLayout(dialog)
         if problem:
-            text = f"{problem}\n\n{text}"
-        name, accepted = QInputDialog.getText(
-            parent, "Upload Template", text, QLineEdit.Normal, name)
+            layout.addWidget(QLabel(problem))
+        form = QFormLayout()
+        layout.addLayout(form)
+        edit = QLineEdit(name)
+        edit.setObjectName("template_name")
+        form.addRow(f"Name in {memory}:", edit)
+        buttons = _buttons(dialog, "Upload")
+        add_help(dialog, "upload_template", buttons)
+        layout.addWidget(buttons)
+        accepted = dialog.exec_() == QDialog.Accepted
+        name = edit.text().strip().upper()
+        dialog.deleteLater()
         if not accepted:
             return None
-        name = name.strip().upper()
         problem = workflow.template_name_problem(name)
         if problem is None:
             return name

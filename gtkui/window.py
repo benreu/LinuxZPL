@@ -93,8 +93,8 @@ def add_help(window, dialog, key: str, row=None):
     on a Help button and on F1, opened by `window`'s show_help. Without
     `row`, `dialog` is a Gtk.Dialog and the button goes at the left of its
     action area, as a plain button rather than a response, so it leaves
-    the dialog running. With `row`, a box built by hand, it goes at the
-    row's start. Either way it is named "help"."""
+    the dialog running. With `row`, a box built by hand, it goes first in
+    the row. Either way it is named "help"."""
     topic = helpdocs.WINDOW_HELP[key]
     button = Gtk.Button.new_with_mnemonic("_Help")
     button.set_name("help")
@@ -105,6 +105,7 @@ def add_help(window, dialog, key: str, row=None):
         action.set_child_secondary(button, True)
     else:
         row.pack_start(button, False, False, 0)
+        row.reorder_child(button, 0)
     accel = Gtk.AccelGroup()
     dialog.add_accel_group(accel)
     button.add_accelerator("clicked", accel, Gdk.KEY_F1, 0,
@@ -2017,6 +2018,7 @@ class ZPLViewerWindow(Gtk.Window):
                                 modal=True)
             dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
             dialog.add_button("Upload", Gtk.ResponseType.OK)
+            add_help(self, dialog, "upload_template")
             dialog.set_default_response(Gtk.ResponseType.OK)
             content = dialog.get_content_area()
             content.set_spacing(8)
@@ -2158,6 +2160,7 @@ class ZPLViewerWindow(Gtk.Window):
         """Show the fonts stored on the printer, and add or remove them."""
         dialog = Gtk.Dialog(title="Printer Fonts", parent=self, flags=0)
         dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        add_help(self, dialog, "printer_fonts")
         dialog.set_default_size(480, 560)
 
         content = dialog.get_content_area()
@@ -2394,6 +2397,7 @@ class ZPLViewerWindow(Gtk.Window):
         dialog = Gtk.Dialog(title="Upload Font To", parent=parent, flags=0)
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                            Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        add_help(self, dialog, "upload_font_to")
 
         content = dialog.get_content_area()
         content.set_spacing(4)
@@ -2422,6 +2426,7 @@ class ZPLViewerWindow(Gtk.Window):
         dialog = Gtk.Dialog(title="Store Graphic As", parent=parent, flags=0)
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                            Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        add_help(self, dialog, "store_graphic_as")
 
         content = dialog.get_content_area()
         content.set_spacing(4)
@@ -2467,6 +2472,7 @@ class ZPLViewerWindow(Gtk.Window):
         dialog = Gtk.Dialog(title="Store Object As", parent=parent, flags=0)
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                            Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        add_help(self, dialog, "store_object_as")
 
         content = dialog.get_content_area()
         content.set_spacing(4)
@@ -2587,8 +2593,7 @@ class ZPLViewerWindow(Gtk.Window):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         # Not one of the BusyBar's blocked buttons: Help is most wanted while
         # an upload is going wrong.
-        help_btn = Gtk.Button(label="Help")
-        row.pack_start(help_btn, False, False, 0)
+        add_help(self, dialog, "firmware_update", row=row)
         update_btn = Gtk.Button(label="Update")
         update_btn.set_sensitive(False)
         row.pack_start(update_btn, False, False, 0)
@@ -2705,8 +2710,6 @@ class ZPLViewerWindow(Gtk.Window):
         refresh_btn.connect("clicked", on_refresh)
         browse_btn.connect("clicked", on_browse)
         update_btn.connect("clicked", on_update)
-        help_btn.connect("clicked", lambda _b: self.show_help(
-            dialog, "firmware-update"))
         close_btn.connect("clicked", lambda _b: dialog.response(Gtk.ResponseType.CLOSE))
         dialog.show_all()
         ask_version()
@@ -2732,6 +2735,7 @@ class ZPLViewerWindow(Gtk.Window):
         """
         dialog = Gtk.Dialog(title="Printer Graphics", parent=self, flags=0)
         dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        add_help(self, dialog, "printer_graphics")
         dialog.set_default_size(420, 340)
 
         content = dialog.get_content_area()
@@ -2993,6 +2997,7 @@ class ZPLViewerWindow(Gtk.Window):
         """
         dialog = Gtk.Dialog(title="Printer Objects", parent=self, flags=0)
         dialog.add_button(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        add_help(self, dialog, "printer_objects")
         dialog.set_default_size(460, 340)
 
         content = dialog.get_content_area()
@@ -3252,6 +3257,7 @@ class ZPLViewerWindow(Gtk.Window):
         close_btn = Gtk.Button(label="Close")
         buttons.pack_start(send_btn, False, False, 0)
         buttons.pack_start(close_btn, False, False, 0)
+        add_help(self, window, "printer_console", row=buttons)
         busy = BusyBar((send_btn,))
         buttons.pack_end(busy, False, False, 0)
         content.pack_start(buttons, False, False, 0)
@@ -3417,6 +3423,7 @@ class ZPLViewerWindow(Gtk.Window):
         busy = BusyBar((refresh_btn,), status.set_text)
         buttons.pack_end(busy, False, False, 0)
         buttons.pack_end(close_btn, False, False, 0)
+        add_help(self, window, "printer_status", row=buttons)
         content.pack_start(buttons, False, False, 0)
 
         # Held in a dict so the nested functions can rebind them: the reports
