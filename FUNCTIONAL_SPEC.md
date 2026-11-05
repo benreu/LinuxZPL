@@ -787,7 +787,7 @@ pinned.
   so an element pushed against an edge that is not on a line stays against the
   edge.
   - **Alt**, held once a drag is under way, turns snapping off for as long as
-    it is held. A key for the middle of a drag, not the start: window
+    it is held - to the grid and to elements alike, guides included. A key for the middle of a drag, not the start: window
     managers often take Alt with a button press for themselves. While a drag
     is live, a press and release of Alt belong to the drag, never to the menu
     bar's keyboard navigation, which in Qt would otherwise take the focus and
@@ -802,6 +802,27 @@ pinned.
   - **Only the pointer snaps.** Arrow-key nudges, a typed X or Y, Align and a
     paste go exactly where they are told, and the arrows - a dot, or ten with
     Shift - are how something is placed off the grid while snapping is on.
+- **Snap to Elements** (§6.3) lines what the pointer moves up with what is
+  already on the label: the left edge, centre and right edge, and the top,
+  middle and bottom, of every element not being dragged - each member of a
+  group on its own - and of the label itself. A move tries every edge and
+  centre of its box; a resize only the edge or edges its handle moves. On each
+  axis, the nearest pair within **6 screen pixels** - `6 / scale` dots, so the
+  reach looks the same at every zoom - is put together, a centre onto an edge
+  as nearly as whole dots allow, which is within half a dot. Within reach it
+  wins over the grid; an axis with nothing in reach goes to the grid, if Snap
+  to Grid is on. Nothing being dragged is a target, so a group's members never
+  line up with each other. Alt, Shift and the redo on a key change work as
+  they do for the grid, and a locked axis snaps to nothing.
+- **Guides** show what has lined up, while a drag with Snap to Elements on
+  lasts: magenta lines one pixel wide, drawn over everything else and gone
+  when the button comes up. They are read from where the box came to rest -
+  after the clamp to the label, and after a text, a barcode, a circle or a
+  symbol has taken the size it prints at - so a guide never claims a match
+  the printed size did not keep. Each runs along the shared coordinate across
+  the dragged box and every box on that line, or the whole label where the
+  label's own edge or centre is one of them. A resize looks only at the edges
+  its handle moved.
 - **Arrow keys nudge** the selection: one dot, the finest step a printer can
   place, or ten with **Shift** — the 10× most drawing programs use, fixed in
   dots at every resolution. A nudge is a move like a drag: one shared delta,
@@ -1112,8 +1133,10 @@ those two groups. §5 describes what each does to the scale. Then, as a group
 of their own, **Show Grid** (Ctrl+'), a check item that shows and hides the
 grid (§5), and **Grid Settings…**, its spacing (§7.3). Then **Snap to Grid**
 (Ctrl+Shift+'), a check item that puts what the pointer drags, and what the
-palette adds, on the grid (§5, §6.5). All three are remembered the moment
-they change (§13). Then **Properties Panel**, a check item that
+palette adds, on the grid (§5, §6.5), and **Snap to Elements**, a check item
+with no shortcut that lines what the pointer drags up with the other
+elements and the label, and shows guides while it does (§5). All four are
+remembered the moment they change (§13). Then **Properties Panel**, a check item that
 shows and hides the Properties panel (§7.1), docked or floating, and is kept
 ticked to match it however it was shown or closed.
 
@@ -2763,7 +2786,7 @@ rulers = no
 | `[window]` | on quit | where the window opens (§2) |
 | `[docks]` | with the rest of the file | where the Properties panel is (§7.1). The GTK frontend writes `floating`, `shown` (docked), `width` (docked, in pixels) and `floating_geometry` (`x,y,width,height`); the Qt frontend keeps its own toolkit's saved window state in `state`, which also holds the panel's side. Each reads only its own keys. |
 | `[recent]` | whenever a file is opened or saved, an entry is dropped, or the list is cleared | File > Open Recent (§6.1) |
-| `[grid]` | the moment Show Grid, Snap to Grid or Grid Settings changes it | the grid (§5): `unit` (`in`, `mm` or `dots`), `spacing` in that unit, `major_every`, `shown` and `snap` (Snap to Grid). `snap_elements` and `rulers` are kept for the grid's later commands and are `no` until then. |
+| `[grid]` | the moment Show Grid, Snap to Grid, Snap to Elements or Grid Settings changes it | the grid (§5): `unit` (`in`, `mm` or `dots`), `spacing` in that unit, `major_every`, `shown`, `snap` (Snap to Grid) and `snap_elements` (Snap to Elements). `rulers` is kept for a later command and is `no` until then. |
 
 **The Print window's printer** (§9) deliberately never writes `[printer]` —
 only Default Printer and Label Size do.

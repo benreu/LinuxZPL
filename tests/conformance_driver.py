@@ -342,7 +342,8 @@ class GtkDriver:
         document = self.canvas.document
         return [document.elements.index(el) for el in document.selection]
 
-    def drag_pointer(self, from_x, from_y, dx, dy, shift=False, alt=False):
+    def drag_pointer(self, from_x, from_y, dx, dy, shift=False, alt=False,
+                     release=True):
         """Press, move and release - the path a user's drag actually takes.
 
         In steps, because a pointer arrives in steps. One motion event carrying
@@ -350,7 +351,8 @@ class GtkDriver:
         box snaps back to what it will print, so a drag delivered in small
         pieces used to lose every piece smaller than that snap. `shift` and
         `alt` are held from the first motion on, not at the press, where Shift
-        would make the click an additive one.
+        would make the click an additive one. With `release` false the button
+        stays down, for a look at the drag while it lasts.
         """
         from gi.repository import Gdk
         scale = self.canvas._scale()
@@ -360,9 +362,18 @@ class GtkDriver:
         for x, y in _drag_path(from_x, from_y, dx, dy):
             self.canvas.on_motion(self.canvas,
                                   self._Event(x * scale, y * scale, state=state))
+        if release:
+            self.release_pointer(from_x + dx, from_y + dy)
+
+    def release_pointer(self, lx, ly):
+        """Let the button up at a point in label dots."""
+        scale = self.canvas._scale()
         self.canvas.on_button_release(self.canvas,
-                                      self._Event((from_x + dx) * scale,
-                                                  (from_y + dy) * scale))
+                                      self._Event(lx * scale, ly * scale))
+
+    def guides(self):
+        """The snap guides the canvas is showing, as text to compare."""
+        return repr(self.canvas.guides)
 
     def resize(self, element, handle, dx, dy):
         self.geometry.resize_by_handle(self.canvas.document, element, handle, dx, dy)
@@ -373,6 +384,10 @@ class GtkDriver:
     def set_snap(self, on):
         """View > Snap to Grid, as the menu item sets it."""
         self.window.snap_grid_item.set_active(on)
+
+    def set_snap_elements(self, on):
+        """View > Snap to Elements, as the menu item sets it."""
+        self.window.snap_elements_item.set_active(on)
 
     def handles(self, element):
         return self.geometry.handles(element)
@@ -714,11 +729,12 @@ class QtDriver:
         return [self.document.elements.index(el)
                 for el in self.document.selection]
 
-    def drag_pointer(self, from_x, from_y, dx, dy, shift=False, alt=False):
+    def drag_pointer(self, from_x, from_y, dx, dy, shift=False, alt=False,
+                     release=True):
         """Press, move and release - the path a user's drag actually takes.
 
-        In steps, and with Shift or Alt held from the first motion on, for the
-        reasons the GTK driver's gives.
+        In steps, with Shift or Alt held from the first motion on, and the
+        button left down when `release` is false, as the GTK driver's.
         """
         from PySide2.QtCore import QEvent, Qt
         modifiers = Qt.NoModifier
@@ -730,8 +746,18 @@ class QtDriver:
         for x, y in _drag_path(from_x, from_y, dx, dy):
             self.canvas.mouseMoveEvent(self._event(QEvent.MouseMove, x, y,
                                                    modifiers))
+        if release:
+            self.release_pointer(from_x + dx, from_y + dy)
+
+    def release_pointer(self, lx, ly):
+        """Let the button up at a point in label dots."""
+        from PySide2.QtCore import QEvent
         self.canvas.mouseReleaseEvent(
-            self._event(QEvent.MouseButtonRelease, from_x + dx, from_y + dy))
+            self._event(QEvent.MouseButtonRelease, lx, ly))
+
+    def guides(self):
+        """The snap guides the canvas is showing, as text to compare."""
+        return repr(self.canvas.guides)
 
     def resize(self, element, handle, dx, dy):
         self.geometry.resize_by_handle(self.document, element, handle, dx, dy)
@@ -743,6 +769,11 @@ class QtDriver:
         """View > Snap to Grid, as the menu item sets it."""
         if self.window.snap_grid_action.isChecked() != on:
             self.window.snap_grid_action.trigger()
+
+    def set_snap_elements(self, on):
+        """View > Snap to Elements, as the menu item sets it."""
+        if self.window.snap_elements_action.isChecked() != on:
+            self.window.snap_elements_action.trigger()
 
     def handles(self, element):
         return self.geometry.handles(element)
@@ -1792,6 +1823,36 @@ def sequence(driver, record):
     driver.add_frame()
     record('add two frames with a click, each a grid space on from the last')
     driver.set_snap(False)
+
+    # Snap to Elements: the edges and centres of what is already on the
+    # label, and of the label itself, reach six screen pixels out for a
+    # dragged edge. On the ruled label, whose rules start at x 20 and end at
+    # 380, and whose middle is at 203.
+    driver.set_snap_elements(True)
+    driver.load(FIXTURE_RULES)
+    driver.set_zoom(1.0)
+    _lined = driver.add_frame()
+    record('add a frame to the ruled label, with Snap to Elements on')
+    driver.fresh_gesture()
+    _grab = (_lined.x + _lined.width // 2, _lined.y + _lined.height // 2)
+    # To x 17: three dots from the rules' left edge at 20, and further from
+    # the vertical rule's centre at 22 and its right side at 24, so the
+    # nearest is the one it takes.
+    driver.drag_pointer(_grab[0], _grab[1], 17 - _lined.x, 3, release=False)
+    record("drag it within reach of the rules' left edge: the guides it shows",
+           driver.guides())
+    driver.release_pointer(_grab[0] + 17 - _lined.x, _grab[1] + 3)
+    record("let it go, on the rules' left edge")
+    driver.fresh_gesture()
+    _grab = (_lined.x + _lined.width // 2, _lined.y + _lined.height // 2)
+    driver.drag_pointer(_grab[0], _grab[1], 206 - _grab[0], 0)
+    record("drag its centre onto the label's")
+    driver.select(_lined)
+    driver.fresh_gesture()
+    _edge = driver.handles(_lined)['mr']
+    driver.drag_pointer(_edge[0], _edge[1], 376 - _edge[0], 0)
+    record("stretch its right edge onto the rules'")
+    driver.set_snap_elements(False)
 
 
 def main():

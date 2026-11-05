@@ -11987,6 +11987,52 @@ check("a text's guides claim only the edge it printed at",
                           or abs(2 * _tright - 812) <= 1),
       (_tright, _tg))
 
+# The Qt window: Snap to Elements, and guides while a drag lasts.
+_ew_ini = Path(tempfile.mkdtemp()) / 'settings.ini'
+_ew_real = qt_main._config_path, qt_main._fallback_config_path
+qt_main._config_path = qt_main._fallback_config_path = lambda: _ew_ini
+try:
+    ew = qt_main.ZPLDesignerWindow()
+    check("Snap to Elements starts off, with no shortcut",
+          not ew.grid.snap_elements and not ew.snap_elements_action.isChecked()
+          and ew.snap_elements_action.shortcut().isEmpty())
+    ew.snap_elements_action.trigger()
+    check("and is remembered once turned on",
+          ew.grid.snap_elements and zpl_grid.load_grid([_ew_ini]).snap_elements)
+    ec = ew.canvas
+    ec.set_zoom(1.0)
+    ea = ew.document.add_frame_element()
+    ea.x, ea.y = 100, 100
+    eb = ew.document.add_frame_element()
+    eb.x, eb.y = 400, 300
+    ec.commit()
+
+    def _eev(kind, x, y, mods=Qt.NoModifier):
+        return QMouseEvent(kind, QPoint(x, y), Qt.LeftButton, Qt.LeftButton, mods)
+
+    ec.mousePressEvent(_eev(QEvent.MouseButtonPress, 500, 375))
+    for _k in range(1, 9):
+        ec.mouseMoveEvent(_eev(QEvent.MouseMove, 500 - 296 * _k // 8, 375 - 20 * _k // 8))
+    check("a drag through the canvas snaps onto another element's edge",
+          (eb.x, eb.y) == (100, 280), (eb.x, eb.y))
+    check("with a guide for each edge and centre that line up, while it lasts",
+          ec.guides == [(100.0, 100, 100.0, 430), (200.0, 100, 200.0, 430),
+                        (300.0, 100, 300.0, 430)], ec.guides)
+    _img = ec.grab().toImage()
+    check("drawn in magenta", _img.pixelColor(100, 270).name() == '#e6008c',
+          _img.pixelColor(100, 270).name())
+    ec.mouseMoveEvent(_eev(QEvent.MouseMove, 204, 355, Qt.AltModifier))
+    check("Alt held drops the snap and the guides",
+          (eb.x, eb.y) == (104, 280) and ec.guides == [], ((eb.x, eb.y), ec.guides))
+    ec.mouseMoveEvent(_eev(QEvent.MouseMove, 204, 355))
+    ec.mouseReleaseEvent(QMouseEvent(QEvent.MouseButtonRelease, QPoint(204, 355),
+                                     Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
+    check("and the guides go when the drag ends", ec.guides == [] and eb.x == 100)
+    ew.unsaved_changes = False
+    ew.close()
+finally:
+    qt_main._config_path, qt_main._fallback_config_path = _ew_real
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

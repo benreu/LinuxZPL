@@ -312,6 +312,10 @@ class ZPLDesignerWindow(QMainWindow):
         self.grid.snap = bool(checked)
         self._grid_changed()
 
+    def on_snap_to_elements(self, checked):
+        self.grid.snap_elements = bool(checked)
+        self._grid_changed()
+
     def on_grid_settings(self):
         chosen = qt_dialogs.grid_settings_dialog(self, self.grid, self.document.dpi)
         if chosen is None:
@@ -466,6 +470,10 @@ class ZPLDesignerWindow(QMainWindow):
             "Snap to Grid", lambda _checked=False: self.snap_grid_action.trigger(),
             'Ctrl+"')
         self._alt_snap_grid.setVisible(False)
+        # No shortcut: every window-wide binding is a key taken from the canvas.
+        self.snap_elements_action = self._action(
+            "Snap to &Elements", self.on_snap_to_elements, checkable=True)
+        self.snap_elements_action.setChecked(self.grid.snap_elements)
 
         self.label_size_action = self._action("Label Size…", self.on_label_size)
         self.default_printer_action = self._action("Default Printer…", self.on_default_printer)
@@ -559,6 +567,7 @@ class ZPLDesignerWindow(QMainWindow):
         view_menu.addAction(self.grid_settings_action)
         view_menu.addSeparator()
         view_menu.addAction(self.snap_grid_action)
+        view_menu.addAction(self.snap_elements_action)
         view_menu.addSeparator()
         # The dock's own show/hide action, so it stays ticked to match the
         # panel however it was shown or closed

@@ -79,8 +79,9 @@ disagree.
 - **Grid**: View → Show Grid draws one over the label, spaced in inches,
   millimetres or dots (View → Grid Settings…), thinning out as you zoom out;
   it is never printed. View → Snap to Grid puts what you drag, resize or add
-  from the palette on it - hold Alt mid-drag to place freely, Shift to keep a
-  move on one axis
+  from the palette on it, and View → Snap to Elements lines what you drag up
+  with the edges and centres of other elements and the label, with magenta
+  guides - hold Alt mid-drag to place freely, Shift to keep a move on one axis
 
 ## Requirements
 
@@ -225,7 +226,8 @@ zplcore/    no GUI toolkit, runs headless
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   grid.py        the grid over the canvas: its unit, where its lines fall
-  snap.py        where a drag lands: on the grid, held to one axis
+  snap.py        where a drag lands: on the grid, against other elements,
+                 held to one axis; the guides that show it
   textraster.py  the text raster both canvases blit
   graphic_symbols.py  the ^GS symbols, drawn, since there is no file for
                  the printer's GS font

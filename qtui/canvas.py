@@ -120,6 +120,9 @@ class DesignCanvas(QWidget):
         # Shift or Alt mid-drag can redo it at once, without waiting for the
         # pointer to move.
         self._drag_delta = None
+        # What the dragged box has lined up with, as (x0, y0, x1, y1) segments
+        # in dots, while Snap to Elements is on and a drag is live.
+        self.guides = []
         # A rubber band being dragged over empty canvas: where it started and
         # where the pointer is now, both in dots, and whether it adds to the
         # selection rather than replacing it.
@@ -150,6 +153,7 @@ class DesignCanvas(QWidget):
         """Show a different document - a load, or File > New."""
         self.document = document
         document.snap_grid = self._grid
+        self.guides = []
         self.drag_start = None
         self.active_handle = None
         self.resize_origin = None
@@ -264,6 +268,7 @@ class DesignCanvas(QWidget):
         target = self.document.resize_target()
         if target is not None:
             self._draw_handles(painter, target)
+        self._draw_guides(painter)
         self._draw_band(painter, scale)
 
         painter.restore()
@@ -307,6 +312,23 @@ class DesignCanvas(QWidget):
                 pen.setWidth(1)
                 painter.setPen(pen)
                 painter.drawLines(lines)
+        painter.restore()
+
+    # Magenta, the colour drawing programs give a snap guide: nothing else on
+    # the canvas uses it, so a guide never reads as an outline or a rule.
+    GUIDE = QColor(230, 0, 140)
+
+    def _draw_guides(self, painter):
+        """What the dragged box has lined up with, while the drag lasts."""
+        if not self.guides:
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        pen = QPen(self.GUIDE)
+        pen.setCosmetic(True)
+        pen.setWidth(1)
+        painter.setPen(pen)
+        painter.drawLines([QLineF(x0, y0, x1, y1) for x0, y0, x1, y1 in self.guides])
         painter.restore()
 
     def _draw_element(self, painter, element: DesignElement, selected: bool):
@@ -1043,16 +1065,24 @@ class DesignCanvas(QWidget):
         doc = self.document
         self._drag_delta = (dx, dy)
         grid = None if modifiers & Qt.AltModifier else self._grid
+        scale = self._scale()
         if self.active_handle:
+            target = doc.resize_target()
+            moving = (target.members if isinstance(target, geometry.GroupBox)
+                      else [target])
             dx, dy = snap.resize_delta(doc, self.resize_origin, self.active_handle,
-                                       dx, dy, grid)
-            geometry.resize_by_handle(doc, doc.resize_target(),
-                                      self.active_handle, dx, dy,
+                                       dx, dy, grid, moving=moving, scale=scale)
+            geometry.resize_by_handle(doc, target, self.active_handle, dx, dy,
                                       origin=self.resize_origin)
         else:
             # The whole selection moves together, clamped as one box.
-            snap.drag_selection(doc, doc.selection, self.move_origin, dx, dy, grid,
-                                lock_axis=bool(modifiers & Qt.ShiftModifier))
+            moving = doc.selection
+            snap.drag_selection(doc, moving, self.move_origin, dx, dy, grid,
+                                lock_axis=bool(modifiers & Qt.ShiftModifier), scale=scale)
+        # Read from where the box came to rest, so a guide never claims a
+        # match the printed size did not keep.
+        self.guides = (snap.guides(doc, moving, self.active_handle)
+                       if snap.snapping_elements(grid) else [])
         self._drag_changed = True
         self.update()
 
@@ -1105,6 +1135,9 @@ class DesignCanvas(QWidget):
         self.resize_origin = None
         self.move_origin = None
         self._drag_delta = None
+        if self.guides:
+            self.guides = []
+            self.update()
         if self._drag_changed:
             # A drag is one change, reported once it finishes, so it is one undo
             # entry rather than one per motion event.

@@ -1028,6 +1028,11 @@ class ZPLViewerWindow(Gtk.Window):
         add_accel(self.snap_grid_item, "<Control><Shift>apostrophe")
         add_accel(self.snap_grid_item, "<Control><Shift>quotedbl", visible=False)
         view_menu.append(self.snap_grid_item)
+        # No shortcut: every window-wide binding is a key taken from the canvas.
+        self.snap_elements_item = Gtk.CheckMenuItem.new_with_mnemonic("Snap to _Elements")
+        self.snap_elements_item.set_active(self.grid.snap_elements)
+        self.snap_elements_item.connect("toggled", self.on_snap_to_elements_toggled)
+        view_menu.append(self.snap_elements_item)
 
         view_menu.append(Gtk.SeparatorMenuItem())
         # Shows and hides the Properties panel, docked or floating - and is
@@ -1456,6 +1461,10 @@ class ZPLViewerWindow(Gtk.Window):
 
     def on_snap_to_grid_toggled(self, item):
         self.grid.snap = item.get_active()
+        self._grid_changed()
+
+    def on_snap_to_elements_toggled(self, item):
+        self.grid.snap_elements = item.get_active()
         self._grid_changed()
 
     def on_grid_settings_clicked(self, *_args):

@@ -163,6 +163,9 @@ class DesignCanvas(Gtk.DrawingArea):
         # Shift or Alt mid-drag can redo it at once, without waiting for the
         # pointer to move.
         self._drag_delta = None
+        # What the dragged box has lined up with, as (x0, y0, x1, y1) segments
+        # in dots, while Snap to Elements is on and a drag is live.
+        self.guides = []
         # A rubber band being dragged over empty canvas: where it started and
         # where the pointer is now, both in dots, and whether it adds to the
         # selection rather than replacing it.
@@ -267,6 +270,7 @@ class DesignCanvas(Gtk.DrawingArea):
         """Show a different document - a load, or File > New."""
         self.document = document
         document.snap_grid = self._grid
+        self.guides = []
         self.drag_start = None
         self.active_handle = None
         self.resize_origin = None
@@ -570,6 +574,7 @@ class DesignCanvas(Gtk.DrawingArea):
         target = self.document.resize_target()
         if target is not None:
             self._draw_handles(context, target)
+        self._draw_guides(context, scale_factor)
         self._draw_band(context, scale_factor)
 
         context.restore()
@@ -601,26 +606,47 @@ class DesignCanvas(Gtk.DrawingArea):
             (major if is_major else minor).append((x, top, x, bottom))
         for y, is_major in grid.lines(top, bottom, scale, dpi):
             (major if is_major else minor).append((left, y, right, y))
-        # A one-pixel line centred on a pixel boundary falls on the pixel
-        # before it, unantialiased; half a pixel over puts it on the column
-        # that starts at its dot, where Qt draws it too.
-        half = 0.5 / max(1e-6, scale)
-        context.save()
-        context.set_antialias(cairo.Antialias.NONE)
-        context.set_line_width(2 * half)
         for colour, lines in ((self.GRID_MINOR, minor), (self.GRID_MAJOR, major)):
-            if not lines:
-                continue
-            context.set_source_rgba(*colour)
-            for ax, ay, bx, by in lines:
-                if ax == bx:
-                    context.move_to(ax + half, ay)
-                    context.line_to(bx + half, by)
-                else:
-                    context.move_to(ax, ay + half)
-                    context.line_to(bx, by + half)
-            context.stroke()
+            if lines:
+                context.set_source_rgba(*colour)
+                self._hairlines(context, scale, lines)
+
+    @staticmethod
+    def _hairlines(context, scale: float, lines):
+        """Stroke one-pixel lines, given in dots, on the pixel each one's
+        position falls in - where Qt draws an unantialiased cosmetic line, so
+        the two frontends light the same pixels at every zoom. 609 dots at 0.75
+        is 456.75 pixels, which is row 456 in both.
+
+        Drawn in the widget's own pixels: a line one pixel wide centred on a
+        pixel boundary, unantialiased, lands on whichever side cairo rounds to.
+        """
+        scale = max(1e-6, scale)
+        context.save()
+        context.scale(1 / scale, 1 / scale)
+        context.set_antialias(cairo.Antialias.NONE)
+        context.set_line_width(1)
+        for ax, ay, bx, by in lines:
+            if ax == bx:
+                px = math.floor(ax * scale + 1e-9) + 0.5
+                context.move_to(px, ay * scale)
+                context.line_to(px, by * scale)
+            else:
+                py = math.floor(ay * scale + 1e-9) + 0.5
+                context.move_to(ax * scale, py)
+                context.line_to(bx * scale, py)
+        context.stroke()
         context.restore()
+
+    # Magenta, the colour drawing programs give a snap guide: nothing else on
+    # the canvas uses it, so a guide never reads as an outline or a rule.
+    GUIDE = (230 / 255, 0, 140 / 255)
+
+    def _draw_guides(self, context, scale: float):
+        """What the dragged box has lined up with, while the drag lasts."""
+        if self.guides:
+            context.set_source_rgb(*self.GUIDE)
+            self._hairlines(context, scale, self.guides)
 
     def _draw_element(self, context, element: DesignElement, selected: bool):
         """Draw a single element."""
@@ -1416,6 +1442,9 @@ class DesignCanvas(Gtk.DrawingArea):
             self.resize_origin = None
             self.move_origin = None
             self._drag_delta = None
+            if self.guides:
+                self.guides = []
+                self.queue_draw()
             # a drag is one change, reported once it finishes, so that it is
             # one undo step rather than one per motion event
             if self._drag_changed:
@@ -1584,16 +1613,24 @@ class DesignCanvas(Gtk.DrawingArea):
         doc = self.document
         self._drag_delta = (dx, dy)
         grid = None if alt else self._grid
+        scale = self._scale()
         if self.active_handle:
+            target = doc.resize_target()
+            moving = (target.members if isinstance(target, geometry.GroupBox)
+                      else [target])
             dx, dy = snap.resize_delta(doc, self.resize_origin, self.active_handle,
-                                       dx, dy, grid)
-            geometry.resize_by_handle(doc, doc.resize_target(),
-                                      self.active_handle, dx, dy,
+                                       dx, dy, grid, moving=moving, scale=scale)
+            geometry.resize_by_handle(doc, target, self.active_handle, dx, dy,
                                       origin=self.resize_origin)
         else:
             # The whole selection moves together, clamped as one box.
-            snap.drag_selection(doc, doc.selection, self.move_origin, dx, dy, grid,
-                                lock_axis=shift)
+            moving = doc.selection
+            snap.drag_selection(doc, moving, self.move_origin, dx, dy, grid,
+                                lock_axis=shift, scale=scale)
+        # Read from where the box came to rest, so a guide never claims a
+        # match the printed size did not keep.
+        self.guides = (snap.guides(doc, moving, self.active_handle)
+                       if snap.snapping_elements(grid) else [])
         self._drag_changed = True
         self.queue_draw()
 

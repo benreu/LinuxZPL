@@ -2207,6 +2207,42 @@ try:
           (sf.x, sf.y) == (102, 122), (sf.x, sf.y))
     sc.on_button_release(sc, SnapEvent(120, 140))
     check("the whole drag is one change", heard == ['change'], heard)
+
+    # Snap to Elements, and the guides a drag shows while it lasts
+    check("Snap to Elements starts off, with no shortcut",
+          not sw.grid.snap_elements and not sw.snap_elements_item.get_active()
+          and sw.snap_elements_item not in sw.accelerators)
+    sw.snap_grid_item.set_active(False)
+    sw.snap_elements_item.set_active(True)
+    check("and is remembered once turned on",
+          zpl_grid.load_grid([snap_path]).snap_elements)
+    sc.set_document(_Doc(812, 1218, dpi=203))
+    ea = sc.add_frame_element()
+    ea.x, ea.y = 100, 100
+    eb = sc.add_frame_element()
+    eb.x, eb.y = 400, 300
+    sc.last_click_element = None
+    sc.on_button_press(sc, SnapEvent(500, 375))
+    for k in range(1, 9):
+        sc.on_motion(sc, SnapEvent(500 - 296 * k // 8, 375 - 20 * k // 8))
+    check("a drag through the canvas snaps onto another element's edge",
+          (eb.x, eb.y) == (100, 280), (eb.x, eb.y))
+    check("with a guide for each edge and centre that line up, while it lasts",
+          sc.guides == [(100.0, 100, 100.0, 430), (200.0, 100, 200.0, 430),
+                        (300.0, 100, 300.0, 430)], sc.guides)
+    surface =cairo.ImageSurface(cairo.FORMAT_ARGB32, 120, 300)
+    sc.on_draw(sc, cairo.Context(surface))
+    surface.flush()
+    data, stride = surface.get_data(), surface.get_stride()
+    b, g, r = data[270 * stride + 4 * 100: 270 * stride + 4 * 100 + 3]
+    check("drawn in magenta, on the pixel Qt lights", (r, g, b) == (230, 0, 140),
+          (r, g, b))
+    sc.on_motion(sc, SnapEvent(204, 355, Gdk.ModifierType.MOD1_MASK))
+    check("Alt held drops the snap and the guides",
+          (eb.x, eb.y) == (104, 280) and sc.guides == [], ((eb.x, eb.y), sc.guides))
+    sc.on_motion(sc, SnapEvent(204, 355))
+    sc.on_button_release(sc, SnapEvent(204, 355))
+    check("and the guides go when the drag ends", sc.guides == [] and eb.x == 100)
     sw.destroy()
 finally:
     gtk_main._config_path = real_config_path
