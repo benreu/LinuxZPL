@@ -32,6 +32,7 @@ from . import dialogs as qt_dialogs
 from .busy import BusyBar
 from .canvas import PALETTE_MIME, DesignCanvas, to_qimage
 from .properties import PropertiesPanel
+from .rulers import RULER_SIZE, Ruler, RulerCorner
 
 # The align commands, in menu order: the three horizontal, then the three
 # vertical. The GTK frontend spells the same six the same way, and the
@@ -137,8 +138,18 @@ class ZPLDesignerWindow(QMainWindow):
         # Always on, so the width a fit is measured against does not change
         # when the scrollbar appears, which would set off a resize loop.
         self.scroller.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        # The rulers, in margins the scroll area keeps outside what it scrolls.
+        # Made before the viewport is watched, which places them.
+        self.top_ruler = Ruler(self.canvas, self.grid, True, self.scroller)
+        self.left_ruler = Ruler(self.canvas, self.grid, False, self.scroller)
+        self.ruler_corner = RulerCorner(self.grid, self.scroller)
         self.scroller.viewport().installEventFilter(self)
         self.setCentralWidget(self.scroller)
+        for bar in (self.scroller.horizontalScrollBar(),
+                    self.scroller.verticalScrollBar()):
+            bar.valueChanged.connect(self._update_rulers)
+        self.canvas.scaleChanged.connect(self._update_rulers)
+        self.canvas.pointerMoved.connect(self._on_pointer_moved)
 
         # The selection's properties, edited live, beside the canvas. Built
         # before the actions, every one of which ends its burst of edits.
@@ -157,10 +168,14 @@ class ZPLDesignerWindow(QMainWindow):
                               *self.upload_template_actions),
                              self.update_status, self)
         self.statusBar().addPermanentWidget(self._busy)
+        # Where the pointer is on the label, in the grid's unit, beside the zoom
+        self.pointer_label = QLabel()
+        self.pointer_label.setContentsMargins(0, 0, 12, 0)
+        self.statusBar().addPermanentWidget(self.pointer_label)
         self.zoom_label = QLabel()
         self.statusBar().addPermanentWidget(self.zoom_label)
         self.statusBar().showMessage("Ready")
-        self._sync_view_size()
+        self._show_rulers()
 
         self._undo_stack = []
         self._redo_stack = []
@@ -211,6 +226,8 @@ class ZPLDesignerWindow(QMainWindow):
         if watched is self.scroller.viewport():
             if event.type() == event.Resize:
                 self._sync_view_size()
+            if event.type() in (event.Resize, event.Move):
+                self._place_rulers()
         elif watched in self._palette_kinds and self._palette_drag(watched, event):
             return True
         return super().eventFilter(watched, event)
@@ -323,10 +340,54 @@ class ZPLDesignerWindow(QMainWindow):
         self.grid.update(chosen)
         self._grid_changed()
 
+    def on_rulers(self, checked):
+        self.grid.rulers = bool(checked)
+        self._show_rulers()
+        self._grid_changed()
+
+    def _show_rulers(self):
+        """Give the rulers their margins, or take them away, and fit again:
+        the area a fit measures has just grown or shrunk by a ruler."""
+        shown = self.grid.rulers
+        margin = RULER_SIZE if shown else 0
+        self.scroller.setViewportMargins(margin, margin, 0, 0)
+        for ruler in (self.top_ruler, self.left_ruler, self.ruler_corner):
+            ruler.setVisible(shown)
+        self._place_rulers()
+        self._sync_view_size()
+
+    def _place_rulers(self):
+        """Lay the rulers along the viewport's top and left edges."""
+        area = self.scroller.viewport().geometry()
+        size = RULER_SIZE
+        self.top_ruler.setGeometry(area.left(), area.top() - size, area.width(), size)
+        self.left_ruler.setGeometry(area.left() - size, area.top(), size, area.height())
+        self.ruler_corner.setGeometry(area.left() - size, area.top() - size, size, size)
+        self._update_rulers()
+
+    def _update_rulers(self, *_args):
+        if self.grid.rulers:
+            for ruler in (self.top_ruler, self.left_ruler, self.ruler_corner):
+                ruler.update()
+
+    def _on_pointer_moved(self, point):
+        """Follow the pointer in the readout and on the rulers."""
+        if point is None:
+            self.pointer_label.setText("")
+            self.top_ruler.set_pointer(None)
+            self.left_ruler.set_pointer(None)
+            return
+        x, y = point
+        self.pointer_label.setText(zpl_grid.format_point(x, y, self.grid.unit,
+                                                         self.document.dpi))
+        self.top_ruler.set_pointer(x)
+        self.left_ruler.set_pointer(y)
+
     def _grid_changed(self):
         """Show the grid as it now is, and remember it."""
         zpl_grid.save_grid(self._settings_files(), self.grid)
         self.canvas.update()
+        self._update_rulers()
 
     # --- convenience ---------------------------------------------------------
 
@@ -456,6 +517,9 @@ class ZPLDesignerWindow(QMainWindow):
         self.fit_width_action = self._action("Fit &Width", self.on_fit_width, "Ctrl+9")
         self.actual_size_action = self._action("&Actual Size", self.on_actual_size,
                                                "Ctrl+1")
+        self.rulers_action = self._action("&Rulers", self.on_rulers, "Ctrl+R",
+                                          checkable=True)
+        self.rulers_action.setChecked(self.grid.rulers)
         self.show_grid_action = self._action("Show &Grid", self.on_show_grid,
                                              "Ctrl+'", checkable=True)
         self.show_grid_action.setChecked(self.grid.shown)
@@ -563,6 +627,7 @@ class ZPLDesignerWindow(QMainWindow):
         view_menu.addAction(self.fit_width_action)
         view_menu.addAction(self.actual_size_action)
         view_menu.addSeparator()
+        view_menu.addAction(self.rulers_action)
         view_menu.addAction(self.show_grid_action)
         view_menu.addAction(self.grid_settings_action)
         view_menu.addSeparator()

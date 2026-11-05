@@ -12074,6 +12074,80 @@ check("the readout gives inches to the thousandth, millimetres to the tenth",
       and zpl_grid.format_point(254, 162, 'mm', 203) == '31.8, 20.3 mm'
       and zpl_grid.format_point(254, 162, 'dots', 203) == '254, 162 dots')
 
+# The Qt window: View > Rulers, and the readout in the status bar
+_rw_ini = Path(tempfile.mkdtemp()) / 'settings.ini'
+_rw_real = qt_main._config_path, qt_main._fallback_config_path
+qt_main._config_path = qt_main._fallback_config_path = lambda: _rw_ini
+try:
+    rw = qt_main.ZPLDesignerWindow()
+    rw.resize(1000, 800)
+    rw.show()
+    app.processEvents()
+    check("the rulers start hidden, on Ctrl+R",
+          not rw.grid.rulers and not rw.rulers_action.isChecked()
+          and rw.rulers_action.shortcut().toString() == 'Ctrl+R'
+          and not rw.top_ruler.isVisible())
+    _vp_before = rw.scroller.viewport().geometry()
+    rw.rulers_action.trigger()
+    app.processEvents()
+    _vp = rw.scroller.viewport().geometry()
+    check("Rulers shows them, in margins the scroll area keeps for them",
+          rw.top_ruler.isVisible() and rw.left_ruler.isVisible()
+          and rw.ruler_corner.isVisible()
+          and (_vp.left() - _vp_before.left(), _vp.top() - _vp_before.top()) == (20, 20),
+          (_vp_before, _vp))
+    check("along the viewport's top and left edges",
+          rw.top_ruler.geometry().bottom() + 1 == _vp.top()
+          and rw.left_ruler.geometry().right() + 1 == _vp.left()
+          and rw.top_ruler.width() == _vp.width())
+    check("and a fit measures the smaller view",
+          rw.canvas._view_size == (_vp.width(), _vp.height()), rw.canvas._view_size)
+    check("they are remembered", zpl_grid.load_grid([_rw_ini]).rulers)
+    _canvas_at = rw.canvas.mapToGlobal(QPoint(0, 0))
+    check("each ruler's 0 is on the label's edge",
+          rw.top_ruler.marks()[0][:3] == (rw.top_ruler.mapFromGlobal(_canvas_at).x(), 0, '0')
+          and rw.left_ruler.marks()[0][:3]
+          == (rw.left_ruler.mapFromGlobal(_canvas_at).y(), 0, '0'),
+          (rw.top_ruler.marks()[:1], rw.left_ruler.marks()[:1]))
+    rw.canvas.set_zoom(2.0)
+    rw.scroller.horizontalScrollBar().setValue(300)
+    app.processEvents()
+    check("and stays there scrolled, the marks moving with the label",
+          rw.top_ruler.origin()
+          == rw.top_ruler.mapFromGlobal(rw.canvas.mapToGlobal(QPoint(0, 0))).x() < 0
+          and all(0 <= px <= rw.top_ruler.width() for px, _, _ in rw.top_ruler.marks()),
+          rw.top_ruler.origin())
+    rw.canvas.set_zoom(1.0)
+    app.processEvents()
+
+    check("the readout is blank with the pointer off the canvas",
+          rw.pointer_label.text() == '')
+    rw.canvas.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, QPoint(254, 162),
+                                         Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+    check("and gives the pointer's place on the label, in the grid's unit",
+          rw.pointer_label.text() == '1.251, 0.798 in', rw.pointer_label.text())
+    check("which the rulers mark too",
+          (rw.top_ruler.pointer, rw.left_ruler.pointer) == (254, 162))
+    rw.grid.unit, rw.grid.spacing = 'mm', 1.0
+    rw.canvas.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, QPoint(254, 162),
+                                         Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+    check("in millimetres when the grid is",
+          rw.pointer_label.text() == '31.8, 20.3 mm', rw.pointer_label.text())
+    rw.canvas.leaveEvent(QEvent(QEvent.Leave))
+    check("and blank again once the pointer leaves",
+          rw.pointer_label.text() == '' and rw.top_ruler.pointer is None)
+    rw.rulers_action.trigger()
+    app.processEvents()
+    # Only the margins: at 1:1 a horizontal scrollbar has come and taken
+    # some of the height, which the fitted view had no need of.
+    check("Rulers again hides them and gives the room back",
+          not rw.top_ruler.isVisible()
+          and rw.scroller.viewport().geometry().topLeft() == _vp_before.topLeft(),
+          (rw.scroller.viewport().geometry(), _vp_before))
+    rw.close()
+finally:
+    qt_main._config_path, qt_main._fallback_config_path = _rw_real
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

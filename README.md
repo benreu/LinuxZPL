@@ -82,6 +82,9 @@ disagree.
   from the palette on it, and View → Snap to Elements lines what you drag up
   with the edges and centres of other elements and the label, with magenta
   guides - hold Alt mid-drag to place freely, Shift to keep a move on one axis
+- **Rulers and pointer position**: View → Rulers puts rulers along the
+  canvas's edges, and the status bar shows where the pointer is on the label,
+  both in the grid's unit
 
 ## Requirements
 
@@ -192,7 +195,7 @@ Identical in both frontends.
 | Ctrl+Q | Quit | Ctrl+[ / Ctrl+Shift+[ | Send Backward / to Back |
 | Ctrl+A | Select All | Ctrl++ / Ctrl+- | Zoom In / Out |
 | Ctrl+Shift+A | Deselect All | Ctrl+0 / Ctrl+9 / Ctrl+1 | Fit Label / Fit Width / 1:1 |
-| | | Ctrl+' / Ctrl+Shift+' | Show Grid / Snap to Grid |
+| Ctrl+R | Rulers | Ctrl+' / Ctrl+Shift+' | Show Grid / Snap to Grid |
 
 ## Settings
 
@@ -225,7 +228,8 @@ zplcore/    no GUI toolkit, runs headless
                     printer for Printer -> Firmware Update...
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
-  grid.py        the grid over the canvas: its unit, where its lines fall
+  grid.py        the grid over the canvas: its unit, where its lines fall,
+                 the rulers' marks and the pointer readout
   snap.py        where a drag lands: on the grid, against other elements,
                  held to one axis; the guides that show it
   textraster.py  the text raster both canvases blit

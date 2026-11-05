@@ -637,13 +637,13 @@ source at the new size — never from the previous bitmap.
 ┌─────────────────────────────────────────────────────────┐
 │ File Edit View Settings   Title  ↶ ↷  − Fit +  Align ▾ ✕│  header bar
 ├────────────┬────────────────────────────────────────────┤
-│ [+ Text]   │                                            │
-│ [+ Time]   │                                            │
-│ [+ Frame]  │              design canvas                 │  tool palette,
-│ [+ Circle] │                                            │  scrollable canvas
-│ …          │                                            │
-├────────────┴────────────────────────────────────────────┤
-│ Ready                                            75% ▏  │  status bar
+│ [+ Text]   │in│0   1   2   3   4                         │  rulers, when shown
+│ [+ Time]   │──┼─────────────────────────────────────────│
+│ [+ Frame]  │1 │           design canvas                 │  tool palette,
+│ [+ Circle] │2 │                                         │  scrollable canvas
+│ …          │  │                                         │
+├────────────┴──┴─────────────────────────────────────────┤
+│ Ready                           1.251, 0.798 in  75% ▏  │  status bar
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -678,7 +678,27 @@ may be smaller, or elsewhere, than the one they were saved on.
 
 The zoom percentage is its own widget in the status bar, so a status message
 does not wipe it away; `(fit)` marks a scale being decided by a fit rather than
-pinned.
+pinned. Beside it, another widget of its own gives **where the pointer is** on
+the label, in the grid's unit (§7.3): inches to the thousandth, millimetres to
+the tenth or whole dots, `1.251, 0.798 in`, about one dot's worth at 203 dpi.
+It follows the pointer over the canvas, during a drag too, and is blank while
+the pointer is anywhere else. It has no switch.
+
+**The rulers**, shown by View ▸ Rulers (§6.3) and hidden until they are, run
+along the canvas's top and left edges, 20 pixels thick, outside the area that
+scrolls, so they stay put while the label moves under them. Their 0 is the
+label's top-left corner, found from where the canvas is on screen, so it
+follows the scroll position and the centring of a label smaller than the view.
+Along the label they are white, beyond it shaded. They are in the grid's unit,
+which the square where they meet names. Their numbered step is the smallest
+of 0.1, 0.2, 0.5, 1, 2, 5 or 10 inches, 1, 2, 5, 10, 20, 50, 100 or 200 mm, or
+10, 20, 50 dots and so on up to 5000, that keeps the numbers 50 pixels apart,
+divided into tenths, fifths or halves - the finest that keeps the marks 5
+pixels apart - with a longer mark at each half. Decimal inches, as Label Size
+takes them, not a carpenter's sixteenths. The left ruler's numbers read up it.
+A red mark on each follows the pointer. Showing or hiding them takes their
+room from the view or gives it back, and a fit follows. Both frontends take
+their marks from the core, so they number the same ones.
 
 ---
 
@@ -1136,12 +1156,13 @@ would be six more keys taken away from the canvas (§14).
 
 Zoom In, Zoom Out, then Fit Label, Fit Width, Actual Size — separated into
 those two groups. §5 describes what each does to the scale. Then, as a group
-of their own, **Show Grid** (Ctrl+'), a check item that shows and hides the
+of their own, **Rulers** (Ctrl+R), a check item that shows and hides the
+rulers (§4), **Show Grid** (Ctrl+'), a check item that shows and hides the
 grid (§5), and **Grid Settings…**, its spacing (§7.3). Then **Snap to Grid**
 (Ctrl+Shift+'), a check item that puts what the pointer drags, and what the
 palette adds, on the grid (§5, §6.5), and **Snap to Elements**, a check item
 with no shortcut that lines what the pointer drags up with the other
-elements and the label, and shows guides while it does (§5). All four are
+elements and the label, and shows guides while it does (§5). All five are
 remembered the moment they change (§13). Then **Properties Panel**, a check item that
 shows and hides the Properties panel (§7.1), docked or floating, and is kept
 ticked to match it however it was shown or closed.
@@ -2792,7 +2813,7 @@ rulers = no
 | `[window]` | on quit | where the window opens (§2) |
 | `[docks]` | with the rest of the file | where the Properties panel is (§7.1). The GTK frontend writes `floating`, `shown` (docked), `width` (docked, in pixels) and `floating_geometry` (`x,y,width,height`); the Qt frontend keeps its own toolkit's saved window state in `state`, which also holds the panel's side. Each reads only its own keys. |
 | `[recent]` | whenever a file is opened or saved, an entry is dropped, or the list is cleared | File > Open Recent (§6.1) |
-| `[grid]` | the moment Show Grid, Snap to Grid, Snap to Elements or Grid Settings changes it | the grid (§5): `unit` (`in`, `mm` or `dots`), `spacing` in that unit, `major_every`, `shown`, `snap` (Snap to Grid) and `snap_elements` (Snap to Elements). `rulers` is kept for a later command and is `no` until then. |
+| `[grid]` | the moment Rulers, Show Grid, Snap to Grid, Snap to Elements or Grid Settings changes it | the grid (§5): `unit` (`in`, `mm` or `dots`), `spacing` in that unit, `major_every`, `shown`, `snap` (Snap to Grid), `snap_elements` (Snap to Elements) and `rulers` (Rulers). |
 
 **The Print window's printer** (§9) deliberately never writes `[printer]` —
 only Default Printer and Label Size do.
@@ -2863,6 +2884,7 @@ treated as corrupt and falls back too.
 | Ctrl+0 | Fit Label |
 | Ctrl+9 | Fit Width |
 | Ctrl+1 | Actual Size (1:1) |
+| Ctrl+R | Rulers |
 | Ctrl+' | Show Grid |
 | Ctrl+Shift+' | Snap to Grid |
 

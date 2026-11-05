@@ -39,6 +39,7 @@ from .canvas import DesignCanvas, palette_targets, to_pixbuf
 # editors that use them most
 from .editors import _make_combo, _make_row, _make_spin
 from .properties import DEFAULT_WIDTH as PANEL_WIDTH, PropertiesPanel
+from .rulers import Ruler, RulerCorner
 from PIL import Image
 import io
 
@@ -1010,6 +1011,11 @@ class ZPLViewerWindow(Gtk.Window):
             view_menu.append(item)
 
         view_menu.append(Gtk.SeparatorMenuItem())
+        self.rulers_item = Gtk.CheckMenuItem.new_with_mnemonic("_Rulers")
+        self.rulers_item.set_active(self.grid.rulers)
+        self.rulers_item.connect("toggled", self.on_rulers_toggled)
+        add_accel(self.rulers_item, "<Control>r")
+        view_menu.append(self.rulers_item)
         self.show_grid_item = Gtk.CheckMenuItem.new_with_mnemonic("Show _Grid")
         self.show_grid_item.set_active(self.grid.shown)
         self.show_grid_item.connect("toggled", self.on_show_grid_toggled)
@@ -1215,9 +1221,13 @@ class ZPLViewerWindow(Gtk.Window):
         self._view_pending = False
         scrolled_canvas.connect("size-allocate", self._on_view_allocated)
         self.scrolled_canvas = scrolled_canvas
+        # The scrolled canvas with the rulers along its top and left edges,
+        # outside what it scrolls, so they stay put while the label moves
+        self.ruler_grid = Gtk.Grid()
+        self.ruler_grid.attach(scrolled_canvas, 1, 1, 1, 1)
         # The canvas and, docked beside it, the Properties panel
         self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        self.paned.pack1(scrolled_canvas, True, False)
+        self.paned.pack1(self.ruler_grid, True, False)
         self.paned.connect("size-allocate", self._on_paned_allocated)
         self._panel_unplaced = True
         self.panel_width = self.saved_panel['width']
@@ -1276,6 +1286,22 @@ class ZPLViewerWindow(Gtk.Window):
         viewport = Gtk.Viewport()
         viewport.add(self.design_canvas)
         scrolled_canvas.add(viewport)
+
+        self.top_ruler = Ruler(self.design_canvas, self.grid, True)
+        self.left_ruler = Ruler(self.design_canvas, self.grid, False)
+        self.ruler_corner = RulerCorner(self.grid)
+        self.ruler_grid.attach(self.ruler_corner, 0, 0, 1, 1)
+        self.ruler_grid.attach(self.top_ruler, 1, 0, 1, 1)
+        self.ruler_grid.attach(self.left_ruler, 0, 1, 1, 1)
+        for ruler in (self.top_ruler, self.left_ruler, self.ruler_corner):
+            # Shown by _show_rulers, not by the window's show_all
+            ruler.set_no_show_all(True)
+        for adjustment in (scrolled_canvas.get_hadjustment(),
+                           scrolled_canvas.get_vadjustment()):
+            adjustment.connect("value-changed", self._update_rulers)
+        self.design_canvas.connect("size-allocate", self._update_rulers)
+        self.design_canvas.connect("scale-changed", self._update_rulers)
+        self.design_canvas.connect("pointer-moved", self._on_pointer_moved)
         
         # Status bar. The zoom is its own label beside it, so a status message
         # does not wipe it away.
@@ -1285,6 +1311,10 @@ class ZPLViewerWindow(Gtk.Window):
         self.zoom_label = Gtk.Label()
         self.zoom_label.set_margin_end(8)
         status_row.pack_end(self.zoom_label, False, False, 0)
+        # Where the pointer is on the label, in the grid's unit, beside the zoom
+        self.pointer_label = Gtk.Label()
+        self.pointer_label.set_margin_end(12)
+        status_row.pack_end(self.pointer_label, False, False, 0)
         # Beside the zoom, for the one network call the main window makes
         # itself: Print.
         self._busy = BusyBar((self.print_item, self.quick_print_item,
@@ -1295,6 +1325,7 @@ class ZPLViewerWindow(Gtk.Window):
 
         self.show_all()
         self._restore_panel()
+        self._show_rulers()
         self._update_zoom_readout()
         self.update_status("Ready")
 
@@ -1493,10 +1524,40 @@ class ZPLViewerWindow(Gtk.Window):
         self.grid.update(chosen)
         self._grid_changed()
 
+    def on_rulers_toggled(self, item):
+        self.grid.rulers = item.get_active()
+        self._show_rulers()
+        self._grid_changed()
+
+    def _show_rulers(self):
+        """Show or hide the rulers. The scrolled window grows or shrinks by a
+        ruler as they go or come, and a fit follows it from its allocation."""
+        for ruler in (self.top_ruler, self.left_ruler, self.ruler_corner):
+            ruler.set_visible(self.grid.rulers)
+
+    def _update_rulers(self, *_args):
+        if self.grid.rulers:
+            for ruler in (self.top_ruler, self.left_ruler, self.ruler_corner):
+                ruler.queue_draw()
+
+    def _on_pointer_moved(self, _canvas, point):
+        """Follow the pointer in the readout and on the rulers."""
+        if point is None:
+            self.pointer_label.set_text("")
+            self.top_ruler.set_pointer(None)
+            self.left_ruler.set_pointer(None)
+            return
+        x, y = point
+        self.pointer_label.set_text(zpl_grid.format_point(
+            x, y, self.grid.unit, self.design_canvas.document.dpi))
+        self.top_ruler.set_pointer(x)
+        self.left_ruler.set_pointer(y)
+
     def _grid_changed(self):
         """Show the grid as it now is, and remember it."""
         zpl_grid.save_grid(self._settings_files(), self.grid)
         self.design_canvas.queue_draw()
+        self._update_rulers()
 
     def main_window_closed(self, widget, event):
       if not self.close_app(widget):

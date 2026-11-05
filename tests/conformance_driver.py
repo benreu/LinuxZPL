@@ -375,6 +375,20 @@ class GtkDriver:
         """The snap guides the canvas is showing, as text to compare."""
         return repr(self.canvas.guides)
 
+    def hover(self, lx, ly):
+        """Move the pointer over the canvas with no button down."""
+        scale = self.canvas._scale()
+        self.canvas.on_motion(self.canvas, self._Event(lx * scale, ly * scale))
+
+    def readout(self):
+        """The status bar's pointer readout."""
+        return self.window.pointer_label.get_text()
+
+    def set_grid_unit(self, unit, spacing):
+        """Grid Settings' unit and spacing, as accepting the dialog sets them."""
+        self.window.grid.unit, self.window.grid.spacing = unit, spacing
+        self.window._grid_changed()
+
     def resize(self, element, handle, dx, dy):
         self.geometry.resize_by_handle(self.canvas.document, element, handle, dx, dy)
 
@@ -758,6 +772,24 @@ class QtDriver:
     def guides(self):
         """The snap guides the canvas is showing, as text to compare."""
         return repr(self.canvas.guides)
+
+    def hover(self, lx, ly):
+        """Move the pointer over the canvas with no button down."""
+        from PySide2.QtCore import QEvent, QPoint, Qt
+        from PySide2.QtGui import QMouseEvent
+        scale = self.canvas._scale()
+        self.canvas.mouseMoveEvent(QMouseEvent(
+            QEvent.MouseMove, QPoint(int(lx * scale), int(ly * scale)),
+            Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+
+    def readout(self):
+        """The status bar's pointer readout."""
+        return self.window.pointer_label.text()
+
+    def set_grid_unit(self, unit, spacing):
+        """Grid Settings' unit and spacing, as accepting the dialog sets them."""
+        self.window.grid.unit, self.window.grid.spacing = unit, spacing
+        self.window._grid_changed()
 
     def resize(self, element, handle, dx, dy):
         self.geometry.resize_by_handle(self.document, element, handle, dx, dy)
@@ -1853,6 +1885,19 @@ def sequence(driver, record):
     driver.drag_pointer(_edge[0], _edge[1], 376 - _edge[0], 0)
     record("stretch its right edge onto the rules'")
     driver.set_snap_elements(False)
+
+    # The pointer readout, worded in the core for both frontends, in each of
+    # the grid's units. At 1:1, where a pixel is a dot in both.
+    driver.set_zoom(1.0)
+    driver.hover(254, 162)
+    record('the pointer readout, in inches', driver.readout())
+    driver.set_grid_unit('mm', 1.0)
+    driver.hover(254, 162)
+    record('the pointer readout, in millimetres', driver.readout())
+    driver.set_grid_unit('dots', 10)
+    driver.hover(254, 162)
+    record('the pointer readout, in dots', driver.readout())
+    driver.set_grid_unit('in', 0.1)
 
 
 def main():

@@ -2244,6 +2244,87 @@ try:
     sc.on_button_release(sc, SnapEvent(204, 355))
     check("and the guides go when the drag ends", sc.guides == [] and eb.x == 100)
     sw.destroy()
+
+    # View > Rulers, and the pointer readout in the status bar
+    import time as _time
+
+    def ruler_pump(seconds=0.5):
+        end = _time.time() + seconds
+        while _time.time() < end:
+            while Gtk.events_pending():
+                Gtk.main_iteration_do(False)
+            _time.sleep(0.005)
+
+    rw = ZPLViewerWindow()
+    rw.resize(1000, 800)
+    rw.show_all()
+    ruler_pump()
+    check("the rulers start hidden, on Ctrl+R",
+          not rw.grid.rulers and not rw.rulers_item.get_active()
+          and rw.accelerators.get(rw.rulers_item) == "<Control>r"
+          and not rw.top_ruler.get_visible())
+    view_before = rw.scrolled_canvas.get_allocation()
+    rw.rulers_item.set_active(True)
+    ruler_pump()
+    view_after = rw.scrolled_canvas.get_allocation()
+    check("Rulers shows them along the canvas's top and left edges",
+          rw.top_ruler.get_visible() and rw.left_ruler.get_visible()
+          and rw.ruler_corner.get_visible()
+          and rw.top_ruler.get_allocated_height() == 20
+          and rw.left_ruler.get_allocated_width() == 20)
+    check("taking their room from the view, which a fit then measures",
+          view_after.width == view_before.width - 20
+          and view_after.height == view_before.height - 20,
+          (view_before.width, view_before.height, view_after.width, view_after.height))
+    check("they are remembered", zpl_grid.load_grid([snap_path]).rulers)
+    rc = rw.design_canvas
+    check("and the label is fitted again to the view they leave",
+          rc.get_allocated_width() <= view_after.width
+          and rc.get_allocated_height() <= view_after.height,
+          (rc.get_allocated_width(), rc.get_allocated_height(),
+           view_after.width, view_after.height))
+    canvas_x, _ = rc.translate_coordinates(rw.top_ruler, 0, 0)
+    _, canvas_y = rc.translate_coordinates(rw.left_ruler, 0, 0)
+    check("each ruler's 0 is on the label's edge",
+          rw.top_ruler.marks()[0] == (canvas_x, 0, '0')
+          and rw.left_ruler.marks()[0] == (canvas_y, 0, '0'),
+          (rw.top_ruler.marks()[:1], rw.left_ruler.marks()[:1], canvas_x, canvas_y))
+    rc.set_zoom(2.0)
+    hadjustment = rw.scrolled_canvas.get_hadjustment()
+    for _ in range(40):           # until the scroll range has caught up
+        ruler_pump(0.05)
+        if hadjustment.get_upper() >= 1624:
+            break
+    check("a zoom still takes after the view has changed size under it",
+          rc.get_allocated_width() == 1624, rc.get_allocated_width())
+    hadjustment.set_value(300)
+    ruler_pump()
+    check("and stays there scrolled, the marks moving with the label",
+          rw.top_ruler.origin() == -300
+          and all(0 <= px <= rw.top_ruler.get_allocated_width()
+                  for px, _, _ in rw.top_ruler.marks()),
+          (rw.top_ruler.origin(), hadjustment.get_value()))
+    rc.set_zoom(1.0)
+    ruler_pump()
+
+    check("the readout is blank with the pointer off the canvas",
+          rw.pointer_label.get_text() == '')
+    rc.on_motion(rc, SnapEvent(254, 162))
+    check("and gives the pointer's place on the label, in the grid's unit",
+          rw.pointer_label.get_text() == '1.251, 0.798 in', rw.pointer_label.get_text())
+    check("which the rulers mark too",
+          (rw.top_ruler.pointer, rw.left_ruler.pointer) == (254, 162))
+    rw.grid.unit, rw.grid.spacing = 'mm', 1.0
+    rc.on_motion(rc, SnapEvent(254, 162))
+    check("in millimetres when the grid is",
+          rw.pointer_label.get_text() == '31.8, 20.3 mm', rw.pointer_label.get_text())
+    rc.on_leave(rc, None)
+    check("and blank again once the pointer leaves",
+          rw.pointer_label.get_text() == '' and rw.top_ruler.pointer is None)
+    rw.rulers_item.set_active(False)
+    ruler_pump()
+    check("Rulers again hides them", not rw.top_ruler.get_visible())
+    rw.destroy()
 finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path

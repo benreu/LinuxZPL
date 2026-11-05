@@ -78,6 +78,9 @@ class DesignCanvas(QWidget):
     # A mouse button went down, before the canvas acts on it: the Properties
     # panel records the edits it has made so far as their own undo entry.
     pressed = Signal()
+    # Where the pointer is, as (x, y) in dots, or None once it has left: the
+    # status bar's readout and the rulers' markers follow it.
+    pointerMoved = Signal(object)
 
     # Cursor shown while hovering each resize handle
     HANDLE_CURSORS = {
@@ -1038,6 +1041,7 @@ class DesignCanvas(QWidget):
 
     def mouseMoveEvent(self, event):
         self._update_cursor(event)
+        self.pointerMoved.emit(self._screen_to_label(event.x(), event.y()))
 
         doc = self.document
         if self.band_origin is not None:
@@ -1213,6 +1217,7 @@ class DesignCanvas(QWidget):
     def leaveEvent(self, event):
         if not self.active_handle:
             self._set_cursor(None)
+        self.pointerMoved.emit(None)
 
     # --- dropping from the palette -------------------------------------------
 

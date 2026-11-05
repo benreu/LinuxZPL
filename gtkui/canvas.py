@@ -113,6 +113,9 @@ class DesignCanvas(Gtk.DrawingArea):
         # (kind, x, y in dots) - a palette button let go over the canvas. The
         # window adds the element, since it owns the + Image file chooser.
         'element-dropped': (GObject.SignalFlags.RUN_FIRST, None, (str, int, int)),
+        # Where the pointer is, as (x, y) in dots, or None once it has left:
+        # the status bar's readout and the rulers' markers follow it.
+        'pointer-moved': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         # A mouse button went down, before the canvas acts on it: the
         # Properties panel records the edits it has made so far as their own
         # undo entry.
@@ -1510,6 +1513,7 @@ class DesignCanvas(Gtk.DrawingArea):
         """Restore the default cursor when the pointer leaves the canvas."""
         if not self.active_handle:
             self._set_cursor(None)
+        self.emit('pointer-moved', None)
 
     def drag_picture(self, kind: str) -> cairo.ImageSurface:
         """The element a palette drag of `kind` would drop, drawn as this
@@ -1585,6 +1589,7 @@ class DesignCanvas(Gtk.DrawingArea):
     def on_motion(self, widget, event):
         """Handle mouse motion for dragging elements or resizing."""
         self._update_cursor(event)
+        self.emit('pointer-moved', self._screen_to_label(event.x, event.y))
 
         if self.band_origin is not None:
             self.band_now = self._screen_to_label(event.x, event.y)
