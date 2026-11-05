@@ -11882,6 +11882,111 @@ try:
 finally:
     qt_main._config_path, qt_main._fallback_config_path = _sw_real
 
+# --- snapping to elements and the label, and the guides that show it -----------
+_edoc = Document(812, 1218, dpi=203)
+_anchor = _edoc.add_frame_element()
+_anchor.x, _anchor.y = 100, 100                      # 200 x 150
+_mover = _edoc.add_frame_element()
+_mover.x, _mover.y = 400, 300
+_mbox = (400, 300, 200, 150)
+_ge = zpl_grid.Grid(snap_elements=True)
+_xs, _ys = zpl_snap.targets(_edoc, [_mover])
+check("an element's targets are every other element's edges and centre, and the label's",
+      [t for t, _ in _xs] == [200, 400, 600, 0, 812, 1624]
+      and [t for t, _ in _ys] == [200, 350, 500, 0, 1218, 2436], (_xs, _ys))
+check("a dragged left edge within reach goes onto another element's left edge",
+      zpl_snap.move_delta(_edoc, _mbox, -296, 0, _ge, moving=[_mover]) == (-300, 0))
+check("without Snap to Elements it does not",
+      zpl_snap.move_delta(_edoc, _mbox, -296, 0, zpl_grid.Grid(),
+                          moving=[_mover]) == (-296, 0))
+check("a centre goes onto a centre",
+      zpl_snap.move_delta(_edoc, _mbox, -297, 0, _ge, moving=[_mover]) == (-300, 0))
+check("each axis on its own: here the left edge is in reach of the label's centre",
+      zpl_snap.move_delta(_edoc, _mbox, 0, -297, _ge, moving=[_mover]) == (6, -300))
+check("and onto the label's centre",
+      zpl_snap.move_delta(_edoc, _mbox, 8, 0, _ge, moving=[_mover]) == (6, 0))
+check("an edge out of reach stays where the pointer put it",
+      zpl_snap.move_delta(_edoc, _mbox, -290, 0, _ge, moving=[_mover]) == (-290, 0))
+check("the reach is six screen pixels, the same to the eye at every zoom",
+      zpl_snap.move_delta(_edoc, _mbox, -290, 0, _ge, moving=[_mover], scale=0.5)
+      == (-300, 0)
+      and zpl_snap.move_delta(_edoc, _mbox, -296, 0, _ge, moving=[_mover], scale=2.0)
+      == (-296, 0))
+_both = zpl_grid.Grid(snap=True, snap_elements=True)
+check("within reach an element wins over the grid",
+      zpl_snap.move_delta(_edoc, _mbox, -296, 0, _both, moving=[_mover]) == (-300, 5))
+check("out of reach of any, the grid takes it",
+      zpl_snap.move_delta(_edoc, _mbox, -250, 0, _both, moving=[_mover]) == (-258, 5))
+check("a locked axis snaps to nothing",
+      zpl_snap.move_delta(_edoc, _mbox, -296, 3, _ge, lock_axis=True,
+                          moving=[_mover]) == (-300, 0)
+      and zpl_snap.move_delta(_edoc, _mbox, 7, -197, _ge, lock_axis=True,
+                              moving=[_mover]) == (0, -200))
+check("a dragged box is never its own target",
+      zpl_snap.move_delta(_edoc, (100, 100, 200, 150), 4, 0, _ge,
+                          moving=[_anchor, _mover]) == (4, 0))
+_odd = _edoc.add_frame_element()
+_odd.x, _odd.y, _odd.width, _odd.height = 600, 600, 101, 51
+check("an odd box's centre goes onto an edge as nearly as whole dots allow",
+      zpl_snap.move_delta(_edoc, (600, 600, 101, 51), -347, 0, _ge, moving=[_odd])
+      == (-350, 0))
+_odd.x = 250
+check("and is shown as lined up, half a dot being as close as it can come",
+      any(g[0] == g[2] == 300.0 for g in zpl_snap.guides(_edoc, [_odd])),
+      zpl_snap.guides(_edoc, [_odd]))
+_edoc.elements.remove(_odd)
+
+_ro2 = geometry.resize_origin(_mover)
+check("a resize's dragged edge goes onto another element's edge",
+      zpl_snap.resize_delta(_edoc, _ro2, 'mr', -296, 0, _ge, moving=[_mover])
+      == (-300, 0))
+check("and an edge the handle leaves alone is not looked at",
+      zpl_snap.resize_delta(_edoc, _ro2, 'tm', 0, -197, _ge, moving=[_mover])
+      == (0, -200)
+      and zpl_snap.resize_delta(_edoc, _ro2, 'bm', 0, -350, _ge, moving=[_mover])
+      == (0, -350))
+
+zpl_snap.drag_selection(_edoc, [_mover], _mbox, -296, -195, _ge)
+check("a move lands where the snap says", (_mover.x, _mover.y) == (100, 100))
+_g = zpl_snap.guides(_edoc, [_mover])
+check("a guide for each edge and centre lined up, spanning both boxes",
+      sorted(_g) == sorted([(100.0, 100, 100.0, 250), (200.0, 100, 200.0, 250),
+                            (300.0, 100, 300.0, 250), (100, 100.0, 300, 100.0),
+                            (100, 175.0, 300, 175.0), (100, 250.0, 300, 250.0)]), _g)
+_mover.x, _mover.y = 306, 700
+check("a guide to the label's centre runs the whole label",
+      zpl_snap.guides(_edoc, [_mover]) == [(406.0, 0, 406.0, 1218)],
+      zpl_snap.guides(_edoc, [_mover]))
+_mover.x += 1
+check("and one dot off is not lined up", zpl_snap.guides(_edoc, [_mover]) == [])
+check("a resize's guides look only at the edges its handle moved",
+      zpl_snap.guides(_edoc, [_anchor], 'mr') == []
+      and zpl_snap.guides(_edoc, [_anchor], 'ml') == [])
+
+# A text box takes the size it prints at after its edge is snapped, so its
+# guides are read from where it came to rest, never from the request.
+_tdoc = Document(812, 1218, dpi=203)
+_tbar = _tdoc.add_frame_element()
+_tbar.x, _tbar.y = 100, 300
+_ttext = _tdoc.add_text_element('Snap')
+_ttext.x, _ttext.y = 100, 100
+_tdoc.sync_text_width(_ttext)
+_tro = geometry.resize_origin(_ttext)
+_tdx = (_tbar.x + _tbar.width) - (_ttext.x + _ttext.width) - 3
+geometry.resize_by_handle(_tdoc, _ttext, 'mr',
+                          *zpl_snap.resize_delta(_tdoc, _tro, 'mr', _tdx, 0, _ge,
+                                                 moving=[_ttext]),
+                          origin=_tro)
+_tright = _ttext.x + _ttext.width
+_tg = zpl_snap.guides(_tdoc, [_ttext], 'mr')
+check("a text's guides claim only the edge it printed at",
+      all(abs(g[0] - _tright) <= 0.5 for g in _tg)
+      and (_tg != []) == (abs(_tright - (_tbar.x + _tbar.width)) <= 0.5
+                          or abs(2 * _tright - (2 * _tbar.x + _tbar.width)) <= 1
+                          or abs(_tright - _tbar.x) <= 0.5
+                          or abs(2 * _tright - 812) <= 1),
+      (_tright, _tg))
+
 print()
 print(("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
