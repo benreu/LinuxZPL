@@ -1169,7 +1169,7 @@ class ZPLViewerWindow(Gtk.Window):
         menu_bar.append(help_menu_item)
 
         help_contents_item = Gtk.MenuItem.new_with_mnemonic("_Contents")
-        help_contents_item.connect("activate", lambda _item: self.show_help(self))
+        help_contents_item.connect("activate", lambda _item: self.on_help_contents())
         add_accel(help_contents_item, "F1")
         help_menu.append(help_contents_item)
 
@@ -2004,6 +2004,7 @@ class ZPLViewerWindow(Gtk.Window):
             dialog.set_default_response(Gtk.ResponseType.APPLY)
         else:
             dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        add_help(self, dialog, "font_problem")
         response = dialog.run()
         dialog.destroy()
         if response == Gtk.ResponseType.APPLY:
@@ -3569,29 +3570,32 @@ class ZPLViewerWindow(Gtk.Window):
 
         Returns a note for the status bar when it rescaled, else None.
         """
-        def ask(old, printer_dpi, assumed, w_in, h_in):
-            dialog = Gtk.MessageDialog(
-                parent=self, flags=0, message_type=Gtk.MessageType.QUESTION,
-                buttons=Gtk.ButtonsType.NONE,
-                text=(f"This label does not say what resolution it was drawn "
-                      f"for, so {old} dpi is assumed." if assumed
-                      else f"This label was designed for {old} dpi."))
-            dialog.format_secondary_text(
-                f"The printer is set to {printer_dpi} dpi. Rescaling by "
-                f"{printer_dpi / old:.2f} keeps its physical size; keeping the "
-                f"dots as they are makes it print {w_in:.1f} x {h_in:.1f} inches.")
-            dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
-            dialog.add_button("Keep Dots", Gtk.ResponseType.NO)
-            dialog.add_button("Rescale", Gtk.ResponseType.YES)
-            dialog.set_default_response(Gtk.ResponseType.YES)
-            response = dialog.run()
-            dialog.destroy()
-            if response == Gtk.ResponseType.YES:
-                return 'rescale'
-            return 'keep' if response == Gtk.ResponseType.NO else 'cancel'
-
         return workflow.reconcile_dpi(self.design_canvas.document,
-                                      self.printer_dpi, ask, file_dpi=loaded_dpi)
+                                      self.printer_dpi, self._ask_dpi_rescale,
+                                      file_dpi=loaded_dpi)
+
+    def _ask_dpi_rescale(self, old, printer_dpi, assumed, w_in, h_in):
+        """'rescale', 'keep' or 'cancel' for a design drawn for `old` dpi."""
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text=(f"This label does not say what resolution it was drawn "
+                  f"for, so {old} dpi is assumed." if assumed
+                  else f"This label was designed for {old} dpi."))
+        dialog.format_secondary_text(
+            f"The printer is set to {printer_dpi} dpi. Rescaling by "
+            f"{printer_dpi / old:.2f} keeps its physical size; keeping the "
+            f"dots as they are makes it print {w_in:.1f} x {h_in:.1f} inches.")
+        dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+        dialog.add_button("Keep Dots", Gtk.ResponseType.NO)
+        dialog.add_button("Rescale", Gtk.ResponseType.YES)
+        dialog.set_default_response(Gtk.ResponseType.YES)
+        add_help(self, dialog, "dpi_rescale")
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.YES:
+            return 'rescale'
+        return 'keep' if response == Gtk.ResponseType.NO else 'cancel'
 
     def inches_to_dots(self, w_in: float, h_in: float):
         """Physical size -> dots at the current printer resolution."""
@@ -4631,6 +4635,15 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.format_secondary_text(message)
         dialog.run()
         dialog.destroy()
+
+    def on_help_contents(self):
+        """Help > Contents, and F1: the contents, or with the focus in the
+        Properties panel, help on what it shows. The floating panel's window
+        shares this window's keys, so F1 reaches here from it too."""
+        if self.properties.has_focus_within():
+            self.properties.open_help()
+        else:
+            self.show_help(self)
 
     def show_help(self, parent, topic: str = helpdocs.CONTENTS):
         """Open the help page `topic` in a viewer of its own

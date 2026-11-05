@@ -1280,7 +1280,14 @@ class ZPLDesignerWindow(QMainWindow):
         dialog.show()
 
     def on_help_contents(self):
-        qt_dialogs.show_help(self)
+        # F1 with the focus in the Properties panel, docked or floating, is
+        # help on what the panel shows: the shortcut is the window's, and Qt
+        # keeps a window's shortcuts working while its floating dock is
+        # active.
+        if self.properties.has_focus_within():
+            self.properties.open_help()
+        else:
+            qt_dialogs.show_help(self)
 
     # --- files ---------------------------------------------------------------
 

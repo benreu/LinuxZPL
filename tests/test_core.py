@@ -19,6 +19,9 @@ from zplcore.renderer import ZPLRenderer
 
 app = QApplication([])
 from qtui import canvas as qt_canvas, window as qt_main, dialogs as qt_dialogs
+# Kept for the Help checks: checks further down stand in for it and leave
+# their stand-in in place.
+_real_ask_dpi_rescale = qt_dialogs.ask_dpi_rescale
 
 # A headless run must never reach a modal dialog, so the two these checks would
 # otherwise trip are stubbed and their messages recorded.
@@ -11243,7 +11246,7 @@ def _wh_modal(key, open_window, close=lambda window: window.reject()):
 
 
 try:
-    qt_dialogs.show_help = lambda parent, topic: _wh_asked.append(topic)
+    qt_dialogs.show_help = lambda parent, topic=_hd.CONTENTS: _wh_asked.append(topic)
     _wh_modal("label_settings",
               lambda: qt_dialogs.label_size_dialog(None, _wh_doc, 203))
     _wh_modal("grid_settings",
@@ -11283,6 +11286,67 @@ try:
         _wh_dialog.close()
     _wh_win.unsaved_changes = False
     _wh_win.close(); _wh_win.deleteLater()
+
+    # The two questions: Help leaves each up, and the answer then given is
+    # the one returned.
+    _wh_answers = []
+
+    def _wh_answer(text):
+        def close(box):
+            next(b for b in box.buttons() if b.text() == text).click()
+        return close
+
+    _wh_modal("dpi_rescale", lambda: _wh_answers.append(_real_ask_dpi_rescale(
+        None, 203, 300, False, 4.0, 6.0)), close=_wh_answer("Keep Dots"))
+    _wh_modal("font_problem", lambda: _wh_answers.append(qt_dialogs.ask_font_problem(
+        None, "The printer lacks a font.", "FOO.TTF", {"FOO.TTF": "/tmp/foo.ttf"})),
+        close=_wh_answer("Upload & Print"))
+    check("Qt: after Help, each question still gives the answer clicked",
+          _wh_answers == ["keep", "upload"], _wh_answers)
+
+    # The Properties panel's Help: the selected element's page, on its
+    # button and on F1 with the focus in the panel; F1 elsewhere is still
+    # the contents.
+    _wp_win = qt_main.ZPLDesignerWindow()
+    _wp_win.resize(1200, 900)
+    _wp_win.show()
+    _wp_win.activateWindow()
+    QApplication.processEvents()
+    _wp_panel = _wp_win.properties
+    _wp_help = _wp_panel.findChild(_WhButton, "help")
+    _wp_win.document.add_barcode_element()
+    _wp_panel.request()
+    QApplication.processEvents()
+    del _wh_asked[:]
+    _wp_help.click()
+    _wp_clicked = list(_wh_asked)
+    del _wh_asked[:]
+    # The focus in one of its rows, as a click there puts it
+    next(w for w in _wp_panel.findChildren(qt_dialogs.QLineEdit)
+         if w.isVisible()).setFocus()
+    QApplication.processEvents()
+    _wp_in_panel = _wp_panel.has_focus_within()
+    _wp_win.help_contents_action.trigger()
+    _wp_f1_panel = list(_wh_asked)
+    del _wh_asked[:]
+    _wp_win.canvas.setFocus()
+    QApplication.processEvents()
+    _wp_win.help_contents_action.trigger()
+    _wp_f1_canvas = list(_wh_asked)
+    del _wh_asked[:]
+    _wp_win.document.clear_selection()
+    _wp_help.click()
+    _wp_none = list(_wh_asked)
+    check("Qt: the panel's Help opens the selected element's page, and so "
+          "does F1 in the panel; F1 on the canvas opens the contents; with "
+          "nothing selected Help opens the panel's own page",
+          _wp_help is not None and not _wp_help.toolTip()
+          and _wp_clicked == ["barcode"] and _wp_in_panel
+          and _wp_f1_panel == ["barcode"] and _wp_f1_canvas == [_hd.CONTENTS]
+          and _wp_none == [_hd.PANEL],
+          (_wp_clicked, _wp_in_panel, _wp_f1_panel, _wp_f1_canvas, _wp_none))
+    _wp_win.unsaved_changes = False
+    _wp_win.close(); _wp_win.deleteLater()
 finally:
     qt_dialogs.show_help = _wh_real_help
 

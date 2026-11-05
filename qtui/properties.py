@@ -32,7 +32,7 @@ from PySide2.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox,
                                QPushButton, QScrollArea, QSizePolicy, QSpinBox,
                                QVBoxLayout, QWidget)
 
-from zplcore import geometry
+from zplcore import geometry, helpdocs
 from zplcore import properties as zpl_props
 from zplcore.model import ImageElement
 
@@ -106,7 +106,16 @@ class PropertiesPanel(QDockWidget):
         font = self._title.font()
         font.setBold(True)
         self._title.setFont(font)
-        layout.addWidget(self._title)
+        top = QHBoxLayout()
+        top.addWidget(self._title, 1)
+        # A plain button with no tooltip: Help on the selection's own page.
+        # It takes no focus, so pressing it leaves an edit where it was.
+        self._help = QPushButton("Help")
+        self._help.setObjectName("help")
+        self._help.setFocusPolicy(Qt.NoFocus)
+        self._help.clicked.connect(self.open_help)
+        top.addWidget(self._help)
+        layout.addLayout(top)
         self._area = QVBoxLayout()
         layout.addLayout(self._area)
         layout.addStretch(1)
@@ -120,6 +129,20 @@ class PropertiesPanel(QDockWidget):
         QApplication.instance().focusChanged.connect(self._on_focus_changed)
         window.canvas.painted.connect(self.queue_sync)
         window.canvas.pressed.connect(self.finish_edit)
+
+    # --- help -----------------------------------------------------------------
+
+    def help_topic(self) -> str:
+        """The help page for what the panel shows: the selected element's
+        kind, or the panel itself."""
+        return helpdocs.element_topic(list(self._window.document.selection))
+
+    def has_focus_within(self) -> bool:
+        focus = QApplication.focusWidget()
+        return focus is not None and self.isVisible() and self.isAncestorOf(focus)
+
+    def open_help(self):
+        qt_dialogs.show_help(self, self.help_topic())
 
     # --- following the selection --------------------------------------------
 

@@ -1283,6 +1283,21 @@ its question unanswered. Which page each window opens is one table,
 | Printer Console | `printer-status#console` |
 | Printer Status | `printer-status#status` |
 | Firmware Update (§10.8) | `firmware-update` |
+| The resolution question (Rescale / Keep Dots, §11) | `resolution#rescale` |
+| The missing-fonts question (Upload & Print, §10.3) | `fonts#check` |
+
+The two questions are message boxes. A message box closes on any of its
+buttons, so their Help is cut loose from the box and only opens the page:
+the question stays up and the answer given afterwards is the one returned.
+
+The Properties panel (§7.1) has a **Help** button of its own, beside its
+title, that opens the page about what it shows: the selected element's kind
+- the text page, at its section for a clock, serial or numbered field; the
+barcode page; the stored graphics page at using one - or, with nothing or
+more than one element selected, the panel's own page
+(`helpdocs.element_topic`). F1 with the focus in the panel, docked or
+floating, does the same; F1 anywhere else in the main window opens the
+contents.
 
 A window whose question was a stock one-line prompt is a small window of its
 own instead, so it can hold the button: Upload Template's name is asked for
@@ -1351,7 +1366,7 @@ back where it was left: its size, and whether it floats (§13).
   floating, it comes back the same ways.
 - **What it shows.** A title — the kind of element ("Frame", "Time Field"),
   "Group of 3" for one whole group, "3 elements" for anything else selected
-  together, or "Nothing selected" — and then:
+  together, or "Nothing selected" — with **Help** beside it (§6.8), and then:
   - **X and Y**, the left and top of the selection's box in dots, and **Print
     This Element**. Typing an X or Y moves the whole selection by the
     difference, held inside the label as a drag holds it (§5). Print This
@@ -2960,7 +2975,7 @@ treated as corrupt and falls back too.
 | Ctrl+R | Rulers |
 | Ctrl+' | Show Grid |
 | Ctrl+Shift+' | Snap to Grid |
-| F1 | Help Contents; in a window, that window's help page |
+| F1 | Help Contents; in a window, that window's help page; in the Properties panel, the page about what it shows |
 
 Three notes for a port:
 

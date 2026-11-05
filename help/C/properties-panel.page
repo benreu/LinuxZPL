@@ -19,7 +19,10 @@
     <title>What it shows</title>
     <list>
       <item><p>At the top, what is selected: the kind of element, such as
-      <gui>Frame</gui>, or <gui>Group of 3</gui>, or <gui>3 elements</gui>.</p></item>
+      <gui>Frame</gui>, or <gui>Group of 3</gui>, or <gui>3 elements</gui>.
+      <gui>Help</gui> beside it, or <key>F1</key> while you are in the
+      panel, opens the page about that kind of element, or this page when
+      nothing or several elements are selected.</p></item>
       <item><p><gui>X</gui> and <gui>Y</gui>, the left and top of the
       selection in dots. Typing a new value moves the whole
       selection.</p></item>

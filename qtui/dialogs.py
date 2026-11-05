@@ -161,6 +161,24 @@ def add_help(dialog, key: str, box: Optional[QDialogButtonBox] = None):
     return button
 
 
+def add_question_help(box: QMessageBox, key: str):
+    """A question's Help, on a button and on F1: the page WINDOW_HELP names
+    for `key`. A message box closes on any of its buttons, so this one is
+    cut loose from the box and only opens the page, leaving the question
+    up to be answered."""
+    topic = helpdocs.WINDOW_HELP[key]
+
+    def open_page():
+        show_help(box, topic)
+
+    button = box.addButton(QMessageBox.Help)
+    button.setObjectName("help")
+    button.clicked.disconnect()
+    button.clicked.connect(open_page)
+    QShortcut(QKeySequence(Qt.Key_F1), box).activated.connect(open_page)
+    return button
+
+
 def _buttons(dialog, accept_text="OK"):
     box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog)
     box.button(QDialogButtonBox.Ok).setText(accept_text)
@@ -3925,6 +3943,7 @@ def ask_dpi_rescale(parent, old_dpi: int, printer_dpi: int, assumed: bool,
     cancel = box.addButton("Cancel", QMessageBox.RejectRole)
     box.setDefaultButton(rescale)
     box.setEscapeButton(cancel)
+    add_question_help(box, "dpi_rescale")
     box.exec_()
     clicked = box.clickedButton()
     if clicked is rescale:
@@ -3948,6 +3967,7 @@ def ask_font_problem(parent, text: str, detail: str, uploadable: dict) -> str:
     # whichever of those is actually available.
     box.setDefaultButton(upload if upload is not None else cancel)
     box.setEscapeButton(cancel)
+    add_question_help(box, "font_problem")
     box.exec_()
     clicked = box.clickedButton()
     if upload is not None and clicked is upload:

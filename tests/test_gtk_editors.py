@@ -2446,18 +2446,20 @@ def wh_press(key, window):
     wh_seen[key] = (clicked, responses, list(wh_asked), at_left)
 
 
-def wh_run(key, open_window):
+def wh_run(key, open_window, response=Gtk.ResponseType.CANCEL):
     """open_window() runs a dialog: press its Help instead of waiting, then
-    cancel it."""
+    answer it with `response`. Returns what open_window() returned. A
+    message dialog's run() is stood in for apart: a check above left one
+    of its own on that class."""
     def peek(dialog):
         wh_press(key, dialog)
-        return Gtk.ResponseType.CANCEL
-    real = Gtk.Dialog.run
-    Gtk.Dialog.run = peek
+        return response
+    real, real_message = Gtk.Dialog.run, Gtk.MessageDialog.run
+    Gtk.Dialog.run = Gtk.MessageDialog.run = peek
     try:
-        open_window()
+        return open_window()
     finally:
-        Gtk.Dialog.run = real
+        Gtk.Dialog.run, Gtk.MessageDialog.run = real, real_message
 
 
 wh_win = ZPLViewerWindow()
@@ -2496,6 +2498,62 @@ for wh_key, wh_open, wh_attr in (
     wh_window = getattr(wh_win, wh_attr)
     wh_press(wh_key, wh_window)
     wh_window.destroy()
+
+# The two questions: Help leaves each running, and the answer then given is
+# the one returned.
+wh_answers = [
+    wh_run("dpi_rescale", lambda: wh_win._ask_dpi_rescale(203, 300, False, 4.0, 6.0),
+           Gtk.ResponseType.NO),
+    wh_run("font_problem", lambda: wh_win._ask_font_problem(
+        "The printer lacks a font.", "FOO.TTF", {"FOO.TTF": "/tmp/foo.ttf"}),
+        Gtk.ResponseType.APPLY)]
+check("GTK: after Help, each question still gives the answer clicked",
+      wh_answers == ["keep", "upload"], wh_answers)
+
+# The Properties panel's Help: the selected element's page, on its button
+# and on F1 with the focus in the panel; F1 elsewhere is still the contents.
+def wh_pump():
+    while Gtk.events_pending():
+        Gtk.main_iteration_do(False)
+
+
+wp_win = ZPLViewerWindow()
+wp_win.show_help = lambda parent, topic=helpdocs.CONTENTS: wh_asked.append(topic)
+wp_win.show_all()
+wh_pump()
+wp_win.design_canvas.document.add_barcode_element()
+wp_win.properties.request()
+wh_pump()
+wp_help = next(w for w in _pw_widgets(wp_win.properties) if w.get_name() == "help")
+del wh_asked[:]
+wp_help.clicked()
+wp_clicked = list(wh_asked)
+del wh_asked[:]
+# The focus in one of its rows, as a click there puts it
+next(w for w in _pw_widgets(wp_win.properties)
+     if isinstance(w, Gtk.Entry) and w.get_mapped()).grab_focus()
+wh_pump()
+wp_in_panel = wp_win.properties.has_focus_within()
+Gtk.accel_groups_activate(wp_win, Gdk.KEY_F1, 0)
+wp_f1_panel = list(wh_asked)
+del wh_asked[:]
+wp_win.design_canvas.grab_focus()
+wh_pump()
+Gtk.accel_groups_activate(wp_win, Gdk.KEY_F1, 0)
+wp_f1_canvas = list(wh_asked)
+del wh_asked[:]
+wp_win.design_canvas.document.clear_selection()
+wp_help.clicked()
+wp_none = list(wh_asked)
+check("GTK: the panel's Help opens the selected element's page, and so does "
+      "F1 in the panel; F1 on the canvas opens the contents; with nothing "
+      "selected Help opens the panel's own page",
+      wp_help.get_tooltip_text() is None and not wp_help.get_can_focus()
+      and wp_clicked == ["barcode"] and wp_in_panel
+      and wp_f1_panel == ["barcode"] and wp_f1_canvas == [helpdocs.CONTENTS]
+      and wp_none == [helpdocs.PANEL],
+      (wp_clicked, wp_in_panel, wp_f1_panel, wp_f1_canvas, wp_none))
+wp_win.destroy()
 
 for wh_key, wh_topic in sorted(helpdocs.WINDOW_HELP.items()):
     check(f"GTK {wh_key}: Help, at the left, opens {wh_topic} without ending "

@@ -30,7 +30,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gdk, GLib, Gtk, Pango
 
-from zplcore import geometry
+from zplcore import geometry, helpdocs
 from zplcore import properties as zpl_props
 from zplcore.model import ImageElement
 
@@ -115,6 +115,15 @@ class PropertiesPanel(Gtk.Box):
         heading = Gtk.Label(xalign=0)
         heading.set_markup("<b>Properties</b>")
         bar.pack_start(heading, True, True, 0)
+        # Help on the selection's own page. Words, not an icon, so it needs no
+        # tooltip to say what it is; it takes no focus, so pressing it leaves
+        # an edit where it was.
+        help_button = Gtk.Button.new_with_label("Help")
+        help_button.set_relief(Gtk.ReliefStyle.NONE)
+        help_button.set_name("help")
+        help_button.set_can_focus(False)
+        help_button.connect("clicked", lambda _b: self.open_help())
+        bar.pack_start(help_button, False, False, 0)
         self._float_button = Gtk.Button.new_from_icon_name(
             "window-new-symbolic", Gtk.IconSize.MENU)
         self._float_button.set_relief(Gtk.ReliefStyle.NONE)
@@ -183,6 +192,27 @@ class PropertiesPanel(Gtk.Box):
         else:
             self.hide()
         self.on_shown_changed(shown)
+
+    def help_topic(self) -> str:
+        """The help page for what the panel shows: the selected element's
+        kind, or the panel itself."""
+        return helpdocs.element_topic(
+            list(self._window.design_canvas.document.selection))
+
+    def has_focus_within(self) -> bool:
+        """Whether the focus is in the panel, in the window F1 was pressed in:
+        docked, the designer's; floating, its own window, while that is the
+        active one."""
+        top = self.get_toplevel()
+        if not isinstance(top, Gtk.Window) or not self.get_visible():
+            return False
+        if self._floating is not None and not top.is_active():
+            return False
+        focus = top.get_focus()
+        return focus is not None and (focus is self or focus.is_ancestor(self))
+
+    def open_help(self):
+        self._window.show_help(self.get_toplevel(), self.help_topic())
 
     def set_floating(self, floating: bool) -> None:
         """Pull the panel off into a window of its own, or put it back."""

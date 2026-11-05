@@ -66,7 +66,13 @@ WINDOW_HELP = {
     "printer_console": "printer-status#console",
     "printer_status": "printer-status#status",
     "firmware_update": "firmware-update",
+    "dpi_rescale": "resolution#rescale",
+    "font_problem": "fonts#check",
 }
+
+# The Properties panel's own page: what it opens with nothing selected, or
+# with more than one element.
+PANEL = "properties-panel"
 
 
 class Launch(NamedTuple):
@@ -84,6 +90,36 @@ def topics(pages: Path = PAGES) -> List[str]:
     """Every page's id: its file name without .page, which Mallard requires
     to match the id the page gives itself."""
     return sorted(p.stem for p in pages.glob("*.page"))
+
+
+def element_topic(selection) -> str:
+    """The page the Properties panel's Help opens for `selection`, a list of
+    elements: the page about that kind of element when it is one element,
+    and the panel's own page otherwise. A text element's page section
+    follows what feeds it, as its rows in the panel do."""
+    from . import model
+    if len(selection) != 1:
+        return PANEL
+    element = selection[0]
+    if isinstance(element, model.TextElement):
+        if element.clock_format:
+            return "text#time"
+        if element.serial_increment is not None:
+            return "text#serial"
+        if element.field_number is not None:
+            return "text#numbered"
+        return "text"
+    for kind, topic in ((model.FrameElement, "frame"),
+                        (model.CircleElement, "circle-ellipse"),
+                        (model.EllipseElement, "circle-ellipse"),
+                        (model.DiagonalLineElement, "diagonal"),
+                        (model.GraphicSymbolElement, "symbol"),
+                        (model.BarcodeElement, "barcode"),
+                        (model.ImageElement, "image"),
+                        (model.StoredGraphicElement, "stored-graphics#use")):
+        if isinstance(element, kind):
+            return topic
+    return PANEL
 
 
 def split_topic(topic: str) -> Tuple[str, str]:

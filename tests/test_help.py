@@ -243,6 +243,34 @@ for bad in ("fonts#nowhere", "nowhere#manager", "nowhere"):
         raised = True
     check(f"asking for {bad!r}, which does not exist, is an error", raised and not started)
 
+# The Properties panel's Help: the page about the one element selected.
+from zplcore import model
+doc = model.Document()
+kinds = [
+    (doc.add_text_element("words"), "text"),
+    (doc.add_time_element(), "text#time"),
+    (doc.add_serial_element(), "text#serial"),
+    (doc.add_numbered_element(), "text#numbered"),
+    (doc.add_frame_element(), "frame"),
+    (doc.add_circle_element(), "circle-ellipse"),
+    (doc.add_ellipse_element(), "circle-ellipse"),
+    (doc.add_diagonal_element(), "diagonal"),
+    (doc.add_graphic_symbol_element(), "symbol"),
+    (doc.add_barcode_element(), "barcode"),
+    (model.ImageElement(), "image"),
+    (doc.add_stored_graphic_element(), "stored-graphics#use"),
+]
+for element, topic in kinds:
+    got = helpdocs.element_topic([element])
+    page, section = helpdocs.split_topic(got)
+    check(f"the panel's Help for a {type(element).__name__} opens {topic}",
+          got == topic and page in trees
+          and (not section or section in section_ids(trees[page])), got)
+check("with nothing selected, or several elements, it opens the panel's own page",
+      helpdocs.element_topic([]) == helpdocs.PANEL
+      and helpdocs.element_topic([kinds[0][0], kinds[9][0]]) == helpdocs.PANEL
+      and helpdocs.PANEL in trees)
+
 # --- watching the viewer for its first seconds ------------------------------------
 
 
