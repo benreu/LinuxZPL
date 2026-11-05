@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="printer-status">
+  <info>
+    <link type="guide" xref="index#printer"/>
+    <title type="sort">1</title>
+    <link type="seealso" xref="printing"/>
+    <desc>Find out why a label did not print: the printer's faults, what it
+    is doing, its memory and its wear, and a console for anything
+    else.</desc>
+  </info>
+
+  <title>Printer status and the console</title>
+
+  <section id="status">
+    <title>Printer status</title>
+    <p><guiseq><gui>Printer</gui><gui>Status…</gui></guiseq> asks the printer
+    about itself:</p>
+    <terms>
+      <item>
+        <title>Faults</title>
+        <p>What the printer is complaining of, such as the head open, paper
+        or ribbon out, or the head too hot.</p>
+      </item>
+      <item>
+        <title>What it is doing</title>
+        <p>Whether it is paused, its buffer is full, labels are still to
+        print, or a label is waiting to be taken from the peeler. A printer
+        left in communications diagnostic mode is pointed out, since it then
+        prints everything it is sent as a hex dump, which looks like a
+        ruined label.</p>
+      </item>
+      <item>
+        <title>Memory</title>
+        <p>RAM and Flash, each as a bar of what is used, with how much is
+        free beside it: what decides whether another font or graphic will
+        fit.</p>
+      </item>
+      <item>
+        <title>The printer itself</title>
+        <p>Model, firmware, resolution, how long it has been on, and how far
+        its head has printed, in the printer's own units.</p>
+      </item>
+    </terms>
+    <note>
+      <p>A Zebra answers no ordinary status question while its paper or
+      ribbon is out, its head is open, its rewinder is full or its head is
+      too hot. LinuxZPL asks for the fault flags first, which a printer
+      answers even then, and says when the rest went unanswered for that
+      reason. A full rewinder raises no flag at all, and the window says
+      that too.</p>
+    </note>
+    <p>Tick <gui>Auto-refresh</gui> to ask again every few seconds (2 to
+    300; 5 to begin with) while you watch, or press <gui>Refresh</gui>.
+    <gui>Copy</gui> puts the whole report on the clipboard, ready for a
+    support request. If the printer stops answering, the last readings stay
+    on screen rather than going blank.</p>
+  </section>
+
+  <section id="console">
+    <title>The printer console</title>
+    <p><guiseq><gui>Printer</gui><gui>Console…</gui></guiseq> sends whatever
+    you type to the printer, exactly as typed, and shows what it answers,
+    or <gui>(no reply)</gui>. It is for commands nothing else here sends,
+    such as a one-off setting or a question for the printer. It can be left
+    open while you work on the label.</p>
+  </section>
+</page>

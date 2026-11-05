@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="stored-graphics">
+  <info>
+    <link type="guide" xref="index#printer"/>
+    <title type="sort">2</title>
+    <link type="seealso" xref="image"/>
+    <desc>Store a logo on the printer once and use it on many labels, and see
+    or remove what the printer holds.</desc>
+  </info>
+
+  <title>Graphics and other files stored on the printer</title>
+
+  <p>An <link xref="image">image</link> is kept inside each label that uses
+  it. A logo printed on many labels can instead be stored on the printer
+  once, and each label then only names it.</p>
+
+  <section id="store">
+    <title>Store a graphic on the printer</title>
+    <p><guiseq><gui>Printer</gui><gui>Graphics…</gui></guiseq> lists the
+    graphics (<file>.GRF</file> files) stored in each of the printer's
+    memories.</p>
+    <terms>
+      <item>
+        <title><gui>Store…</gui></title>
+        <p>Turns a PNG or JPEG file into the printer's black and white dots
+        and stores it under the memory, name and extension you give.</p>
+      </item>
+      <item>
+        <title><gui>Retrieve…</gui></title>
+        <p>Fetches a stored graphic back and saves it as a picture file.</p>
+      </item>
+      <item>
+        <title><gui>Delete</gui></title>
+        <p>Removes the selected graphic from the printer, after asking. It
+        cannot be undone.</p>
+      </item>
+      <item>
+        <title><gui>Refresh</gui></title>
+        <p>Asks the printer again.</p>
+      </item>
+    </terms>
+    <p>A graphic shows a picture in the list once it has been stored or
+    retrieved during this session.</p>
+  </section>
+
+  <section id="use">
+    <title>Use a stored graphic on a label</title>
+    <p><gui>+ Graphic</gui> adds a field that prints a graphic stored on the
+    printer. In the Properties panel:</p>
+    <terms>
+      <item>
+        <title><gui>Command</gui></title>
+        <p><gui>Recall Graphic (^XG)</gui>, which can enlarge it, or
+        <gui>Image Move (^IM)</gui>, which prints it at its own size.</p>
+      </item>
+      <item>
+        <title><gui>Device</gui>, <gui>Name</gui> and <gui>Extension</gui></title>
+        <p>Where the graphic is stored on the printer, and what it is
+        called.</p>
+      </item>
+      <item>
+        <title><gui>Magnification X</gui> and <gui>Magnification Y</gui></title>
+        <p>How many times larger to print it, 1 to 10 across and down.</p>
+      </item>
+    </terms>
+    <p>The canvas shows the picture once LinuxZPL has seen it this session,
+    by storing it, retrieving it, or opening a label that stores it.
+    Otherwise it shows a box naming the graphic. What prints is whatever the
+    printer holds under that name.</p>
+  </section>
+
+  <section id="objects">
+    <title>Everything else on the printer</title>
+    <p><guiseq><gui>Printer</gui><gui>Objects…</gui></guiseq> lists every
+    file the printer holds, of any kind and in every memory, including Zebra's
+    own read-only files. Beside each is the kind of memory it is in, such as
+    DRAM or Flash. <gui>Store…</gui> puts any file from this computer onto
+    the printer's Flash memory as it is, <gui>Retrieve…</gui> saves a copy of
+    one, and <gui>Delete</gui> removes one, after asking. Zebra's read-only
+    files cannot be deleted.</p>
+  </section>
+</page>
