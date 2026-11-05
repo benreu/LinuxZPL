@@ -2621,26 +2621,60 @@ def _gtk_shown(widget, root):
     return True
 
 
+def _gtk_field_of(label):
+    """The field a label names: the widget after it in a row box, or beside
+    it in a grid."""
+    parent = label.get_parent()
+    if isinstance(parent, Gtk.Grid):
+        return parent.get_child_at(parent.child_get_property(label, 'left-attach') + 1,
+                                   parent.child_get_property(label, 'top-attach'))
+    if isinstance(parent, Gtk.Box):
+        kids = parent.get_children()
+        at = kids.index(label)
+        return kids[at + 1] if at + 1 < len(kids) else None
+    return None
+
+
+def _gtk_label_of(widget):
+    """The "Name:" label just before a field - in its row box, above it where
+    an editor stacks them, or beside it in a grid - or None."""
+    parent = widget.get_parent()
+    before = None
+    if isinstance(parent, Gtk.Grid):
+        left = parent.child_get_property(widget, 'left-attach')
+        if left:
+            before = parent.get_child_at(left - 1,
+                                         parent.child_get_property(widget, 'top-attach'))
+    elif isinstance(parent, Gtk.Box):
+        kids = parent.get_children()
+        at = kids.index(widget)
+        before = kids[at - 1] if at else None
+    if isinstance(before, Gtk.Label) and before.get_text().endswith(':'):
+        return before
+    return None
+
+
 def _gtk_tips(root, shown_only=False, expected=None):
     """{key: widget} for every widget under `root` that has a tooltip, and
     what doesn't fit the table: a tooltip on a widget it isn't the tip for,
-    or a label beside or above a field that doesn't say what the field says.
-    A row's label is the "Name:" before its field - beside it in a row box,
-    or above it where an editor stacks them."""
+    or a label that doesn't say what its field says - the field itself, or
+    a box around it ("Pause every:" names a box of the number and its unit).
+    `shown_only` passes over the rows a barcode's symbology hides, and
+    `expected` gives the tip for a name the table keys some other way."""
     found, wrong = {}, []
     expected = expected or {}
     for widget in gtk_props._descendants(root):
         if shown_only and not _gtk_shown(widget, root):
             continue
         text = widget.get_tooltip_text()
-        parent = widget.get_parent()
-        siblings = parent.get_children() if isinstance(parent, Gtk.Box) else []
-        position = next((i for i, s in enumerate(siblings) if s is widget), None)
         if isinstance(widget, Gtk.Label):
             if text:
-                after = (siblings[position + 1] if position is not None
-                         and position + 1 < len(siblings) else None)
-                if after is None or after.get_tooltip_text() != text:
+                field = _gtk_field_of(widget)
+                tips = set()
+                if field is not None:
+                    tips = {field.get_tooltip_text()} | {
+                        d.get_tooltip_text() for d in gtk_props._descendants(field)}
+                if text not in tips:
                     wrong.append(('label', widget.get_text()))
             continue
         if not text:
@@ -2651,10 +2685,9 @@ def _gtk_tips(root, shown_only=False, expected=None):
             wrong.append(('widget', name, text[:40]))
             continue
         found[key] = widget
-        before = siblings[position - 1] if position else None
-        if (isinstance(before, Gtk.Label) and before.get_text().endswith(':')
-                and before.get_tooltip_text() != text):
-            wrong.append(('unlabelled', before.get_text(), name))
+        label = _gtk_label_of(widget)
+        if label is not None and label.get_tooltip_text() != text:
+            wrong.append(('unlabelled', label.get_text(), name))
     return found, wrong
 
 
@@ -2849,15 +2882,89 @@ check("GTK: the + Symbol and Align buttons take theirs from the table",
           for key, button in _t_window.items()),
       [(b.get_name(), b.get_tooltip_text()) for b in _t_window.values()])
 _tip_seen |= set(_t_window)
+_t_names = dict((w.get_name(), w) for w in gtk_props._descendants(tw))
+_t_buttons = list(zpl_tips.PALETTE.values()) + ['undo', 'redo', 'zoom_out',
+                                                'fit_label', 'zoom_in']
+_t_untold = [key for key in _t_buttons
+             if key not in _t_names
+             or _t_names[key].get_tooltip_text() != zpl_tips.TIPS[key]]
+check("GTK: the palette's + Time, + Serial, + Numbered, + Image and + Graphic, "
+      "and undo, redo and the zoom buttons, say what they do",
+      not _t_untold, _t_untold)
+_tip_seen |= set(_t_buttons)
 
 _t_dialog, _t_finish = gtk_main._build_print_dialog(
     tw, _pw_doc, _PW_PRINTER, _PW_DEFAULT)
 _t_found, _t_wrong = _gtk_tips(_t_dialog)
-check("GTK: the Print window's tips are the table's, Replicates' label included",
-      {'replicates', 'darkness_set'} <= set(_t_found) and not _t_wrong,
-      (sorted(_t_found), _t_wrong))
+_t_print_rows = {'pause_count', 'replicates', 'override_pause', 'cut_on_error',
+                 'mirror', 'reverse', 'code_validation', 'darkness_set',
+                 'darkness', 'print_speed', 'slew_speed', 'backfeed_speed',
+                 'print_mode', 'prepeel', 'media_tracking', 'mark_offset',
+                 'media_type', 'port', 'dpi', 'font_device', 'test_connection',
+                 'use_default'}
+check("GTK: the Print window explains its rows from the table, each label too",
+      set(_t_found) == _t_print_rows and not _t_wrong,
+      (sorted(set(_t_found) ^ _t_print_rows), _t_wrong))
 _tip_seen |= set(_t_found)
 _t_dialog.destroy()
+
+_g_dialog, _g_finish = gtk_main._build_grid_dialog(tw, tw.grid, 203)
+_t_found, _t_wrong = _gtk_tips(_g_dialog)
+_t_window_tips = {}
+if set(_t_found) != {'grid_major'} or _t_wrong:
+    _t_window_tips['Grid Settings'] = (sorted(_t_found), _t_wrong)
+_tip_seen |= set(_t_found)
+_g_dialog.destroy()
+
+# The modal ones: run() is stood in for while each is looked at
+_t_seen = {}
+
+
+def _t_peek(dialog):
+    found, wrong = _gtk_tips(dialog)
+    _t_seen.update(found=set(found), wrong=wrong)
+    return Gtk.ResponseType.CANCEL
+
+
+from zplcore import local_port as zpl_local
+_t_real_run, _t_real_ports = Gtk.Dialog.run, zpl_local.list_ports
+_t_real_printer = (tw.printer_address, tw.printer_port)
+Gtk.Dialog.run = _t_peek
+# The managers ask the printer as they open: a port nothing listens on
+# answers at once, and closing drops the answer
+zpl_local.list_ports = lambda: []
+tw.printer_address, tw.printer_port = '127.0.0.1', 9
+try:
+    for _title, _open, _wanted in (
+            ("Label Settings", lambda: tw.on_label_settings_clicked(None),
+             {'dpi', 'home_x', 'home_y'}),
+            ("Default Printer", lambda: gtk_main._printer_picker_dialog(
+                tw, "Default Printer", '10.0.0.1', 9100, 203),
+             {'port', 'dpi', 'font_device', 'test_connection'}),
+            ("Store Graphic As", lambda: tw._ask_device_spec(tw), {'device'}),
+            ("Upload Font To", lambda: tw._ask_font_device(tw), {'font_device'}),
+            ("Store Object As", lambda: tw._ask_object_name(tw, 'X', 'DAT'),
+             {'object_name'}),
+            ("Graphics", lambda: tw.on_printer_graphics_clicked(None),
+             {'store_graphic', 'retrieve_graphic'}),
+            ("Objects", lambda: tw.on_printer_objects_clicked(None),
+             {'store_object', 'retrieve_object', 'delete_object'}),
+            ("Firmware", lambda: tw.on_printer_firmware_clicked(None),
+             {'firmware_connection', 'firmware_refresh'}),
+            ("Local Fonts", lambda: tw.on_local_fonts_clicked(None),
+             {'extra_font_folder'})):
+        _t_seen.clear()
+        _open()
+        _tip_seen |= _t_seen.get('found', set())
+        if _t_seen.get('found') != _wanted or _t_seen.get('wrong'):
+            _t_window_tips[_title] = (sorted(_t_seen.get('found', set()) ^ _wanted),
+                                      _t_seen.get('wrong'))
+finally:
+    Gtk.Dialog.run, zpl_local.list_ports = _t_real_run, _t_real_ports
+    tw.printer_address, tw.printer_port = _t_real_printer
+check("GTK: Label Settings, Grid Settings, Default Printer, the store windows "
+      "and the printer's managers explain their rows from the table",
+      not _t_window_tips, _t_window_tips)
 tw.unsaved_changes = False
 tw.destroy()
 

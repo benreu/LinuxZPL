@@ -39,6 +39,7 @@ from .canvas import DesignCanvas, palette_targets, to_pixbuf
 # The row helpers every dialog here builds with, kept beside the element
 # editors that use them most
 from .editors import _make_combo, _make_row, _make_spin, set_tip
+from zplcore import tips as zpl_tips
 from .properties import DEFAULT_WIDTH as PANEL_WIDTH, PropertiesPanel
 from .rulers import Ruler, RulerCorner
 from PIL import Image
@@ -73,6 +74,7 @@ def _dpi_combo(dpi: int) -> Gtk.ComboBoxText:
     replaced with a supported one.
     """
     combo = Gtk.ComboBoxText()
+    combo.set_name("dpi")
     for d in zpl_fonts.SUPPORTED_DPI:
         combo.append_text(str(d))
     try:
@@ -145,10 +147,11 @@ class _PrinterRows:
 
         self.port_spin = _make_spin(port, 1, 65535)
         self.port_spin.set_name("port")
-        _make_row(self.box, "Port:", self.port_spin, self.LABEL_WIDTH)
+        _make_row(self.box, "Port:", self.port_spin, self.LABEL_WIDTH,
+                  tip='port')
 
         self.dpi_combo = _dpi_combo(dpi)
-        _make_row(self.box, "DPI:", self.dpi_combo, self.LABEL_WIDTH)
+        _make_row(self.box, "DPI:", self.dpi_combo, self.LABEL_WIDTH, tip='dpi')
 
         # Where a font this app assigns is written and uploaded. The same
         # STORED_GRAPHIC_DEVICES the Store Graphic dialog offers, so a memory
@@ -157,12 +160,15 @@ class _PrinterRows:
         self.font_device_combo, self._font_device_codes = _make_combo(
             STORED_GRAPHIC_DEVICES,
             (font_device or zpl_fonts.DEFAULT_FONT_DEVICE).upper())
+        self.font_device_combo.set_name("font_device")
         _make_row(self.box, "Font memory:", self.font_device_combo,
-                  self.LABEL_WIDTH)
+                  self.LABEL_WIDTH, tip='font_device')
 
         self._test_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
                                  spacing=8)
         self.test_btn = Gtk.Button(label="Test Connection")
+        self.test_btn.set_name("test_connection")
+        set_tip(self.test_btn, 'test_connection')
         self.test_btn.connect("clicked", self._on_test)
         self._test_row.pack_start(self.test_btn, False, False, 0)
         if default is not None:
@@ -170,6 +176,7 @@ class _PrinterRows:
             # going back to.
             default_btn = Gtk.Button(label="Use Default")
             default_btn.set_name("use_default")
+            set_tip(default_btn, 'use_default')
             default_btn.connect("clicked", lambda _b: self._fill(*default))
             self._test_row.pack_start(default_btn, False, False, 0)
         self.box.pack_start(self._test_row, False, False, 0)
@@ -391,7 +398,8 @@ def _build_print_dialog(parent, document, printer, default):
     pause_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
     pause_row.pack_start(pause, True, True, 0)
     pause_row.pack_start(Gtk.Label(label="labels (0 = never)"), False, False, 0)
-    _make_row(copies, "Pause every:", pause_row, 100)
+    _pause_box, pause_label = _make_row(copies, "Pause every:", pause_row, 100)
+    set_tip(pause, 'pause_count', pause_label)
     replicates = _make_spin(settings.replicates, *zpl_print.REPLICATE_RANGE)
     replicates.set_name("replicates")
     _make_row(copies, "Replicates:", replicates, 100, tip='replicates')
@@ -399,6 +407,8 @@ def _build_print_dialog(parent, document, printer, default):
                      settings.override_pause)
     cut = check(copies, "cut_on_error", "Cut after a voided RFID label",
                 settings.cut_on_error)
+    set_tip(override, 'override_pause')
+    set_tip(cut, 'cut_on_error')
 
     # How the finished label is laid down, and checked, rather than where a
     # field sits on it.
@@ -411,6 +421,10 @@ def _build_print_dialog(parent, document, printer, default):
     validate = check(flags, "code_validation",
                      "Check barcode data as printed (^CV)",
                      settings.code_validation)
+    # Print upside down says all there is to say
+    for flag, key in ((mirror, 'mirror'), (reverse, 'reverse'),
+                      (validate, 'code_validation')):
+        set_tip(flag, key)
 
     setup = group(right, "Printer setup sent with the label")
     # A number box has no "unset", so the darkness has a tick for it.
@@ -430,30 +444,32 @@ def _build_print_dialog(parent, document, printer, default):
     darkness_row.pack_start(darkness_set, False, False, 0)
     darkness_row.pack_start(darkness_spin, True, True, 0)
     darkness_row.pack_start(darkness.note, False, False, 0)
-    _make_row(setup, "Darkness (^MD):", darkness_row)
+    _darkness_box, darkness_label = _make_row(setup, "Darkness (^MD):",
+                                              darkness_row)
+    set_tip(darkness_spin, 'darkness', darkness_label)
 
     print_speed, print_speeds = setup_combo(
         "print_speed", zpl_print.PRINT_SPEED_CHOICES, settings.print_speed)
-    _make_row(setup, "Print speed (^PR):", print_speed)
+    _make_row(setup, "Print speed (^PR):", print_speed, tip='print_speed')
     slew_speed, slew_speeds = setup_combo(
         "slew_speed", zpl_print.FEED_SPEED_CHOICES, settings.slew_speed)
-    _make_row(setup, "Slew speed:", slew_speed)
+    _make_row(setup, "Slew speed:", slew_speed, tip='slew_speed')
     backfeed_speed, backfeed_speeds = setup_combo(
         "backfeed_speed", zpl_print.FEED_SPEED_CHOICES,
         settings.backfeed_speed)
-    _make_row(setup, "Backfeed speed:", backfeed_speed)
+    _make_row(setup, "Backfeed speed:", backfeed_speed, tip='backfeed_speed')
 
     print_mode, print_modes = setup_combo(
         "print_mode", zpl_print.PRINT_MODES, settings.print_mode)
-    _make_row(setup, "Print mode (^MM):", print_mode)
+    _make_row(setup, "Print mode (^MM):", print_mode, tip='print_mode')
     prepeel = Gtk.CheckButton(label="Prepeel")
     prepeel.set_name("prepeel")
     prepeel.set_active(settings.prepeel)
-    _make_row(setup, "", prepeel)
+    _make_row(setup, "", prepeel, tip='prepeel')
 
     tracking, trackings = setup_combo(
         "media_tracking", zpl_print.MEDIA_TRACKING, settings.media_tracking)
-    _make_row(setup, "Media tracking (^MN):", tracking)
+    _make_row(setup, "Media tracking (^MN):", tracking, tip='media_tracking')
     offset_spin = _make_spin(0, *zpl_print.MARK_OFFSET_RANGE)
     offset_spin.set_name("mark_offset")
     offset = _NumberRow(offset_spin, settings.mark_offset, 0)
@@ -461,11 +477,13 @@ def _build_print_dialog(parent, document, printer, default):
     offset_row.pack_start(offset_spin, True, True, 0)
     offset_row.pack_start(Gtk.Label(label="dots"), False, False, 0)
     offset_row.pack_start(offset.note, False, False, 0)
-    _make_row(setup, "Black mark offset:", offset_row)
+    _offset_box, offset_label = _make_row(setup, "Black mark offset:",
+                                          offset_row)
+    set_tip(offset_spin, 'mark_offset', offset_label)
 
     media_type, media_types = setup_combo(
         "media_type", zpl_print.MEDIA_TYPES, settings.media_type)
-    _make_row(setup, "Media type (^MT):", media_type)
+    _make_row(setup, "Media type (^MT):", media_type, tip='media_type')
 
     note = Gtk.Label(label="Printer's setting sends nothing. A value set "
                            "here stays in effect on the printer after this "
@@ -585,6 +603,7 @@ def _build_grid_dialog(parent, grid, dpi):
         table.attach(label, 0, number, 1, 1)
         widget.set_hexpand(True)
         table.attach(widget, 1, number, 1, 1)
+        return label
 
     unit_combo = Gtk.ComboBoxText()
     unit_combo.set_name("grid_unit")
@@ -608,7 +627,7 @@ def _build_grid_dialog(parent, grid, dpi):
     major_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
     major_row.pack_start(major_spin, True, True, 0)
     major_row.pack_start(Gtk.Label(label="spaces"), False, False, 0)
-    row(2, "Major line every:", major_row)
+    set_tip(major_spin, 'grid_major', row(2, "Major line every:", major_row))
 
     hint = Gtk.Label()
     hint.set_name("grid_hint")
@@ -1126,14 +1145,16 @@ class ZPLViewerWindow(Gtk.Window):
         self.undo_button = Gtk.Button()
         self.undo_button.set_image(Gtk.Image.new_from_icon_name(
             "edit-undo-symbolic", Gtk.IconSize.BUTTON))
-        self.undo_button.set_tooltip_text("Undo (Ctrl+Z)")
+        self.undo_button.set_name("undo")
+        set_tip(self.undo_button, 'undo')
         self.undo_button.connect("clicked", self.on_undo)
         button_box.pack_start(self.undo_button, False, False, 0)
 
         self.redo_button = Gtk.Button()
         self.redo_button.set_image(Gtk.Image.new_from_icon_name(
             "edit-redo-symbolic", Gtk.IconSize.BUTTON))
-        self.redo_button.set_tooltip_text("Redo (Ctrl+Shift+Z)")
+        self.redo_button.set_name("redo")
+        set_tip(self.redo_button, 'redo')
         self.redo_button.connect("clicked", self.on_redo)
         button_box.pack_start(self.redo_button, False, False, 0)
 
@@ -1206,6 +1227,11 @@ class ZPLViewerWindow(Gtk.Window):
                 ("+ Image", 'image', self.on_add_image_clicked),
                 ("+ Graphic", 'stored_graphic', self.on_add_stored_graphic_clicked)):
             button = Gtk.Button(label=label)
+            # The kinds whose name alone doesn't say what they add
+            key = zpl_tips.PALETTE.get(kind)
+            if key is not None:
+                button.set_name(key)
+                set_tip(button, key)
             button.connect("clicked", handler)
             button.drag_source_set(Gdk.ModifierType.BUTTON1_MASK, palette_targets(),
                                    Gdk.DragAction.COPY)
@@ -1230,11 +1256,12 @@ class ZPLViewerWindow(Gtk.Window):
         zoom_box.get_style_context().add_class("linked")
         zoom_box.set_margin_start(10)
         end_box.pack_start(zoom_box, False, False, 0)
-        for label, action, tip in (("\u2212", self.on_zoom_out, "Zoom out (Ctrl+-)"),
-                                   ("Fit", self.on_fit_label, "Fit the label (Ctrl+0)"),
-                                   ("+", self.on_zoom_in, "Zoom in (Ctrl++)")):
+        for label, action, key in (("\u2212", self.on_zoom_out, 'zoom_out'),
+                                   ("Fit", self.on_fit_label, 'fit_label'),
+                                   ("+", self.on_zoom_in, 'zoom_in')):
             button = Gtk.Button(label=label)
-            button.set_tooltip_text(tip)
+            button.set_name(key)
+            set_tip(button, key)
             button.connect("clicked", action)
             zoom_box.pack_start(button, False, False, 0)
 
@@ -2409,7 +2436,8 @@ class ZPLViewerWindow(Gtk.Window):
 
         combo, codes = _make_combo(STORED_GRAPHIC_DEVICES,
                                    self.printer_font_device)
-        _make_row(content, "Memory:", combo)
+        combo.set_name("font_device")
+        _make_row(content, "Memory:", combo, tip='font_device')
 
         content.show_all()
         response = dialog.run()
@@ -2437,7 +2465,8 @@ class ZPLViewerWindow(Gtk.Window):
         content.set_margin_bottom(8)
 
         device_combo, device_codes = _make_combo(STORED_GRAPHIC_DEVICES, 'R')
-        _make_row(content, "Device:", device_combo)
+        device_combo.set_name("device")
+        _make_row(content, "Device:", device_combo, tip='device')
 
         name_entry = Gtk.Entry()
         name_entry.set_text("LOGO")
@@ -2485,7 +2514,8 @@ class ZPLViewerWindow(Gtk.Window):
         name_entry = Gtk.Entry()
         name_entry.set_text(default_name)
         name_entry.set_max_length(8)
-        _make_row(content, "Name (on E:):", name_entry)
+        name_entry.set_name("object_name")
+        _make_row(content, "Name (on E:):", name_entry, tip='object_name')
 
         ext_entry = Gtk.Entry()
         ext_entry.set_text(default_ext)
@@ -2565,8 +2595,11 @@ class ZPLViewerWindow(Gtk.Window):
         content.set_margin_bottom(8)
 
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        row.pack_start(Gtk.Label(label="Connection:"), False, False, 0)
+        connection_label = Gtk.Label(label="Connection:")
+        row.pack_start(connection_label, False, False, 0)
         connection = Gtk.ComboBoxText()
+        connection.set_name("firmware_connection")
+        set_tip(connection, 'firmware_connection', connection_label)
         row.pack_start(connection, True, True, 0)
         content.pack_start(row, False, False, 0)
 
@@ -2575,6 +2608,8 @@ class ZPLViewerWindow(Gtk.Window):
                             halign=Gtk.Align.START, selectable=True)
         row.pack_start(current, True, True, 0)
         refresh_btn = Gtk.Button(label="Refresh")
+        refresh_btn.set_name("firmware_refresh")
+        set_tip(refresh_btn, 'firmware_refresh')
         row.pack_start(refresh_btn, False, False, 0)
         content.pack_start(row, False, False, 0)
 
@@ -2771,6 +2806,10 @@ class ZPLViewerWindow(Gtk.Window):
         store_btn = Gtk.Button(label="Store…")
         retrieve_btn = Gtk.Button(label="Retrieve…")
         delete_btn = Gtk.Button(label="Delete")
+        for button, key in ((store_btn, 'store_graphic'),
+                            (retrieve_btn, 'retrieve_graphic')):
+            button.set_name(key)
+            set_tip(button, key)
         refresh_btn = Gtk.Button(label="Refresh")
         retrieve_btn.set_sensitive(False)
         delete_btn.set_sensitive(False)
@@ -3034,6 +3073,11 @@ class ZPLViewerWindow(Gtk.Window):
         store_btn = Gtk.Button(label="Store…")
         retrieve_btn = Gtk.Button(label="Retrieve…")
         delete_btn = Gtk.Button(label="Delete")
+        for button, key in ((store_btn, 'store_object'),
+                            (retrieve_btn, 'retrieve_object'),
+                            (delete_btn, 'delete_object')):
+            button.set_name(key)
+            set_tip(button, key)
         refresh_btn = Gtk.Button(label="Refresh")
         retrieve_btn.set_sensitive(False)
         delete_btn.set_sensitive(False)
@@ -3838,6 +3882,8 @@ class ZPLViewerWindow(Gtk.Window):
 
         rescan_btn = Gtk.Button(label="Rescan")
         extra_btn = Gtk.Button(label="Extra Font Folder\u2026")
+        extra_btn.set_name("extra_font_folder")
+        set_tip(extra_btn, 'extra_font_folder')
         buttons = Gtk.Box(spacing=8)
         buttons.pack_start(rescan_btn, False, False, 0)
         buttons.pack_start(extra_btn, False, False, 0)
@@ -3998,6 +4044,7 @@ class ZPLViewerWindow(Gtk.Window):
         dpi_box.pack_start(dpi_label, False, False, 0)
 
         dpi_combo = _dpi_combo(self.printer_dpi)
+        set_tip(dpi_combo, 'dpi', dpi_label)
         dpi_box.pack_start(dpi_combo, True, True, 0)
 
         # ^LH: the origin every field is placed from. Its use is preprinted
@@ -4005,9 +4052,11 @@ class ZPLViewerWindow(Gtk.Window):
         # belongs beside the size rather than among the printer settings.
         transform = self.design_canvas.document.transform
         home_x_spin = _make_spin(transform.home[0], 0, 32000)
-        _make_row(content, "Home X (dots):", home_x_spin)
+        home_x_spin.set_name("home_x")
+        _make_row(content, "Home X (dots):", home_x_spin, tip='home_x')
         home_y_spin = _make_spin(transform.home[1], 0, 32000)
-        _make_row(content, "Home Y (dots):", home_y_spin)
+        home_y_spin.set_name("home_y")
+        _make_row(content, "Home Y (dots):", home_y_spin, tip='home_y')
 
         # Info label
         info_label = Gtk.Label()

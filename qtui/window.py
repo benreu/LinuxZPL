@@ -21,6 +21,7 @@ from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QHBoxLayout, 
 from zplcore import fonts as zpl_fonts
 from zplcore import grid as zpl_grid
 from zplcore import parser as zpl_parser
+from zplcore import tips as zpl_tips
 from zplcore import printer_io
 from zplcore import view as zpl_view
 from zplcore import workflow
@@ -687,6 +688,12 @@ class ZPLDesignerWindow(QMainWindow):
             action = self._action(text, slot)
             toolbar.addAction(action)
             button = toolbar.widgetForAction(action)
+            # The kinds whose name alone doesn't say what they add. On the
+            # action, which the button takes its tooltip from.
+            key = zpl_tips.PALETTE.get(kind)
+            if key is not None:
+                button.setObjectName(key)
+                action.setToolTip(qt_dialogs.tip_markup(zpl_tips.TIPS[key]))
             button.installEventFilter(self)
             self._palette[kind] = slot
             self._palette_kinds[button] = kind
@@ -721,20 +728,23 @@ class ZPLDesignerWindow(QMainWindow):
         row.setContentsMargins(0, 0, 4, 0)
         row.setSpacing(2)
 
-        def strip_button(action):
+        def strip_button(action, key):
+            # GTK's buttons say the same, and name the shortcut
+            action.setToolTip(qt_dialogs.tip_markup(zpl_tips.TIPS[key]))
             button = QToolButton(strip)
+            button.setObjectName(key)
             button.setDefaultAction(action)
             button.setAutoRaise(True)
             row.addWidget(button)
 
         self.undo_button_action = self._action("\u21b6 Undo", self.on_undo)
         self.redo_button_action = self._action("\u21b7 Redo", self.on_redo)
-        strip_button(self.undo_button_action)
-        strip_button(self.redo_button_action)
+        strip_button(self.undo_button_action, 'undo')
+        strip_button(self.redo_button_action, 'redo')
         row.addSpacing(10)
-        strip_button(self._action("\u2212", self.on_zoom_out))
-        strip_button(self._action("Fit", self.on_fit_label))
-        strip_button(self._action("+", self.on_zoom_in))
+        strip_button(self._action("\u2212", self.on_zoom_out), 'zoom_out')
+        strip_button(self._action("Fit", self.on_fit_label), 'fit_label')
+        strip_button(self._action("+", self.on_zoom_in), 'zoom_in')
         row.addSpacing(10)
 
         # One button opening the same six commands the Edit menu holds, rather

@@ -12454,7 +12454,8 @@ from PySide2.QtWidgets import (QWidget as _TWidget, QLabel as _TLabel,
 def _qt_tips(root, shown_only=False, expected=None):
     """{key: widget} for every widget under `root` that has a tooltip, and
     what doesn't fit the table: a tooltip on a widget it isn't the tip for,
-    or a form row's label that doesn't say what its field says.
+    or a label that doesn't say what its field says - a form row's, its
+    field a widget or a layout of them, or a label's buddy.
     `shown_only` passes over the rows a barcode's symbology hides, and
     `expected` gives the tip for a name the table keys some other way."""
     widgets = [root] + [w for w in root.findChildren(_TWidget)
@@ -12462,18 +12463,26 @@ def _qt_tips(root, shown_only=False, expected=None):
     expected = expected or {}
     labels = {}
     for rows in root.findChildren(_TForm):
-        for widget in widgets:
-            label = rows.labelForField(widget)
-            if label is not None:
-                labels[id(label)] = widget
+        for row in range(rows.rowCount()):
+            label_item = rows.itemAt(row, _TForm.LabelRole)
+            field_item = rows.itemAt(row, _TForm.FieldRole)
+            if (label_item is None or field_item is None
+                    or label_item.widget() is None):
+                continue
+            if field_item.widget() is not None:
+                fields = [field_item.widget()]
+            else:
+                layout = field_item.layout()
+                fields = [layout.itemAt(i).widget() for i in range(layout.count())
+                          if layout.itemAt(i).widget() is not None]
+            labels[id(label_item.widget())] = (label_item.widget(), fields)
+    for widget in widgets:
+        if isinstance(widget, _TLabel) and widget.buddy() is not None:
+            labels[id(widget)] = (widget, [widget.buddy()])
+    shown = {id(w) for w in widgets}
     found, wrong = {}, []
     for widget in widgets:
-        if not widget.toolTip():
-            continue
-        if id(widget) in labels:
-            field = labels[id(widget)]
-            if widget.toolTip() != field.toolTip():
-                wrong.append(('label', widget.text(), field.objectName()))
+        if not widget.toolTip() or id(widget) in labels:
             continue
         name = widget.objectName()
         key = name[len('prop_'):] if name.startswith('prop_') else name
@@ -12482,11 +12491,13 @@ def _qt_tips(root, shown_only=False, expected=None):
             wrong.append(('widget', name, widget.toolTip()[:40]))
             continue
         found[key] = widget
-    # A field with a tip and a label: the label has it too
-    for label_id, field in labels.items():
-        label = next(w for w in widgets if id(w) == label_id)
-        if field.toolTip() and label.toolTip() != field.toolTip():
-            wrong.append(('unlabelled', label.text(), field.objectName()))
+    # A label says what its field says, when the field says anything
+    for label, fields in labels.values():
+        if id(label) not in shown:
+            continue
+        tips = {f.toolTip() for f in fields if f.toolTip()}
+        if (label.toolTip() or tips) and label.toolTip() not in tips:
+            wrong.append(('label', label.text(), label.toolTip()[:40]))
     return found, wrong
 
 
@@ -12671,6 +12682,24 @@ check("the toolbar's + Symbol and Align buttons take theirs from the table",
           for key, button in _t_window.items()),
       [(b.objectName(), b.toolTip()) for b in _t_window.values()])
 _tip_seen |= set(_t_window)
+from PySide2.QtWidgets import QToolButton as _TToolButton
+_t_buttons = dict((key, tw.findChild(_TToolButton, key)) for key in
+                  list(zpl_tips.PALETTE.values())
+                  + ['undo', 'redo', 'zoom_out', 'fit_label', 'zoom_in'])
+_t_untold = [key for key, button in _t_buttons.items()
+             if button is None
+             or button.toolTip() != qt_dialogs.tip_markup(zpl_tips.TIPS[key])]
+check("the palette's + Time, + Serial, + Numbered, + Image and + Graphic, and "
+      "undo, redo and the zoom buttons, say what they do",
+      not _t_untold, _t_untold)
+_tip_seen |= set(_t_buttons)
+# An action's tooltip follows it through a change of state: undo greys out
+# and back without losing its words
+tw.undo_button_action.setEnabled(False)
+tw.undo_button_action.setEnabled(True)
+check("and undo keeps its tip through being greyed out",
+      _t_buttons['undo'].toolTip() == qt_dialogs.tip_markup(zpl_tips.TIPS['undo']),
+      _t_buttons['undo'].toolTip())
 tw.unsaved_changes = False
 tw.close()
 
@@ -12681,11 +12710,94 @@ def _t_print_look(d):
     _t_print.update(found=set(_found), wrong=_wrong)
 
 _drive_print(_pw_doc, _t_print_look, button='cancel')
-check("the Print window's tips are the table's, Replicates' label included",
-      {'replicates', 'darkness_set'} <= _t_print['found']
-      and not _t_print['wrong'],
-      (sorted(_t_print['found']), _t_print['wrong']))
+_t_print_rows = {'pause_count', 'replicates', 'override_pause', 'cut_on_error',
+                 'mirror', 'reverse', 'code_validation', 'darkness_set',
+                 'darkness', 'print_speed', 'slew_speed', 'backfeed_speed',
+                 'print_mode', 'prepeel', 'media_tracking', 'mark_offset',
+                 'media_type', 'port', 'dpi', 'font_device', 'test_connection',
+                 'use_default'}
+check("the Print window explains its rows from the table, each label too",
+      _t_print['found'] == _t_print_rows and not _t_print['wrong'],
+      (sorted(_t_print['found'] ^ _t_print_rows), _t_print['wrong']))
 _tip_seen |= _t_print['found']
+
+
+def _t_modal(call):
+    """The tips in the modal window `call` opens, which is then cancelled."""
+    seen = {}
+
+    def act():
+        dialog = next((widget for widget in app.topLevelWidgets()
+                       if isinstance(widget, QDialog) and widget.isVisible()), None)
+        if dialog is None:
+            QTimer.singleShot(50, act)
+            return
+        found, wrong = _qt_tips(dialog)
+        seen.update(found=set(found), wrong=wrong)
+        dialog.reject()
+
+    QTimer.singleShot(100, act)
+    call()
+    return seen
+
+
+_t_windows = {
+    'Label Settings': (lambda: qt_dialogs.label_size_dialog(None, _pw_doc, 203),
+                       {'dpi', 'home_x', 'home_y'}),
+    'Grid Settings': (lambda: qt_dialogs.grid_settings_dialog(
+        None, zpl_grid.Grid(), 203), {'grid_major'}),
+    'Default Printer': (lambda: qt_dialogs.printer_settings_dialog(
+        None, '10.0.0.1', 9100, 203, 'E'),
+        {'port', 'dpi', 'font_device', 'test_connection'}),
+    'Store Graphic As': (lambda: qt_dialogs.store_graphic_dialog(None), {'device'}),
+    'Upload Font To': (lambda: qt_dialogs.font_device_dialog(None, 'E'),
+                       {'font_device'}),
+    'Store Object As': (lambda: qt_dialogs.store_object_dialog(None, 'X', 'DAT'),
+                        {'object_name'}),
+}
+_t_window_tips = {}
+for _title, (_open, _wanted) in _t_windows.items():
+    _seen = _t_modal(_open)
+    _tip_seen |= _seen['found']
+    if _seen['found'] != _wanted or _seen['wrong']:
+        _t_window_tips[_title] = (sorted(_seen['found'] ^ _wanted), _seen['wrong'])
+check("Label Settings, Grid Settings, Default Printer and the store windows "
+      "explain their rows from the table",
+      not _t_window_tips, _t_window_tips)
+
+# The printer's managers, kept from asking the printer anything
+_t_stubs = (qt_dialogs.PrinterGraphicsDialog.refresh,
+            qt_dialogs.PrinterObjectsDialog.refresh,
+            qt_dialogs.PrinterFirmwareDialog._ask_version, zpl_local.list_ports)
+qt_dialogs.PrinterGraphicsDialog.refresh = lambda self: None
+qt_dialogs.PrinterObjectsDialog.refresh = lambda self: None
+qt_dialogs.PrinterFirmwareDialog._ask_version = lambda self, *a: None
+zpl_local.list_ports = lambda: []
+try:
+    _t_managers = {
+        'Graphics': (qt_dialogs.PrinterGraphicsDialog(None, '127.0.0.1', 9),
+                     {'store_graphic', 'retrieve_graphic'}),
+        'Objects': (qt_dialogs.PrinterObjectsDialog(None, '127.0.0.1', 9),
+                    {'store_object', 'retrieve_object', 'delete_object'}),
+        'Firmware': (qt_dialogs.PrinterFirmwareDialog(None, '127.0.0.1', 9),
+                     {'firmware_connection', 'firmware_refresh'}),
+        'Local Fonts': (qt_dialogs.LocalFontsDialog(None), {'extra_font_folder'}),
+    }
+    _t_manager_tips = {}
+    for _title, (_dialog, _wanted) in _t_managers.items():
+        _found, _wrong = _qt_tips(_dialog)
+        _tip_seen |= set(_found)
+        if set(_found) != _wanted or _wrong:
+            _t_manager_tips[_title] = (sorted(set(_found) ^ _wanted), _wrong)
+        _dialog.reject()
+finally:
+    (qt_dialogs.PrinterGraphicsDialog.refresh,
+     qt_dialogs.PrinterObjectsDialog.refresh,
+     qt_dialogs.PrinterFirmwareDialog._ask_version,
+     zpl_local.list_ports) = _t_stubs
+check("the printer's managers explain the buttons that need it, Firmware's "
+      "Connection label too",
+      not _t_manager_tips, _t_manager_tips)
 
 # The GTK panel draws its own header, with a close and a float button; Qt's
 # dock has a title bar for that.

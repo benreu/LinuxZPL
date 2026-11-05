@@ -167,9 +167,27 @@ TIPS = {
         "scanner joins back up; each row places one of them. Untick Print to "
         "leave that symbol off (^FM).",
 
-    # --- the main window
+    # --- the main window: the palette, and the buttons beside the menus
+    'add_time':
+        "Add a date or time the printer fills in from its clock as it "
+        "prints (^FC).",
+    'add_serial': "Add a number the printer counts on by itself for each label (^SN).",
+    'add_numbered':
+        "Add a field whose data is supplied by number when the label prints, "
+        "for a stored format recalled with new data (^FN).",
+    'add_image':
+        "Add a picture from this computer. It's sent to the printer inside "
+        "the label.",
+    'add_graphic':
+        "Add a graphic already stored on the printer. The label carries only "
+        "its name (^XG or ^IM).",
     'add_symbol': "Add a graphic symbol (^GS)",
     'align': "Line the selection up (Edit ▸ Align)",
+    'undo': "Undo (Ctrl+Z)",
+    'redo': "Redo (Ctrl+Shift+Z)",
+    'zoom_out': "Zoom out (Ctrl+-)",
+    'fit_label': "Fit the label (Ctrl+0)",
+    'zoom_in': "Zoom in (Ctrl++)",
 
     # --- the Properties panel's own header (GTK draws it; Qt's dock has a
     # title bar of its own)
@@ -178,9 +196,111 @@ TIPS = {
     'dock_panel': "Dock the panel beside the canvas",
 
     # --- the Print window
+    'pause_count':
+        "Prints the copies in groups of this many, stopping after each group "
+        "until the printer's Pause key is pressed; a cutter cuts there. 0 "
+        "never pauses.",
     'replicates': "Copies of each serial number before it counts on",
+    'override_pause':
+        "The printer still cuts after each group, but doesn't stop for the "
+        "Pause key.",
+    'cut_on_error':
+        "With a cutter fitted, cuts after any label the printer voided "
+        "because its RFID tag failed, so it comes away on its own. Unticked, "
+        "it cuts there only where it would have anyway.",
+    'mirror':
+        "Prints the whole label as a mirror image, to be read from behind "
+        "through clear stock.",
+    'reverse':
+        "Every field prints as if its Reverse print were ticked: white over "
+        "ink already on the label, black elsewhere.",
+    'code_validation':
+        "The printer checks each barcode's data (its characters, check digit "
+        "and length) and prints an error message in place of one that fails, "
+        "rather than a wrong barcode.",
     'darkness_set': "Clear for the printer's setting",
+    'darkness':
+        "Darker (+) or lighter (−) than the darkness the printer is set "
+        "to. Untick to leave the printer's setting alone.",
+    'print_speed':
+        "How fast the label moves while printing, in inches a second. Slower "
+        "usually prints sharper.",
+    'slew_speed': "How fast blank stock feeds between labels. Set a Print speed first.",
+    'backfeed_speed':
+        "How fast the stock backs up to the next label after a tear-off, "
+        "peel or cut. Set a Slew speed first.",
+    'print_mode':
+        "What the printer does with a printed label: tear-off, peel, rewind, "
+        "cut… It has to be one the printer is fitted for.",
+    'prepeel':
+        "In peel-off mode, peels a little of the next label off its backing "
+        "before printing it, which helps stock that sticks. Needs a Print "
+        "mode.",
+    'media_tracking':
+        "How the printer finds where each label starts: continuous stock has "
+        "no gaps; web sensing finds the gap between labels; mark sensing "
+        "finds a black mark on the back.",
+    'mark_offset':
+        "Where the black mark sits from the point the labels separate, in "
+        "dots; 0 is right at the perforation or cut. Only for mark sensing.",
+    'media_type':
+        "Thermal transfer prints through a ribbon; direct thermal prints "
+        "straight onto heat-sensitive stock with none. Match what's loaded.",
+
+    # --- the printer, in the Print window and Default Printer
+    'port': "The printer's raw printing port. Zebra printers use 9100.",
+    'dpi':
+        "The printer's resolution. The label is laid out in dots, so a wrong "
+        "setting prints it the wrong size.",
+    'font_device':
+        "The printer drive uploaded fonts go to. R: (DRAM) is lost when the "
+        "printer is switched off; E: (Flash) keeps them.",
+    'test_connection':
+        "Connect to the printer and ask its resolution, which fills in DPI.",
+    'use_default': "Fill these in from Settings ▸ Default Printer.",
+
+    # --- Label Settings and Grid Settings
+    'home_x':
+        "Shifts every field this many dots right, to fit the design around a "
+        "preprinted area without moving each field (^LH).",
+    'home_y':
+        "Shifts every field this many dots down, to fit the design around a "
+        "preprinted area without moving each field (^LH).",
+    'grid_major': "Draws every so many lines darker, to count spaces by.",
+
+    # --- storing on the printer, and the printer's managers
+    'object_name':
+        "The name on the printer's E: drive, up to 8 characters. Case is kept "
+        "as typed.",
+    'firmware_connection':
+        "The printer to update: the session's network printer, or one "
+        "plugged in by USB, which is the only way to reach a printer in "
+        "forced download mode.",
+    'firmware_refresh':
+        "Ask the printer's firmware version again, and look again for USB "
+        "printers, which can come back under a new number after a restart.",
+    'store_graphic':
+        "Store an image from this computer on the printer, to place with "
+        "+ Graphic.",
+    'retrieve_graphic':
+        "Fetch the selected graphic from the printer, so the canvas can draw "
+        "it, and save it to a file if you like.",
+    'store_object': "Upload any file from this computer to the printer's E: drive.",
+    'retrieve_object':
+        "Download the selected object from the printer and save it to a file.",
+    'delete_object':
+        "Delete the selected object from the printer. Z: is factory memory "
+        "and can't be deleted.",
+    'extra_font_folder':
+        "Also search a folder of your own for .ttf fonts, for when the "
+        "system's font list misses them.",
 }
+
+# The palette's buttons whose name alone doesn't say what they add, by the
+# kind each adds: the button's tip key. + Text and + Frame say it already.
+PALETTE = {'time': 'add_time', 'serial': 'add_serial',
+           'numbered': 'add_numbered', 'image': 'add_image',
+           'stored_graphic': 'add_graphic'}
 
 # A barcode symbology's own rows, from symbology.BARCODE_PARAMETERS, keyed by
 # (symbology, attribute): one row serves every symbology with that attribute,

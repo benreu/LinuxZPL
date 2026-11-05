@@ -199,6 +199,7 @@ def _font_device_combo(device: str) -> QComboBox:
     delete it.
     """
     combo = QComboBox()
+    combo.setObjectName("font_device")
     for label, code in STORED_GRAPHIC_DEVICES:
         combo.addItem(label, code)
     index = combo.findData((device or zpl_fonts.DEFAULT_FONT_DEVICE).upper())
@@ -216,6 +217,7 @@ def _dpi_combo(dpi: int) -> QComboBox:
     replaced with a supported one.
     """
     combo = QComboBox()
+    combo.setObjectName("dpi")
     for d in zpl_fonts.SUPPORTED_DPI:
         combo.addItem(str(d))
     if dpi in zpl_fonts.SUPPORTED_DPI:
@@ -513,6 +515,8 @@ class LocalFontsDialog(QDialog):
         self._rescan_btn = QPushButton("Rescan")
         row.addWidget(self._rescan_btn)
         self._extra_btn = QPushButton("Extra Font Folder…")
+        self._extra_btn.setObjectName("extra_font_folder")
+        set_tip(self._extra_btn, 'extra_font_folder')
         row.addWidget(self._extra_btn)
         row.addStretch(1)
         layout.addLayout(row)
@@ -561,22 +565,23 @@ def tip_markup(text: str) -> str:
     return "<p>" + html.escape(text, quote=False) + "</p>"
 
 
-def set_tip(widget, key: str, form=None) -> None:
+def set_tip(widget, key: str, form=None, label=None) -> None:
     """Give `widget` the tip zplcore.tips holds for `key`, and the label of
-    its row in `form` too, so hovering either explains it. A key the table
-    doesn't have is a mistake here, and fails."""
-    set_tip_text(widget, zpl_tips.TIPS[key], form)
+    its row in `form` too, so hovering either explains it - or `label`, for
+    a row whose field is a layout around `widget`. A key the table doesn't
+    have is a mistake here, and fails."""
+    set_tip_text(widget, zpl_tips.TIPS[key], form, label)
 
 
-def set_tip_text(widget, text: str, form=None) -> None:
+def set_tip_text(widget, text: str, form=None, label=None) -> None:
     """set_tip for a tip looked up some other way - a barcode row's, which
     depends on the symbology (zplcore.tips.PARAMETERS, CHECK_DIGIT)."""
     markup = tip_markup(text)
     widget.setToolTip(markup)
-    if form is not None:
+    if label is None and form is not None:
         label = form.labelForField(widget)
-        if label is not None:
-            label.setToolTip(markup)
+    if label is not None:
+        label.setToolTip(markup)
 
 
 # --- element editing --------------------------------------------------------
@@ -2113,9 +2118,11 @@ def store_graphic_dialog(parent) -> Optional[str]:
     layout.addLayout(form)
 
     device_combo = QComboBox()
+    device_combo.setObjectName("device")
     for label, code in STORED_GRAPHIC_DEVICES:
         device_combo.addItem(label, code)
     form.addRow("Device:", device_combo)
+    set_tip(device_combo, 'device', form)
 
     name_edit = QLineEdit("LOGO")
     name_edit.setMaxLength(8)
@@ -2152,6 +2159,7 @@ def font_device_dialog(parent, default_device: str) -> Optional[str]:
 
     combo = _font_device_combo(default_device)
     form.addRow("Memory:", combo)
+    set_tip(combo, 'font_device', form)
 
     buttons = _buttons(dialog)
     add_help(dialog, "upload_font_to", buttons)
@@ -2179,8 +2187,10 @@ def store_object_dialog(parent, default_name: str, default_ext: str):
     layout.addLayout(form)
 
     name_edit = QLineEdit(default_name)
+    name_edit.setObjectName("object_name")
     name_edit.setMaxLength(8)
     form.addRow("Name (on E:):", name_edit)
+    set_tip(name_edit, 'object_name', form)
 
     ext_edit = QLineEdit(default_ext)
     form.addRow("Extension:", ext_edit)
@@ -2239,6 +2249,7 @@ def label_size_dialog(parent, document: Document, dpi: int):
 
     dpi_combo = _dpi_combo(dpi)
     form.addRow("DPI:", dpi_combo)
+    set_tip(dpi_combo, 'dpi', form)
 
     # ^LH: the origin every field is placed from. Its use is preprinted stock -
     # moving the printable area below a pre-printed header - so it belongs
@@ -2248,12 +2259,14 @@ def label_size_dialog(parent, document: Document, dpi: int):
     home_x.setRange(0, 32000)
     home_x.setValue(document.transform.home[0])
     form.addRow("Home X (dots):", home_x)
+    set_tip(home_x, 'home_x', form)
 
     home_y = QSpinBox()
     home_y.setObjectName("home_y")
     home_y.setRange(0, 32000)
     home_y.setValue(document.transform.home[1])
     form.addRow("Home Y (dots):", home_y)
+    set_tip(home_y, 'home_y', form)
 
     for text, w_in, h_in in PRESET_SIZES:
         btn = QPushButton(text)
@@ -2329,6 +2342,7 @@ def grid_settings_dialog(parent, grid, dpi: int):
     major_spin.setValue(grid.major_every)
     major_spin.setSuffix(" spaces")
     form.addRow("Major line every:", major_spin)
+    set_tip(major_spin, 'grid_major', form)
 
     hint = QLabel()
     layout.addWidget(hint)
@@ -2407,21 +2421,27 @@ class _PrinterRows:
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(port)
         form.addRow("Port:", self.port_spin)
+        set_tip(self.port_spin, 'port', form)
 
         self.dpi_combo = _dpi_combo(dpi)
         form.addRow("DPI:", self.dpi_combo)
+        set_tip(self.dpi_combo, 'dpi', form)
 
         self.font_device_combo = _font_device_combo(font_device)
         form.addRow("Font memory:", self.font_device_combo)
+        set_tip(self.font_device_combo, 'font_device', form)
 
         self._test_row = QHBoxLayout()
         self.test_btn = QPushButton("Test Connection")
+        self.test_btn.setObjectName("test_connection")
+        set_tip(self.test_btn, 'test_connection')
         self._test_row.addWidget(self.test_btn)
         if default is not None:
             # What the persisted default printer is, for comparing against or
             # going back to.
             default_btn = QPushButton("Use Default")
             default_btn.setObjectName("use_default")
+            set_tip(default_btn, 'use_default')
             default_btn.clicked.connect(lambda: self._fill(*default))
             self._test_row.addWidget(default_btn)
         self._test_row.addStretch(1)
@@ -2635,6 +2655,7 @@ def print_dialog(parent, document: Document, printer, default):
     pause.setSpecialValueText("Never")
     pause.setSuffix(" labels")
     copies.addRow("Pause every:", pause)
+    set_tip(pause, 'pause_count', copies)
     replicates = _count_spin("replicates", zpl_print.REPLICATE_RANGE,
                              settings.replicates)
     copies.addRow("Replicates:", replicates)
@@ -2642,10 +2663,12 @@ def print_dialog(parent, document: Document, printer, default):
     override = QCheckBox("Don't pause between groups")
     override.setObjectName("override_pause")
     override.setChecked(settings.override_pause)
+    set_tip(override, 'override_pause')
     copies.addRow(override)
     cut = QCheckBox("Cut after a voided RFID label")
     cut.setObjectName("cut_on_error")
     cut.setChecked(settings.cut_on_error)
+    set_tip(cut, 'cut_on_error')
     copies.addRow(cut)
     left.addWidget(copies_box)
     left.addStretch(1)
@@ -2668,6 +2691,10 @@ def print_dialog(parent, document: Document, printer, default):
                    settings.reverse)
     validate = flag("code_validation", "Check barcode data as printed (^CV)",
                     settings.code_validation)
+    # Print upside down says all there is to say
+    for check, key in ((mirror, 'mirror'), (reverse, 'reverse'),
+                       (validate, 'code_validation')):
+        set_tip(check, key)
     right.addWidget(label_box)
 
     setup_box = QGroupBox("Printer setup sent with the label")
@@ -2689,29 +2716,36 @@ def print_dialog(parent, document: Document, printer, default):
     darkness_row.addWidget(darkness_spin, 1)
     darkness_row.addWidget(darkness.note)
     setup.addRow("Darkness (^MD):", darkness_row)
+    set_tip(darkness_spin, 'darkness', label=setup.labelForField(darkness_row))
 
     print_speed = _setup_combo("print_speed", zpl_print.PRINT_SPEED_CHOICES,
                                settings.print_speed)
     setup.addRow("Print speed (^PR):", print_speed)
+    set_tip(print_speed, 'print_speed', setup)
     slew_speed = _setup_combo("slew_speed", zpl_print.FEED_SPEED_CHOICES,
                               settings.slew_speed)
     setup.addRow("Slew speed:", slew_speed)
+    set_tip(slew_speed, 'slew_speed', setup)
     backfeed_speed = _setup_combo("backfeed_speed",
                                   zpl_print.FEED_SPEED_CHOICES,
                                   settings.backfeed_speed)
     setup.addRow("Backfeed speed:", backfeed_speed)
+    set_tip(backfeed_speed, 'backfeed_speed', setup)
 
     print_mode = _setup_combo("print_mode", zpl_print.PRINT_MODES,
                               settings.print_mode)
     setup.addRow("Print mode (^MM):", print_mode)
+    set_tip(print_mode, 'print_mode', setup)
     prepeel = QCheckBox("Prepeel")
     prepeel.setObjectName("prepeel")
     prepeel.setChecked(settings.prepeel)
     setup.addRow("", prepeel)
+    set_tip(prepeel, 'prepeel', setup)
 
     tracking = _setup_combo("media_tracking", zpl_print.MEDIA_TRACKING,
                             settings.media_tracking)
     setup.addRow("Media tracking (^MN):", tracking)
+    set_tip(tracking, 'media_tracking', setup)
     offset_spin = QSpinBox()
     offset_spin.setObjectName("mark_offset")
     offset_spin.setRange(*zpl_print.MARK_OFFSET_RANGE)
@@ -2721,10 +2755,12 @@ def print_dialog(parent, document: Document, printer, default):
     offset_row.addWidget(offset_spin, 1)
     offset_row.addWidget(offset.note)
     setup.addRow("Black mark offset:", offset_row)
+    set_tip(offset_spin, 'mark_offset', label=setup.labelForField(offset_row))
 
     media_type = _setup_combo("media_type", zpl_print.MEDIA_TYPES,
                               settings.media_type)
     setup.addRow("Media type (^MT):", media_type)
+    set_tip(media_type, 'media_type', setup)
 
     note = QLabel("Printer's setting sends nothing. A value set here stays "
                   "in effect on the printer after this label.")
@@ -3053,6 +3089,10 @@ class PrinterGraphicsDialog(QDialog):
         self._retrieve_btn = QPushButton("Retrieve…")
         self._delete_btn = QPushButton("Delete")
         self._refresh_btn = QPushButton("Refresh")
+        for button, key in ((self._store_btn, 'store_graphic'),
+                            (self._retrieve_btn, 'retrieve_graphic')):
+            button.setObjectName(key)
+            set_tip(button, key)
         self._retrieve_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
         buttons = (self._store_btn, self._retrieve_btn, self._delete_btn,
@@ -3276,6 +3316,11 @@ class PrinterObjectsDialog(QDialog):
         self._retrieve_btn = QPushButton("Retrieve…")
         self._delete_btn = QPushButton("Delete")
         self._refresh_btn = QPushButton("Refresh")
+        for button, key in ((self._store_btn, 'store_object'),
+                            (self._retrieve_btn, 'retrieve_object'),
+                            (self._delete_btn, 'delete_object')):
+            button.setObjectName(key)
+            set_tip(button, key)
         self._retrieve_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
         buttons = (self._store_btn, self._retrieve_btn, self._delete_btn,
@@ -3521,8 +3566,12 @@ class PrinterFirmwareDialog(QDialog):
 
         layout = QVBoxLayout(self)
         row = QHBoxLayout()
-        row.addWidget(QLabel("Connection:"))
+        connection_label = QLabel("Connection:")
+        row.addWidget(connection_label)
         self._connection = QComboBox()
+        self._connection.setObjectName("firmware_connection")
+        connection_label.setBuddy(self._connection)
+        set_tip(self._connection, 'firmware_connection', label=connection_label)
         row.addWidget(self._connection, 1)
         layout.addLayout(row)
         self._list_connections()
@@ -3532,6 +3581,8 @@ class PrinterFirmwareDialog(QDialog):
         self._current.setTextInteractionFlags(Qt.TextSelectableByMouse)
         row.addWidget(self._current, 1)
         self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.setObjectName("firmware_refresh")
+        set_tip(self._refresh_btn, 'firmware_refresh')
         row.addWidget(self._refresh_btn)
         layout.addLayout(row)
 

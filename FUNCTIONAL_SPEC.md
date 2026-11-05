@@ -1404,7 +1404,14 @@ back where it was left: its size, and whether it floats (§13).
   plain sentences, ending with the ZPL command when the label doesn't show it.
   An explanation is a tooltip rather than a note under its row, which would
   cost the narrow panel a line on every element that has it: Reverse print's
-  is, and so is the list of `%` codes a time field's format can use.
+  is, and so is the list of `%` codes a time field's format can use. The
+  windows of §7.3 are explained the same way - the Print window's rows,
+  Label Settings' home, the printer's rows, Grid Settings' major lines, the
+  store windows and the printer's managers - and so are the palette buttons
+  whose name alone doesn't say what they add (+ Time, + Serial, + Numbered,
+  + Image, + Graphic). Undo, redo and the zoom buttons name their shortcut
+  in both frontends. A note that warns rather than explains stays a line of
+  text: the Print window's "Printer's setting sends nothing".
 - The font chooser opened from the text rows is modal to the window the panel
   is in, not to the application.
 
