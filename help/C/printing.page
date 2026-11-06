@@ -12,16 +12,19 @@
 
   <title>Print a label</title>
 
-  <p>LinuxZPL sends labels straight to a Zebra printer on the network, with
-  no printing system in between. The printer has to be reachable from this
-  computer at its address and port; if it is not, the error says why.</p>
+  <p>LinuxZPL sends labels straight to a Zebra printer, on the network or
+  plugged into this computer by USB, with no printing system or printer
+  driver in between. If the printer cannot be reached, the error says why.</p>
 
   <section id="default-printer">
     <title>The printer you normally use</title>
     <p><guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq> holds
-    the printer's <gui>Address</gui>, <gui>Port</gui> (usually 9100) and
-    <gui>DPI</gui>, its resolution. <gui>Test Connection</gui> checks the
-    printer can be reached and asks it its resolution. <gui>Font
+    the printer and its <gui>DPI</gui>, its resolution. Under
+    <gui>Connection</gui>, choose <gui>Network</gui> and give the printer's
+    <gui>Address</gui> and <gui>Port</gui> (usually 9100), or <gui>USB</gui>
+    and choose it from the <gui>Printer</gui> list: see
+    <link xref="#usb"/>. <gui>Test Connection</gui> checks the printer can be
+    reached and asks it its resolution. <gui>Font
     memory</gui> says where on the printer fonts are kept: see
     <link xref="fonts"/>. These are remembered from one session to the
     next.</p>
@@ -36,7 +39,8 @@
     <terms>
       <item>
         <title><gui>Printer</gui></title>
-        <p>The printer to print to. A change here lasts until LinuxZPL is
+        <p>The printer to print to, on the network or by USB, as in
+        <gui>Default Printer</gui>. A change here lasts until LinuxZPL is
         closed and is not remembered; <gui>Use Default</gui> fills in the
         default printer again. This is how to print to another printer for
         a while.</p>
@@ -69,6 +73,50 @@
     </terms>
     <p>Everything but the printer is saved with the label, so the label
     prints the same way next time, and a change to it can be undone.</p>
+  </section>
+
+  <section id="usb">
+    <title>A printer plugged in by USB</title>
+    <p>Choose <gui>USB</gui> under <gui>Connection</gui>, then the printer in
+    the <gui>Printer</gui> list, which names each one with its device, such
+    as <sys>lp2</sys>. Press <gui>Refresh</gui> after plugging a printer in
+    or switching it on. LinuxZPL remembers the printer by its serial number,
+    so it finds it again when it comes back as another device after a
+    restart. A remembered printer that is not plugged in stays in the list as
+    <gui>(not connected)</gui>.</p>
+    <terms>
+      <item>
+        <title>No permission</title>
+        <p>The printer's device belongs to the <sys>lp</sys> group. Join it
+        with <cmd>sudo usermod -aG lp $USER</cmd>, then log out and in
+        again.</p>
+      </item>
+      <item>
+        <title>(no usblp driver)</title>
+        <p>The printer is plugged in, but has no device, because a print
+        system's own driver took it over to look at it and did not give it
+        back. This can happen when a new printer is plugged in. The error
+        gives the command that gives it back, which needs your password:
+        <cmd>echo 3-1.1.2.1:1.0 | sudo tee
+        /sys/bus/usb/drivers/usblp/bind</cmd>, with the printer's own
+        number in place of <sys>3-1.1.2.1:1.0</sys>. Unplugging it and
+        plugging it in again may not help, since the same thing happens
+        again.</p>
+      </item>
+      <item>
+        <title>A "missing printer driver" message</title>
+        <p>When a new printer is plugged in, the desktop may say it has no
+        driver for it. LinuxZPL does not need one, so the message can be
+        ignored. Setting up a print queue for the printer is not needed
+        either, and while a print queue is printing, LinuxZPL cannot use the
+        printer.</p>
+      </item>
+      <item>
+        <title>In use</title>
+        <p>Only one program can use a USB printer at a time. LinuxZPL waits a
+        few seconds for whatever has it, and then says it is in use.</p>
+      </item>
+    </terms>
   </section>
 
   <section id="quick-print">

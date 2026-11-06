@@ -14,13 +14,19 @@ the printer in place of (address, port). A network Connection goes to
 printer_io, a USB one to local_port, and a bare local_port.LocalPort - a node
 picked for one job, as Firmware Update does - straight to local_port.
 Cancelled and CancelToken stay printer_io's, whichever way a call goes.
+
+A USB printer that cannot be used for a reason the user can fix - not
+plugged in, no usblp driver, no permission, in use - raises PortProblem,
+which the queries let through rather than reading as "could not be asked".
 """
 
 import errno
+import os
 from dataclasses import dataclass, replace
 from typing import Callable, Iterable, List, Optional, Tuple, Union
 
 from . import local_port, printer_io
+from .local_port import PortProblem  # noqa: F401  (re-exported)
 
 NETWORK = 'network'
 USB = 'usb'
@@ -118,32 +124,104 @@ Printer = Union[Connection, local_port.LocalPort]
 
 
 def list_usb() -> List[Tuple[Connection, str]]:
-    """Every USB printer present now, as (Connection, node), in node order."""
+    """Every USB printer present now, as (Connection, node), in node order -
+    then any on the bus with no node, as (Connection, ''): see
+    local_port.list_detached()."""
     return [(Connection.usb(found.serial, found.description), found.path)
-            for found in local_port.list_printers()]
+            for found in (local_port.list_printers()
+                          + local_port.list_detached())]
+
+
+NO_USB_PRINTERS = "No USB printers found"
+NO_USB_CHOSEN = ("No USB printer is chosen: plug one in and press Refresh, "
+                 "or choose Network.")
+NO_ADDRESS = "Printer address cannot be empty."
+
+
+def usb_choices(current: Connection
+                ) -> Tuple[List[Tuple[str, Optional[Connection]]], int]:
+    """The USB Printer list both frontends show, as ([(label, Connection)],
+    the index to select).
+
+    Each printer present is named with its node, `Zebra … ZT410 (lp2)`, so
+    two of one model can be told apart; one with no node says why, `(no
+    usblp driver)`. The printer `current` names is selected, and when it is
+    the USB printer in use but not plugged in it is still listed, `(not
+    connected)`, so opening the window never loses it. With nothing to list
+    the one entry says so and carries None.
+    """
+    entries = []
+    for printer, path in list_usb():
+        detail = os.path.basename(path) if path else "no usblp driver"
+        entries.append((f"{_title(printer)} ({detail})", printer))
+    keys = [printer.key() for _label, printer in entries]
+    wanted = current.as_usb(current.usb_serial, current.usb_name).key()
+    if wanted in keys:
+        return entries, keys.index(wanted)
+    if current.is_usb:
+        entries.append((f"{_title(current)} (not connected)",
+                        Connection.usb(current.usb_serial, current.usb_name)))
+        return entries, len(entries) - 1
+    if not entries:
+        return [(NO_USB_PRINTERS, None)], 0
+    return entries, 0
+
+
+def _title(printer: Connection) -> str:
+    return printer.usb_name or f"USB printer {printer.usb_serial}"
+
+
+def _matches(printer: Connection, found: local_port.UsbPrinter) -> bool:
+    if printer.usb_serial:
+        return found.serial == printer.usb_serial
+    return bool(printer.usb_name) and found.description == printer.usb_name
 
 
 def resolve(printer: Connection) -> local_port.LocalPort:
     """The node a USB printer has now, found by its serial number - or, for
-    one without, by its name, the lowest node winning. Raises OSError if it
-    is not plugged in."""
+    one without, by its name, the lowest node winning. Raises PortProblem if
+    it is not plugged in, or is but has no node."""
     for found in local_port.list_printers():
-        if printer.usb_serial:
-            if found.serial == printer.usb_serial:
-                return local_port.LocalPort(found.path)
-        elif printer.usb_name and found.description == printer.usb_name:
+        if _matches(printer, found):
             return local_port.LocalPort(found.path)
-    raise OSError(errno.ENODEV, _not_connected(printer))
+    for found in local_port.list_detached():
+        if _matches(printer, found):
+            raise PortProblem(errno.ENODEV, _no_driver(printer, found))
+    raise PortProblem(errno.ENODEV, _not_connected(printer))
+
+
+def node_of(printer: Connection) -> Optional[str]:
+    """The node a USB printer in use has now, or None - for a network
+    printer, or a USB one that is not there. Never raises; for choosing a
+    list entry, not for sending."""
+    if not printer.is_usb:
+        return None
+    try:
+        return resolve(printer).path
+    except OSError:
+        return None
+
+
+def _named(printer: Connection) -> str:
+    if printer.usb_name and printer.usb_serial:
+        return f"{printer.usb_name} (serial number {printer.usb_serial})"
+    return printer.usb_name or (f"The USB printer with serial number "
+                                f"{printer.usb_serial}")
 
 
 def _not_connected(printer: Connection) -> str:
-    if printer.usb_name and printer.usb_serial:
-        return (f"{printer.usb_name} (serial number {printer.usb_serial}) "
-                f"is not connected by USB.")
-    if printer.usb_name:
-        return f"{printer.usb_name} is not connected by USB."
-    return (f"The USB printer with serial number {printer.usb_serial} is "
-            f"not connected.")
+    return f"{_named(printer)} is not connected by USB."
+
+
+def _no_driver(printer: Connection, found: local_port.UsbPrinter) -> str:
+    """Plugged in, but usblp does not drive it: most often a print queue's
+    own USB driver (a CUPS backend) probed it and left it detached. Putting
+    usblp back needs root, so this says how rather than trying."""
+    return (f"{_named(printer)} is plugged in, but has no USB printer "
+            f"device: something - usually a print system's driver probing "
+            f"it - detached the kernel's usblp driver from it. To attach it "
+            f"again, run: echo {found.interface} | sudo tee "
+            f"/sys/bus/usb/drivers/usblp/bind")
 
 
 def _local(printer: Printer) -> Optional[local_port.LocalPort]:

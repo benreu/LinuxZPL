@@ -1481,8 +1481,8 @@ file choosers and the prompts — are modal.
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI; Home X and Y | Home is `^LH`, 0–32000 dots. 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Grid Settings** | Unit; Spacing; Major line every | Unit is Inches, Millimetres or Dots. Spacing is 0.005–2 in to three decimals, 0.1–50 mm to two, or 1–400 dots; one that comes out under a dot at the label's resolution is held at one. Changing the unit converts the spacing, so the grid stays its size as far as the new unit's precision and range allow: 0.1 in becomes 2.54 mm, not 0.1 mm. Major line every is 1–100 spaces. A live hint gives a physical spacing in dots at the label's resolution, where a fraction means the lines are not evenly spaced, and a dot spacing in inches. Only the spacing is here; showing the grid is the View menu's (§6.3). Accepting redraws the grid and remembers it (§13). It changes nothing in the label and records no undo entry (§12). |
-| **Default Printer** | Address; Port; DPI; Font memory; Test Connection | Port 1–65535. DPI is a choice of 203 / 300 / 600. Font memory is §10.4.1's. Test Connection opens the socket and then asks the printer its resolution, filling the DPI field in (§11). Accepting persists all four (§13). |
-| **Print** | **Printer**: Address; Port; DPI; Font memory; Test Connection; Use Default. **Copies (`^PQ`)**: Copies; Pause every; Replicates; Don't pause between groups; Cut after a voided RFID label. **Label**: Print upside down (`^PO`); Mirror left to right (`^PM`); Reverse fields, white on black (`^LR`); Check barcode data as printed (`^CV`). **Printer setup sent with the label**: Darkness (`^MD`); Print, Slew and Backfeed speed (`^PR`); Print mode (`^MM`) and Prepeel; Media tracking (`^MN`) and Black mark offset; Media type (`^MT`). Buttons Print, OK, Cancel | The printer rows are Default Printer's, built by the same helper, pre-filled with whichever printer is in effect, and for this session only: they never write settings.ini (§13), and Use Default re-fills them from the persisted default, for comparing against or going back to it. A DPI change runs §11's prompt. Everything else is saved with the label, and its rows come from one table both frontends share. `^PQ`'s own ranges: Copies 1–99,999,999, Pause every 0 to 99,999,999 labels, 0 never pausing (Qt shows it as Never; GTK, whose numeric spin button takes no letters, says "0 = never" beside the box), Replicates 0–99,999,999. Darkness is −30 to 30 in tenths, relative to the printer's configured darkness, with a tick beside the box, since a number box has no "unset". Print speed is 1–14 in/s and slew and backfeed 2–14, each labelled with the letter A–E that also names it where there is one. Every set-up row's first choice is **Printer's setting**, which writes nothing (§9). Slew is greyed out until Print speed is set and Backfeed until Slew is, so no `^PR` goes out with a blank in the middle; Prepeel is greyed out without a print mode, and the offset, −240 to 566 dots, without mark sensing. A value the label carries that no row offers — a reserved print mode, a speed past the list, a darkness with two decimals — is offered first as "As written: …" and selected, or shown beside a number box, as Edit Symbol does with data it has no symbol for; and a command left alone keeps its spelling, so `^PRC` stays `^PRC`. Accepting the window unchanged never rewrites the label. **Print** applies and prints (§9), **OK** applies without printing and **Cancel** changes nothing. Print is the default button. A visit that changes the label is one undo entry, and one that changes nothing records none (§12). |
+| **Default Printer** | Connection; Address and Port, or Printer and Refresh; DPI; Font memory; Test Connection | Connection is **Network** or **USB**, and only the rows for the one chosen are shown: Address and Port (1–65535) for a network printer, or for a USB one the Printer list and Refresh (§9, "A printer on USB"). Both are kept while the other is chosen, so switching back offers what was there. DPI is a choice of 203 / 300 / 600. Font memory is §10.4.1's. Test Connection opens the connection - the socket, or the USB printer's node - and then asks the printer its resolution, filling the DPI field in (§11); a USB problem the user can put right is reported in its own words. Accepting persists the printer, the DPI and the font memory (§13). The GTK frontend does not offer USB yet: its rows are Address and Port only. |
+| **Print** | **Printer**: Connection; Address and Port, or Printer and Refresh; DPI; Font memory; Test Connection; Use Default. **Copies (`^PQ`)**: Copies; Pause every; Replicates; Don't pause between groups; Cut after a voided RFID label. **Label**: Print upside down (`^PO`); Mirror left to right (`^PM`); Reverse fields, white on black (`^LR`); Check barcode data as printed (`^CV`). **Printer setup sent with the label**: Darkness (`^MD`); Print, Slew and Backfeed speed (`^PR`); Print mode (`^MM`) and Prepeel; Media tracking (`^MN`) and Black mark offset; Media type (`^MT`). Buttons Print, OK, Cancel | The printer rows are Default Printer's, built by the same helper, pre-filled with whichever printer is in effect, and for this session only: they never write settings.ini (§13), and Use Default re-fills them from the persisted default, for comparing against or going back to it. A DPI change runs §11's prompt. Everything else is saved with the label, and its rows come from one table both frontends share. `^PQ`'s own ranges: Copies 1–99,999,999, Pause every 0 to 99,999,999 labels, 0 never pausing (Qt shows it as Never; GTK, whose numeric spin button takes no letters, says "0 = never" beside the box), Replicates 0–99,999,999. Darkness is −30 to 30 in tenths, relative to the printer's configured darkness, with a tick beside the box, since a number box has no "unset". Print speed is 1–14 in/s and slew and backfeed 2–14, each labelled with the letter A–E that also names it where there is one. Every set-up row's first choice is **Printer's setting**, which writes nothing (§9). Slew is greyed out until Print speed is set and Backfeed until Slew is, so no `^PR` goes out with a blank in the middle; Prepeel is greyed out without a print mode, and the offset, −240 to 566 dots, without mark sensing. A value the label carries that no row offers — a reserved print mode, a speed past the list, a darkness with two decimals — is offered first as "As written: …" and selected, or shown beside a number box, as Edit Symbol does with data it has no symbol for; and a command left alone keeps its spelling, so `^PRC` stays `^PRC`. Accepting the window unchanged never rewrites the label. **Print** applies and prints (§9), **OK** applies without printing and **Cancel** changes nothing. Print is the default button. A visit that changes the label is one undo entry, and one that changes nothing records none (§12). |
 
 ---
 
@@ -2111,8 +2111,9 @@ already in force.
 
 1. Check the label's fonts against the printer (§10.3). If the user cancels,
    stop and report "Printing cancelled".
-2. Open a TCP connection to the configured address and port (10 s timeout). On
-   failure, show the error and stop.
+2. Open the connection: a TCP connection to the configured address and port
+   (10 s timeout), or the USB printer's node (below). On failure, show the
+   error and stop.
 3. Send the document's ZPL as UTF-8 bytes and close the connection.
 
 **`^PO`, `^PM` and `^LR` are always sent explicitly in step 3, whatever their
@@ -2153,11 +2154,59 @@ Elements with `print_enabled` false are sent as `^FXDESIGNER_NOPRINT` comments
 rather than as fields, so the printer ignores them.
 
 **The Print window's printer is for this session only.** It changes the
-address, port and DPI that step 2 above uses, for every print from then on,
+connection and DPI that step 2 above uses, for every print from then on,
 without writing them to settings.ini (§13) — the next launch starts back on
 the persisted default. If the DPI changes, it runs the same rescale prompt as
 Default Printer (§11), since a label's dot geometry has to stay consistent
 with whichever printer will render it.
+
+### A printer on USB
+
+The printer is a network one or a USB one, chosen in the printer rows of
+Default Printer and the Print window (§7.3), and every request follows it:
+printing, the pre-print check (§10.3), Upload Template, Test Connection and the
+printer's windows (§10.4-10.7). Firmware Update has its own choice (§10.8).
+
+**A USB printer is the kernel's printer node, `/dev/usb/lpN`,** which the
+`usblp` driver makes for it, and it is **remembered by its USB serial number**,
+not its node. The kernel numbers the nodes in the order printers appear, so a
+printer that restarts or is plugged in again can come back under another one;
+the serial number goes with the printer. A printer with no serial number is
+remembered by its name, the lowest node winning when two share it. The node is
+looked up each time something is sent.
+
+The **Printer** list names each USB printer present by the manufacturer and
+model in its IEEE 1284 device ID, with its node, `Zebra Technologies ZTC
+ZT410-203dpi ZPL (lp2)`. The printer in use stays in the list when it is not
+plugged in, as `(not connected)`, so opening the window never loses it.
+**Refresh** looks again. With no USB printer to choose, OK and Print say so
+rather than accept USB with nothing behind it.
+
+**A printer on the bus with no node** is listed as `(no usblp driver)`. A print
+system's own USB driver - a CUPS backend - detaches `usblp` to talk to a
+printer itself, and one that never attaches it again leaves the printer
+plugged in and working but with no node. Attaching it again needs root, so the
+error says how instead of trying: `echo <interface> | sudo tee
+/sys/bus/usb/drivers/usblp/bind`, naming the printer's USB interface. On Ubuntu
+this happens when a new printer is plugged in: system-config-printer's udev
+hook probes it through every CUPS backend to set up a print queue, and the
+desktop then reports a **missing printer driver** if CUPS has none. Nothing
+here needs one - ZPL goes to the printer as it is - and a CUPS queue for the
+printer would hold its port while it prints.
+
+**The node belongs to a group** (`lp` on Debian and Ubuntu); a user outside it
+is told which group to join, read from the node's own ownership. **usblp lets
+one program hold a node at a time**, so a request that finds it held - by the
+Status window between refreshes, or by CUPS - waits for it within its own
+timeout, and then says it is in use. Before a request whose reply is read,
+whatever the printer is still sending from an earlier one is thrown away:
+over the network a late reply dies with its socket, but on USB it would be
+read as the start of the next.
+
+**These are reported in their own words**, not as "could not reach the
+printer": not connected, no driver, no permission and in use each have
+something the user can do, and the queries behind printing and the printer's
+windows let them through where any other failure reads as unreachable.
 
 ### Printer wire formats
 
@@ -2504,8 +2553,9 @@ the manufacturer and model in its IEEE 1284 device ID. USB is the way in to a
 printer whose network is not running: a Zebra in *forced download mode* -
 powered on with a key held, to replace firmware the running printer will not
 take - listens on USB, serial and parallel only. Changing the connection asks
-the version again. **Refresh** lists the USB printers again first, keeping the
-chosen one by path, because the kernel numbers the nodes in the order printers
+the version again. The window opens on the session's printer: the USB one,
+found by its serial number, when that is the one in use and it is plugged in.
+**Refresh** lists the USB printers again first, keeping the chosen one by path, because the kernel numbers the nodes in the order printers
 appear and a printer restarting into that mode can come back under another
 number.
 
@@ -2540,7 +2590,7 @@ Default Printer and the Print window, which offer the same choice: label size is
 but stored in dots, so the resolution is half of what the size means, and
 having to leave for another dialog to change that half is how a label ends up
 the wrong physical size. It can also be detected: the Test Connection button
-opens the socket and then
+opens the connection (§9) and then
 asks the printer, mapping the reported dots per mm (6, 8, 12, 24) to dpi (152,
 203, 300, 600) and filling the field in. A printer that does not answer, or
 reports a resolution the application does not support, leaves the manual
@@ -2669,10 +2719,9 @@ already carries them rather than being authored from a blank document.
 **Printer → Graphics…** talks to the real printer, the same way Settings →
 Printer Fonts… already does for fonts — not `graphic_store`'s local memory,
 though it keeps that in step as a convenience (see below). Every request
-goes to whichever printer is actually in effect this session
-(`self.printer_address`/`self.printer_port`, which a session-only "Set
-Printer for This Session…" override moves without touching the persisted
-default) — never the persisted default itself.
+goes to whichever printer is actually in effect this session (the Print
+window's printer, which moves without touching the persisted default, §9) —
+never the persisted default itself.
 
 - **View** queries the printer live via `^HW`, one request per device
   (`R:`/`E:`/`B:`/`A:`, since graphics — unlike fonts, always `E:` — can live
@@ -2871,8 +2920,11 @@ and read back from there the same way on the next start.
 
 ```ini
 [printer]
+connection = network
 address = 192.168.50.21
 port = 9100
+usb_serial = 18J181107685
+usb_name = Zebra Technologies ZTC ZT410-203dpi ZPL
 dpi = 203
 font_device = E
 
@@ -2912,7 +2964,7 @@ rulers = no
 
 | Section | Written | Used by |
 |---|---|---|
-| `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion; `font_device` is the font memory (§10.4.1), ignored unless it names a drive the program knows |
+| `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion. `connection` is `network` or `usb`; `address` and `port` are the network printer, `usb_serial` and `usb_name` the USB one (§9), and both are kept whichever is chosen. A file without `connection` reads as the network printer it names, and `usb` with no serial or name falls back to network. `font_device` is the font memory (§10.4.1), ignored unless it names a drive the program knows |
 | `[fonts]` | with `[printer]`, and when the extra font folder changes | `extra_dir`, a folder searched for fonts beside the installed ones; empty for none |
 | `[label]` | when Label Size is accepted | the label at startup and on File > New |
 | `[window]` | on quit | where the window opens (§2) |
@@ -3033,7 +3085,8 @@ Three notes for a port:
 A status bar reports the last significant action: `Ready`, `Loaded: <file>`,
 `Saved: <file>`, `Save failed`, `Error loading file`, `Undo`, `Redo`,
 `Printing cancelled`, `Rescaled from <old> to <new> dpi`,
-`Label size set to <w>x<h>`, `Printer set to <address>:<port>`,
+`Label size set to <w>x<h>`, `Printer set to <printer>` (`<address>:<port>`,
+or a USB printer's name and `(USB)`),
 `Copied <n> elements`, `Cut <n> elements`, `Duplicated <n> elements`,
 `Pasted <n> elements` with what the paste rescaled, the fonts it kept and
 field numbers it shared, and what it left out (§8.4),

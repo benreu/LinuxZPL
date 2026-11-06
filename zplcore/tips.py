@@ -258,6 +258,13 @@ TIPS = {
     'test_connection':
         "Connect to the printer and ask its resolution, which fills in DPI.",
     'use_default': "Fill these in from Settings ▸ Default Printer.",
+    'usb_printer':
+        "The USB printers plugged in now. The one chosen is remembered by its "
+        "serial number, so it's found again when it comes back under another "
+        "/dev/usb/lp number. Opening one needs membership of the lp group.",
+    'usb_refresh':
+        "Look for USB printers again, after plugging one in or switching it "
+        "on.",
 
     # --- Label Settings and Grid Settings
     'home_x':

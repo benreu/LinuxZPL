@@ -25,7 +25,7 @@ from PIL import Image as PILImage
 
 from . import graphics
 from . import connection
-from .connection import Printer
+from .connection import Printer, PortProblem
 
 _STORE: dict = {}
 
@@ -194,6 +194,8 @@ def query_printer_graphics(printer: Printer, timeout: float = 5,
         try:
             reply = connection.send(printer, payload, timeout,
                                     read_reply=True, cancel=cancel)
+        except PortProblem:
+            raise
         except OSError:
             if index == 0:
                 return None  # the connection itself failed

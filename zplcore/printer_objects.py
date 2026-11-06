@@ -26,7 +26,7 @@ import re
 from typing import List, Optional
 
 from . import connection
-from .connection import Printer
+from .connection import Printer, PortProblem
 from .graphic_store import split_device_spec
 
 # R:/E:/B:/A: are the devices fonts.py and graphic_store.py already cover;
@@ -86,6 +86,8 @@ def query_printer_objects(printer: Printer, timeout: float = 5,
         try:
             reply = connection.send(printer, payload, timeout,
                                     read_reply=True, cancel=cancel)
+        except PortProblem:
+            raise
         except OSError:
             if index == 0:
                 return None  # the connection itself failed

@@ -17,7 +17,8 @@
     <terms>
       <item>
         <title><gui>Network</gui></title>
-        <p>Sends to this session's printer.</p>
+        <p>Sends to this session's printer's network address. When the
+        printer in use is a USB one, the window opens on it instead.</p>
       </item>
       <item>
         <title><gui>USB</gui></title>

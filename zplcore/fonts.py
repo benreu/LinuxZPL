@@ -14,7 +14,7 @@ from typing import Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 from PIL import ImageFont
 
 from . import connection
-from .connection import Printer
+from .connection import Printer, PortProblem
 from .graphic_store import DEVICES
 
 # Fonts are 8.3 TrueType objects, and ~DY can write one to any of the four
@@ -650,6 +650,11 @@ def query_printer_fonts(printer: Printer, timeout: float = 5,
     graphic_store.query_printer_graphics and
     printer_objects.query_printer_objects judge it the same way, for the
     same reason.
+
+    A PortProblem is raised, not read as None: a USB printer that is not
+    plugged in, has no driver, is in use or may not be opened is something
+    the user can put right, and they need its advice rather than "could not
+    reach the printer". Every query here and in those modules does the same.
     """
     specs: Set[str] = set()
     unreadable: List[str] = []
@@ -659,6 +664,8 @@ def query_printer_fonts(printer: Printer, timeout: float = 5,
         try:
             reply = connection.send(printer, payload, timeout,
                                     read_reply=True, cancel=cancel)
+        except PortProblem:
+            raise
         except OSError:
             if index == 0:
                 return None  # the connection itself failed
@@ -687,6 +694,8 @@ def query_resident_fonts(printer: Printer, timeout: float = 5,
     try:
         reply = connection.send(printer, b'^XA^HWZ:*.FNT^XZ', timeout,
                                 read_reply=True, cancel=cancel)
+    except PortProblem:
+        raise
     except OSError:
         return None
     if not reply:
@@ -707,6 +716,8 @@ def query_printer_dpi(printer: Printer, timeout: float = 5,
     try:
         reply = connection.send(printer, b'~HI', timeout, read_reply=True,
                                 cancel=cancel)
+    except PortProblem:
+        raise
     except OSError:
         return None
     if not reply:

@@ -39,7 +39,7 @@ import re
 from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
 from . import connection
-from .connection import Printer
+from .connection import Printer, PortProblem
 from .fonts import DOTS_PER_MM_TO_DPI
 from .graphic_store import DEVICE_NAMES
 
@@ -655,6 +655,8 @@ class _Session:
             reply = connection.send(self.printer, payload,
                                     self.timeout, read_reply=True,
                                     cancel=self.cancel)
+        except PortProblem:
+            raise
         except OSError:
             if not self.answered and not self.unanswered:
                 self.dead = True  # the connection itself failed

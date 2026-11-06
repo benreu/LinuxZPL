@@ -5321,6 +5321,220 @@ _pw_default = _drive_print(_pw_doc, lambda d: d.findChild(_QPB, 'use_default').c
 check("Use Default refills the printer from the persisted default",
       _pw_default[1] == _PW_DEFAULT, _pw_default[1])
 
+# --- the printer rows: a network printer or a USB one ----------------------
+# The USB printers present are stood in for, and show_error only records, so
+# a refusal does not open a box that waits for a click.
+import pty as _ur_pty, tty as _ur_tty, threading as _ur_threading
+from PySide2.QtWidgets import (QRadioButton as _QRadio, QWidget as _QW,
+                               QLabel as _QL)
+from zplcore import local_port as _ur_local, connection as _ur_conn
+from qtui.busy import BusyBar as _UrBusy
+
+_ur_real = (_ur_local.list_printers, _ur_local.list_detached,
+            qt_dialogs.show_error)
+_ur_present, _ur_loose, _ur_errors = [], [], []
+_ur_local.list_printers = lambda *a: list(_ur_present)
+_ur_local.list_detached = lambda *a: list(_ur_loose)
+qt_dialogs.show_error = lambda parent, message: _ur_errors.append(str(message))
+_UR_NAME = 'Zebra Technologies ZTC ZT410-203dpi ZPL'
+_UR_ZEBRA = Connection.usb('18J181107685', _UR_NAME)
+_UR_HERE = [_ur_local.UsbPrinter('/dev/usb/lp2', _UR_NAME, '18J181107685')]
+
+def _ur_drive(open_dialog, fill=lambda d: None, button='ok'):
+    """Open a dialog, run `fill` on it once it shows, then press a button."""
+    def act():
+        dialog = next((widget for widget in app.topLevelWidgets()
+                       if isinstance(widget, QDialog) and widget.isVisible()), None)
+        if dialog is None:
+            QTimer.singleShot(50, act)
+            return
+        fill(dialog)
+        box = dialog.findChild(QDialogButtonBox)
+        box.button(QDialogButtonBox.Ok if button == 'ok'
+                   else QDialogButtonBox.Cancel).click()
+    QTimer.singleShot(100, act)
+    return open_dialog()
+
+def _ur_wait(dialog_or_busy, seconds=5):
+    """Let a printer call that is out come back."""
+    busy = (dialog_or_busy if isinstance(dialog_or_busy, _UrBusy)
+            else dialog_or_busy.findChild(_UrBusy))
+    until = time.monotonic() + seconds
+    while busy is not None and busy.running and time.monotonic() < until:
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+
+def _ur_shown(dialog):
+    return tuple(dialog.findChild(_QW, name).isVisibleTo(dialog)
+                 for name in ('address', 'port', 'usb_printer', 'usb_refresh'))
+
+try:
+    _ur_present[:] = _UR_HERE
+    _ur_seen = {}
+    def _ur_switch(d):
+        _ur_seen['network'] = _ur_shown(d)
+        d.findChild(_QRadio, 'connection_usb').setChecked(True)
+        _ur_seen['usb'] = _ur_shown(d)
+        combo = d.findChild(QComboBox, 'usb_printer')
+        _ur_seen['listed'] = [combo.itemText(i) for i in range(combo.count())]
+    _ur_chosen = _ur_drive(lambda: qt_dialogs.print_dialog(
+        None, _pw_doc, _PW_PRINTER, _PW_DEFAULT), _ur_switch)
+    check("the printer rows show Address and Port for a network printer, and "
+          "only the USB Printer list and Refresh once USB is chosen",
+          _ur_seen['network'] == (True, True, False, False)
+          and _ur_seen['usb'] == (False, False, True, True), _ur_seen)
+    check("the USB Printer list names each printer with its node",
+          _ur_seen['listed'] == [f'{_UR_NAME} (lp2)'], _ur_seen['listed'])
+    check("choosing USB gives that printer, the network address carried",
+          _ur_chosen[1] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME),
+                            203, 'E'), _ur_chosen[1])
+
+    _ur_back = {}
+    def _ur_switch_back(d):
+        _ur_back['usb'] = _ur_shown(d)
+        d.findChild(_QRadio, 'connection_network').setChecked(True)
+    _ur_net = _ur_drive(lambda: qt_dialogs.printer_settings_dialog(
+        None, _PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME), 203, 'E'),
+        _ur_switch_back)
+    check("a USB printer opens on the USB rows, and Network gives back the "
+          "address it carried",
+          _ur_back['usb'] == (False, False, True, True)
+          and _ur_net == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME)
+                          .as_network('192.168.1.50', 9100), 203, 'E'), _ur_net)
+
+    _ur_present[:] = []
+    _ur_away = Connection.usb('OLD1', 'Zebra old')
+    _ur_text = {}
+    _ur_kept = _ur_drive(
+        lambda: qt_dialogs.printer_settings_dialog(None, _ur_away, 203, 'E'),
+        lambda d: _ur_text.update(
+            text=d.findChild(QComboBox, 'usb_printer').currentText()))
+    check("a USB printer that is not plugged in stays chosen, said to be not "
+          "connected", _ur_text['text'] == 'Zebra old (not connected)'
+          and _ur_kept == (_ur_away, 203, 'E'), (_ur_text, _ur_kept))
+
+    del _ur_errors[:]
+    _ur_none = _ur_drive(
+        lambda: qt_dialogs.printer_settings_dialog(None, _PW_PRINTER[0], 203, 'E'),
+        lambda d: d.findChild(_QRadio, 'connection_usb').setChecked(True))
+    check("USB with no USB printer to choose is refused, saying so",
+          _ur_none is None and _ur_errors == [_ur_conn.NO_USB_CHOSEN],
+          (_ur_none, _ur_errors))
+
+    _ur_present[:] = _UR_HERE
+    _UR_DEFAULT = (Connection.network('10.0.0.1', 9300)
+                   .as_usb(_UR_ZEBRA.usb_serial, _UR_NAME), 203, 'R')
+    _ur_restored = _ur_drive(
+        lambda: qt_dialogs.print_dialog(None, _pw_doc, _PW_PRINTER, _UR_DEFAULT),
+        lambda d: d.findChild(_QPB, 'use_default').click())
+    check("Use Default brings back a USB default printer",
+          _ur_restored[1] == _UR_DEFAULT, _ur_restored[1])
+
+    # Test Connection by USB: a pty plays the printer, answering ~HI.
+    _ur_master, _ur_slave = _ur_pty.openpty()
+    _ur_tty.setraw(_ur_slave)
+    _ur_present[:] = [_ur_local.UsbPrinter(os.ttyname(_ur_slave), _UR_NAME,
+                                           '18J181107685')]
+    _ur_heard = []
+    def _ur_answer():
+        _ur_heard.append(os.read(_ur_master, 64))
+        os.write(_ur_master, b'\x02ZT410-200dpi,V75.20.21,8,4096KB\x03\r\n')
+    _ur_th = _ur_threading.Thread(target=_ur_answer, daemon=True)
+    _ur_th.start()
+    _ur_result = {}
+    def _ur_test(d):
+        d.findChild(_QPB, 'test_connection').click()
+        _ur_wait(d)
+        _ur_result['text'] = d.findChild(_QL, 'test_result').text()
+    _ur_drive(lambda: qt_dialogs.printer_settings_dialog(None, _UR_ZEBRA, 300, 'E'),
+              _ur_test, button='cancel')
+    _ur_th.join(3)
+    os.close(_ur_master); os.close(_ur_slave)
+    check("Test Connection opens a USB printer and asks its resolution",
+          _ur_heard == [b'~HI'] and _ur_result['text']
+          == f"✓ Connected to {_UR_NAME} (USB) — 203 dpi", (_ur_heard, _ur_result))
+
+    _ur_present[:] = []
+    _ur_loose[:] = [_ur_local.UsbPrinter('', _UR_NAME, '18J181107685',
+                                         '3-1.1.2.1:1.0')]
+    _ur_result.clear()
+    _ur_drive(lambda: qt_dialogs.printer_settings_dialog(None, _UR_ZEBRA, 203, 'E'),
+              _ur_test, button='cancel')
+    check("and for one with no usblp driver, says how to give it back",
+          _ur_result['text'].startswith(f"✗ {_UR_NAME} (serial number "
+                                        "18J181107685) is plugged in")
+          and 'echo 3-1.1.2.1:1.0 | sudo tee' in _ur_result['text'], _ur_result)
+    _ur_loose[:] = []
+
+    # The managers say what is wrong with a USB port, not "could not reach".
+    _ur_ask_version = qt_dialogs.PrinterFirmwareDialog._ask_version
+    _ur_said = {}
+    for _ur_kind, _ur_make in (
+            ('Fonts', lambda: qt_dialogs.PrinterFontsDialog(None, _UR_ZEBRA)),
+            ('Graphics', lambda: qt_dialogs.PrinterGraphicsDialog(None, _UR_ZEBRA)),
+            ('Objects', lambda: qt_dialogs.PrinterObjectsDialog(None, _UR_ZEBRA))):
+        _ur_dlg = _ur_make()
+        _ur_wait(_ur_dlg._busy)
+        _ur_said[_ur_kind] = _ur_dlg._status.text()
+        _ur_dlg.reject()
+    check("the printer's managers say a USB printer is not connected, rather "
+          "than that it could not be reached",
+          set(_ur_said.values()) == {f"{_UR_NAME} (serial number 18J181107685) "
+                                     "is not connected by USB."}, _ur_said)
+
+    # Firmware Update opens on the session's USB printer, wherever it is now.
+    _ur_present[:] = [_ur_local.UsbPrinter('/dev/usb/lp1', 'Brother HL', ''),
+                      _ur_local.UsbPrinter('/dev/usb/lp4', _UR_NAME,
+                                           '18J181107685')]
+    # Kept in a name: the dialog's QTimer.singleShot holds this method only
+    # weakly, and fires after it is put back - a stub nothing else keeps would
+    # be freed by then, and the timer would call freed memory.
+    def _ur_no_version(self, *a):
+        pass
+    qt_dialogs.PrinterFirmwareDialog._ask_version = _ur_no_version
+    try:
+        _ur_fw = qt_dialogs.PrinterFirmwareDialog(
+            None, _PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME))
+        _ur_fw_net = qt_dialogs.PrinterFirmwareDialog(None, _PW_PRINTER[0])
+    finally:
+        qt_dialogs.PrinterFirmwareDialog._ask_version = _ur_ask_version
+    check("Firmware Update opens on the USB printer in use, and on the "
+          "network for a network one",
+          _ur_fw._local() == _ur_local.LocalPort('/dev/usb/lp4')
+          and _ur_fw._connection.itemText(0) == 'Network: 192.168.1.50:9100'
+          and _ur_fw_net._local() is None, _ur_fw._connection.currentText())
+    _ur_fw.reject(); _ur_fw_net.reject()
+
+    # The window: Quick Print goes down the USB printer's node, and says so.
+    with tempfile.TemporaryDirectory() as _ur_dir:
+        _ur_fifo = Path(_ur_dir) / 'lp2'
+        os.mkfifo(_ur_fifo)
+        _ur_present[:] = [_ur_local.UsbPrinter(str(_ur_fifo), _UR_NAME,
+                                               '18J181107685')]
+        _ur_got = []
+        def _ur_read():
+            with open(_ur_fifo, 'rb') as f:
+                _ur_got.append(f.read())
+        _ur_reader = _ur_threading.Thread(target=_ur_read, daemon=True)
+        _ur_reader.start()
+        uw = qt_main.ZPLDesignerWindow()
+        uw._save_settings = lambda *a: None
+        uw.on_add_frame()
+        uw.printer_connection = _UR_ZEBRA
+        uw.quick_print_action.trigger()
+        _ur_wait(uw._busy)
+        _ur_reader.join(3)
+        check("Quick Print sends the label to a USB printer, and says where",
+              _ur_got and b'^GB' in _ur_got[0]
+              and uw.statusBar().currentMessage() == f"Sent to {_UR_NAME} (USB)",
+              (uw.statusBar().currentMessage(), _ur_got[:1]))
+        uw.unsaved_changes = False
+        uw.close()
+finally:
+    (_ur_local.list_printers, _ur_local.list_detached,
+     qt_dialogs.show_error) = _ur_real
+
 # The window: one undo entry for a visit that changed the label, none for
 # one that did not, and Print sends after the settings go on.
 pw = qt_main.ZPLDesignerWindow()
@@ -11219,9 +11433,37 @@ with tempfile.TemporaryDirectory() as _cn_dir:
               ('lp2', 'Zebra Technologies ZTC UPS ZT400', '18J165111007')],
           _cn_found)
 
+# A printer on the bus with no node - usblp detached from it, as a CUPS
+# backend probing it can leave it - is found from the USB device's own files.
+with tempfile.TemporaryDirectory() as _cn_dir:
+    _cn_bus = Path(_cn_dir) / 'bus' / 'usb' / 'devices'
+    for _cn_iface, _cn_class, _cn_proto, _cn_driven in (
+            ('3-1.1.2.1:1.0', '07', '02', False),   # a printer, undriven
+            ('3-1.4:1.0', '07', '02', True),        # a printer usblp drives
+            ('3-1.5:1.0', '07', '04', False),       # IPP over USB: ipp-usb's
+            ('3-1.6:1.0', '03', '01', False)):      # a keyboard
+        (_cn_bus / _cn_iface).mkdir(parents=True)
+        (_cn_bus / _cn_iface / 'bInterfaceClass').write_text(_cn_class + '\n')
+        (_cn_bus / _cn_iface / 'bInterfaceProtocol').write_text(_cn_proto + '\n')
+        if _cn_driven:
+            (_cn_bus / _cn_iface / 'driver').mkdir()
+        _cn_device = _cn_bus / _cn_iface.split(':')[0]
+        _cn_device.mkdir()
+        (_cn_device / 'manufacturer').write_text('Zebra Technologies\n')
+        (_cn_device / 'product').write_text('ZTC ZT410-203dpi ZPL\n')
+        (_cn_device / 'serial').write_text('18J181107685\n')
+    _cn_loose = zpl_local.list_detached(str(Path(_cn_dir)))
+    check("list_detached: a printer interface no driver has, named from its "
+          "USB strings, and nothing usblp or ipp-usb drives",
+          _cn_loose == [zpl_local.UsbPrinter(
+              '', 'Zebra Technologies ZTC ZT410-203dpi ZPL', '18J181107685',
+              '3-1.1.2.1:1.0')], _cn_loose)
+
 _cn_real_list = zpl_local.list_printers
-_cn_present = []
+_cn_real_detached = zpl_local.list_detached
+_cn_present, _cn_detached = [], []
 zpl_local.list_printers = lambda *a: list(_cn_present)
+zpl_local.list_detached = lambda *a: list(_cn_detached)
 try:
     _cn_present[:] = [
         zpl_local.UsbPrinter('/dev/usb/lp1', 'Zebra Technologies ZTC UPS ZT400', 'OTHER'),
@@ -11240,17 +11482,83 @@ try:
           "winning",
           zpl_connection.resolve(Connection.usb('', 'Brother HL'))
           == zpl_local.LocalPort('/dev/usb/lp4'))
+    check("usb_choices: each printer named with its node, the one in use "
+          "selected",
+          zpl_connection.usb_choices(_cn_both)
+          == ([('Zebra Technologies ZTC UPS ZT400 (lp1)',
+                Connection.usb('OTHER', 'Zebra Technologies ZTC UPS ZT400')),
+               ('Zebra Technologies ZTC UPS ZT400 (lp3)', _cn_usb),
+               ('Brother HL (lp4)', Connection.usb('', 'Brother HL')),
+               ('Brother HL (lp5)', Connection.usb('', 'Brother HL'))], 1))
     _cn_present[:] = _cn_present[2:]
     try:
         zpl_connection.resolve(_cn_usb); _cn_o = 'returned'
-    except OSError as e:
-        _cn_o = (e.errno, str(e).split('] ')[-1])
-    check("resolve: one that is not plugged in is an OSError saying so",
+    except zpl_connection.PortProblem as e:
+        _cn_o = (e.errno, str(e))
+    check("resolve: one that is not plugged in is a PortProblem saying so, "
+          "without an [Errno] in front",
           _cn_o == (_cn_errno.ENODEV, "Zebra Technologies ZTC UPS ZT400 "
                     "(serial number 18J165111007) is not connected by USB."),
           _cn_o)
-    check("and a query through it reads as a printer that could not be asked",
-          zpl_fonts.query_printer_dpi(_cn_usb) is None)
+    check("usb_choices: the printer in use stays listed when it is not "
+          "plugged in, and is selected",
+          zpl_connection.usb_choices(_cn_usb)[0][-1:]
+          == [('Zebra Technologies ZTC UPS ZT400 (not connected)', _cn_usb)]
+          and zpl_connection.usb_choices(_cn_usb)[1] == 2)
+    check("but a USB printer only carried, not in use, is not added",
+          len(zpl_connection.usb_choices(
+              _cn_usb.as_network('10.0.0.1', 9100))[0]) == 2)
+    _cn_detached[:] = [zpl_local.UsbPrinter(
+        '', 'Zebra Technologies ZTC UPS ZT400', '18J165111007', '3-1.1.2.1:1.0')]
+    try:
+        zpl_connection.resolve(_cn_usb); _cn_o = 'returned'
+    except zpl_connection.PortProblem as e:
+        _cn_o = str(e)
+    check("resolve: one plugged in with no node says why, and how to give it "
+          "its driver back",
+          _cn_o == "Zebra Technologies ZTC UPS ZT400 (serial number "
+                   "18J165111007) is plugged in, but has no USB printer "
+                   "device: something - usually a print system's driver "
+                   "probing it - detached the kernel's usblp driver from it. "
+                   "To attach it again, run: echo 3-1.1.2.1:1.0 | sudo tee "
+                   "/sys/bus/usb/drivers/usblp/bind", _cn_o)
+    check("list_usb and usb_choices: one with no node is listed, saying so",
+          zpl_connection.list_usb()[-1] == (_cn_usb, '')
+          and zpl_connection.usb_choices(_cn_usb)
+          == ([('Brother HL (lp4)', Connection.usb('', 'Brother HL')),
+               ('Brother HL (lp5)', Connection.usb('', 'Brother HL')),
+               ('Zebra Technologies ZTC UPS ZT400 (no usblp driver)', _cn_usb)],
+              2))
+    _cn_present[:], _cn_detached[:] = [], []
+    check("usb_choices: with none at all, one entry says so and carries None",
+          zpl_connection.usb_choices(_cn_net)
+          == ([(zpl_connection.NO_USB_PRINTERS, None)], 0))
+    check("node_of: the node a USB printer in use has, else None, never "
+          "raising", zpl_connection.node_of(_cn_usb) is None
+          and zpl_connection.node_of(_cn_net) is None)
+
+    # Every query lets a PortProblem through: its advice is for the user,
+    # where any other failure reads as "could not be asked".
+    from zplcore import printer_status as _cn_status
+    _cn_through = []
+    for _cn_name, _cn_query in (
+            ('query_printer_fonts', zpl_fonts.query_printer_fonts),
+            ('query_resident_fonts', zpl_fonts.query_resident_fonts),
+            ('query_printer_dpi', zpl_fonts.query_printer_dpi),
+            ('query_printer_graphics', zpl_graphic_store.query_printer_graphics),
+            ('query_printer_objects', printer_objects.query_printer_objects),
+            ('query_printer_activity', _cn_status.query_printer_activity),
+            ('query_printer_specs', _cn_status.query_printer_specs),
+            ('current_firmware', zpl_firmware.current_firmware),
+            ('missing_printer_fonts', lambda p: workflow.missing_printer_fonts(
+                _FontDoc({'E:A.TTF': '/a.ttf'}), p))):
+        try:
+            _cn_query(_cn_usb)
+            _cn_through.append((_cn_name, 'returned'))
+        except zpl_connection.PortProblem:
+            pass
+    check("every printer query lets a USB port problem through rather than "
+          "reading it as unreachable", _cn_through == [], _cn_through)
 finally:
     zpl_local.list_printers = _cn_real_list
 
@@ -11351,6 +11659,7 @@ check("a reply left over from an earlier request is not read as this one's",
       _cn_heard == [b'~HI']
       and _cn_reply == '\x02ZT410-200dpi,V75.20.21Z,8,4096KB\x03\r\n',
       (_cn_heard, _cn_reply))
+zpl_local.list_detached = _cn_real_detached
 
 _fw_texts = None
 for _fw_act in _cw_win.menuBar().actions():
@@ -12931,7 +13240,7 @@ _t_print_rows = {'pause_count', 'replicates', 'override_pause', 'cut_on_error',
                  'darkness', 'print_speed', 'slew_speed', 'backfeed_speed',
                  'print_mode', 'prepeel', 'media_tracking', 'mark_offset',
                  'media_type', 'port', 'dpi', 'font_device', 'test_connection',
-                 'use_default'}
+                 'use_default', 'usb_printer', 'usb_refresh'}
 check("the Print window explains its rows from the table, each label too",
       _t_print['found'] == _t_print_rows and not _t_print['wrong'],
       (sorted(_t_print['found'] ^ _t_print_rows), _t_print['wrong']))
@@ -12964,7 +13273,8 @@ _t_windows = {
         None, zpl_grid.Grid(), 203), {'grid_major'}),
     'Default Printer': (lambda: qt_dialogs.printer_settings_dialog(
         None, Connection.network('10.0.0.1', 9100), 203, 'E'),
-        {'port', 'dpi', 'font_device', 'test_connection'}),
+        {'port', 'dpi', 'font_device', 'test_connection', 'usb_printer',
+         'usb_refresh'}),
     'Store Graphic As': (lambda: qt_dialogs.store_graphic_dialog(None), {'device'}),
     'Upload Font To': (lambda: qt_dialogs.font_device_dialog(None, 'E'),
                        {'font_device'}),

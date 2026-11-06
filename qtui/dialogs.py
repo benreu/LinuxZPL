@@ -21,10 +21,11 @@ from PySide2.QtGui import (QFont, QFontMetrics, QGuiApplication,
 from PySide2.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication,
                                QCheckBox, QComboBox,
                                QDialog, QDialogButtonBox, QFileDialog,
-                               QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+                               QFormLayout, QFrame, QGridLayout, QGroupBox,
+                               QHBoxLayout,
                                QLabel, QLineEdit, QListWidget, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton,
-                               QScrollArea, QShortcut,
+                               QRadioButton, QScrollArea, QShortcut,
                                QSpinBox, QDoubleSpinBox, QTableWidget,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
@@ -36,7 +37,7 @@ from zplcore import (connection as zpl_connection,
                      print_settings as zpl_print, printer_io,
                      printer_objects, printer_status, textraster,
                      tips as zpl_tips, workflow)
-from zplcore.connection import Connection
+from zplcore.connection import Connection, PortProblem
 from zplcore.print_settings import AsWritten, PrintSettings
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
@@ -2391,14 +2392,19 @@ def grid_settings_dialog(parent, grid, dpi: int):
 
 
 class _PrinterRows:
-    """Address, Port, DPI, Font memory and Test Connection, plus Use Default
-    when there is a default to go back to.
+    """Connection (Network or USB), then Address and Port or the USB Printer
+    list, DPI, Font memory and Test Connection, plus Use Default when there
+    is a default to go back to.
 
     Default Printer and the Print window both build their printer from these
     rows, so the two can't drift apart. `box` is the widget holding them.
     `withhold(buttons)` adds the busy row, and the buttons it names are
     withheld while a probe is out, so a half-finished one can't be accepted as
     an answer.
+
+    Only the rows for the chosen connection are shown, but both halves are
+    kept: the address typed stays while USB is chosen, and the other way
+    round, so switching back offers what was there.
 
     Font memory belongs here rather than beside each text element. Which
     memory a printer keeps its fonts in is a property of the printer being
@@ -2413,27 +2419,65 @@ class _PrinterRows:
         self.box = QWidget()
         layout = QVBoxLayout(self.box)
         layout.setContentsMargins(0, 0, 0, 0)
-        form = QFormLayout()
-        layout.addLayout(form)
+        # A grid rather than a form: a QFormLayout keeps the spacing of a row
+        # it hides, and Network and USB each hide the other's rows.
+        grid = QGridLayout()
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+        self._labels = {}
+
+        def add_row(text, field, *widgets):
+            label = QLabel(text)
+            label.setBuddy(widgets[0] if widgets else field)
+            row = grid.rowCount()
+            grid.addWidget(label, row, 0)
+            if isinstance(field, QWidget):
+                grid.addWidget(field, row, 1)
+            else:
+                grid.addLayout(field, row, 1)
+            self._labels[id(field)] = label
+            return label
+
+        kinds = QHBoxLayout()
+        self.network_radio = QRadioButton("Network")
+        self.network_radio.setObjectName("connection_network")
+        self.usb_radio = QRadioButton("USB")
+        self.usb_radio.setObjectName("connection_usb")
+        kinds.addWidget(self.network_radio)
+        kinds.addWidget(self.usb_radio)
+        kinds.addStretch(1)
+        add_row("Connection:", kinds, self.network_radio)
 
         self.address_edit = QLineEdit(printer.address)
         self.address_edit.setObjectName("address")
-        form.addRow("Address:", self.address_edit)
+        add_row("Address:", self.address_edit)
 
         self.port_spin = QSpinBox()
         self.port_spin.setObjectName("port")
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(printer.port)
-        form.addRow("Port:", self.port_spin)
-        set_tip(self.port_spin, 'port', form)
+        set_tip(self.port_spin, 'port',
+                label=add_row("Port:", self.port_spin))
+
+        self._usb_row = QHBoxLayout()
+        self.usb_combo = QComboBox()
+        self.usb_combo.setObjectName("usb_printer")
+        self._usb_row.addWidget(self.usb_combo, 1)
+        self.usb_refresh_btn = QPushButton("Refresh")
+        self.usb_refresh_btn.setObjectName("usb_refresh")
+        self._usb_row.addWidget(self.usb_refresh_btn)
+        set_tip(self.usb_combo, 'usb_printer',
+                label=add_row("Printer:", self._usb_row, self.usb_combo))
+        set_tip(self.usb_refresh_btn, 'usb_refresh')
+        self._usb_entries = []
+        self._list_usb(printer)
 
         self.dpi_combo = _dpi_combo(dpi)
-        form.addRow("DPI:", self.dpi_combo)
-        set_tip(self.dpi_combo, 'dpi', form)
+        set_tip(self.dpi_combo, 'dpi', label=add_row("DPI:", self.dpi_combo))
 
         self.font_device_combo = _font_device_combo(font_device)
-        form.addRow("Font memory:", self.font_device_combo)
-        set_tip(self.font_device_combo, 'font_device', form)
+        set_tip(self.font_device_combo, 'font_device',
+                label=add_row("Font memory:", self.font_device_combo))
 
         self._test_row = QHBoxLayout()
         self.test_btn = QPushButton("Test Connection")
@@ -2451,10 +2495,16 @@ class _PrinterRows:
         self._test_row.addStretch(1)
         layout.addLayout(self._test_row)
         self.result = QLabel()
+        self.result.setObjectName("test_result")
         self.result.setWordWrap(True)
         layout.addWidget(self.result)
         self.busy = None
         self.test_btn.clicked.connect(self._on_test)
+        self.usb_refresh_btn.clicked.connect(
+            lambda: self._list_usb(self._chosen_usb() or self._printer))
+        (self.usb_radio if printer.is_usb else self.network_radio).setChecked(True)
+        self.network_radio.toggled.connect(self._show_kind)
+        self._show_kind()
 
     def withhold(self, buttons) -> None:
         self.busy = BusyBar((self.test_btn, *buttons),
@@ -2467,15 +2517,56 @@ class _PrinterRows:
             self.busy.abandon()
 
     def value(self, parent):
-        """(Connection, dpi, font_device), or None when no address is given,
-        which is reported."""
-        address = self.address_edit.text().strip()
-        if not address:
-            show_error(parent, "Printer address cannot be empty.")
+        """(Connection, dpi, font_device), or None when there is no printer
+        to give - no address, or no USB printer - which is reported."""
+        printer, problem = self._chosen()
+        if printer is None:
+            show_error(parent, problem)
             return None
-        return (self._printer.as_network(address, self.port_spin.value()),
-                _dpi_from(self.dpi_combo, self._dpi),
+        return (printer, _dpi_from(self.dpi_combo, self._dpi),
                 self.font_device_combo.currentData())
+
+    def _chosen(self):
+        """(Connection, None) for the printer the rows describe, or (None,
+        what is missing)."""
+        address = self.address_edit.text().strip()
+        port = self.port_spin.value()
+        if self.usb_radio.isChecked():
+            usb = self._chosen_usb()
+            if usb is None:
+                return None, zpl_connection.NO_USB_CHOSEN
+            carried = (self._printer.as_network(address, port) if address
+                       else self._printer)
+            return carried.as_usb(usb.usb_serial, usb.usb_name), None
+        if not address:
+            return None, zpl_connection.NO_ADDRESS
+        return self._printer.as_network(address, port), None
+
+    def _chosen_usb(self) -> Optional[Connection]:
+        index = self.usb_combo.currentIndex()
+        if 0 <= index < len(self._usb_entries):
+            return self._usb_entries[index]
+        return None
+
+    def _list_usb(self, keep: Connection) -> None:
+        """Fill the USB Printer list afresh, on `keep` if it is there."""
+        entries, index = zpl_connection.usb_choices(keep)
+        self.usb_combo.clear()
+        for label, _printer in entries:
+            self.usb_combo.addItem(label)
+        self._usb_entries = [printer for _label, printer in entries]
+        self.usb_combo.setCurrentIndex(index)
+
+    def _show_kind(self, _checked=None) -> None:
+        network = self.network_radio.isChecked()
+        for field, widgets, shown in (
+                (self.address_edit, (self.address_edit,), network),
+                (self.port_spin, (self.port_spin,), network),
+                (self._usb_row, (self.usb_combo, self.usb_refresh_btn),
+                 not network)):
+            for widget in widgets:
+                widget.setVisible(shown)
+            self._labels[id(field)].setVisible(shown)
 
     def _set_result(self, colour, text):
         self.result.setStyleSheet(f"color: {colour};")
@@ -2488,6 +2579,8 @@ class _PrinterRows:
         self._printer = printer
         self.address_edit.setText(printer.address)
         self.port_spin.setValue(printer.port)
+        self._list_usb(printer)
+        (self.usb_radio if printer.is_usb else self.network_radio).setChecked(True)
         if dpi in zpl_fonts.SUPPORTED_DPI:
             self.dpi_combo.setCurrentIndex(
                 list(zpl_fonts.SUPPORTED_DPI).index(dpi))
@@ -2499,11 +2592,10 @@ class _PrinterRows:
             self.dpi_combo.setCurrentIndex(index)
 
     def _on_test(self):
-        addr = self.address_edit.text().strip()
-        if not addr:
-            self._set_result("red", "Address is required")
+        printer, problem = self._chosen()
+        if printer is None:
+            self._set_result("red", problem)
             return
-        printer = Connection.network(addr, self.port_spin.value())
         self._set_result("gray", f"Connecting to {printer.where()}…")
         connected = f"✓ Connected to {printer.where()}"
         busy = self.busy
@@ -2511,6 +2603,7 @@ class _PrinterRows:
         def probe(cancel):
             # Connect and send nothing: reachability first, on its own, so
             # an unreachable printer reads as that rather than as "no dpi".
+            # For a USB printer that is finding its node and opening it.
             zpl_connection.send(printer, b'', 5, cancel=cancel)
             busy.report(f"{connected} — asking its resolution…")
             return zpl_fonts.query_printer_dpi(printer, cancel=cancel)
@@ -2936,7 +3029,10 @@ class PrinterFontsDialog(QDialog):
                 return
             answer, detected = (None, None) if error is not None else result
             fonts, unreadable = (None, ()) if answer is None else answer
-            if fonts is None:
+            if isinstance(error, PortProblem):
+                # A USB port with a fix the user needs to hear about.
+                self._status.setText(str(error))
+            elif fonts is None:
                 # Not the same as "no fonts": say the printer could not be
                 # asked, rather than showing an empty list as if it had answered.
                 self._status.setText(f"Could not reach the printer at "
@@ -3138,6 +3234,9 @@ class PrinterGraphicsDialog(QDialog):
         def done(specs, error):
             if isinstance(error, printer_io.Cancelled):
                 self._status.setText("Listing cancelled.")
+                return
+            if isinstance(error, PortProblem):
+                self._status.setText(str(error))
                 return
             if specs is None or error is not None:
                 self._status.setText(f"Could not reach the printer at "
@@ -3366,6 +3465,9 @@ class PrinterObjectsDialog(QDialog):
             if isinstance(error, printer_io.Cancelled):
                 self._status.setText("Listing cancelled.")
                 return
+            if isinstance(error, PortProblem):
+                self._status.setText(str(error))
+                return
             if specs is None or error is not None:
                 self._status.setText(f"Could not reach the printer at "
                                      f"{self._printer.where()}.")
@@ -3558,9 +3660,10 @@ class PrinterFirmwareDialog(QDialog):
     the BusyBar's, switched to a percentage by report_fraction.
 
     The printer is the session's network one, or any USB printer this
-    machine has - the way in to one in forced download mode. Refresh looks
-    for USB printers again, since one that restarts into that mode can come
-    back under another number.
+    machine has - the way in to one in forced download mode. It opens on the
+    session's printer: the USB one, when that is what is in use and it is
+    plugged in. Refresh looks for USB printers again, since one that
+    restarts into that mode can come back under another number.
     """
 
     def __init__(self, parent, printer: Connection):
@@ -3568,6 +3671,7 @@ class PrinterFirmwareDialog(QDialog):
         self.setWindowTitle("Firmware Update")
         self.resize(460, 200)
         self._network = Connection.network(printer.address, printer.port)
+        self._opening_path = zpl_connection.node_of(printer)
         self._path = None
         self._size = 0
 
@@ -3638,7 +3742,8 @@ class PrinterFirmwareDialog(QDialog):
     def _list_connections(self):
         """Network first, then every USB printer, keeping the one chosen if
         it is still there."""
-        chosen = self._connection.currentData()
+        chosen = (self._connection.currentData() if self._connection.count()
+                  else self._opening_path)
         self._connection.blockSignals(True)
         self._connection.clear()
         self._connection.addItem(f"Network: {self._network.where()}", None)
@@ -3673,7 +3778,7 @@ class PrinterFirmwareDialog(QDialog):
             self._current.setText(
                 f"Current firmware: {version}" if version and error is None
                 else "Current firmware: unavailable")
-            if isinstance(error, PermissionError):
+            if isinstance(error, PortProblem):
                 self._status.setText(str(error))
 
         self._busy.run(lambda cancel: zpl_firmware.current_firmware(

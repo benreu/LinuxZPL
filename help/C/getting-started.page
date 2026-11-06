@@ -14,10 +14,13 @@
   <steps>
     <item>
       <p>Tell LinuxZPL where the printer is:
-      <guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq>. Type
-      its network <gui>Address</gui> and <gui>Port</gui> (Zebra printers
-      listen on 9100), then press <gui>Test Connection</gui>, which also asks
-      the printer its resolution and fills in <gui>DPI</gui>.</p>
+      <guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq>. For
+      a printer on the network, type its <gui>Address</gui> and
+      <gui>Port</gui> (Zebra printers listen on 9100); for one plugged in by
+      USB, choose <gui>USB</gui> and pick it from the list (see
+      <link xref="printing#usb"/>). Then press <gui>Test Connection</gui>,
+      which also asks the printer its resolution and fills in
+      <gui>DPI</gui>.</p>
     </item>
     <item>
       <p>Set the label's size:

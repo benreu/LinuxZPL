@@ -48,6 +48,23 @@ STALE_QUIET = 0.05
 _GONE = select.POLLHUP | select.POLLERR | select.POLLNVAL
 
 
+class PortProblem(OSError):
+    """A USB port that cannot be used for a reason the user can do something
+    about - no permission, in use, not plugged in, no usblp driver - rather
+    than a printer that did not answer. The queries that read any other
+    OSError as "the printer could not be asked" let this one through, so its
+    advice reaches the user. Its text is the advice alone, without the
+    "[Errno n]" an OSError puts in front."""
+
+    def __str__(self):
+        return self.strerror or super().__str__()
+
+
+class PortPermissionError(PortProblem, PermissionError):
+    """No permission to open the node: a PortProblem, and a PermissionError
+    for anything that asks for one."""
+
+
 @dataclass(frozen=True)
 class LocalPort:
     """A printer reached through a device node, e.g. /dev/usb/lp0."""
@@ -59,10 +76,14 @@ class UsbPrinter:
     """A USB printer present now: its node, what it says it is, and the
     serial number its USB descriptor carries (empty if it has none). The
     node number can change when the printer restarts or is plugged in again;
-    the serial number does not."""
+    the serial number does not.
+
+    `interface` is set, and `path` empty, for a printer on the bus that has
+    no node because nothing drives it: see list_detached()."""
     path: str
     description: str
     serial: str
+    interface: str = ''
 
 
 def describe_1284(device_id: str) -> str:
@@ -95,6 +116,34 @@ def list_printers(dev_root: str = '/dev',
         found.append(UsbPrinter(
             path, describe_1284(_read(os.path.join(device, 'ieee1284_id'))),
             _read(os.path.join(device, '..', 'serial')).strip()))
+    return found
+
+
+def list_detached(sys_root: str = '/sys') -> List[UsbPrinter]:
+    """Every USB printer on the bus that no driver has, so it has no node.
+
+    usblp makes /dev/usb/lpN for a printer, but a print system's own USB
+    driver (a CUPS backend) detaches usblp to talk to the printer itself,
+    and one that never attaches it again leaves the printer plugged in and
+    working but out of reach here. Printer-class interfaces only, and not
+    IPP-over-USB ones (protocol 4), which ipp-usb drives instead. Named from
+    the USB device's own strings, since the IEEE 1284 ID is usblp's to read.
+    """
+    found = []
+    pattern = os.path.join(sys_root, 'bus', 'usb', 'devices', '*:*')
+    for interface in sorted(glob.glob(pattern)):
+        if (_read(os.path.join(interface, 'bInterfaceClass')).strip() != '07'
+                or _read(os.path.join(interface, 'bInterfaceProtocol')).strip() == '04'
+                or os.path.exists(os.path.join(interface, 'driver'))):
+            continue
+        name = os.path.basename(interface)
+        device = os.path.join(os.path.dirname(interface), name.split(':')[0])
+        described = ' '.join(
+            part for part in (_read(os.path.join(device, key)).strip()
+                              for key in ('manufacturer', 'product')) if part)
+        found.append(UsbPrinter('', described,
+                                _read(os.path.join(device, 'serial')).strip(),
+                                name))
     return found
 
 
@@ -184,12 +233,13 @@ def _open(port: LocalPort, timeout: float,
         try:
             return os.open(port.path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
         except PermissionError:
-            raise PermissionError(_permission_hint(port.path)) from None
+            raise PortPermissionError(errno.EACCES,
+                                      _permission_hint(port.path)) from None
         except OSError as e:
             if e.errno != errno.EBUSY:
                 raise
             if time.monotonic() - since > timeout:
-                raise OSError(errno.EBUSY, _busy_hint(port.path)) from None
+                raise PortProblem(errno.EBUSY, _busy_hint(port.path)) from None
         time.sleep(TICK)
 
 

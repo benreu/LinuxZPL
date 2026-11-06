@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import connection, printer_io, printer_status
-from .connection import Printer
+from .connection import Printer, PortProblem
 
 CHUNK = 16 * 1024
 # Generous: a printer can stop reading for a while as it erases flash.
@@ -48,12 +48,12 @@ def current_firmware(printer: Printer,
     """The firmware version ~HI reports, or None if the printer could not be
     asked or did not answer in a form ~HI has.
 
-    Cancelled propagates, and so does PermissionError: neither means the
-    printer is out of reach, and a port this user may not open has a fix
-    they need to be told."""
+    Cancelled propagates, and so does PortProblem: neither means the
+    printer is out of reach, and a USB port this user may not open, or one
+    in use, has a fix they need to be told."""
     try:
         reply = connection.send_command(printer, '~HI', cancel=cancel)
-    except PermissionError:
+    except PortProblem:
         raise
     except OSError:
         return None

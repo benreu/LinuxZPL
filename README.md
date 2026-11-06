@@ -56,8 +56,11 @@ disagree.
   a USB port - the way in to a Zebra in forced download mode, whose network is
   not running. USB needs membership of the group that owns `/dev/usb/lpN`
   (`lp` on Debian and Ubuntu)
-- **Network Printing**: straight over TCP to a Zebra, no printing subsystem
-  involved
+- **Network or USB printing**: straight to a Zebra over TCP, or down its USB
+  printer node (`/dev/usb/lpN`), with no printing subsystem or driver
+  involved. A USB printer is remembered by its serial number, so it is found
+  again when it comes back under another node number. USB needs membership of
+  the `lp` group; the Qt frontend offers it so far
 - **Select more than one**: shift-click, or drag a band across the canvas, and
   the whole selection moves together; Select All, Deselect All and Invert
   Selection are in the Edit menu
@@ -186,8 +189,9 @@ a save would not keep.
 2. Drag elements to position them, or drag the handles to resize
 3. Double-click an element to edit it - text, font, barcode value, image file
 4. Right-click an element for **Print This Element**, **Delete** and the z-order actions
-5. Set the printer address and resolution under **Settings -> Default Printer**
-   (**Test Connection** also asks the printer what dpi it is, and fills it in)
+5. Set the printer - a network address, or a USB printer - and its resolution
+   under **Settings -> Default Printer** (**Test Connection** also asks the
+   printer what dpi it is, and fills it in)
 6. **File -> Print...** to pick the printer for this session, the copies, how
    the label is laid down and the printer's darkness, speed and media, then
    send it - or **File -> Quick Print** to send it as it is
@@ -220,7 +224,8 @@ Identical in both frontends.
 
 ## Settings
 
-Printer address, port and resolution are kept in
+The printer - its address and port, or the USB printer's serial number - and
+its resolution are kept in
 `~/.config/linuxzpl/settings.ini`, shared by both frontends, along with the
 window's size and position from the last time it was closed, the files
 listed under File > Open Recent, and the grid. A missing or
