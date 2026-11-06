@@ -5,19 +5,22 @@
     <link type="guide" xref="index#elements"/>
     <title type="sort">6</title>
     <link type="seealso" xref="frame"/>
+    <link type="seealso" xref="elements"/>
     <desc>Slanting lines, from corner to corner of a box.</desc>
   </info>
 
   <title>Diagonal lines</title>
 
   <p><gui>+ Diagonal</gui> adds a line from one corner of its box to the
-  opposite one. For a straight horizontal or vertical line, use a thin
-  <link xref="frame">frame</link>.</p>
+  opposite one (<code>^GD</code> in ZPL). For a straight horizontal or
+  vertical line, use a thin <link xref="frame#rule">frame</link>.</p>
 
   <terms>
     <item>
       <title><gui>Width</gui> and <gui>Height</gui></title>
-      <p>The box the line crosses, in dots.</p>
+      <p>The box the line crosses, in dots, 3 to 32000. The line always runs
+      from corner to corner, so changing the width or height, or dragging a
+      handle, changes how steep it is.</p>
     </item>
     <item>
       <title><gui>Direction</gui></title>
@@ -28,11 +31,21 @@
       <title><gui>Thickness</gui></title>
       <p>Measured across the box, along each row of dots, rather than square
       to the line. So a shallow line looks thinner on paper than a steep one
-      of the same thickness.</p>
+      of the same thickness, and the line's ends are cut level with the top
+      and bottom of the box. At the box's full width the line fills the box
+      solid, so the thickness cannot go past that.</p>
     </item>
     <item>
       <title><gui>Colour</gui> and <gui>Reverse</gui></title>
       <p>As for a <link xref="frame">frame</link>.</p>
     </item>
   </terms>
+
+  <note>
+    <p>Zebra's manual does not say which way a printer measures a
+    diagonal's thickness. The canvas follows the rule above, which has not
+    yet been checked against a printer. If a printer measures it square to
+    the line instead, a shallow line prints thicker than the canvas
+    shows.</p>
+  </note>
 </page>

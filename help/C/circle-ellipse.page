@@ -5,28 +5,34 @@
     <link type="guide" xref="index#elements"/>
     <title type="sort">5</title>
     <link type="seealso" xref="frame"/>
+    <link type="seealso" xref="elements"/>
     <desc>Rings, ovals and solid discs.</desc>
   </info>
 
   <title>Circles and ellipses</title>
 
-  <p><gui>+ Circle</gui> adds a circle and <gui>+ Ellipse</gui> an
-  ellipse.</p>
+  <p><gui>+ Circle</gui> adds a circle (<code>^GC</code> in ZPL) and
+  <gui>+ Ellipse</gui> an ellipse (<code>^GE</code>). They are different
+  elements: a circle can never be stretched into an oval.</p>
 
   <terms>
     <item>
       <title><gui>Diameter</gui></title>
-      <p>A circle's size in dots, 3 to 4095. A circle always stays round:
-      dragging any handle changes its diameter.</p>
+      <p>A circle's size in dots, 3 to 4095. Its box is a square exactly the
+      diameter wide. A circle always stays round: a side handle sets the
+      diameter from that side, and a corner handle takes the smaller of the
+      two sides you dragged, so the circle stays inside the box.</p>
     </item>
     <item>
       <title><gui>Width</gui> and <gui>Height</gui></title>
-      <p>An ellipse's size in dots, 3 to 4095 each, set freely.</p>
+      <p>An ellipse's size in dots, 3 to 4095 each, set freely. Its handles
+      change the box exactly as you drag it.</p>
     </item>
     <item>
       <title><gui>Thickness</gui></title>
-      <p>The ring, drawn inward from the outline. At the radius (half the
-      shorter side, for an ellipse) the shape is solid black.</p>
+      <p>The ring, drawn inward from the outline, so the box stays the
+      outside. At the radius (half the shorter side, for an ellipse) the
+      shape is solid black.</p>
     </item>
     <item>
       <title><gui>Colour</gui> and <gui>Reverse</gui></title>
@@ -35,4 +41,22 @@
       white.</p>
     </item>
   </terms>
+
+  <section id="centre">
+    <title>Put a circle's centre on a point</title>
+    <p><gui>X</gui> and <gui>Y</gui> are the top left corner of the circle's
+    box, not its centre. To centre a circle on a point, subtract half the
+    diameter from the point: a circle 150 dots across, centred on 400, 300,
+    goes at <gui>X</gui> 325, <gui>Y</gui> 225. Or line it up with something
+    else using <guiseq><gui>Edit</gui><gui>Align</gui></guiseq>.</p>
+  </section>
+
+  <note>
+    <p>The canvas draws an ellipse's ring the thickness you set at the ends
+    of both its axes, so on a long, narrow ellipse it is thinner where the
+    curve turns. How a printer draws that ring has not yet been checked
+    against one. The difference would be nothing on a round ellipse and
+    under a dot on a moderately long one, growing the longer and narrower
+    the ellipse is.</p>
+  </note>
 </page>

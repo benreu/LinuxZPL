@@ -5,6 +5,7 @@
     <link type="guide" xref="index#elements"/>
     <title type="sort">3</title>
     <link type="seealso" xref="stored-graphics"/>
+    <link type="seealso" xref="elements"/>
     <desc>Logos and pictures from JPEG and PNG files, turned into the black
     and white dots the printer prints.</desc>
   </info>
@@ -13,25 +14,50 @@
 
   <p><gui>+ Image</gui> asks for a JPEG or PNG file and puts it on the label.
   Dragged onto the canvas, it asks once you let go, and the image lands
-  there.</p>
+  there. In ZPL it is <code>^GF</code>, the picture's dots written out in
+  full.</p>
 
-  <p>A thermal printer prints only black dots, so the image is resized to its
-  box and turned into a pattern of black and white dots. What the canvas
-  shows is that pattern: exactly what is saved in the file and sent to the
-  printer. Resizing the image makes the pattern again from the original
-  file, at the new size, so it never blurs from being resized twice.</p>
+  <section id="dots">
+    <title>From picture to dots</title>
+    <p>A thermal printer prints only black dots, so the image is resized to
+    its box and turned into a pattern of black and white dots. What the
+    canvas shows is that pattern: exactly what is saved in the file and sent
+    to the printer. Resizing the image makes the pattern again from the
+    original picture, at the new size, so it never blurs from being resized
+    twice.</p>
+    <p>The picture is stretched to fill its box, and nothing keeps its
+    proportions: dragging a side handle squeezes or widens it. To keep its
+    shape, type both the <gui>Width</gui> and the <gui>Height</gui> in the
+    same proportion as the picture, or drag a corner carefully.</p>
+    <p>To use another file in the same place and size, select the image and
+    press <gui>Replace Image…</gui> in the Properties panel.</p>
+  </section>
 
-  <p>To use another file in the same place and size, select the image and
-  press <gui>Replace Image…</gui> in the Properties panel.</p>
+  <section id="saved">
+    <title>What the label file keeps</title>
+    <p>The label file holds three things for each image: the dots the printer
+    needs, a full-colour copy of the picture at the image's size, and where
+    the original file was. When the label is opened again:</p>
+    <list>
+      <item><p>the dots are exactly the ones saved, so opening and saving a
+      label never changes what it prints;</p></item>
+      <item><p>a resize starts from the original file if it is still where
+      it was, or else from the full-colour copy. Enlarging the image after
+      its file has moved therefore softens it, since the copy is only as big
+      as the image was. <gui>Replace Image…</gui> with the original file
+      fixes that.</p></item>
+    </list>
+    <p>Images make label files large, and the printer receives the whole
+    image every time the label prints: a 400 × 400 dot image adds about 50
+    KB, and one twice as wide and tall about four times as much. A logo used
+    on many labels can be stored on the printer once instead: see
+    <link xref="stored-graphics"/>.</p>
+  </section>
 
   <note>
     <p>White parts of an image are not white ink; they are simply not
     printed. Anything beneath an image prints through its white parts, and
     the canvas shows that. To keep something beneath from printing, clear
-    its <gui>Print This Element</gui>.</p>
+    its <gui>Print This Element</gui>. Images have no <gui>Reverse</gui>.</p>
   </note>
-
-  <p>The picture is kept inside the label file. A logo used on many labels
-  can be stored on the printer once instead: see
-  <link xref="stored-graphics"/>.</p>
 </page>

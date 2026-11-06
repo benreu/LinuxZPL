@@ -6,6 +6,7 @@
     <title type="sort">4</title>
     <link type="seealso" xref="circle-ellipse"/>
     <link type="seealso" xref="diagonal"/>
+    <link type="seealso" xref="elements"/>
     <desc>Boxes, rules and solid black blocks, with square or rounded
     corners.</desc>
   </info>
@@ -13,23 +14,30 @@
   <title>Frames, boxes and lines</title>
 
   <p><gui>+ Frame</gui> adds a box. A frame is also how to draw a straight
-  horizontal or vertical rule (a frame a few dots tall or wide), and a solid
-  black block.</p>
+  horizontal or vertical rule, and a solid black block. In ZPL it is
+  <code>^GB</code>.</p>
 
   <terms>
     <item>
       <title><gui>Width</gui> and <gui>Height</gui></title>
-      <p>The outside of the frame, in dots.</p>
+      <p>The outside of the frame, in dots, 1 to 32000. Its handles change
+      the box exactly as you drag it.</p>
     </item>
     <item>
       <title><gui>Thickness</gui></title>
-      <p>The border, drawn inward from the outside edge. At half the shorter
-      side the border meets in the middle and the frame is solid black; the
-      thickness cannot go past that.</p>
+      <p>The border, drawn inward from the outside edge, so a thicker border
+      never makes the frame bigger: the box is always the outside. Once the
+      thickness reaches half the shorter side, the borders meet in the
+      middle and the frame is solid black; the thickness cannot go past
+      that.</p>
     </item>
     <item>
       <title><gui>Corner Rounding</gui></title>
-      <p>0 for square corners, up to 8, the roundest the printer draws.</p>
+      <p>0 for square corners, up to 8, the roundest the printer draws. It is
+      a share of the frame's shorter side rather than a size in dots: at 8
+      the corners' radius is half the shorter side, at 4 a quarter. So the
+      same rounding looks rounder on a small frame than on a large
+      one.</p>
     </item>
     <item>
       <title><gui>Colour</gui></title>
@@ -41,6 +49,19 @@
       and the paper under it black, whatever the colour.</p>
     </item>
   </terms>
+
+  <section id="rule">
+    <title>Draw a straight line</title>
+    <p>A rule is a frame as thin as the line: for a horizontal line 3 dots
+    thick, make a frame as wide as the line and 3 dots tall, with a
+    thickness of 2 or more so it is solid. Type the height in the Properties
+    panel, since a handle won't make a side smaller than 20 dots. After
+    that, dragging the line's end handles lengthens or shortens it and
+    leaves it 3 dots thick. A vertical line is the same, turned the other
+    way: 3 dots wide and as tall as the line.</p>
+    <p>For a slanting line, use a <link xref="diagonal">diagonal
+    line</link>.</p>
+  </section>
 
   <note>
     <p>A printer cannot print white: a <gui>White</gui> frame prints nothing

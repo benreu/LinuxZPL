@@ -64,10 +64,21 @@
         <p>How many times larger to print it, 1 to 10 across and down.</p>
       </item>
     </terms>
+    <p>In ZPL the field is <code>^XG</code> or <code>^IM</code>, naming the
+    graphic; the picture itself stays on the printer.</p>
     <p>The canvas shows the picture once LinuxZPL has seen it this session,
-    by storing it, retrieving it, or opening a label that stores it.
-    Otherwise it shows a box naming the graphic. What prints is whatever the
-    printer holds under that name.</p>
+    by storing it, retrieving it, or opening a label that stores it. Its box
+    is then the size it prints: the graphic's own size in dots, times the
+    magnification. Changing <gui>Magnification X</gui> or
+    <gui>Magnification Y</gui> resizes it, and dragging a handle of a
+    <gui>Recall Graphic</gui> field picks the nearest whole magnification,
+    1 to 10. An <gui>Image Move</gui> field always prints at the graphic's
+    own size, so it has no handles.</p>
+    <p>Until LinuxZPL has seen the graphic, the canvas shows a box naming it.
+    Nothing says yet how big the graphic is, so that box only stands in for
+    it while you lay out the label, and its handles size it freely.</p>
+    <p>What prints is whatever the printer holds under that name when the
+    label prints, which may not be the picture the canvas showed.</p>
   </section>
 
   <section id="objects">
