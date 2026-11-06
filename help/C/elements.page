@@ -54,7 +54,7 @@
     <p>The outlines, the light tint behind text and frames, and the handles
     are there only to show you the element. None of them prints. The box does
     not include the blank margin a barcode needs either side for a scanner:
-    leave that clear yourself (see <link xref="barcode"/>).</p>
+    leave that clear yourself (see <link xref="barcode#size"/>).</p>
   </section>
 
   <section id="turned">

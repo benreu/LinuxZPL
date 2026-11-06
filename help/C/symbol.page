@@ -5,6 +5,7 @@
     <link type="guide" xref="index#elements"/>
     <title type="sort">7</title>
     <link type="seealso" xref="text"/>
+    <link type="seealso" xref="elements"/>
     <desc>The ®, ©, ™, UL and CSA marks, from the printer's own symbol
     font.</desc>
   </info>
@@ -12,7 +13,8 @@
   <title>Graphic symbols: ® © ™ UL CSA</title>
 
   <p><gui>+ Symbol ▾</gui> opens a list of the five symbols every Zebra
-  printer carries, and adds the one you choose:</p>
+  printer carries, and adds the one you choose. In ZPL it is
+  <code>^GS</code>, with a letter picking the symbol.</p>
   <list>
     <item><p>® Registered trademark</p></item>
     <item><p>© Copyright</p></item>
@@ -28,15 +30,27 @@
     </item>
     <item>
       <title><gui>Height</gui> and <gui>Width</gui></title>
-      <p>The symbols are made of dots and grow in whole steps of 24 dots:
-      24, 48, 72 and so on. Dragging a handle takes the largest step that
-      fits.</p>
+      <p>The symbols come from a bitmap font whose cell is 24 dots square.
+      Like the printer's other built-in fonts, it prints only at whole
+      multiples of that cell, 1 to 10 times in each direction, so every
+      symbol is 24, 48, 72 … up to 240 dots tall and wide. Height and width
+      are separate, so a symbol can be stretched one way.</p>
     </item>
     <item>
       <title><gui>Orientation</gui> and <gui>Reverse</gui></title>
-      <p>As for <link xref="text">text</link>.</p>
+      <p>As for <link xref="text">text</link>. Turned 90° or 270°, the box's
+      width and height swap.</p>
     </item>
   </terms>
+
+  <section id="dragging">
+    <title>Dragging a symbol's handles</title>
+    <p>A drag asks for a size, and the symbol takes the largest whole step
+    that fits inside the box you dragged, not the nearest. That way a
+    symbol never grows past the room it was given: when the label is made
+    smaller, or a group holding the symbol is scaled down, the symbol stays
+    inside it.</p>
+  </section>
 
   <note>
     <p>The printer draws these from a font of its own. The canvas shows

@@ -4,6 +4,7 @@
   <info>
     <link type="guide" xref="index#elements"/>
     <title type="sort">1</title>
+    <link type="seealso" xref="elements"/>
     <link type="seealso" xref="fonts"/>
     <link type="seealso" xref="templates"/>
     <desc>Text in any installed TrueType font or the printer's own, wrapped
@@ -15,28 +16,68 @@
 
   <p><gui>+ Text</gui> adds a line of text. Select it, and type its text and
   set its size in the <link xref="properties-panel">Properties
-  panel</link>.</p>
+  panel</link>. In ZPL it is a <code>^A</code> or <code>^A@</code> font
+  command and the text in <code>^FD</code>.</p>
+
+  <section id="measure">
+    <title>Why the box is the width it is</title>
+    <p>The box around text is always as wide as the text will print, because
+    LinuxZPL measures it with the font the printer will use:</p>
+    <terms>
+      <item>
+        <title>The printer's built-in font (the default)</title>
+        <p>New text uses the printer's font F, a bitmap font whose characters
+        are drawn in a cell 26 dots tall and 13 wide, with a small gap
+        between characters. A bitmap font can only be printed at whole
+        multiples of its cell, 1 to 10 times in each direction, so the
+        printer rounds the height and width you give it to the nearest
+        multiple. Text set to <gui>Font Height</gui> 36 and
+        <gui>Font Width</gui> 20 prints in a 26 × 26 cell, and the box shows
+        that size, not 36 × 20. The panel keeps the numbers you typed.</p>
+        <p>The cell is a fixed number of dots, so the same text prints
+        smaller on a 300 dpi printer than on a 203 dpi one.</p>
+      </item>
+      <item>
+        <title>Font 0</title>
+        <p>The printer's scalable font, used by many other programs. LinuxZPL
+        measures it with a close stand-in: see
+        <link xref="fonts#font-zero"/>.</p>
+      </item>
+      <item>
+        <title>A TrueType font</title>
+        <p>Measured from the font file itself, letter by letter, so
+        <code>IIII</code> is narrow and <code>WWWW</code> wide, as they
+        print.</p>
+      </item>
+    </terms>
+    <p>That is why there is no <gui>Width</gui> row: the width follows from
+    the text and the font. To make text wider, raise <gui>Font Width</gui>
+    or drag a side handle.</p>
+  </section>
 
   <section id="size">
     <title>Size, turn and direction</title>
     <terms>
       <item>
         <title><gui>Font Height</gui> and <gui>Font Width</gui></title>
-        <p>In dots, 8 to 500. The width stretches or narrows each character;
-        the box on the canvas is always the width the text will print.
-        Dragging a side handle changes the font width, and a top or bottom
-        handle the height.</p>
+        <p>In dots, 8 to 32000. The width stretches or narrows each
+        character. Dragging a side handle changes the font width, and a top
+        or bottom handle the height; the box then comes back to the size the
+        text prints.</p>
       </item>
       <item>
         <title><gui>Orientation</gui></title>
         <p><gui>Normal</gui>, <gui>Rotated 90°</gui>, <gui>Upside down</gui>
-        or <gui>Rotated 270°</gui>.</p>
+        or <gui>Rotated 270°</gui>. Turned 90° or 270°, the box's width and
+        height swap, and so do the handles' jobs: the top and bottom handles
+        then change the font width, and the side handles the height.</p>
       </item>
       <item>
         <title><gui>Direction</gui> and <gui>Character Gap</gui></title>
         <p>Lay the characters out <gui>Left to right</gui>,
         <gui>Top to bottom</gui> or <gui>Right to left</gui>, with extra dots
-        between them.</p>
+        between them. Top to bottom stacks the characters upright, one font
+        height apart, in a column as wide as its widest character.</p>
       </item>
       <item>
         <title><gui>Reverse</gui></title>
@@ -57,10 +98,20 @@
     <link xref="fonts"/>.</p>
     <note>
       <p>The printer's built-in fonts are made of dots, and grow only in
-      whole steps. Their height and width are rounded to the nearest step,
-      so dragging such text larger jumps from size to size rather than
-      growing smoothly. The canvas shows the size that will print.</p>
+      whole steps. Dragging such text larger jumps from size to size rather
+      than growing smoothly. The canvas shows the size that will print.</p>
     </note>
+  </section>
+
+  <section id="characters">
+    <title>Letters beyond plain English</title>
+    <p>Text can hold any letter or symbol, such as é, ü, ß or €. When it
+    does, LinuxZPL tells the printer the label is in Unicode (UTF-8,
+    <code>^CI28</code>), which needs printer firmware V50.14, V60.14 or
+    later. Whether a letter actually prints depends on the font having it.
+    The printer's built-in bitmap fonts carry a limited set, so for anything
+    unusual choose a TrueType font that has the letters, and let LinuxZPL
+    send it to the printer.</p>
   </section>
 
   <section id="wrap">
@@ -70,32 +121,44 @@
     <terms>
       <item>
         <title><gui>Field block (^FB)</gui></title>
-        <p>Wraps to <gui>Wrap Width</gui>, up to <gui>Max Lines</gui> lines
-        (lines past it are dropped, as the printer drops them), with
-        <gui>Line Spacing</gui>, a <gui>Justification</gui> of
+        <p>Wraps to <gui>Wrap Width</gui>, up to <gui>Max Lines</gui> lines,
+        with <gui>Line Spacing</gui>, a <gui>Justification</gui> of
         <gui>Left</gui>, <gui>Centred</gui>, <gui>Right</gui> or
         <gui>Justified</gui>, and an <gui>Indent</gui> for every line after
-        the first.</p>
+        the first. The block is as tall as the lines the text needs, up to
+        the maximum. A word too long for the width stays whole, on a line of
+        its own.</p>
       </item>
       <item>
         <title><gui>Text block (^TB)</gui></title>
         <p>A box <gui>Wrap Width</gui> wide and <gui>Block Height</gui>
-        tall. Text past the bottom is cut off. Its lines are left or right
-        justified. It breaks lines only at spaces, so a line break you type
-        becomes a space.</p>
+        tall. Its lines are spaced by the printer, about 1.28 times the font
+        height apart, and text past the bottom is cut off. A word too long
+        for the width is broken where it runs out of room. It breaks lines
+        only at spaces, so a line break you type becomes a space. Its lines
+        are left or right justified; a right justified block keeps its right
+        edge still and grows to the left.</p>
       </item>
     </terms>
+    <p>Choose a field block for most wrapped text: it can centre or justify,
+    and grows with the text. Choose a text block when the text must stay
+    inside a fixed box whatever its length.</p>
+    <note>
+      <p>LinuxZPL leaves out lines past <gui>Max Lines</gui>. Zebra's manual
+      says a printer prints the extra text over the last line instead, so
+      set <gui>Max Lines</gui> high enough for all the text.</p>
+    </note>
     <p>With a block, the side handles set the wrap width and the text
     re-flows; the top and bottom handles set the number of lines, or a text
-    block's height. Clearing <gui>Wrap</gui> joins the lines back into
-    one.</p>
+    block's height. The font size stays as it is. Clearing <gui>Wrap</gui>
+    joins the lines back into one.</p>
   </section>
 
   <section id="time">
     <title>Dates and times from the printer's clock</title>
     <p><gui>+ Time</gui> adds text the printer fills in from its own clock as
-    it prints. <gui>Format</gui> says what to print, using codes such as
-    these:</p>
+    it prints (<code>^FC</code>). <gui>Format</gui> says what to print, using
+    codes such as these:</p>
     <table frame="all" rules="rows">
       <thead>
         <tr><td><p>Code</p></td><td><p>Prints</p></td></tr>
@@ -113,17 +176,34 @@
   <section id="serial">
     <title>Serial numbers</title>
     <p><gui>+ Serial</gui> adds a number the printer changes on every label
-    it prints. <gui>Start Value</gui> is the first label's number,
-    <gui>Increment</gui> what is added each time (a negative one counts
-    down), and <gui>Add leading zeros</gui> keeps the number as many
-    digits long as the start value. Clearing <gui>Serial</gui> turns the
-    field into ordinary text.</p>
+    it prints (<code>^SN</code>). <gui>Start Value</gui> is the first
+    label's number, <gui>Increment</gui> what is added each time (a negative
+    one counts down), and <gui>Add leading zeros</gui> keeps the number as
+    many digits long as the start value. Clearing <gui>Serial</gui> turns
+    the field into ordinary text.</p>
   </section>
 
   <section id="numbered">
     <title>Text filled in later</title>
     <p><gui>+ Numbered</gui> adds text whose words are given each time the
-    label is printed, and the <gui>ID</gui> row names any text so a program
-    can fill it in: see <link xref="templates"/>.</p>
+    label is printed (<code>^FN</code>), and the <gui>ID</gui> row names any
+    text so a program can fill it in: see <link xref="templates"/>.</p>
+  </section>
+
+  <section id="stand-ins">
+    <title>What the canvas shows for fields the printer fills in</title>
+    <p>The canvas can't know what the printer will put in these fields, so
+    it shows a stand-in between « and »:</p>
+    <list>
+      <item><p>a date or time shows its format, such as
+      <code>«%m/%d/%y»</code>;</p></item>
+      <item><p>a serial number shows its start value and step, such as
+      <code>0001«+1»</code>;</p></item>
+      <item><p>a numbered field shows its field name, such as
+      <code>«Ship to»</code>, or its number, such as
+      <code>«FN4»</code>.</p></item>
+    </list>
+    <p>The box is the width of the stand-in, not of what will print, so leave
+    room for the longest value the field will hold.</p>
   </section>
 </page>

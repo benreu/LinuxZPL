@@ -5,6 +5,7 @@
     <link type="guide" xref="index#elements"/>
     <title type="sort">2</title>
     <link type="seealso" xref="templates"/>
+    <link type="seealso" xref="elements"/>
     <desc>Linear, postal and two-dimensional barcodes, drawn bar for bar as
     the printer prints them.</desc>
   </info>
@@ -14,7 +15,42 @@
   <p><gui>+ Barcode</gui> adds a Code 128 barcode. Choose another kind with
   <gui>Symbology</gui>, and type what it holds in <gui>Barcode
   Value</gui>. The canvas draws the symbol module for module, so its size on
-  the canvas is its size on the label.</p>
+  the canvas is its size on the label. In ZPL it is <code>^BY</code>, which
+  sets the module width, then the barcode's own command, such as
+  <code>^BC</code> for Code 128.</p>
+
+  <section id="size">
+    <title>How big it prints, and why it won't stretch</title>
+    <p>A barcode is made of <em>modules</em>: the narrowest bar or space, or
+    one square of a two-dimensional code. Every module is a whole number of
+    dots, and everything else in the symbol is a whole number of modules. So
+    a barcode can't be stretched to fill a box the way a picture can:</p>
+    <list>
+      <item><p>Its box is the bars, plus the printed value beneath or above
+      them.</p></item>
+      <item><p>Its width comes from encoding the value. More characters make
+      it wider, and different characters can take different widths. Code
+      128's <gui>Automatic</gui> mode packs runs of digits two to a symbol,
+      which makes a number much shorter.</p></item>
+      <item><p>To make it wider or narrower, change <gui>Module Width</gui>,
+      or drag a side handle, which does the same. To make it taller, change
+      <gui>Bar Height</gui> or drag the top or bottom.</p></item>
+    </list>
+    <p>A module of 2 dots is 0.25 mm on a 203 dpi printer, 0.17 mm at 300 dpi
+    and 0.08 mm at 600 dpi. A scanner has a smallest module it can read, so
+    check what yours, or your customer's, needs before shrinking a
+    barcode.</p>
+    <p>A linear barcode also needs a blank margin, the <em>quiet zone</em>,
+    either side, where a scanner finds where the bars start and end. For
+    Code 128 and Code 39 it is at least ten modules wide. The box does not
+    include it, so keep other elements and the label's edge that far
+    away.</p>
+    <p>A two-dimensional code, such as a QR Code or Data Matrix, is a grid
+    whose size the data decides: more data, or more error correction, makes
+    a bigger grid. <gui>Magnification</gui> (<gui>Module Size</gui> for
+    Data Matrix) sets how many dots each square is. Dragging a corner takes
+    the largest size that fits the box you dragged.</p>
+  </section>
 
   <section id="kinds">
     <title>The kinds offered</title>
@@ -91,7 +127,20 @@
         shorter.</p>
       </item>
       <item>
-        <title><gui>Orientation</gui>, <gui>Reverse</gui> and <gui>ID</gui></title>
+        <title><gui>Orientation</gui></title>
+        <p>Turns the barcode, as it turns <link xref="text">text</link>.
+        Turned 90° or 270°, its box's width and height swap, and the side
+        handles then set the bar height.</p>
+      </item>
+      <item>
+        <title><gui>Variable</gui></title>
+        <p>Tick <gui>Data comes from a numbered field (^FN)</gui> to have the
+        barcode's value given each time the label is printed, as a numbered
+        text field's is. <gui>Field Number</gui> and <gui>Field Name</gui>
+        are as for text: see <link xref="templates"/>.</p>
+      </item>
+      <item>
+        <title><gui>Reverse</gui> and <gui>ID</gui></title>
         <p>As for <link xref="text">text</link>.</p>
       </item>
     </terms>
@@ -114,8 +163,8 @@
     <terms>
       <item>
         <title>MaxiCode</title>
-        <p>Always the same size, about an inch across, so it has no module
-        width, orientation or handles. <gui>Insert</gui> has buttons for the
+        <p>Always the same size, about an inch across, at every resolution,
+        so it has no module width, orientation or handles. <gui>Insert</gui> has buttons for the
         GS, RS and EOT characters its message uses, which no keyboard
         types.</p>
       </item>
@@ -124,12 +173,14 @@
         <p>Their <gui>Bar Height</gui> is the height of each row. A message
         too long for one symbol can be split over several:
         <gui>Positions (^FM)</gui> lists where each symbol goes, with
-        <gui>Add</gui> and <gui>Remove</gui>.</p>
+        <gui>Add</gui> and <gui>Remove</gui>. A barcode split this way has no
+        handles; its symbols' sizes come from the rows.</p>
       </item>
       <item>
         <title>TLC39</title>
         <p>A Code 39 and a small MicroPDF417 together. The usual rows set the
-        Code 39, and two more the MicroPDF417.</p>
+        Code 39, and two more the MicroPDF417. Two symbols with different
+        module widths can't share one drag, so it has no handles.</p>
       </item>
     </terms>
   </section>
@@ -137,4 +188,8 @@
   <p>A barcode whose value cannot be encoded, such as data too long for a QR
   Code, keeps its place on the canvas but draws nothing, as the printer
   would print nothing.</p>
+
+  <p>On a printer of another resolution, a barcode can't keep its size
+  exactly: a module of 2 dots becomes 3, not 2.96. See
+  <link xref="resolution#rescale"/>.</p>
 </page>
