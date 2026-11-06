@@ -24,6 +24,10 @@ A viewer that cannot do it usually says so at once, by exiting with an error
 the one started for its first WATCH_SECONDS, asking follow() every POLL_MS,
 and a failure hands over to the next way down the list.
 
+open_pdf() opens a page's PDF on its own, with the PDF viewers alone: the
+built-in help viewer's Print, which prints from the PDF viewer. It is
+watched and handed over the same way, down its own list.
+
 No toolkit is imported here: both frontends call launch() and follow(), and
 show a message in their own way.
 """
@@ -39,8 +43,9 @@ MALLARD = "http://projectmallard.org/1.0/"
 CONTENTS = "index"
 # Tried in this order. The named PDF viewers are for a system with no
 # xdg-open, or one on which xdg-open fails; their own order is arbitrary.
-VIEWERS = ("yelp", "xdg-open", "evince", "okular", "atril", "xreader",
-           "qpdfview", "zathura", "mupdf")
+PDF_VIEWERS = ("xdg-open", "evince", "okular", "atril", "xreader",
+               "qpdfview", "zathura", "mupdf")
+VIEWERS = ("yelp",) + PDF_VIEWERS
 WATCH_SECONDS = 5.0
 POLL_MS = 250
 # follow()'s answer while the viewer is still starting: ask again.
@@ -84,6 +89,7 @@ class Launch(NamedTuple):
     pages: Path = PAGES
     pdf: Optional[Path] = None  # the PDF shown, when a PDF viewer was used
     cache: Optional[Path] = None
+    printing: bool = False      # from open_pdf(), so handed over down PDF_VIEWERS
 
 
 def topics(pages: Path = PAGES) -> List[str]:
@@ -154,6 +160,16 @@ def unmade_message(pages: Path, error: Exception) -> str:
             f"{_where(pages, None)}")
 
 
+def no_pdf_viewer_message(pdf: Path, other: bool = False) -> str:
+    return (f"No {'other ' if other else ''}PDF viewer was found to print the "
+            f"page from. Install one (Evince, Okular, Atril or any other), "
+            f"then try again.\n\nThis page as a PDF: {pdf}")
+
+
+def pdf_unmade_message(error: Exception) -> str:
+    return f"The page could not be made into a PDF: {error}"
+
+
 def _start(argv: List[str]) -> Optional[subprocess.Popen]:
     """Start a viewer apart from this process: in a session of its own, so
     it neither dies with the designer nor takes a Ctrl+C meant for it, and
@@ -167,6 +183,43 @@ def _start(argv: List[str]) -> Optional[subprocess.Popen]:
         return None
 
 
+def _check(topic: str, pages: Path) -> Tuple[str, str, Path]:
+    """The page and section `topic` names, and the page's file; ValueError
+    for a page or a section that does not exist, a programming error."""
+    page_id, section = split_topic(topic)
+    page = pages / f"{page_id}.page"
+    if not page.is_file():
+        raise ValueError(f"no help page {page_id!r} in {pages}")
+    if section and section not in section_ids(page):
+        raise ValueError(f"no section {section!r} in help page {page_id!r}")
+    return page_id, section, page
+
+
+def open_pdf(topic: str, pages: Path = PAGES, cache: Optional[Path] = None,
+             start_after: str = "") -> Launch:
+    """Open the PDF of the page `topic` names, at its top, with the first
+    of PDF_VIEWERS after `start_after` that is on PATH and starts, to print
+    it from there. The PDFs are made into `cache` (helppdf.cache_dir() if
+    None). Never waits for the viewer."""
+    page_id, _section, _page = _check(topic, pages)
+    names = (PDF_VIEWERS[PDF_VIEWERS.index(start_after) + 1:] if start_after
+             else PDF_VIEWERS)
+    try:
+        from . import helppdf
+        pdf = helppdf.build(pages, cache) / f"{page_id}.pdf"
+    except Exception as e:  # the help must never take the program down
+        return Launch(None, pdf_unmade_message(e), topic, "", pages, None, cache, True)
+    for name in names:
+        path = shutil.which(name)
+        if not path:
+            continue
+        process = _start([path, str(pdf)])
+        if process is not None:
+            return Launch(process, None, topic, name, pages, pdf, cache, True)
+    return Launch(None, no_pdf_viewer_message(pdf, bool(start_after)), topic, "",
+                  pages, pdf, cache, True)
+
+
 def launch(topic: str = CONTENTS, pages: Path = PAGES,
            cache: Optional[Path] = None, start_after: str = "") -> Launch:
     """Show the help page `topic`, or the contents, with the first viewer in
@@ -175,12 +228,7 @@ def launch(topic: str = CONTENTS, pages: Path = PAGES,
     The PDFs are made, into `cache` (helppdf.cache_dir() if None), only
     when it comes to a PDF viewer. Asking for a page or a section that does
     not exist is a programming error."""
-    page_id, section = split_topic(topic)
-    page = pages / f"{page_id}.page"
-    if not page.is_file():
-        raise ValueError(f"no help page {page_id!r} in {pages}")
-    if section and section not in section_ids(page):
-        raise ValueError(f"no section {section!r} in help page {page_id!r}")
+    page_id, section, page = _check(topic, pages)
     names = VIEWERS[VIEWERS.index(start_after) + 1:] if start_after else VIEWERS
     pdf = None
     for name in names:
@@ -219,10 +267,12 @@ def follow(launched: Launch, elapsed: float) -> Union[str, None, Launch]:
         return WATCHING if elapsed < WATCH_SECONDS else None
     if code == 0:
         return None
-    following = launch(launched.topic, launched.pages, launched.cache,
-                       start_after=launched.viewer)
+    again = open_pdf if launched.printing else launch
+    following = again(launched.topic, launched.pages, launched.cache,
+                      start_after=launched.viewer)
     if following.message:
+        what = "the page's PDF" if launched.printing else "the help"
         return following._replace(
-            message=f"{launched.viewer} could not show the help "
+            message=f"{launched.viewer} could not show {what} "
                     f"(exit status {code}).\n\n{following.message}")
     return following

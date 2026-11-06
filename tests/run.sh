@@ -7,7 +7,7 @@ status=0
 
 for suite in tests/test_core.py tests/test_deviations.py tests/test_font_fallback.py \
              tests/test_decode.py tests/test_cli.py tests/test_api.py \
-             tests/test_help.py; do
+             tests/test_help.py tests/test_helpview.py; do
   echo "=== $suite ==="
   QT_QPA_PLATFORM=offscreen python3 -u "$suite" || status=1
 done
