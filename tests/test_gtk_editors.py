@@ -26,6 +26,7 @@ from gi.repository import Gtk
 from gtkui import window as gtk_main
 from gtkui.window import ZPLViewerWindow
 from zplcore import geometry
+from zplcore.connection import Connection
 
 fails = []
 
@@ -1613,17 +1614,18 @@ fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 gtk_main._config_path = lambda: blocked_dir / 'settings.ini'
 gtk_main._fallback_config_path = lambda: fallback_path
 try:
-    window._default_printer = ('10.0.0.9', window.printer_port,
+    window._default_printer = (Connection.network('10.0.0.9', 9100),
                                window.printer_dpi, window.printer_font_device)
     window._save_settings()
     written = configparser.ConfigParser(); written.read(fallback_path)
     check("a settings file the user config directory won't take is written to the project fallback instead",
           written.has_section('printer') and written.get('printer', 'address') == '10.0.0.9',
           dict(written['printer']) if written.has_section('printer') else None)
-    window.printer_address = gtk_main.DEFAULT_PRINTER_ADDRESS
+    window.printer_connection = Connection.network(gtk_main.DEFAULT_PRINTER_ADDRESS, 9100)
     window._load_settings()
     check("and is read back from the fallback location",
-          window.printer_address == '10.0.0.9', window.printer_address)
+          window.printer_connection == Connection.network('10.0.0.9', 9100),
+          window.printer_connection)
 finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
@@ -1662,21 +1664,21 @@ session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 gtk_main._config_path = lambda: session_path
 gtk_main._fallback_config_path = lambda: session_path
 try:
-    window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.50', 9100, 203
-    window._default_printer = (window.printer_address, window.printer_port,
+    window.printer_connection, window.printer_dpi = Connection.network('192.168.1.50', 9100), 203
+    window._default_printer = (window.printer_connection,
                                window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
     real_dialog = gtk_main._printer_picker_dialog
-    gtk_main._print_dialog = _print_window_returns(('10.0.0.5', 9200, 203, 'E'))
+    gtk_main._print_dialog = _print_window_returns((Connection.network('10.0.0.5', 9200), 203, 'E'))
     try:
         window.on_print_dialog_clicked(None)
     finally:
         gtk_main._print_dialog = real_print_dialog
 
     check("the Print window changes the printer in effect",
-          (window.printer_address, window.printer_port) == ('10.0.0.5', 9200),
-          (window.printer_address, window.printer_port))
+          window.printer_connection == Connection.network('10.0.0.5', 9200),
+          window.printer_connection)
 
     written = configparser.ConfigParser(); written.read(session_path)
     check("but never writes it to the settings file",
@@ -1687,8 +1689,9 @@ try:
     # override just applied above - otherwise clicking OK on an unedited
     # dialog would silently promote the override into the new default.
     seen = {}
-    def capture_dialog(parent, title, address, port, dpi, font_device=None):
-        seen['address'], seen['port'], seen['dpi'] = address, port, dpi
+    def capture_dialog(parent, title, printer, dpi, font_device=None):
+        seen['address'], seen['port'], seen['dpi'] = (printer.address,
+                                                      printer.port, dpi)
         seen['font_device'] = font_device
         return None  # cancel, so nothing else about window state changes
     gtk_main._printer_picker_dialog = capture_dialog
@@ -1700,7 +1703,8 @@ try:
           (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
 
     # Contrast: Default Printer, given the same dialog result, does persist.
-    gtk_main._printer_picker_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203, 'E')
+    gtk_main._printer_picker_dialog = lambda *a, **k: (
+        Connection.network('10.0.0.5', 9200), 203, 'E')
     try:
         window.on_default_printer_clicked(None)
     finally:
@@ -1722,12 +1726,12 @@ quit_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 gtk_main._config_path = lambda: quit_path
 gtk_main._fallback_config_path = lambda: quit_path
 try:
-    window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.70', 9100, 203
-    window._default_printer = (window.printer_address, window.printer_port,
+    window.printer_connection, window.printer_dpi = Connection.network('192.168.1.70', 9100), 203
+    window._default_printer = (window.printer_connection,
                                window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
-    gtk_main._print_dialog = _print_window_returns(('10.0.0.8', 9400, 203, 'E'))
+    gtk_main._print_dialog = _print_window_returns((Connection.network('10.0.0.8', 9400), 203, 'E'))
     try:
         window.on_print_dialog_clicked(None)
     finally:
@@ -1749,12 +1753,12 @@ label_settings_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 gtk_main._config_path = lambda: label_settings_path
 gtk_main._fallback_config_path = lambda: label_settings_path
 try:
-    window.printer_address, window.printer_port, window.printer_dpi = '192.168.1.80', 9100, 203
-    window._default_printer = (window.printer_address, window.printer_port,
+    window.printer_connection, window.printer_dpi = Connection.network('192.168.1.80', 9100), 203
+    window._default_printer = (window.printer_connection,
                                window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
-    gtk_main._print_dialog = _print_window_returns(('10.0.0.9', 9500, 203, 'E'))
+    gtk_main._print_dialog = _print_window_returns((Connection.network('10.0.0.9', 9500), 203, 'E'))
     try:
         window.on_print_dialog_clicked(None)
     finally:
@@ -1769,9 +1773,10 @@ try:
     window.apply_label_settings(900, 600, 300, 3.0, 2.0)
 
     check("Label Settings updates the persisted default's DPI",
-          window._default_printer[2] == 300, window._default_printer)
+          window._default_printer[1] == 300, window._default_printer)
     check("but leaves the persisted default's address alone",
-          window._default_printer[0] == '192.168.1.80', window._default_printer)
+          window._default_printer[0].address == '192.168.1.80',
+          window._default_printer)
 
     written = configparser.ConfigParser(); written.read(label_settings_path)
     check("the settings file reflects the new DPI but the original, non-overridden address",
@@ -1788,8 +1793,8 @@ finally:
 import time as _pw_time
 from zplcore.print_settings import AsWritten as _AW
 
-_PW_PRINTER = ('192.168.1.50', 9100, 203, 'E')
-_PW_DEFAULT = ('10.0.0.1', 9300, 203, 'R')
+_PW_PRINTER = (Connection.network('192.168.1.50', 9100), 203, 'E')
+_PW_DEFAULT = (Connection.network('10.0.0.1', 9300), 203, 'R')
 pw = ZPLViewerWindow()
 
 def _pw_widgets(container):
@@ -1917,7 +1922,7 @@ check("Label Settings no longer has Copies or ^PO/^PM/^LR, but keeps Home",
 # The window: one undo entry for a visit that changed the label, none for
 # one that did not, and Print sends after the settings go on.
 pw._save_settings = lambda *a: None
-pw.printer_address, pw.printer_port, pw.printer_dpi = '192.168.1.50', 9100, 203
+pw.printer_connection, pw.printer_dpi = Connection.network('192.168.1.50', 9100), 203
 pw.design_canvas.document.dpi = 203
 pw.design_canvas.add_frame_element()
 pw.on_canvas_changed()
@@ -2568,7 +2573,7 @@ for wh_key, wh_dialog in (
 import socket
 wh_sock = socket.socket()
 wh_sock.bind(("127.0.0.1", 0))
-wh_win.printer_address, wh_win.printer_port = "127.0.0.1", wh_sock.getsockname()[1]
+wh_win.printer_connection = Connection.network("127.0.0.1", wh_sock.getsockname()[1])
 wh_sock.close()
 wh_run("printer_fonts", lambda: wh_win.on_printer_fonts_clicked(None))
 wh_run("printer_graphics", lambda: wh_win.on_printer_graphics_clicked(None))
@@ -2975,18 +2980,18 @@ def _t_peek(dialog):
 
 from zplcore import local_port as zpl_local
 _t_real_run, _t_real_ports = Gtk.Dialog.run, zpl_local.list_ports
-_t_real_printer = (tw.printer_address, tw.printer_port)
+_t_real_printer = tw.printer_connection
 Gtk.Dialog.run = _t_peek
 # The managers ask the printer as they open: a port nothing listens on
 # answers at once, and closing drops the answer
 zpl_local.list_ports = lambda: []
-tw.printer_address, tw.printer_port = '127.0.0.1', 9
+tw.printer_connection = Connection.network('127.0.0.1', 9)
 try:
     for _title, _open, _wanted in (
             ("Label Settings", lambda: tw.on_label_settings_clicked(None),
              {'dpi', 'home_x', 'home_y'}),
             ("Default Printer", lambda: gtk_main._printer_picker_dialog(
-                tw, "Default Printer", '10.0.0.1', 9100, 203),
+                tw, "Default Printer", Connection.network('10.0.0.1', 9100), 203),
              {'port', 'dpi', 'font_device', 'test_connection'}),
             ("Store Graphic As", lambda: tw._ask_device_spec(tw), {'device'}),
             ("Upload Font To", lambda: tw._ask_font_device(tw), {'font_device'}),
@@ -3008,7 +3013,7 @@ try:
                                       _t_seen.get('wrong'))
 finally:
     Gtk.Dialog.run, zpl_local.list_ports = _t_real_run, _t_real_ports
-    tw.printer_address, tw.printer_port = _t_real_printer
+    tw.printer_connection = _t_real_printer
 check("GTK: Label Settings, Grid Settings, Default Printer, the store windows "
       "and the printer's managers explain their rows from the table",
       not _t_window_tips, _t_window_tips)

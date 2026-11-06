@@ -14,6 +14,7 @@ import time
 import base64
 import configparser
 from pathlib import Path
+from zplcore import connection as zpl_connection
 from zplcore import firmware as zpl_firmware
 from zplcore import fonts as zpl_fonts
 from zplcore import helpdocs
@@ -28,6 +29,7 @@ from zplcore import model
 from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
+from zplcore.connection import Connection
 from zplcore import graphic_symbols
 from zplcore.model import STORED_GRAPHIC_DEVICES, Document
 from zplcore.print_settings import AsWritten, PrintSettings
@@ -134,18 +136,20 @@ class _PrinterRows:
 
     LABEL_WIDTH = 90
 
-    def __init__(self, address, port, dpi, font_device=None, default=None):
+    def __init__(self, printer, dpi, font_device=None, default=None):
         self._dpi = dpi
+        # Carried so whatever the rows do not show survives a visit.
+        self._printer = printer
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
 
         self.address_entry = Gtk.Entry()
         self.address_entry.set_name("address")
-        self.address_entry.set_text(address)
+        self.address_entry.set_text(printer.address)
         # Enter in the address is the dialog's default button.
         self.address_entry.set_activates_default(True)
         _make_row(self.box, "Address:", self.address_entry, self.LABEL_WIDTH)
 
-        self.port_spin = _make_spin(port, 1, 65535)
+        self.port_spin = _make_spin(printer.port, 1, 65535)
         self.port_spin.set_name("port")
         _make_row(self.box, "Port:", self.port_spin, self.LABEL_WIDTH,
                   tip='port')
@@ -197,12 +201,13 @@ class _PrinterRows:
             self.busy.abandon()
 
     def value(self):
-        """(address, port, dpi, font_device), or None when no address is
+        """(Connection, dpi, font_device), or None when no address is
         given."""
         address = self.address_entry.get_text().strip()
         if not address:
             return None
-        return (address, int(self.port_spin.get_value()),
+        return (self._printer.as_network(address,
+                                         int(self.port_spin.get_value())),
                 _dpi_from(self.dpi_combo, self._dpi),
                 self._font_device_codes[self.font_device_combo.get_active()])
 
@@ -223,9 +228,10 @@ class _PrinterRows:
             self.dpi_combo.append_text(str(value))
             self.dpi_combo.set_active(len(model) - 1)
 
-    def _fill(self, address, port, dpi, font_device):
-        self.address_entry.set_text(address)
-        self.port_spin.set_value(port)
+    def _fill(self, printer, dpi, font_device):
+        self._printer = printer
+        self.address_entry.set_text(printer.address)
+        self.port_spin.set_value(printer.port)
         self._set_dpi(dpi)
         if font_device in self._font_device_codes:
             self.font_device_combo.set_active(
@@ -233,20 +239,20 @@ class _PrinterRows:
 
     def _on_test(self, _btn):
         addr = self.address_entry.get_text().strip()
-        prt = int(self.port_spin.get_value())
         if not addr:
             self._set_result("red", "Address is required")
             return
-        self._set_result("gray", f"Connecting to {addr}:{prt}…")
-        connected = f"✓ Connected to {addr}:{prt}"
+        printer = Connection.network(addr, int(self.port_spin.get_value()))
+        self._set_result("gray", f"Connecting to {printer.where()}…")
+        connected = f"✓ Connected to {printer.where()}"
         busy = self.busy
 
         def probe(cancel):
             # Connect and send nothing: reachability first, on its own, so
             # an unreachable printer reads as that rather than as "no dpi".
-            printer_io.send(addr, prt, b'', 5, cancel=cancel)
+            zpl_connection.send(printer, b'', 5, cancel=cancel)
             busy.report(f"{connected} — asking its resolution…")
-            return zpl_fonts.query_printer_dpi(addr, prt, cancel=cancel)
+            return zpl_fonts.query_printer_dpi(printer, cancel=cancel)
 
         def done(reported, error):
             if isinstance(error, printer_io.Cancelled):
@@ -271,10 +277,9 @@ class _PrinterRows:
         busy.run(probe, done)
 
 
-def _printer_picker_dialog(parent, title, address, port, dpi,
-                           font_device=None):
-    """Default Printer's dialog: (address, port, dpi, font_device), or None
-    if cancelled."""
+def _printer_picker_dialog(parent, title, printer, dpi, font_device=None):
+    """Default Printer's dialog: (Connection, dpi, font_device), or None if
+    cancelled."""
     dialog = Gtk.Dialog(title=title, parent=parent, flags=0)
     dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                        Gtk.STOCK_OK, Gtk.ResponseType.OK)
@@ -282,7 +287,7 @@ def _printer_picker_dialog(parent, title, address, port, dpi,
     content.set_spacing(4)
     for side in ("start", "end", "top", "bottom"):
         getattr(content, "set_margin_" + side)(8)
-    rows = _PrinterRows(address, port, dpi, font_device)
+    rows = _PrinterRows(printer, dpi, font_device)
     content.pack_start(rows.box, False, False, 0)
     rows.withhold((dialog.get_widget_for_response(Gtk.ResponseType.OK),))
     add_help(parent, dialog, "default_printer")
@@ -565,7 +570,7 @@ def _print_dialog(parent, document, printer, default):
     cancelled.
 
     `action` is 'print' or 'ok'. OK keeps the settings without printing.
-    `printer` is the (address, port, dpi, font_device) for this session, and
+    `printer` is the (Connection, dpi, font_device) for this session, and
     the window opens on the one in effect. `default` is the persisted printer
     Use Default goes back to. `settings` is a print_settings.PrintSettings:
     everything here that is saved with the label, for the caller to apply as
@@ -759,8 +764,9 @@ class ZPLViewerWindow(Gtk.Window):
         self.unsaved_changes = False
         
         # Printer connection settings (persisted in the config file)
-        self.printer_address = DEFAULT_PRINTER_ADDRESS
-        self.printer_port = DEFAULT_PRINTER_PORT
+        # Network or USB - see zplcore.connection.
+        self.printer_connection = Connection.network(DEFAULT_PRINTER_ADDRESS,
+                                                     DEFAULT_PRINTER_PORT)
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
         # Which printer memory this app's own fonts are written to and
         # uploaded to - see Document.font_device, which every document is
@@ -787,8 +793,8 @@ class ZPLViewerWindow(Gtk.Window):
         # The persisted printer, snapshotted so the Print window, whose
         # printer is for this session only, can offer "Use Default" without
         # re-reading the settings file.
-        self._default_printer = (self.printer_address, self.printer_port,
-                                 self.printer_dpi, self.printer_font_device)
+        self._default_printer = (self.printer_connection, self.printer_dpi,
+                                 self.printer_font_device)
         self._place_on_screen()
         # Label size in dots, which depends on both settings above
         self.label_width, self.label_height = self.inches_to_dots(*self.label_inches)
@@ -2083,13 +2089,13 @@ class ZPLViewerWindow(Gtk.Window):
         except Exception as e:
             self.show_error_dialog(f"Failed to generate ZPL: {e}")
             return
-        address, port = self.printer_address, self.printer_port
+        printer = self.printer_connection
         stored = f"{device}:{name}.ZPL"
         self.update_status(f"Uploading {stored}...")
 
         def work(cancel):
-            printer_io.send(address, port, content.encode('utf-8'), 10,
-                            cancel=cancel)
+            zpl_connection.send(printer, content.encode('utf-8'), 10,
+                                cancel=cancel)
 
         def done(_result, error):
             if isinstance(error, printer_io.Cancelled):
@@ -2098,7 +2104,7 @@ class ZPLViewerWindow(Gtk.Window):
                 self.show_error_dialog(str(error))
                 self.update_status("Upload failed")
             else:
-                self.update_status(f"Stored {stored} on {address}:{port}")
+                self.update_status(f"Stored {stored} on {printer.where()}")
 
         self._busy.run(work, done)
 
@@ -2109,18 +2115,18 @@ class ZPLViewerWindow(Gtk.Window):
         then upload whatever the user chose to and send the label.
         """
         content = self.design_canvas.to_zpl(explicit_flips=True)
-        address, port = self.printer_address, self.printer_port
+        printer = self.printer_connection
 
         def send_label(uploadable):
             self.update_status("Printing...")
 
             def work(cancel):
                 if uploadable:
-                    workflow.upload_fonts(uploadable, address, port,
+                    workflow.upload_fonts(uploadable, printer,
                                           self._busy.report, cancel)
                     self._busy.report("Printing...")
-                printer_io.send(address, port, content.encode('utf-8'), 10,
-                                cancel=cancel)
+                zpl_connection.send(printer, content.encode('utf-8'), 10,
+                                    cancel=cancel)
 
             def done(_result, error):
                 if isinstance(error, printer_io.Cancelled):
@@ -2129,7 +2135,7 @@ class ZPLViewerWindow(Gtk.Window):
                     self.show_error_dialog(str(error))
                     self.update_status("Printing failed")
                 else:
-                    self.update_status(f"Sent to {address}:{port}")
+                    self.update_status(f"Sent to {printer.where()}")
 
             self._busy.run(work, done)
 
@@ -2164,7 +2170,7 @@ class ZPLViewerWindow(Gtk.Window):
             return
         self.update_status("Checking printer fonts...")
         self._busy.run(lambda cancel: workflow.missing_printer_fonts(
-            self.design_canvas.document, address, port, cancel=cancel), checked)
+            self.design_canvas.document, printer, cancel=cancel), checked)
     
     def _new_renderer(self) -> ZPLRenderer:
         """A renderer preloaded with the fonts this session knows about.
@@ -2256,7 +2262,8 @@ class ZPLViewerWindow(Gtk.Window):
             resident_store.clear()
             if detected:
                 resident_status.set_text(
-                    f"Reported by the printer at {self.printer_address}.")
+                    f"Reported by the printer at "
+                    f"{self.printer_connection.where(with_port=False)}.")
             elif detected is None:
                 resident_status.set_text(
                     "Could not confirm which are present - showing the "
@@ -2311,15 +2318,16 @@ class ZPLViewerWindow(Gtk.Window):
             preview.set_text("")
             font_specs.clear()
             delete_btn.set_sensitive(False)
-            status.set_text(f"Listing fonts on {self.printer_address}...")
+            status.set_text(f"Listing fonts on "
+                            f"{self.printer_connection.where(with_port=False)}...")
             resident_status.set_text("")
 
             def query(cancel):
                 fonts = zpl_fonts.query_printer_fonts(
-                    self.printer_address, self.printer_port, cancel=cancel)
+                    self.printer_connection, cancel=cancel)
                 busy.report("Asking which built-in fonts it has...")
                 detected = zpl_fonts.query_resident_fonts(
-                    self.printer_address, self.printer_port, cancel=cancel)
+                    self.printer_connection, cancel=cancel)
                 return fonts, detected
 
             def done(result, error):
@@ -2330,14 +2338,15 @@ class ZPLViewerWindow(Gtk.Window):
                 fonts, unreadable = (None, ()) if answer is None else answer
                 if fonts is None:
                     status.set_text(f"Could not reach the printer at "
-                                    f"{self.printer_address}:{self.printer_port}.")
+                                    f"{self.printer_connection.where()}.")
                 else:
                     font_specs[:] = sorted(fonts)
                     for spec in font_specs:
                         store.append([spec, graphic_store.device_name(spec)])
                     delete_btn.set_sensitive(bool(fonts))
                     status.set_text(workflow.listing_status(
-                        self.printer_address, "font", zpl_fonts.DEVICES,
+                        self.printer_connection.where(with_port=False),
+                        "font", zpl_fonts.DEVICES,
                         font_specs, unreadable))
                 show_resident(detected)
 
@@ -2378,7 +2387,7 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: zpl_fonts.upload_font(
-                self.printer_address, self.printer_port, path, name, device,
+                self.printer_connection, path, name, device,
                 cancel=cancel), done)
 
         def on_delete(_b):
@@ -2400,7 +2409,7 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: zpl_fonts.delete_printer_font(
-                self.printer_address, self.printer_port, name, device,
+                self.printer_connection, name, device,
                 cancel=cancel), done)
 
         upload_btn.connect("clicked", on_upload)
@@ -2544,7 +2553,7 @@ class ZPLViewerWindow(Gtk.Window):
             buttons=Gtk.ButtonsType.NONE,
             text=f"Delete {spec} from the printer?")
         dialog.format_secondary_text(
-            f"This removes it from {self.printer_address}:{self.printer_port} "
+            f"This removes it from {self.printer_connection.where()} "
             "itself, not just this list. It cannot be undone from here.")
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                            "Delete", Gtk.ResponseType.ACCEPT)
@@ -2584,7 +2593,8 @@ class ZPLViewerWindow(Gtk.Window):
         looks for USB printers again, since one that restarts into that mode
         can come back under another number.
         """
-        address, port = self.printer_address, self.printer_port
+        network = Connection.network(self.printer_connection.address,
+                                     self.printer_connection.port)
         dialog = Gtk.Dialog(title="Firmware Update", parent=self, flags=0)
         dialog.set_default_size(460, 200)
         content = dialog.get_content_area()
@@ -2648,7 +2658,7 @@ class ZPLViewerWindow(Gtk.Window):
             was = connection.get_active_id()
             connection.handler_block(changed_id)
             connection.remove_all()
-            connection.append("", f"Network: {address}:{port}")
+            connection.append("", f"Network: {network.where()}")
             for path, described in zpl_local.list_ports():
                 connection.append(path, f"USB: {path} ({described})"
                                   if described else f"USB: {path}")
@@ -2676,7 +2686,7 @@ class ZPLViewerWindow(Gtk.Window):
                     status.set_text(str(error))
 
             busy.run(lambda cancel: zpl_firmware.current_firmware(
-                address, port, cancel=cancel, local=local), done)
+                local or network, cancel=cancel), done)
 
         def on_refresh(_b):
             list_connections()
@@ -2738,8 +2748,8 @@ class ZPLViewerWindow(Gtk.Window):
                         "version.")
 
             busy.run(lambda cancel: zpl_firmware.upload_firmware(
-                address, port, path, progress=progress, cancel=cancel,
-                local=local), done)
+                local or network, path, progress=progress, cancel=cancel),
+                done)
 
         changed_id = connection.connect("changed", ask_version)
         list_connections()
@@ -2756,9 +2766,9 @@ class ZPLViewerWindow(Gtk.Window):
     def on_printer_graphics_clicked(self, widget):
         """View, store, retrieve and delete graphics on the real printer -
         whichever one is actually in effect this session
-        (self.printer_address/self.printer_port, which a session override
-        moves without touching the persisted default - see
-        self._default_printer), the same target Printer Fonts already uses.
+        (self.printer_connection, which a session override moves without
+        touching the persisted default - see self._default_printer), the
+        same target Printer Fonts already uses.
 
         Modelled closely on on_printer_fonts_clicked: refresh() queries the
         printer live and reports when it cannot be reached, exactly as that
@@ -2830,7 +2840,8 @@ class ZPLViewerWindow(Gtk.Window):
             preview.clear()
             retrieve_btn.set_sensitive(False)
             delete_btn.set_sensitive(False)
-            status.set_text(f"Listing graphics on {self.printer_address}...")
+            status.set_text(f"Listing graphics on "
+                            f"{self.printer_connection.where(with_port=False)}...")
 
             def done(specs, error):
                 nonlocal entries
@@ -2839,7 +2850,7 @@ class ZPLViewerWindow(Gtk.Window):
                     return
                 if specs is None or error is not None:
                     status.set_text(f"Could not reach the printer at "
-                                    f"{self.printer_address}:{self.printer_port}.")
+                                    f"{self.printer_connection.where()}.")
                     return
                 entries, unreadable = specs
                 for spec in entries:
@@ -2847,11 +2858,12 @@ class ZPLViewerWindow(Gtk.Window):
                     suffix = f" ({cached.width}×{cached.height})" if cached else ""
                     list_store.append([f"{spec}{suffix}"])
                 status.set_text(workflow.listing_status(
-                    self.printer_address, "graphic", graphic_store.DEVICES,
+                    self.printer_connection.where(with_port=False),
+                    "graphic", graphic_store.DEVICES,
                     entries, unreadable))
 
             busy.run(lambda cancel: graphic_store.query_printer_graphics(
-                self.printer_address, self.printer_port, cancel=cancel), done)
+                self.printer_connection, cancel=cancel), done)
 
         def selected_entry():
             """The spec the list has selected, or None."""
@@ -2932,7 +2944,7 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: graphic_store.upload_graphic(
-                self.printer_address, self.printer_port, spec, image,
+                self.printer_connection, spec, image,
                 cancel=cancel), done)
 
         def on_retrieve(_b):
@@ -2976,7 +2988,7 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: graphic_store.retrieve_printer_graphic(
-                self.printer_address, self.printer_port, spec, cancel=cancel), done)
+                self.printer_connection, spec, cancel=cancel), done)
 
         def on_delete(_b):
             spec = selected_entry()
@@ -3000,7 +3012,7 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: graphic_store.delete_printer_graphic(
-                self.printer_address, self.printer_port, spec, cancel=cancel), done)
+                self.printer_connection, spec, cancel=cancel), done)
 
         store_btn.connect("clicked", on_store)
         retrieve_btn.connect("clicked", on_retrieve)
@@ -3094,7 +3106,8 @@ class ZPLViewerWindow(Gtk.Window):
             list_store.clear()
             retrieve_btn.set_sensitive(False)
             delete_btn.set_sensitive(False)
-            status.set_text(f"Listing objects on {self.printer_address}...")
+            status.set_text(f"Listing objects on "
+                            f"{self.printer_connection.where(with_port=False)}...")
 
             def done(specs, error):
                 if isinstance(error, printer_io.Cancelled):
@@ -3102,18 +3115,19 @@ class ZPLViewerWindow(Gtk.Window):
                     return
                 if specs is None or error is not None:
                     status.set_text(f"Could not reach the printer at "
-                                    f"{self.printer_address}:{self.printer_port}.")
+                                    f"{self.printer_connection.where()}.")
                     return
                 entries, unreadable = specs
                 for spec in entries:
                     list_store.append(
                         [spec, graphic_store.device_name(spec)])
                 status.set_text(workflow.listing_status(
-                    self.printer_address, "object", printer_objects.DEVICES,
+                    self.printer_connection.where(with_port=False),
+                    "object", printer_objects.DEVICES,
                     entries, unreadable))
 
             busy.run(lambda cancel: printer_objects.query_printer_objects(
-                self.printer_address, self.printer_port, cancel=cancel), done)
+                self.printer_connection, cancel=cancel), done)
 
         def selected_entry():
             """The spec the list has selected, or None."""
@@ -3170,7 +3184,7 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: printer_objects.upload_printer_object(
-                self.printer_address, self.printer_port, name, ext, data,
+                self.printer_connection, name, ext, data,
                 cancel=cancel), done)
 
         def on_retrieve(_b):
@@ -3212,7 +3226,7 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: printer_objects.download_printer_object(
-                self.printer_address, self.printer_port, spec, cancel=cancel), done)
+                self.printer_connection, spec, cancel=cancel), done)
 
         def on_delete(_b):
             spec = selected_entry()
@@ -3236,7 +3250,7 @@ class ZPLViewerWindow(Gtk.Window):
                 refresh()
 
             busy.run(lambda cancel: printer_objects.delete_printer_object(
-                self.printer_address, self.printer_port, spec, cancel=cancel), done)
+                self.printer_connection, spec, cancel=cancel), done)
 
         store_btn.connect("clicked", on_store)
         retrieve_btn.connect("clicked", on_retrieve)
@@ -3267,7 +3281,7 @@ class ZPLViewerWindow(Gtk.Window):
         a label, say), so it is shown with show_all() rather than blocking
         on run(). Only one is ever open at a time - a second click presents
         the existing window instead of stacking another one. on_send reads
-        self.printer_address/self.printer_port fresh on every send rather
+        self.printer_connection fresh on every send rather
         than a value captured at open time, so a printer changed via Printer
         Settings while this window is open takes effect immediately.
         """
@@ -3329,7 +3343,7 @@ class ZPLViewerWindow(Gtk.Window):
                                       input_buf.get_end_iter(), False)
             if not text.strip():
                 return
-            address, port = self.printer_address, self.printer_port
+            printer = self.printer_connection
 
             def done(reply, error):
                 if isinstance(error, printer_io.Cancelled):
@@ -3341,8 +3355,8 @@ class ZPLViewerWindow(Gtk.Window):
                 log(f"> {text}\n{reply or '(no reply)'}\n\n")
                 input_buf.set_text("")
 
-            busy.run(lambda cancel: printer_io.send_command(
-                address, port, text, cancel=cancel), done)
+            busy.run(lambda cancel: zpl_connection.send_command(
+                printer, text, cancel=cancel), done)
 
         send_btn.connect("clicked", on_send)
         close_btn.connect("clicked", lambda _b: window.destroy())
@@ -3515,7 +3529,7 @@ class ZPLViewerWindow(Gtk.Window):
                     sections_box.pack_start(frame, False, False, 0)
             sections_box.show_all()
 
-        def done(result, error, address, port):
+        def done(result, error, printer):
             if state['dead']:
                 return
             if isinstance(error, printer_io.Cancelled):
@@ -3531,7 +3545,7 @@ class ZPLViewerWindow(Gtk.Window):
                 # panel that empties itself when a printer is unplugged loses
                 # the reading that would explain why.
                 status.set_text(f"Could not reach the printer at "
-                                f"{address}:{port}.")
+                                f"{printer.where()}.")
                 return
             state['specs'], state['activity'] = specs, activity
             show_reports()
@@ -3540,21 +3554,22 @@ class ZPLViewerWindow(Gtk.Window):
                                  if report is not None
                                  for name in report.unanswered})
             note = (" \u2014 no answer to " + ", ".join(unanswered)) if unanswered else ""
-            status.set_text(f"{address}:{port}{note}")
+            status.set_text(f"{printer.where()}{note}")
 
         def refresh(*_a):
-            address, port = self.printer_address, self.printer_port
-            status.set_text(f"Asking {address}...")
+            printer = self.printer_connection
+            status.set_text(f"Asking {printer.where(with_port=False)}...")
 
             def work(cancel):
-                specs = printer_status.query_printer_specs(address, port,
+                specs = printer_status.query_printer_specs(printer,
                                                            cancel=cancel)
-                busy.report(f"Asking {address} what it is doing...")
-                activity = printer_status.query_printer_activity(address, port,
+                busy.report(f"Asking {printer.where(with_port=False)} "
+                            f"what it is doing...")
+                activity = printer_status.query_printer_activity(printer,
                                                                 cancel=cancel)
                 return specs, activity
 
-            busy.run(work, lambda result, error: done(result, error, address, port))
+            busy.run(work, lambda result, error: done(result, error, printer))
 
         def tick():
             """One auto-refresh. Returns False - ending the timer - once the
@@ -3565,12 +3580,12 @@ class ZPLViewerWindow(Gtk.Window):
                 return False
             if busy.running:
                 return True
-            address, port = self.printer_address, self.printer_port
+            printer = self.printer_connection
             busy.run(
                 lambda cancel: (state['specs'],
                                 printer_status.query_printer_activity(
-                                    address, port, cancel=cancel)),
-                lambda result, error: done(result, error, address, port))
+                                    printer, cancel=cancel)),
+                lambda result, error: done(result, error, printer))
             return True
 
         def arm():
@@ -3659,10 +3674,8 @@ class ZPLViewerWindow(Gtk.Window):
         parser = configparser.ConfigParser()
         try:
             parser.read([_config_path(), _fallback_config_path()])
-            self.printer_address = parser.get(
-                'printer', 'address', fallback=self.printer_address)
-            self.printer_port = parser.getint(
-                'printer', 'port', fallback=self.printer_port)
+            self.printer_connection = Connection.read(
+                parser, self.printer_connection)
             dpi = parser.getint('printer', 'dpi', fallback=self.printer_dpi)
             if dpi > 0:
                 self.printer_dpi = dpi
@@ -3719,16 +3732,15 @@ class ZPLViewerWindow(Gtk.Window):
                 parser.read(path)
                 if not parser.has_section('printer'):
                     parser.add_section('printer')
-                # The persisted default, not self.printer_address/_port/_dpi:
+                # The persisted default, not self.printer_connection/_dpi:
                 # those are whatever is active for printing right now, which a
                 # session override (the Print window) deliberately changes
                 # without this ever running. Only Default Printer and Label
                 # Settings are allowed to move self._default_printer, and they
                 # do so before calling this.
-                parser.set('printer', 'address', self._default_printer[0])
-                parser.set('printer', 'port', str(self._default_printer[1]))
-                parser.set('printer', 'dpi', str(self._default_printer[2]))
-                parser.set('printer', 'font_device', self._default_printer[3])
+                self._default_printer[0].write(parser)
+                parser.set('printer', 'dpi', str(self._default_printer[1]))
+                parser.set('printer', 'font_device', self._default_printer[2])
                 if not parser.has_section('fonts'):
                     parser.add_section('fonts')
                 parser.set('fonts', 'extra_dir', zpl_fonts.EXTRA_FONT_DIR)
@@ -3778,21 +3790,22 @@ class ZPLViewerWindow(Gtk.Window):
         # Opened with the persisted default, not the printer currently in
         # effect: a session override (the Print window) must never leak into
         # this dialog and get re-saved as the new default just by clicking OK.
-        (default_address, default_port, default_dpi,
-         default_font_device) = self._default_printer
+        default_connection, default_dpi, default_font_device = \
+            self._default_printer
         result = _printer_picker_dialog(
-            self, "Default Printer", default_address, default_port,
-            default_dpi, default_font_device)
+            self, "Default Printer", default_connection, default_dpi,
+            default_font_device)
         if result is None:
             return
-        self.printer_address, self.printer_port, new_dpi, font_device = result
+        self.printer_connection, new_dpi, font_device = result
         old_dpi = self.printer_dpi
         self.printer_dpi = new_dpi
         self._set_font_device(font_device)
-        self._default_printer = (self.printer_address, self.printer_port,
-                                 self.printer_dpi, self.printer_font_device)
+        self._default_printer = (self.printer_connection, self.printer_dpi,
+                                 self.printer_font_device)
         self._save_settings()
-        self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
+        self.update_status(
+            f"Printer set to {self.printer_connection.where()}")
         if self.printer_dpi != old_dpi:
             # Pointing at a printer with a different head changes what the
             # open label measures - 1200 dots is 4in at 300 dpi and 5.9in
@@ -3933,15 +3946,15 @@ class ZPLViewerWindow(Gtk.Window):
         document = self.design_canvas.document
         result = _print_dialog(
             self, document,
-            (self.printer_address, self.printer_port, self.printer_dpi,
+            (self.printer_connection, self.printer_dpi,
              self.printer_font_device),
             self._default_printer)
         if result is None:
             return
-        action, (address, port, dpi, font_device), settings = result
-        moved = (address, port) != (self.printer_address, self.printer_port)
+        action, (printer, dpi, font_device), settings = result
+        moved = printer.key() != self.printer_connection.key()
         old_dpi = self.printer_dpi
-        self.printer_address, self.printer_port, self.printer_dpi = address, port, dpi
+        self.printer_connection, self.printer_dpi = printer, dpi
         self._set_font_device(font_device)
         # Settled before the settings go on, against the design the user was
         # looking at, as Label Settings settles it.
@@ -3955,7 +3968,7 @@ class ZPLViewerWindow(Gtk.Window):
         if note:
             self.update_status(note[0].upper() + note[1:])
         elif moved:
-            self.update_status(f"Printing to {address}:{port} for this session")
+            self.update_status(f"Printing to {printer.where()} for this session")
         elif changed:
             self.update_status("Print settings changed")
         if action == 'print':
@@ -4122,12 +4135,11 @@ class ZPLViewerWindow(Gtk.Window):
         """
         old_dpi = self.printer_dpi
         self.printer_dpi = dpi
-        # Only the DPI slot of the default moves - address/port stay whatever
-        # the persisted default already was, so a session override on those
-        # (the Print window) survives a Label Settings visit untouched.
-        self._default_printer = (self._default_printer[0],
-                                 self._default_printer[1], dpi,
-                                 self._default_printer[3])
+        # Only the DPI slot of the default moves - the connection stays
+        # whatever the persisted default already was, so a session override
+        # on it (the Print window) survives a Label Settings visit untouched.
+        self._default_printer = (self._default_printer[0], dpi,
+                                 self._default_printer[2])
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.design_canvas.document.transform = transform

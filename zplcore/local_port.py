@@ -12,7 +12,12 @@ not a limit on the whole call.
 
 This is the way into a printer whose network is not running, which is how a
 Zebra sits in forced download mode: its boot loader listens on USB, serial
-and parallel only.
+and parallel only - and the way to print on one that has no network at all
+(zplcore/connection.py picks between the two).
+
+usblp lets one process hold a node at a time, so an open that finds it busy
+waits, within the same stall limit, for whoever has it to let go: a Status
+window polling while a label prints, say.
 """
 
 import errno
@@ -34,6 +39,12 @@ TICK = 0.2
 # printer_io._exchange does.
 REPLY_QUIET = 0.5
 
+# A reply the printer was still sending when its request gave up waits on
+# the device for whoever opens it next. Before a request whose reply is
+# read, whatever arrives within this much quiet is thrown away, so it is not
+# taken for the start of the new reply.
+STALE_QUIET = 0.05
+
 _GONE = select.POLLHUP | select.POLLERR | select.POLLNVAL
 
 
@@ -41,6 +52,17 @@ _GONE = select.POLLHUP | select.POLLERR | select.POLLNVAL
 class LocalPort:
     """A printer reached through a device node, e.g. /dev/usb/lp0."""
     path: str
+
+
+@dataclass(frozen=True)
+class UsbPrinter:
+    """A USB printer present now: its node, what it says it is, and the
+    serial number its USB descriptor carries (empty if it has none). The
+    node number can change when the printer restarts or is plugged in again;
+    the serial number does not."""
+    path: str
+    description: str
+    serial: str
 
 
 def describe_1284(device_id: str) -> str:
@@ -58,23 +80,38 @@ def describe_1284(device_id: str) -> str:
     return ' '.join(name for name in names if name)
 
 
-def list_ports(dev_root: str = '/dev',
-               sys_root: str = '/sys') -> List[Tuple[str, str]]:
-    """Every USB printer node, as (path, description), in number order. The
-    description is what the printer says it is, or empty if it says nothing.
-    The roots are parameters only so a test can point them at a fake tree."""
+def list_printers(dev_root: str = '/dev',
+                  sys_root: str = '/sys') -> List[UsbPrinter]:
+    """Every USB printer node, in number order. The roots are parameters
+    only so a test can point them at a fake tree."""
     found = []
     paths = glob.glob(os.path.join(dev_root, 'usb', 'lp*'))
     for path in sorted(paths, key=lambda p: (len(p), p)):
-        id_file = os.path.join(sys_root, 'class', 'usbmisc',
-                               os.path.basename(path), 'device', 'ieee1284_id')
-        try:
-            with open(id_file, errors='replace') as f:
-                described = describe_1284(f.read())
-        except OSError:
-            described = ''
-        found.append((path, described))
+        # `device` is the printer's USB interface; its parent, which the
+        # kernel resolves through the symlink, is the USB device that has
+        # the serial number.
+        device = os.path.join(sys_root, 'class', 'usbmisc',
+                              os.path.basename(path), 'device')
+        found.append(UsbPrinter(
+            path, describe_1284(_read(os.path.join(device, 'ieee1284_id'))),
+            _read(os.path.join(device, '..', 'serial')).strip()))
     return found
+
+
+def list_ports(dev_root: str = '/dev',
+               sys_root: str = '/sys') -> List[Tuple[str, str]]:
+    """Every USB printer node, as (path, description), in number order. The
+    description is what the printer says it is, or empty if it says nothing."""
+    return [(printer.path, printer.description)
+            for printer in list_printers(dev_root, sys_root)]
+
+
+def _read(path: str) -> str:
+    try:
+        with open(path, errors='replace') as f:
+            return f.read()
+    except OSError:
+        return ''
 
 
 def send(port: LocalPort, payload: bytes, timeout: float,
@@ -82,8 +119,10 @@ def send(port: LocalPort, payload: bytes, timeout: float,
          cancel: Optional[CancelToken] = None) -> bytes:
     """Send a payload to the printer, optionally reading whatever it replies.
     A cancelled request raises Cancelled and never returns data."""
-    fd = _open(port, cancel)
+    fd = _open(port, timeout, cancel)
     try:
+        if read_reply:
+            _discard_stale(fd, port.path, cancel)
         _write(fd, port.path, payload, timeout, cancel)
         _drain(fd, port.path, timeout, cancel)
         reply = _read_reply(fd, port.path, timeout, cancel) if read_reply else b''
@@ -114,7 +153,7 @@ def send_stream(port: LocalPort, chunks: Iterable[bytes], total: int,
     earlier is. A stall is an error either way: the tail of the file may not
     have reached the printer.
     """
-    fd = _open(port, cancel)
+    fd = _open(port, timeout, cancel)
     sent = 0
     try:
         for chunk in chunks:
@@ -134,13 +173,30 @@ def send_stream(port: LocalPort, chunks: Iterable[bytes], total: int,
     _check(cancel, port.path)
 
 
-def _open(port: LocalPort, cancel: Optional[CancelToken]) -> int:
-    if cancel is not None and cancel.cancelled:
-        raise Cancelled(f"Cancelled before opening {port.path}")
-    try:
-        return os.open(port.path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-    except PermissionError:
-        raise PermissionError(_permission_hint(port.path)) from None
+def _open(port: LocalPort, timeout: float,
+          cancel: Optional[CancelToken]) -> int:
+    """Open the node, waiting up to `timeout` while another process holds
+    it: usblp refuses a second open with EBUSY rather than queueing it."""
+    since = time.monotonic()
+    while True:
+        if cancel is not None and cancel.cancelled:
+            raise Cancelled(f"Cancelled before opening {port.path}")
+        try:
+            return os.open(port.path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        except PermissionError:
+            raise PermissionError(_permission_hint(port.path)) from None
+        except OSError as e:
+            if e.errno != errno.EBUSY:
+                raise
+            if time.monotonic() - since > timeout:
+                raise OSError(errno.EBUSY, _busy_hint(port.path)) from None
+        time.sleep(TICK)
+
+
+def _busy_hint(path: str) -> str:
+    return (f"{path} is in use by another program, or another window of "
+            f"this one. If a print queue (CUPS) has this printer, it holds "
+            f"the port while it prints.")
 
 
 def _permission_hint(path: str) -> str:
@@ -161,13 +217,14 @@ def _check(cancel: Optional[CancelToken], path: str) -> None:
 
 
 def _ready(fd: int, path: str, event: int,
-           cancel: Optional[CancelToken]) -> bool:
-    """Wait up to one TICK for `event`. Raises Cancelled, and OSError if the
-    device has gone away - unplugged, or the printer restarting."""
+           cancel: Optional[CancelToken], wait: float = TICK) -> bool:
+    """Wait up to `wait`, one TICK by default, for `event`. Raises Cancelled,
+    and OSError if the device has gone away - unplugged, or the printer
+    restarting."""
     _check(cancel, path)
     poller = select.poll()
     poller.register(fd, event)
-    for _fd, got in poller.poll(TICK * 1000):
+    for _fd, got in poller.poll(wait * 1000):
         if got & event:
             return True
         if got & _GONE:
@@ -208,6 +265,25 @@ def _drain(fd: int, path: str, timeout: float,
     since = time.monotonic()
     while not _ready(fd, path, select.POLLOUT, cancel):
         _stalled(path, since, timeout)
+
+
+def _discard_stale(fd: int, path: str,
+                   cancel: Optional[CancelToken]) -> None:
+    """Throw away whatever the printer sends before the next request is
+    written: the late end of an earlier reply. Over the network that dies
+    with its socket; here it would be read as this request's answer."""
+    while True:
+        try:
+            ready = _ready(fd, path, select.POLLIN, cancel, STALE_QUIET)
+        except OSError:
+            return
+        if not ready:
+            return
+        try:
+            if not os.read(fd, 4096):
+                return
+        except BlockingIOError:
+            return
 
 
 def _read_reply(fd: int, path: str, timeout: float,

@@ -179,7 +179,7 @@ def reconcile_dpi(document, printer_dpi, ask, file_dpi=_FROM_DOCUMENT):
 # missing and what the prompt says stays here, shared, so the two frontends
 # cannot drift on it.
 
-def missing_printer_fonts(document, address, port, cancel=None):
+def missing_printer_fonts(document, printer, cancel=None):
     """The label's fonts the printer does not have, as (missing, uploadable,
     unreadable) - two spec -> path dicts and the drives that could not be
     read - or None if the printer could not be asked at all.
@@ -197,7 +197,7 @@ def missing_printer_fonts(document, address, port, cancel=None):
     sources = document.font_sources()
     if not sources:
         return {}, {}, []  # nothing but built-in fonts, nothing to check
-    answer = fonts.query_printer_fonts(address, port, cancel=cancel)
+    answer = fonts.query_printer_fonts(printer, cancel=cancel)
     if answer is None:
         return None
     installed, unreadable = answer
@@ -216,15 +216,16 @@ def missing_printer_fonts(document, address, port, cancel=None):
     return missing, uploadable, unreadable
 
 
-def listing_status(address, noun, devices, specs, unreadable) -> str:
+def listing_status(where, noun, devices, specs, unreadable) -> str:
     """The line under a printer manager's list, saying what came back and
     which drives did not.
 
     Lives here rather than in either frontend for the reason
     font_problem_prompt does: both show this, and two copies of a sentence
-    are two sentences that can drift. `noun` is the singular ("object",
-    "font", "graphic"), `devices` the tuple that manager asked, and `specs`
-    and `unreadable` are what its query answered.
+    are two sentences that can drift. `where` names the printer
+    (Connection.where), `noun` is the singular ("object", "font",
+    "graphic"), `devices` the tuple that manager asked, and `specs` and
+    `unreadable` are what its query answered.
 
     A drive that gave nothing is named whether it errored or was simply
     empty, since "this drive holds none of what you are looking at" is the
@@ -236,8 +237,8 @@ def listing_status(address, noun, devices, specs, unreadable) -> str:
     rather than as an empty printer.
     """
     count = len(specs)
-    sentence = (f"{count} {noun}(s) on {address}" if count
-                else f"No {noun}s on {address}")
+    sentence = (f"{count} {noun}(s) on {where}" if count
+                else f"No {noun}s on {where}")
 
     held = {spec.split(':', 1)[0].upper() for spec in specs if ':' in spec}
     unread = set(unreadable)
@@ -280,7 +281,7 @@ def font_problem_prompt(missing, unreadable=()):
             + "\n\nMissing fonts print in a substitute typeface." + note)
 
 
-def upload_fonts(uploadable, address, port, on_progress=None, cancel=None):
+def upload_fonts(uploadable, printer, on_progress=None, cancel=None):
     """Upload each font in turn. `on_progress(message)` reports each one.
 
     Raises OSError naming the font on the first failure - printing after a
@@ -295,7 +296,7 @@ def upload_fonts(uploadable, address, port, on_progress=None, cancel=None):
         # leave every label that named another still printing a substitute.
         device, name = fonts.split_font_spec(spec)
         try:
-            fonts.upload_font(address, port, path, name, device, cancel=cancel)
+            fonts.upload_font(printer, path, name, device, cancel=cancel)
         except printer_io.Cancelled:
             raise
         except Exception as e:

@@ -25,7 +25,8 @@ name normalised the wrong way silently stops matching the real object.
 import re
 from typing import List, Optional
 
-from . import printer_io
+from . import connection
+from .connection import Printer
 from .graphic_store import split_device_spec
 
 # R:/E:/B:/A: are the devices fonts.py and graphic_store.py already cover;
@@ -49,7 +50,7 @@ _OBJECT_SPEC = re.compile(
     r'\*\s*(?:[A-Za-z]:)?([A-Za-z0-9_\-]+)\.([A-Za-z0-9_\-]+)', re.IGNORECASE)
 
 
-def query_printer_objects(address: str, port: int, timeout: float = 5,
+def query_printer_objects(printer: Printer, timeout: float = 5,
                           cancel=None) -> Optional[List[str]]:
     """Every object stored on the printer, across R:/E:/B:/A:/Z:, as
     'd:NAME.EXT', with the devices that could not be read, or None if the
@@ -83,7 +84,7 @@ def query_printer_objects(address: str, port: int, timeout: float = 5,
     for index, device in enumerate(DEVICES):
         payload = f'^XA^HW{device}:*.*^XZ'.encode('ascii')
         try:
-            reply = printer_io.send(address, port, payload, timeout,
+            reply = connection.send(printer, payload, timeout,
                                     read_reply=True, cancel=cancel)
         except OSError:
             if index == 0:
@@ -101,7 +102,7 @@ def query_printer_objects(address: str, port: int, timeout: float = 5,
     return (sorted(set(specs)), unreadable) if answered else None
 
 
-def delete_printer_object(address: str, port: int, raw_spec: str,
+def delete_printer_object(printer: Printer, raw_spec: str,
                           timeout: float = 5, cancel=None) -> None:
     """Delete any object from the printer via ^ID - the same shape
     fonts.delete_printer_font and graphic_store.delete_printer_graphic
@@ -119,7 +120,7 @@ def delete_printer_object(address: str, port: int, raw_spec: str,
     """
     device, name, ext = split_device_spec(raw_spec)
     payload = f"^XA^ID{device}:{name}.{ext}^FS^XZ".encode('ascii')
-    printer_io.send(address, port, payload, timeout, cancel=cancel)
+    connection.send(printer, payload, timeout, cancel=cancel)
 
 
 class ObjectNotRetrievable(OSError):
@@ -138,7 +139,7 @@ class ObjectNotRetrievable(OSError):
     """
 
 
-def download_printer_object(address: str, port: int, raw_spec: str,
+def download_printer_object(printer: Printer, raw_spec: str,
                             timeout: float = 5, cancel=None) -> bytes:
     """Fetch `raw_spec`'s raw bytes from the printer, verbatim.
 
@@ -161,7 +162,7 @@ def download_printer_object(address: str, port: int, raw_spec: str,
     device, name, ext = split_device_spec(raw_spec)
     payload = (f'! U1 setvar "file.type" "{device}:{name}.{ext}"'
               '\r\n').encode('ascii')
-    reply = printer_io.send(address, port, payload, timeout, read_reply=True,
+    reply = connection.send(printer, payload, timeout, read_reply=True,
                             cancel=cancel)
     if not reply:
         raise ObjectNotRetrievable(f"No reply retrieving {raw_spec}")
@@ -192,8 +193,8 @@ def build_object_upload(name: str, ext: str, data: bytes) -> bytes:
     return header.encode('ascii') + data
 
 
-def upload_printer_object(address: str, port: int, name: str, ext: str,
+def upload_printer_object(printer: Printer, name: str, ext: str,
                           data: bytes, timeout: float = 5, cancel=None) -> None:
     """Store `data` on the printer as E:name.ext. Raises on failure."""
-    printer_io.send(address, port, build_object_upload(name, ext, data), timeout,
+    connection.send(printer, build_object_upload(name, ext, data), timeout,
                     cancel=cancel)

@@ -38,7 +38,8 @@ or partial report means it was asked and answered that way.
 import re
 from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
-from . import printer_io
+from . import connection
+from .connection import Printer
 from .fonts import DOTS_PER_MM_TO_DPI
 from .graphic_store import DEVICE_NAMES
 
@@ -633,8 +634,8 @@ class _Session:
     out, which is what lets a dialog's Cancel abandon a half-finished report.
     """
 
-    def __init__(self, address, port, timeout, cancel):
-        self.address, self.port = address, port
+    def __init__(self, printer, timeout, cancel):
+        self.printer = printer
         self.timeout, self.cancel = timeout, cancel
         self.unanswered: List[str] = []
         self.answered = False
@@ -651,7 +652,7 @@ class _Session:
         if self.dead:
             return None
         try:
-            reply = printer_io.send(self.address, self.port, payload,
+            reply = connection.send(self.printer, payload,
                                     self.timeout, read_reply=True,
                                     cancel=self.cancel)
         except OSError:
@@ -854,7 +855,7 @@ def _memory_section(session: _Session,
     return Section("Memory", readings)
 
 
-def query_printer_activity(address: str, port: int, timeout: float = 5,
+def query_printer_activity(printer: Printer, timeout: float = 5,
                            cancel=None) -> Optional[StatusReport]:
     """What the printer is doing and what is wrong with it, right now - the
     half of the report worth asking again.
@@ -874,7 +875,7 @@ def query_printer_activity(address: str, port: int, timeout: float = 5,
     answered nothing on its own is named in `unanswered` and the rest of the
     report still stands.
     """
-    session = _Session(address, port, timeout, cancel)
+    session = _Session(printer, timeout, cancel)
     status = _error_status(session)
     host_reply = session.ask('~HS', b'~HS')
     host = parse_host_status(host_reply) if host_reply else None
@@ -990,7 +991,7 @@ def _wear_section(session: _Session) -> Section:
     return Section("Wear", readings)
 
 
-def query_printer_specs(address: str, port: int, timeout: float = 5,
+def query_printer_specs(printer: Printer, timeout: float = 5,
                         cancel=None) -> Optional[StatusReport]:
     """What this printer *is*, rather than what it is doing - model, firmware,
     resolution, serial, uptime, free space per memory, and head wear.
@@ -1004,7 +1005,7 @@ def query_printer_specs(address: str, port: int, timeout: float = 5,
     Same None contract as every other query in this layer: None means the
     printer could not be asked.
     """
-    session = _Session(address, port, timeout, cancel)
+    session = _Session(printer, timeout, cancel)
     sections = [_printer_section(session), _wear_section(session)]
     if not session.answered:
         return None

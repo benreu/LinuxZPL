@@ -22,7 +22,9 @@ from zplcore import fonts as zpl_fonts
 from zplcore import grid as zpl_grid
 from zplcore import parser as zpl_parser
 from zplcore import tips as zpl_tips
+from zplcore import connection as zpl_connection
 from zplcore import printer_io
+from zplcore.connection import Connection
 from zplcore import view as zpl_view
 from zplcore import workflow
 from zplcore import graphic_symbols
@@ -76,8 +78,9 @@ class ZPLDesignerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.printer_address = DEFAULT_ADDRESS
-        self.printer_port = DEFAULT_PORT
+        # Network or USB - see zplcore.connection.
+        self.printer_connection = Connection.network(DEFAULT_ADDRESS,
+                                                     DEFAULT_PORT)
         self.printer_dpi = zpl_fonts.DEFAULT_DPI
         # Which printer memory this app's own fonts are written to and
         # uploaded to - see Document.font_device, which every document is
@@ -100,8 +103,8 @@ class ZPLDesignerWindow(QMainWindow):
         # The persisted printer, snapshotted so the Print window, whose printer
         # is for this session only, can offer "Use Default" without re-reading
         # the settings file.
-        self._default_printer = (self.printer_address, self.printer_port,
-                                 self.printer_dpi, self.printer_font_device)
+        self._default_printer = (self.printer_connection, self.printer_dpi,
+                                 self.printer_font_device)
         self._place_on_screen()
         # Fonts registered before the application existed could not be handed to
         # Qt then; now there is one, so flush them.
@@ -1106,12 +1109,11 @@ class ZPLDesignerWindow(QMainWindow):
         """
         old_dpi = self.printer_dpi
         self.printer_dpi = dpi
-        # Only the DPI slot of the default moves - address/port stay whatever
-        # the persisted default already was, so a session override on those
-        # (the Print window) survives a Label Settings visit untouched.
-        self._default_printer = (self._default_printer[0],
-                                 self._default_printer[1], dpi,
-                                 self._default_printer[3])
+        # Only the DPI slot of the default moves - the connection stays
+        # whatever the persisted default already was, so a session override
+        # on it (the Print window) survives a Label Settings visit untouched.
+        self._default_printer = (self._default_printer[0], dpi,
+                                 self._default_printer[2])
         self.label_inches = (w_in, h_in)
         if transform is not None:
             self.document.transform = transform
@@ -1135,20 +1137,20 @@ class ZPLDesignerWindow(QMainWindow):
         # Opened with the persisted default, not the printer currently in
         # effect: a session override (the Print window) must never leak into
         # this dialog and get re-saved as the new default just by clicking OK.
-        (default_address, default_port, default_dpi,
-         default_font_device) = self._default_printer
+        default_connection, default_dpi, default_font_device = \
+            self._default_printer
         result = qt_dialogs.printer_settings_dialog(
-            self, default_address, default_port, default_dpi,
-            default_font_device, title="Default Printer")
+            self, default_connection, default_dpi, default_font_device,
+            title="Default Printer")
         if result is None:
             return
-        address, port, dpi, font_device = result
+        printer, dpi, font_device = result
         old_dpi = self.printer_dpi
-        self.printer_address, self.printer_port, self.printer_dpi = address, port, dpi
+        self.printer_connection, self.printer_dpi = printer, dpi
         self._set_font_device(font_device)
-        self._default_printer = (address, port, dpi, font_device)
+        self._default_printer = (printer, dpi, font_device)
         self._save_settings()
-        self.update_status(f"Printer set to {self.printer_address}:{self.printer_port}")
+        self.update_status(f"Printer set to {printer.where()}")
         if dpi != old_dpi:
             note = self._offer_dpi_rescale()
             if note:
@@ -1208,15 +1210,15 @@ class ZPLDesignerWindow(QMainWindow):
         """
         result = qt_dialogs.print_dialog(
             self, self.document,
-            (self.printer_address, self.printer_port, self.printer_dpi,
+            (self.printer_connection, self.printer_dpi,
              self.printer_font_device),
             self._default_printer)
         if result is None:
             return
-        action, (address, port, dpi, font_device), settings = result
-        moved = (address, port) != (self.printer_address, self.printer_port)
+        action, (printer, dpi, font_device), settings = result
+        moved = printer.key() != self.printer_connection.key()
         old_dpi = self.printer_dpi
-        self.printer_address, self.printer_port, self.printer_dpi = address, port, dpi
+        self.printer_connection, self.printer_dpi = printer, dpi
         self._set_font_device(font_device)
         # Settled before the settings go on, against the design the user was
         # looking at, as Label Settings settles it.
@@ -1227,7 +1229,7 @@ class ZPLDesignerWindow(QMainWindow):
         if note:
             self.update_status(note[0].upper() + note[1:])
         elif moved:
-            self.update_status(f"Printing to {address}:{port} for this session")
+            self.update_status(f"Printing to {printer.where()} for this session")
         elif changed:
             self.update_status("Print settings changed")
         if action == 'print':
@@ -1238,7 +1240,7 @@ class ZPLDesignerWindow(QMainWindow):
             self.renderer.register_font(name, path)
 
         dialog = qt_dialogs.PrinterFontsDialog(
-            self, self.printer_address, self.printer_port, on_uploaded,
+            self, self.printer_connection, on_uploaded,
             self.printer_font_device)
         dialog.exec_()
 
@@ -1248,7 +1250,7 @@ class ZPLDesignerWindow(QMainWindow):
         # so an ^XG/^IM/^IL that now resolves differently is shown without
         # marking the file dirty or pushing a bogus undo entry.
         dialog = qt_dialogs.PrinterGraphicsDialog(
-            self, self.printer_address, self.printer_port,
+            self, self.printer_connection,
             on_changed=lambda *_a: self.canvas.update())
         dialog.exec_()
 
@@ -1256,13 +1258,12 @@ class ZPLDesignerWindow(QMainWindow):
         # Same reasoning as on_printer_graphics: deleting an object changes
         # no Document state, so this is a plain repaint, never a commit().
         dialog = qt_dialogs.PrinterObjectsDialog(
-            self, self.printer_address, self.printer_port,
+            self, self.printer_connection,
             on_changed=lambda *_a: self.canvas.update())
         dialog.exec_()
 
     def on_printer_firmware(self):
-        qt_dialogs.PrinterFirmwareDialog(
-            self, self.printer_address, self.printer_port).exec_()
+        qt_dialogs.PrinterFirmwareDialog(self, self.printer_connection).exec_()
 
     def on_printer_console(self):
         # Non-modal and a singleton, unlike the other printer dialogs: this
@@ -1578,18 +1579,18 @@ class ZPLDesignerWindow(QMainWindow):
         except Exception as e:
             self.show_error(f"Failed to generate ZPL: {e}")
             return
-        address, port = self.printer_address, self.printer_port
+        printer = self.printer_connection
 
         def send_label(uploadable):
             self.update_status("Printing...")
 
             def work(cancel):
                 if uploadable:
-                    workflow.upload_fonts(uploadable, address, port,
+                    workflow.upload_fonts(uploadable, printer,
                                           self._busy.report, cancel)
                     self._busy.report("Printing...")
-                printer_io.send(address, port, content.encode('utf-8'),
-                                PRINT_TIMEOUT, cancel=cancel)
+                zpl_connection.send(printer, content.encode('utf-8'),
+                                    PRINT_TIMEOUT, cancel=cancel)
 
             def done(_result, error):
                 if isinstance(error, printer_io.Cancelled):
@@ -1598,7 +1599,7 @@ class ZPLDesignerWindow(QMainWindow):
                     self.show_error(str(error))
                     self.update_status("Printing failed")
                 else:
-                    self.update_status(f"Sent to {address}:{port}")
+                    self.update_status(f"Sent to {printer.where()}")
 
             self._busy.run(work, done)
 
@@ -1633,7 +1634,7 @@ class ZPLDesignerWindow(QMainWindow):
             return
         self.update_status("Checking printer fonts...")
         self._busy.run(lambda cancel: workflow.missing_printer_fonts(
-            self.document, address, port, cancel=cancel), checked)
+            self.document, printer, cancel=cancel), checked)
 
     def on_upload_template(self, device, memory):
         """Store the design on the printer as a ^DF format, printing nothing."""
@@ -1650,13 +1651,13 @@ class ZPLDesignerWindow(QMainWindow):
         except Exception as e:
             self.show_error(f"Failed to generate ZPL: {e}")
             return
-        address, port = self.printer_address, self.printer_port
+        printer = self.printer_connection
         stored = f"{device}:{name}.ZPL"
         self.update_status(f"Uploading {stored}...")
 
         def work(cancel):
-            printer_io.send(address, port, content.encode('utf-8'),
-                            PRINT_TIMEOUT, cancel=cancel)
+            zpl_connection.send(printer, content.encode('utf-8'),
+                                PRINT_TIMEOUT, cancel=cancel)
 
         def done(_result, error):
             if isinstance(error, printer_io.Cancelled):
@@ -1665,7 +1666,7 @@ class ZPLDesignerWindow(QMainWindow):
                 self.show_error(str(error))
                 self.update_status("Upload failed")
             else:
-                self.update_status(f"Stored {stored} on {address}:{port}")
+                self.update_status(f"Stored {stored} on {printer.where()}")
 
         self._busy.run(work, done)
 
@@ -1675,10 +1676,8 @@ class ZPLDesignerWindow(QMainWindow):
         parser = configparser.ConfigParser()
         try:
             parser.read([_config_path(), _fallback_config_path()])
-            self.printer_address = parser.get(
-                'printer', 'address', fallback=self.printer_address)
-            self.printer_port = parser.getint(
-                'printer', 'port', fallback=self.printer_port)
+            self.printer_connection = Connection.read(
+                parser, self.printer_connection)
             dpi = parser.getint('printer', 'dpi', fallback=self.printer_dpi)
             if dpi > 0:
                 self.printer_dpi = dpi
@@ -1722,16 +1721,15 @@ class ZPLDesignerWindow(QMainWindow):
                 parser.read(path)
                 if not parser.has_section('printer'):
                     parser.add_section('printer')
-                # The persisted default, not self.printer_address/_port/_dpi:
+                # The persisted default, not self.printer_connection/_dpi:
                 # those are whatever is active for printing right now, which a
                 # session override (the Print window) deliberately changes
                 # without this ever running. Only Default Printer and Label
                 # Settings are allowed to move self._default_printer, and they
                 # do so before calling this.
-                parser.set('printer', 'address', self._default_printer[0])
-                parser.set('printer', 'port', str(self._default_printer[1]))
-                parser.set('printer', 'dpi', str(self._default_printer[2]))
-                parser.set('printer', 'font_device', self._default_printer[3])
+                self._default_printer[0].write(parser)
+                parser.set('printer', 'dpi', str(self._default_printer[1]))
+                parser.set('printer', 'font_device', self._default_printer[2])
                 if not parser.has_section('fonts'):
                     parser.add_section('fonts')
                 parser.set('fonts', 'extra_dir', zpl_fonts.EXTRA_FONT_DIR)

@@ -29,12 +29,14 @@ from PySide2.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
-from zplcore import (fields as zpl_fields, firmware as zpl_firmware,
+from zplcore import (connection as zpl_connection,
+                     fields as zpl_fields, firmware as zpl_firmware,
                      fonts as zpl_fonts, geometry, graphic_store, helpdocs,
                      grid as zpl_grid, local_port as zpl_local,
                      print_settings as zpl_print, printer_io,
                      printer_objects, printer_status, textraster,
                      tips as zpl_tips, workflow)
+from zplcore.connection import Connection
 from zplcore.print_settings import AsWritten, PrintSettings
 from zplcore.model import (BARCODE_CHECK_DIGIT, BARCODE_CONTROL_CHARACTERS,
                            BARCODE_FEATURES,
@@ -2403,23 +2405,25 @@ class _PrinterRows:
     deployed to, not of one field on one label.
     """
 
-    def __init__(self, address: str, port: int, dpi: int,
+    def __init__(self, printer: Connection, dpi: int,
                  font_device: str = None, default=None):
         self._dpi = dpi
+        # Carried so whatever the rows do not show survives a visit.
+        self._printer = printer
         self.box = QWidget()
         layout = QVBoxLayout(self.box)
         layout.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
         layout.addLayout(form)
 
-        self.address_edit = QLineEdit(address)
+        self.address_edit = QLineEdit(printer.address)
         self.address_edit.setObjectName("address")
         form.addRow("Address:", self.address_edit)
 
         self.port_spin = QSpinBox()
         self.port_spin.setObjectName("port")
         self.port_spin.setRange(1, 65535)
-        self.port_spin.setValue(port)
+        self.port_spin.setValue(printer.port)
         form.addRow("Port:", self.port_spin)
         set_tip(self.port_spin, 'port', form)
 
@@ -2463,13 +2467,13 @@ class _PrinterRows:
             self.busy.abandon()
 
     def value(self, parent):
-        """(address, port, dpi, font_device), or None when no address is
-        given, which is reported."""
+        """(Connection, dpi, font_device), or None when no address is given,
+        which is reported."""
         address = self.address_edit.text().strip()
         if not address:
             show_error(parent, "Printer address cannot be empty.")
             return None
-        return (address, self.port_spin.value(),
+        return (self._printer.as_network(address, self.port_spin.value()),
                 _dpi_from(self.dpi_combo, self._dpi),
                 self.font_device_combo.currentData())
 
@@ -2477,12 +2481,13 @@ class _PrinterRows:
         self.result.setStyleSheet(f"color: {colour};")
         self.result.setText(text)
 
-    def _fill(self, address, port, dpi, font_device):
+    def _fill(self, printer, dpi, font_device):
         index = self.font_device_combo.findData(font_device)
         if index >= 0:
             self.font_device_combo.setCurrentIndex(index)
-        self.address_edit.setText(address)
-        self.port_spin.setValue(port)
+        self._printer = printer
+        self.address_edit.setText(printer.address)
+        self.port_spin.setValue(printer.port)
         if dpi in zpl_fonts.SUPPORTED_DPI:
             self.dpi_combo.setCurrentIndex(
                 list(zpl_fonts.SUPPORTED_DPI).index(dpi))
@@ -2495,20 +2500,20 @@ class _PrinterRows:
 
     def _on_test(self):
         addr = self.address_edit.text().strip()
-        prt = self.port_spin.value()
         if not addr:
             self._set_result("red", "Address is required")
             return
-        self._set_result("gray", f"Connecting to {addr}:{prt}…")
-        connected = f"✓ Connected to {addr}:{prt}"
+        printer = Connection.network(addr, self.port_spin.value())
+        self._set_result("gray", f"Connecting to {printer.where()}…")
+        connected = f"✓ Connected to {printer.where()}"
         busy = self.busy
 
         def probe(cancel):
             # Connect and send nothing: reachability first, on its own, so
             # an unreachable printer reads as that rather than as "no dpi".
-            printer_io.send(addr, prt, b'', 5, cancel=cancel)
+            zpl_connection.send(printer, b'', 5, cancel=cancel)
             busy.report(f"{connected} — asking its resolution…")
-            return zpl_fonts.query_printer_dpi(addr, prt, cancel=cancel)
+            return zpl_fonts.query_printer_dpi(printer, cancel=cancel)
 
         def done(reported, error):
             if isinstance(error, printer_io.Cancelled):
@@ -2533,14 +2538,14 @@ class _PrinterRows:
         busy.run(probe, done)
 
 
-def printer_settings_dialog(parent, address: str, port: int, dpi: int,
+def printer_settings_dialog(parent, printer: Connection, dpi: int,
                             font_device: str = None,
                             title: str = "Default Printer"):
-    """New (address, port, dpi, font_device), or None if cancelled."""
+    """New (Connection, dpi, font_device), or None if cancelled."""
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
     layout = QVBoxLayout(dialog)
-    rows = _PrinterRows(address, port, dpi, font_device)
+    rows = _PrinterRows(printer, dpi, font_device)
     layout.addWidget(rows.box)
     buttons = _buttons(dialog)
     rows.withhold((buttons.button(QDialogButtonBox.Ok),))
@@ -2623,7 +2628,7 @@ def print_dialog(parent, document: Document, printer, default):
     cancelled.
 
     `action` is 'print' or 'ok'. OK keeps the settings without printing.
-    `printer` is the (address, port, dpi, font_device) for this session, and
+    `printer` is the (Connection, dpi, font_device) for this session, and
     the window opens on the one in effect. `default` is the persisted printer
     Use Default goes back to. `settings` is a print_settings.PrintSettings:
     everything here that is saved with the label, for the caller to apply as
@@ -2839,12 +2844,12 @@ class PrinterFontsDialog(QDialog):
     """The fonts stored on the printer, with upload, delete and refresh, plus
     a read-only reference list of the printer's built-in resident fonts."""
 
-    def __init__(self, parent, address: str, port: int, on_uploaded=None,
+    def __init__(self, parent, printer: Connection, on_uploaded=None,
                  font_device: str = zpl_fonts.DEFAULT_FONT_DEVICE):
         super().__init__(parent)
         self.setWindowTitle("Printer Fonts")
         self.resize(480, 520)
-        self._address, self._port = address, port
+        self._printer = printer
         self._on_uploaded = on_uploaded
         # Where Upload... offers to put a font first: the Font memory printer
         # setting. Only a default - this is a manager, so it can put one on
@@ -2914,14 +2919,14 @@ class PrinterFontsDialog(QDialog):
         self._resident_list.clear()
         self._font_specs = []
         self._delete_btn.setEnabled(False)
-        self._status.setText(f"Listing fonts on {self._address}...")
+        where = self._printer.where(with_port=False)
+        self._status.setText(f"Listing fonts on {where}...")
         self._resident_status.clear()
 
         def query(cancel):
-            fonts = zpl_fonts.query_printer_fonts(self._address, self._port,
-                                                  cancel=cancel)
+            fonts = zpl_fonts.query_printer_fonts(self._printer, cancel=cancel)
             self._busy.report("Asking which built-in fonts it has...")
-            detected = zpl_fonts.query_resident_fonts(self._address, self._port,
+            detected = zpl_fonts.query_resident_fonts(self._printer,
                                                       cancel=cancel)
             return fonts, detected
 
@@ -2935,7 +2940,7 @@ class PrinterFontsDialog(QDialog):
                 # Not the same as "no fonts": say the printer could not be
                 # asked, rather than showing an empty list as if it had answered.
                 self._status.setText(f"Could not reach the printer at "
-                                     f"{self._address}:{self._port}.")
+                                     f"{self._printer.where()}.")
             else:
                 self._font_specs = sorted(fonts)
                 for spec in self._font_specs:
@@ -2943,7 +2948,7 @@ class PrinterFontsDialog(QDialog):
                                     [spec, graphic_store.device_name(spec)])
                 self._delete_btn.setEnabled(bool(fonts))
                 self._status.setText(workflow.listing_status(
-                    self._address, "font", zpl_fonts.DEVICES,
+                    where, "font", zpl_fonts.DEVICES,
                     self._font_specs, unreadable))
             self._show_resident(detected)
 
@@ -2953,7 +2958,8 @@ class PrinterFontsDialog(QDialog):
         self._resident_list.clear()
         if detected:
             self._resident_status.setText(
-                f"Reported by the printer at {self._address}.")
+                f"Reported by the printer at "
+                f"{self._printer.where(with_port=False)}.")
         elif detected is None:
             self._resident_status.setText(
                 "Could not confirm which are present - showing the standard "
@@ -3018,7 +3024,7 @@ class PrinterFontsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: zpl_fonts.upload_font(
-            self._address, self._port, path, name, device, cancel=cancel), done)
+            self._printer, path, name, device, cancel=cancel), done)
 
     def _on_delete(self):
         item = self._list.currentItem()
@@ -3039,15 +3045,15 @@ class PrinterFontsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: zpl_fonts.delete_printer_font(
-            self._address, self._port, name, device, cancel=cancel), done)
+            self._printer, name, device, cancel=cancel), done)
 
 
 class PrinterGraphicsDialog(QDialog):
-    """View, store, retrieve and delete graphics on the real printer at
-    `address`:`port` - whichever one is actually in effect this session
-    (the caller passes self.printer_address/self.printer_port, which a
-    session override moves without touching the persisted default), the
-    same target PrinterFontsDialog already uses.
+    """View, store, retrieve and delete graphics on the real printer -
+    whichever one is actually in effect this session (the caller passes
+    self.printer_connection, which a session override moves without
+    touching the persisted default), the same target PrinterFontsDialog
+    already uses.
 
     Modelled closely on PrinterFontsDialog: refresh() queries the printer
     live and reports when it cannot be reached, exactly as that one does for
@@ -3059,11 +3065,11 @@ class PrinterGraphicsDialog(QDialog):
     second round trip to the printer.
     """
 
-    def __init__(self, parent, address: str, port: int, on_changed=None):
+    def __init__(self, parent, printer: Connection, on_changed=None):
         super().__init__(parent)
         self.setWindowTitle("Printer Graphics")
         self.resize(460, 340)
-        self._address, self._port = address, port
+        self._printer = printer
         self._on_changed = on_changed
         self._entries = []
 
@@ -3126,7 +3132,8 @@ class PrinterGraphicsDialog(QDialog):
         self._preview.clear()
         self._retrieve_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
-        self._status.setText(f"Listing graphics on {self._address}...")
+        where = self._printer.where(with_port=False)
+        self._status.setText(f"Listing graphics on {where}...")
 
         def done(specs, error):
             if isinstance(error, printer_io.Cancelled):
@@ -3134,7 +3141,7 @@ class PrinterGraphicsDialog(QDialog):
                 return
             if specs is None or error is not None:
                 self._status.setText(f"Could not reach the printer at "
-                                     f"{self._address}:{self._port}.")
+                                     f"{self._printer.where()}.")
                 return
             self._entries, unreadable = specs
             for spec in self._entries:
@@ -3142,11 +3149,11 @@ class PrinterGraphicsDialog(QDialog):
                 suffix = f" ({cached.width}×{cached.height})" if cached else ""
                 self._list.addItem(f"{spec}{suffix}")
             self._status.setText(workflow.listing_status(
-                self._address, "graphic", graphic_store.DEVICES,
+                where, "graphic", graphic_store.DEVICES,
                 self._entries, unreadable))
 
         self._busy.run(lambda cancel: graphic_store.query_printer_graphics(
-            self._address, self._port, cancel=cancel), done)
+            self._printer, cancel=cancel), done)
 
     def _selected_entry(self):
         """The spec the list has selected, or None."""
@@ -3206,7 +3213,7 @@ class PrinterGraphicsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: graphic_store.upload_graphic(
-            self._address, self._port, spec, image, cancel=cancel), done)
+            self._printer, spec, image, cancel=cancel), done)
 
     def _on_retrieve(self):
         """Fetch the selected graphic's real bytes from the printer, cache
@@ -3241,13 +3248,13 @@ class PrinterGraphicsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: graphic_store.retrieve_printer_graphic(
-            self._address, self._port, spec, cancel=cancel), done)
+            self._printer, spec, cancel=cancel), done)
 
     def _on_delete(self):
         spec = self._selected_entry()
         if spec is None:
             return
-        if not ask_delete_object(self, spec, self._address, self._port):
+        if not ask_delete_object(self, spec, self._printer):
             return
         self._status.setText(f"Deleting {spec}...")
 
@@ -3265,7 +3272,7 @@ class PrinterGraphicsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: graphic_store.delete_printer_graphic(
-            self._address, self._port, spec, cancel=cancel), done)
+            self._printer, spec, cancel=cancel), done)
 
 
 class PrinterObjectsDialog(QDialog):
@@ -3285,11 +3292,11 @@ class PrinterObjectsDialog(QDialog):
     though it is listed and can still be Retrieved.
     """
 
-    def __init__(self, parent, address: str, port: int, on_changed=None):
+    def __init__(self, parent, printer: Connection, on_changed=None):
         super().__init__(parent)
         self.setWindowTitle("Printer Objects")
         self.resize(460, 340)
-        self._address, self._port = address, port
+        self._printer = printer
         self._on_changed = on_changed
 
         layout = QVBoxLayout(self)
@@ -3352,7 +3359,8 @@ class PrinterObjectsDialog(QDialog):
         self._list.clear()
         self._retrieve_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
-        self._status.setText(f"Listing objects on {self._address}...")
+        where = self._printer.where(with_port=False)
+        self._status.setText(f"Listing objects on {where}...")
 
         def done(specs, error):
             if isinstance(error, printer_io.Cancelled):
@@ -3360,18 +3368,18 @@ class PrinterObjectsDialog(QDialog):
                 return
             if specs is None or error is not None:
                 self._status.setText(f"Could not reach the printer at "
-                                     f"{self._address}:{self._port}.")
+                                     f"{self._printer.where()}.")
                 return
             entries, unreadable = specs
             for spec in entries:
                 QTreeWidgetItem(self._list,
                                 [spec, graphic_store.device_name(spec)])
             self._status.setText(workflow.listing_status(
-                self._address, "object", printer_objects.DEVICES,
+                where, "object", printer_objects.DEVICES,
                 entries, unreadable))
 
         self._busy.run(lambda cancel: printer_objects.query_printer_objects(
-            self._address, self._port, cancel=cancel), done)
+            self._printer, cancel=cancel), done)
 
     def _selected_spec(self) -> Optional[str]:
         item = self._list.currentItem()
@@ -3413,7 +3421,7 @@ class PrinterObjectsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: printer_objects.upload_printer_object(
-            self._address, self._port, name, ext, data, cancel=cancel), done)
+            self._printer, name, ext, data, cancel=cancel), done)
 
     def _on_retrieve(self):
         spec = self._selected_spec()
@@ -3446,13 +3454,13 @@ class PrinterObjectsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: printer_objects.download_printer_object(
-            self._address, self._port, spec, cancel=cancel), done)
+            self._printer, spec, cancel=cancel), done)
 
     def _on_delete(self):
         spec = self._selected_spec()
         if spec is None:
             return
-        if not ask_delete_object(self, spec, self._address, self._port):
+        if not ask_delete_object(self, spec, self._printer):
             return
         self._status.setText(f"Deleting {spec}...")
 
@@ -3469,7 +3477,7 @@ class PrinterObjectsDialog(QDialog):
             self.refresh()
 
         self._busy.run(lambda cancel: printer_objects.delete_printer_object(
-            self._address, self._port, spec, cancel=cancel), done)
+            self._printer, spec, cancel=cancel), done)
 
 
 class PrinterConsoleDialog(QDialog):
@@ -3526,7 +3534,7 @@ class PrinterConsoleDialog(QDialog):
         text = self._input.toPlainText()
         if not text.strip():
             return
-        address, port = self._parent.printer_address, self._parent.printer_port
+        printer = self._parent.printer_connection
 
         def done(reply, error):
             if isinstance(error, printer_io.Cancelled):
@@ -3538,8 +3546,8 @@ class PrinterConsoleDialog(QDialog):
             self._log.appendPlainText(f"> {text}\n{reply or '(no reply)'}\n")
             self._input.clear()
 
-        self._busy.run(lambda cancel: printer_io.send_command(
-            address, port, text, cancel=cancel), done)
+        self._busy.run(lambda cancel: zpl_connection.send_command(
+            printer, text, cancel=cancel), done)
 
 
 class PrinterFirmwareDialog(QDialog):
@@ -3555,12 +3563,11 @@ class PrinterFirmwareDialog(QDialog):
     back under another number.
     """
 
-    def __init__(self, parent, address: str, port: int):
+    def __init__(self, parent, printer: Connection):
         super().__init__(parent)
         self.setWindowTitle("Firmware Update")
         self.resize(460, 200)
-        self._address = address
-        self._port = port
+        self._network = Connection.network(printer.address, printer.port)
         self._path = None
         self._size = 0
 
@@ -3634,7 +3641,7 @@ class PrinterFirmwareDialog(QDialog):
         chosen = self._connection.currentData()
         self._connection.blockSignals(True)
         self._connection.clear()
-        self._connection.addItem(f"Network: {self._address}:{self._port}", None)
+        self._connection.addItem(f"Network: {self._network.where()}", None)
         for path, described in zpl_local.list_ports():
             self._connection.addItem(
                 f"USB: {path} ({described})" if described else f"USB: {path}", path)
@@ -3649,7 +3656,7 @@ class PrinterFirmwareDialog(QDialog):
 
     def _where(self) -> str:
         local = self._local()
-        return local.path if local else f"{self._address}:{self._port}"
+        return local.path if local else self._network.where()
 
     def _on_refresh(self):
         self._list_connections()
@@ -3670,7 +3677,7 @@ class PrinterFirmwareDialog(QDialog):
                 self._status.setText(str(error))
 
         self._busy.run(lambda cancel: zpl_firmware.current_firmware(
-            self._address, self._port, cancel=cancel, local=local), done)
+            local or self._network, cancel=cancel), done)
 
     def _on_browse(self):
         path, _ = QFileDialog.getOpenFileName(self, "Choose Firmware File")
@@ -3717,8 +3724,8 @@ class PrinterFirmwareDialog(QDialog):
                 "press Refresh in a minute to see the new version.")
 
         self._busy.run(lambda cancel: zpl_firmware.upload_firmware(
-            self._address, self._port, path, progress=progress,
-            cancel=cancel, local=local), done)
+            local or self._network, path, progress=progress,
+            cancel=cancel), done)
 
 
 class PrinterStatusDialog(QDialog):
@@ -3821,23 +3828,23 @@ class PrinterStatusDialog(QDialog):
 
     def _printer(self):
         """The printer in effect now, not the one in effect when this opened."""
-        return self._parent.printer_address, self._parent.printer_port
+        return self._parent.printer_connection
 
     def refresh(self):
         """Ask everything - the specs as well as the activity."""
-        address, port = self._printer()
-        self._status.setText(f"Asking {address}...")
+        printer = self._printer()
+        self._status.setText(f"Asking {printer.where(with_port=False)}...")
 
         def work(cancel):
-            specs = printer_status.query_printer_specs(address, port,
-                                                       cancel=cancel)
-            self._busy.report(f"Asking {address} what it is doing...")
-            activity = printer_status.query_printer_activity(address, port,
+            specs = printer_status.query_printer_specs(printer, cancel=cancel)
+            self._busy.report(f"Asking {printer.where(with_port=False)} "
+                              f"what it is doing...")
+            activity = printer_status.query_printer_activity(printer,
                                                              cancel=cancel)
             return specs, activity
 
         self._busy.run(work, lambda result, error:
-                       self._done(result, error, address, port))
+                       self._done(result, error, printer))
 
     def _tick(self):
         """One auto-refresh. Only the activity, and only when nothing else is
@@ -3845,14 +3852,14 @@ class PrinterStatusDialog(QDialog):
         than the interval cannot build a backlog of requests."""
         if self._busy.running:
             return
-        address, port = self._printer()
+        printer = self._printer()
         self._busy.run(
             lambda cancel: (self._specs,
                             printer_status.query_printer_activity(
-                                address, port, cancel=cancel)),
-            lambda result, error: self._done(result, error, address, port))
+                                printer, cancel=cancel)),
+            lambda result, error: self._done(result, error, printer))
 
-    def _done(self, result, error, address, port):
+    def _done(self, result, error, printer):
         if isinstance(error, printer_io.Cancelled):
             self._status.setText("Cancelled.")
             return
@@ -3866,7 +3873,7 @@ class PrinterStatusDialog(QDialog):
             # cleared - a panel that empties itself when a printer is unplugged
             # loses the reading that would explain why.
             self._status.setText(f"Could not reach the printer at "
-                                 f"{address}:{port}.")
+                                 f"{printer.where()}.")
             return
         self._specs, self._activity = specs, activity
         self._show()
@@ -3875,7 +3882,7 @@ class PrinterStatusDialog(QDialog):
                              if report is not None
                              for name in report.unanswered})
         note = (" \u2014 no answer to " + ", ".join(unanswered)) if unanswered else ""
-        self._status.setText(f"{address}:{port}{note}")
+        self._status.setText(f"{printer.where()}{note}")
 
     def _show(self):
         """Rebuild the section list from the two reports held."""
@@ -4020,7 +4027,7 @@ def ask_overwrite(parent, filepath) -> bool:
     return box.clickedButton() is replace
 
 
-def ask_delete_object(parent, spec: str, address: str, port: int) -> bool:
+def ask_delete_object(parent, spec: str, printer: Connection) -> bool:
     """Whether to really delete `spec` from the printer.
 
     A destructive action against real state needs a way back that "just
@@ -4035,7 +4042,7 @@ def ask_delete_object(parent, spec: str, address: str, port: int) -> bool:
     box.setWindowTitle("Delete Object")
     box.setText(f"Delete {spec} from the printer?")
     box.setInformativeText(
-        f"This removes it from {address}:{port} itself, not just this "
+        f"This removes it from {printer.where()} itself, not just this "
         "list. It cannot be undone from here.")
     delete = box.addButton("Delete", QMessageBox.DestructiveRole)
     cancel = box.addButton("Cancel", QMessageBox.RejectRole)

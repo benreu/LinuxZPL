@@ -13,7 +13,8 @@ from typing import Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 
 from PIL import ImageFont
 
-from . import printer_io
+from . import connection
+from .connection import Printer
 from .graphic_store import DEVICES
 
 # Fonts are 8.3 TrueType objects, and ~DY can write one to any of the four
@@ -605,15 +606,15 @@ def build_font_upload(font_path: str, name: str,
     return header + data
 
 
-def upload_font(address: str, port: int, font_path: str, name: str,
+def upload_font(printer: Printer, font_path: str, name: str,
                 device: str = DEFAULT_FONT_DEVICE, timeout: float = 30,
                 cancel=None) -> None:
     """Store a local font file on the printer as <device>:<name>.TTF."""
-    printer_io.send(address, port, build_font_upload(font_path, name, device),
+    connection.send(printer, build_font_upload(font_path, name, device),
                     timeout, cancel=cancel)
 
 
-def query_printer_fonts(address: str, port: int, timeout: float = 5,
+def query_printer_fonts(printer: Printer, timeout: float = 5,
                         cancel=None) -> Optional[Set[str]]:
     """Every font object on the printer as 'd:NAME.TTF', across all of
     DEVICES, with the devices that could not be read, or None if the printer
@@ -656,7 +657,7 @@ def query_printer_fonts(address: str, port: int, timeout: float = 5,
     for index, device in enumerate(DEVICES):
         payload = f'^XA^HW{device}:*.TTF^XZ'.encode('ascii')
         try:
-            reply = printer_io.send(address, port, payload, timeout,
+            reply = connection.send(printer, payload, timeout,
                                     read_reply=True, cancel=cancel)
         except OSError:
             if index == 0:
@@ -673,7 +674,7 @@ def query_printer_fonts(address: str, port: int, timeout: float = 5,
     return (specs, unreadable) if answered else None
 
 
-def query_resident_fonts(address: str, port: int, timeout: float = 5,
+def query_resident_fonts(printer: Printer, timeout: float = 5,
                          cancel=None) -> Optional[Set[str]]:
     """Resident font codes the printer reports on its read-only Z: memory.
 
@@ -684,7 +685,7 @@ def query_resident_fonts(address: str, port: int, timeout: float = 5,
     could not be asked, not that it reported nothing.
     """
     try:
-        reply = printer_io.send(address, port, b'^XA^HWZ:*.FNT^XZ', timeout,
+        reply = connection.send(printer, b'^XA^HWZ:*.FNT^XZ', timeout,
                                 read_reply=True, cancel=cancel)
     except OSError:
         return None
@@ -694,7 +695,7 @@ def query_resident_fonts(address: str, port: int, timeout: float = 5,
     return {m.group(1).upper() for m in _FONT_OBJECT_NAME.finditer(text)}
 
 
-def query_printer_dpi(address: str, port: int, timeout: float = 5,
+def query_printer_dpi(printer: Printer, timeout: float = 5,
                       cancel=None) -> Optional[int]:
     """The printer's resolution in dpi, or None if it could not be asked.
 
@@ -704,7 +705,7 @@ def query_printer_dpi(address: str, port: int, timeout: float = 5,
     when the printer is unreachable or answers in an unexpected shape.
     """
     try:
-        reply = printer_io.send(address, port, b'~HI', timeout, read_reply=True,
+        reply = connection.send(printer, b'~HI', timeout, read_reply=True,
                                 cancel=cancel)
     except OSError:
         return None
@@ -718,7 +719,7 @@ def query_printer_dpi(address: str, port: int, timeout: float = 5,
     return None
 
 
-def delete_printer_font(address: str, port: int, name: str,
+def delete_printer_font(printer: Printer, name: str,
                         device: str = DEFAULT_FONT_DEVICE,
                         timeout: float = 10, cancel=None) -> None:
     """Delete a font object from the printer.
@@ -728,7 +729,7 @@ def delete_printer_font(address: str, port: int, name: str,
     that quietly removes nothing, or the wrong thing.
     """
     payload = f"^XA^ID{printer_font_path(name, device)}^FS^XZ".encode('ascii')
-    printer_io.send(address, port, payload, timeout, cancel=cancel)
+    connection.send(printer, payload, timeout, cancel=cancel)
 
 
 # --- local rendering --------------------------------------------------------

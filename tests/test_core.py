@@ -12,6 +12,7 @@ from PySide2.QtGui import QMouseEvent
 from zplcore import (fonts as zpl_fonts, geometry, parser as zpl_parser,
                      textraster, transforms as zpl_transforms, workflow)
 from zplcore import model as zpl_model
+from zplcore.connection import Connection
 from zplcore.model import (Document, TextElement, BarcodeElement, FrameElement,
                            EllipseElement, GraphicSymbolElement, ImageElement)
 from zplcore import graphic_symbols
@@ -181,8 +182,8 @@ _font_real_send = _font_pio.send
 _font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: (
     _font_sent.append(payload) or b'\r\n*ANI.TTF  1024\r\n')
 try:
-    zpl_fonts.delete_printer_font('h', 1, 'ANI', 'B')
-    _listed = zpl_fonts.query_printer_fonts('h', 1)
+    zpl_fonts.delete_printer_font(Connection.network('h', 1), 'ANI', 'B')
+    _listed = zpl_fonts.query_printer_fonts(Connection.network('h', 1))
 finally:
     _font_pio.send = _font_real_send
 check("delete_printer_font(): ^ID names the drive, not an assumed E:",
@@ -214,12 +215,12 @@ _font_real_send = _font_pio.send
 _font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: (
     _REAL_HW if b'^HWE:' in payload else b'')
 try:
-    _real_listed = zpl_fonts.query_printer_fonts('h', 1)
+    _real_listed = zpl_fonts.query_printer_fonts(Connection.network('h', 1))
     _font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: b''
-    _silent = zpl_fonts.query_printer_fonts('h', 1)
+    _silent = zpl_fonts.query_printer_fonts(Connection.network('h', 1))
     _font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: (
         b'\r\n- DIR R:*.TTF \r\n\r\n-  1000 bytes free\r\n')
-    _empty = zpl_fonts.query_printer_fonts('h', 1)
+    _empty = zpl_fonts.query_printer_fonts(Connection.network('h', 1))
 finally:
     _font_pio.send = _font_real_send
 check("query_printer_fonts(): a real ^HW reply parses to its fonts and nothing else",
@@ -252,7 +253,7 @@ _RESIDENT_HW = (b"\r\n- DIR Z:*.FNT \r\n"
 _font_real_send = _font_pio.send
 _font_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: _RESIDENT_HW
 try:
-    _resident = zpl_fonts.query_resident_fonts('h', 1)
+    _resident = zpl_fonts.query_resident_fonts(Connection.network('h', 1))
 finally:
     _font_pio.send = _font_real_send
 check("query_resident_fonts(): parses every .FNT object, long name included",
@@ -4976,17 +4977,18 @@ try:
     fallback_path = Path(tempfile.mkdtemp()) / 'settings.ini'
     qt_main._config_path = lambda: blocked_dir / 'settings.ini'
     qt_main._fallback_config_path = lambda: fallback_path
-    zw._default_printer = ('10.0.0.9', zw.printer_port, zw.printer_dpi,
+    zw._default_printer = (Connection.network('10.0.0.9', 9100), zw.printer_dpi,
                            zw.printer_font_device)
     zw._save_settings()
     written = _cfg.ConfigParser(); written.read(fallback_path)
     check("a settings file the user config directory won't take is written to the project fallback instead",
           written.has_section('printer') and written.get('printer', 'address') == '10.0.0.9',
           dict(written['printer']) if written.has_section('printer') else None)
-    zw.printer_address = qt_main.DEFAULT_ADDRESS
+    zw.printer_connection = Connection.network(qt_main.DEFAULT_ADDRESS, 9100)
     zw._load_settings()
     check("and is read back from the fallback location",
-          zw.printer_address == '10.0.0.9', zw.printer_address)
+          zw.printer_connection == Connection.network('10.0.0.9', 9100),
+          zw.printer_connection)
 finally:
     qt_main._config_path = real_config_path
     qt_main._fallback_config_path = real_fallback_path
@@ -5008,21 +5010,21 @@ session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 qt_main._config_path = lambda: session_path
 qt_main._fallback_config_path = lambda: session_path
 try:
-    zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.50', 9100, 203
-    zw._default_printer = (zw.printer_address, zw.printer_port,
-                           zw.printer_dpi, zw.printer_font_device)
+    zw.printer_connection, zw.printer_dpi = Connection.network('192.168.1.50', 9100), 203
+    zw._default_printer = (zw.printer_connection, zw.printer_dpi,
+                           zw.printer_font_device)
     zw._save_settings()
 
     real_dialog = qt_dialogs.printer_settings_dialog
-    qt_dialogs.print_dialog = _print_window_returns(('10.0.0.5', 9200, 203, 'E'))
+    qt_dialogs.print_dialog = _print_window_returns((Connection.network('10.0.0.5', 9200), 203, 'E'))
     try:
         zw.on_print_dialog()
     finally:
         qt_dialogs.print_dialog = real_print_dialog
 
     check("the Print window changes the printer in effect",
-          (zw.printer_address, zw.printer_port) == ('10.0.0.5', 9200),
-          (zw.printer_address, zw.printer_port))
+          zw.printer_connection == Connection.network('10.0.0.5', 9200),
+          zw.printer_connection)
 
     written = _cfg.ConfigParser(); written.read(session_path)
     check("but never writes it to the settings file",
@@ -5033,8 +5035,9 @@ try:
     # override just applied above - otherwise clicking OK on an unedited
     # dialog would silently promote the override into the new default.
     seen = {}
-    def capture_dialog(parent, address, port, dpi, font_device=None, **kwargs):
-        seen['address'], seen['port'], seen['dpi'] = address, port, dpi
+    def capture_dialog(parent, printer, dpi, font_device=None, **kwargs):
+        seen['address'], seen['port'], seen['dpi'] = (printer.address,
+                                                      printer.port, dpi)
         seen['font_device'] = font_device
         return None  # cancel, so nothing else about window state changes
     qt_dialogs.printer_settings_dialog = capture_dialog
@@ -5046,7 +5049,8 @@ try:
           (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
 
     # Contrast: Default Printer, given the same dialog result, does persist.
-    qt_dialogs.printer_settings_dialog = lambda *a, **k: ('10.0.0.5', 9200, 203, 'E')
+    qt_dialogs.printer_settings_dialog = lambda *a, **k: (
+        Connection.network('10.0.0.5', 9200), 203, 'E')
     try:
         zw.on_default_printer()
     finally:
@@ -5068,12 +5072,12 @@ quit_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 qt_main._config_path = lambda: quit_path
 qt_main._fallback_config_path = lambda: quit_path
 try:
-    zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.70', 9100, 203
-    zw._default_printer = (zw.printer_address, zw.printer_port,
-                           zw.printer_dpi, zw.printer_font_device)
+    zw.printer_connection, zw.printer_dpi = Connection.network('192.168.1.70', 9100), 203
+    zw._default_printer = (zw.printer_connection, zw.printer_dpi,
+                           zw.printer_font_device)
     zw._save_settings()
 
-    qt_dialogs.print_dialog = _print_window_returns(('10.0.0.8', 9400, 203, 'E'))
+    qt_dialogs.print_dialog = _print_window_returns((Connection.network('10.0.0.8', 9400), 203, 'E'))
     try:
         zw.on_print_dialog()
     finally:
@@ -5095,12 +5099,12 @@ label_settings_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 qt_main._config_path = lambda: label_settings_path
 qt_main._fallback_config_path = lambda: label_settings_path
 try:
-    zw.printer_address, zw.printer_port, zw.printer_dpi = '192.168.1.80', 9100, 203
-    zw._default_printer = (zw.printer_address, zw.printer_port,
-                           zw.printer_dpi, zw.printer_font_device)
+    zw.printer_connection, zw.printer_dpi = Connection.network('192.168.1.80', 9100), 203
+    zw._default_printer = (zw.printer_connection, zw.printer_dpi,
+                           zw.printer_font_device)
     zw._save_settings()
 
-    qt_dialogs.print_dialog = _print_window_returns(('10.0.0.9', 9500, 203, 'E'))
+    qt_dialogs.print_dialog = _print_window_returns((Connection.network('10.0.0.9', 9500), 203, 'E'))
     try:
         zw.on_print_dialog()
     finally:
@@ -5110,9 +5114,9 @@ try:
     zw.apply_label_settings(900, 600, 300, 3.0, 2.0)
 
     check("Label Settings updates the persisted default's DPI",
-          zw._default_printer[2] == 300, zw._default_printer)
+          zw._default_printer[1] == 300, zw._default_printer)
     check("but leaves the persisted default's address alone",
-          zw._default_printer[0] == '192.168.1.80', zw._default_printer)
+          zw._default_printer[0].address == '192.168.1.80', zw._default_printer)
 
     written = _cfg.ConfigParser(); written.read(label_settings_path)
     check("the settings file reflects the new DPI but the original, non-overridden address",
@@ -5195,8 +5199,8 @@ import time
 from PySide2.QtWidgets import (QPushButton as _QPB, QLabel as _QLabel,
                                QLineEdit)
 
-_PW_PRINTER = ('192.168.1.50', 9100, 203, 'E')
-_PW_DEFAULT = ('10.0.0.1', 9300, 203, 'R')
+_PW_PRINTER = (Connection.network('192.168.1.50', 9100), 203, 'E')
+_PW_DEFAULT = (Connection.network('10.0.0.1', 9300), 203, 'R')
 
 def _drive_print(document, fill=lambda d: None, button='print'):
     def act():
@@ -5321,7 +5325,7 @@ check("Use Default refills the printer from the persisted default",
 # one that did not, and Print sends after the settings go on.
 pw = qt_main.ZPLDesignerWindow()
 pw._save_settings = lambda *a: None
-pw.printer_address, pw.printer_port, pw.printer_dpi = '192.168.1.50', 9100, 203
+pw.printer_connection, pw.printer_dpi = Connection.network('192.168.1.50', 9100), 203
 pw.document.dpi = 203
 pw.on_add_frame()
 pw.unsaved_changes = False
@@ -7878,11 +7882,11 @@ zpl_printer_io.send = _fake_dpo_send
 try:
     _dpo_raised = False
     try:
-        printer_objects.download_printer_object('10.0.0.1', 9100, 'E:FIRST.TTF')
+        printer_objects.download_printer_object(Connection.network('10.0.0.1', 9100), 'E:FIRST.TTF')
     except printer_objects.ObjectNotRetrievable:
         _dpo_raised = True
     _dpo_second = printer_objects.download_printer_object(
-        '10.0.0.1', 9100, 'E:SECOND.GRF')
+        Connection.network('10.0.0.1', 9100), 'E:SECOND.GRF')
 finally:
     zpl_printer_io.send = _real_send
 
@@ -7915,7 +7919,7 @@ def _raise_cancelled(*a, **k):
 zpl_printer_io.send = _raise_cancelled
 try:
     try:
-        _q = printer_objects.query_printer_objects('10.0.0.1', 9100)
+        _q = printer_objects.query_printer_objects(Connection.network('10.0.0.1', 9100))
         _q_outcome = f"returned {_q!r}"
     except zpl_printer_io.Cancelled:
         _q_outcome = "raised Cancelled"
@@ -7972,7 +7976,7 @@ for _label, _query, _devices, _wanted in (
          ['E:ANI.TTF', 'E:BLUETOOTH.WML', 'E:LOGO.GRF', 'E:PANORAMIC.GRF'])):
     zpl_printer_io.send = _only_e_answers
     try:
-        _found = _query('10.0.0.1', 9100)
+        _found = _query(Connection.network('10.0.0.1', 9100))
     finally:
         zpl_printer_io.send = _real_send
     check(f"{_label}(): silence on R: is not an unreachable printer",
@@ -7983,7 +7987,7 @@ for _label, _query, _devices, _wanted in (
 
     zpl_printer_io.send = _nothing_answers
     try:
-        _silent = _query('10.0.0.1', 9100)
+        _silent = _query(Connection.network('10.0.0.1', 9100))
     finally:
         zpl_printer_io.send = _real_send
     check(f"{_label}(): None only when no device answered at all",
@@ -7991,7 +7995,7 @@ for _label, _query, _devices, _wanted in (
 
     zpl_printer_io.send = _empty_listing
     try:
-        _none_stored = _query('10.0.0.1', 9100)
+        _none_stored = _query(Connection.network('10.0.0.1', 9100))
     finally:
         zpl_printer_io.send = _real_send
     check(f"{_label}(): a printer that lists nothing is empty, not unreachable",
@@ -8004,7 +8008,7 @@ for _label, _query, _devices, _wanted in (
     _attempts.clear()
     zpl_printer_io.send = _dead_host
     try:
-        _dead = _query('10.0.0.1', 9100)
+        _dead = _query(Connection.network('10.0.0.1', 9100))
     finally:
         zpl_printer_io.send = _real_send
     check(f"{_label}(): a dead host is one attempt, not one per device",
@@ -8018,9 +8022,9 @@ def _capture_send(address, port, payload, timeout, read_reply=False, cancel=None
 _sentinel = object()
 zpl_printer_io.send = _capture_send
 try:
-    printer_objects.download_printer_object('h', 1, 'E:A.B', cancel=_sentinel)
-    zpl_fonts.query_printer_fonts('h', 1, cancel=_sentinel)
-    zpl_graphic_store.delete_printer_graphic('h', 1, 'R:A.GRF', cancel=_sentinel)
+    printer_objects.download_printer_object(Connection.network('h', 1), 'E:A.B', cancel=_sentinel)
+    zpl_fonts.query_printer_fonts(Connection.network('h', 1), cancel=_sentinel)
+    zpl_graphic_store.delete_printer_graphic(Connection.network('h', 1), 'R:A.GRF', cancel=_sentinel)
     zpl_printer_io.send_command('h', 1, '~HS', cancel=_sentinel)
 finally:
     zpl_printer_io.send = _real_send
@@ -8081,12 +8085,13 @@ _real_qpf, _real_upload = zpl_fonts.query_printer_fonts, zpl_fonts.upload_font
 try:
     zpl_fonts.query_printer_fonts = lambda *a, **k: None
     check("missing_printer_fonts(): None when the printer could not be asked",
-          workflow.missing_printer_fonts(_FontDoc({'E:ARIAL.TTF': '/a.ttf'}), 'h', 1) is None)
+          workflow.missing_printer_fonts(_FontDoc({'E:ARIAL.TTF': '/a.ttf'}), Connection.network('h', 1)) is None)
     zpl_fonts.query_printer_fonts = lambda *a, **k: ({'E:ARIAL.TTF'}, [])
     check("missing_printer_fonts(): nothing missing when the printer has them all",
-          workflow.missing_printer_fonts(_FontDoc({'e:arial.ttf': '/a.ttf'}), 'h', 1) == ({}, {}, []))
+          workflow.missing_printer_fonts(_FontDoc({'e:arial.ttf': '/a.ttf'}), Connection.network('h', 1)) == ({}, {}, []))
     _m = workflow.missing_printer_fonts(_FontDoc(
-        {'E:ARIAL.TTF': '/a.ttf', 'E:ROBOTO.TTF': '/r.ttf', 'E:MYSTERY.TTF': None}), 'h', 1)
+        {'E:ARIAL.TTF': '/a.ttf', 'E:ROBOTO.TTF': '/r.ttf', 'E:MYSTERY.TTF': None}),
+        Connection.network('h', 1))
     check("missing_printer_fonts(): missing vs uploadable (only those with a source file)",
           _m == ({'E:ROBOTO.TTF': '/r.ttf', 'E:MYSTERY.TTF': None},
                  {'E:ROBOTO.TTF': '/r.ttf'}, []), _m)
@@ -8094,19 +8099,20 @@ try:
     # drive is not the font the label asked for. Matching on the bare name
     # would call this present and let the print fall back to a substitute.
     zpl_fonts.query_printer_fonts = lambda *a, **k: ({'R:ARIAL.TTF'}, [])
-    _wrong = workflow.missing_printer_fonts(_FontDoc({'E:ARIAL.TTF': '/a.ttf'}), 'h', 1)
+    _wrong = workflow.missing_printer_fonts(_FontDoc({'E:ARIAL.TTF': '/a.ttf'}), Connection.network('h', 1))
     check("missing_printer_fonts(): a font on another drive does not satisfy the label",
           _wrong == ({'E:ARIAL.TTF': '/a.ttf'}, {'E:ARIAL.TTF': '/a.ttf'}, []), _wrong)
     zpl_fonts.query_printer_fonts = lambda *a, **k: ({'R:ARIAL.TTF'}, [])
     check("missing_printer_fonts(): and on the drive it does name, it is present",
-          workflow.missing_printer_fonts(_FontDoc({'R:ARIAL.TTF': '/a.ttf'}), 'h', 1) == ({}, {}, []))
+          workflow.missing_printer_fonts(_FontDoc({'R:ARIAL.TTF': '/a.ttf'}), Connection.network('h', 1)) == ({}, {}, []))
 
     # A drive that could not be read leaves its fonts unjudged. Calling them
     # missing would offer to upload them - to the very drive that is failing -
     # on no evidence that they are not already there.
     zpl_fonts.query_printer_fonts = lambda *a, **k: ({'E:ARIAL.TTF'}, ['B'])
     _unknown = workflow.missing_printer_fonts(
-        _FontDoc({'B:CYRI_UB.TTF': '/c.ttf', 'E:ROBOTO.TTF': '/r.ttf'}), 'h', 1)
+        _FontDoc({'B:CYRI_UB.TTF': '/c.ttf', 'E:ROBOTO.TTF': '/r.ttf'}),
+        Connection.network('h', 1))
     check("missing_printer_fonts(): a font on an unreadable drive is unknown, not missing",
           _unknown == ({'E:ROBOTO.TTF': '/r.ttf'}, {'E:ROBOTO.TTF': '/r.ttf'},
                        ['B']), _unknown)
@@ -8115,7 +8121,7 @@ try:
         _calls.append('asked'); return (set(), [])
     zpl_fonts.query_printer_fonts = _fake_qpf
     check("missing_printer_fonts(): a label with only built-in fonts never asks the printer",
-          workflow.missing_printer_fonts(_FontDoc({}), 'h', 1) == ({}, {}, [])
+          workflow.missing_printer_fonts(_FontDoc({}), Connection.network('h', 1)) == ({}, {}, [])
           and _calls == [], _calls)
 
     _t, _d = workflow.font_problem_prompt(None)
@@ -8138,35 +8144,35 @@ try:
           'B:MYSTERY.TTF' in _d and 'E:MYSTERY.TTF' not in _d, _d)
 
     _uploaded, _progress = [], []
-    def _fake_upload(address, port, path, name, device='E', timeout=30, cancel=None):
+    def _fake_upload(printer, path, name, device='E', timeout=30, cancel=None):
         _uploaded.append((name, path, cancel))
     zpl_fonts.upload_font = _fake_upload
-    workflow.upload_fonts({'E:B.TTF': '/b', 'E:A.TTF': '/a'}, 'h', 1,
+    workflow.upload_fonts({'E:B.TTF': '/b', 'E:A.TTF': '/a'}, Connection.network('h', 1),
                           _progress.append, cancel=_sentinel)
     check("upload_fonts(): uploads each font in name order, reporting each, passing cancel through",
           _uploaded == [('A', '/a', _sentinel), ('B', '/b', _sentinel)]
           and _progress == ['Uploading E:A.TTF...', 'Uploading E:B.TTF...'], (_uploaded, _progress))
     # Each font goes to the drive its own spec names, not all to one.
     _devices = []
-    def _device_upload(address, port, path, name, device='E', timeout=30, cancel=None):
+    def _device_upload(printer, path, name, device='E', timeout=30, cancel=None):
         _devices.append((device, name))
     zpl_fonts.upload_font = _device_upload
-    workflow.upload_fonts({'R:ONE.TTF': '/1', 'B:TWO.TTF': '/2'}, 'h', 1)
+    workflow.upload_fonts({'R:ONE.TTF': '/1', 'B:TWO.TTF': '/2'}, Connection.network('h', 1))
     check("upload_fonts(): each font goes to the drive its own spec names",
           sorted(_devices) == [('B', 'TWO'), ('R', 'ONE')], _devices)
-    def _failing_upload(address, port, path, name, device='E', timeout=30, cancel=None):
+    def _failing_upload(printer, path, name, device='E', timeout=30, cancel=None):
         raise OSError("boom")
     zpl_fonts.upload_font = _failing_upload
     try:
-        workflow.upload_fonts({'A': '/a'}, 'h', 1); _up_err = None
+        workflow.upload_fonts({'A': '/a'}, Connection.network('h', 1)); _up_err = None
     except OSError as e:
         _up_err = str(e)
     check("upload_fonts(): a failure names the font", _up_err == "Upload of A failed: boom", _up_err)
-    def _cancelled_upload(address, port, path, name, timeout=30, cancel=None):
+    def _cancelled_upload(printer, path, name, device='E', timeout=30, cancel=None):
         raise zpl_printer_io.Cancelled("x")
     zpl_fonts.upload_font = _cancelled_upload
     try:
-        workflow.upload_fonts({'A': '/a'}, 'h', 1); _up_err = 'returned'
+        workflow.upload_fonts({'A': '/a'}, Connection.network('h', 1)); _up_err = 'returned'
     except zpl_printer_io.Cancelled:
         _up_err = 'Cancelled'
     except Exception as e:
@@ -10389,7 +10395,7 @@ zpl_printer_io.send = _status_fake(
     {'zpl.system_status': _SGD_CLEAN, '~HS': _HS_OK, '~HM': b'1024,0780,0780'},
     _order_log)
 try:
-    _act = zpl_status.query_printer_activity('h', 9100)
+    _act = zpl_status.query_printer_activity(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 check("query_printer_activity(): asks the fault flags before ~HS",
@@ -10411,7 +10417,7 @@ zpl_printer_io.send = _status_fake(
     {'zpl.system_status': b'"0,1,00000000,00000004,0,00000000,00000000"',
      '~HM': b'1024,0780,0780'}, _silent_log)   # ~HS falls through to b''
 try:
-    _silent_act = zpl_status.query_printer_activity('h', 9100)
+    _silent_act = zpl_status.query_printer_activity(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 check("query_printer_activity(): ~HS going silent is reported, not fatal",
@@ -10434,7 +10440,7 @@ zpl_printer_io.send = _status_fake(
                b'    WARNINGS: 0 00000000 00000000\r\n\x03'),
      '~HS': _HS_OK, '~HM': b'1024,0780,0780'}, _fallback_log)
 try:
-    _fb = zpl_status.query_printer_activity('h', 9100)
+    _fb = zpl_status.query_printer_activity(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 check("query_printer_activity(): a refused SGD attribute falls back to ~HQES",
@@ -10450,8 +10456,8 @@ def _dead_status_host(address, port, payload, timeout, read_reply=False, cancel=
     raise OSError('refused')
 zpl_printer_io.send = _dead_status_host
 try:
-    _dead_act = zpl_status.query_printer_activity('h', 9100)
-    _dead_spec = zpl_status.query_printer_specs('h', 9100)
+    _dead_act = zpl_status.query_printer_activity(Connection.network('h', 9100))
+    _dead_spec = zpl_status.query_printer_specs(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 check("query_printer_activity(): a dead host is None, not a blank report",
@@ -10465,7 +10471,7 @@ check("query_printer_status(): a dead host costs one attempt per query, not "
 _mute_log = []
 zpl_printer_io.send = _status_fake({}, _mute_log)
 try:
-    _mute = zpl_status.query_printer_activity('h', 9100)
+    _mute = zpl_status.query_printer_activity(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 check("query_printer_activity(): a printer that answers nothing at all is None",
@@ -10483,7 +10489,7 @@ zpl_printer_io.send = _status_fake(
      'odometer.total_print_length': b'"8560 INCHES, 21744 CENTIMETERS"'},
     _spec_log)
 try:
-    _spec = zpl_status.query_printer_specs('h', 9100)
+    _spec = zpl_status.query_printer_specs(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 check("query_printer_specs(): model, firmware and resolution come off ~HI",
@@ -10497,7 +10503,7 @@ zpl_printer_io.send = _status_fake(
      'odometer.total_print_length': b'"8560 INCHES, 21744 CENTIMETERS"'},
     _wear_log)
 try:
-    _wear_modern = zpl_status.query_printer_specs('h', 9100)
+    _wear_modern = zpl_status.query_printer_specs(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 check("query_printer_specs(): the odometer reads grouped, units untouched",
@@ -10512,7 +10518,7 @@ zpl_printer_io.send = _status_fake(
      '~HQOD': (b'\x02PRINT METERS\r\n    TOTAL NONRESETTABLE: 8560 "\r\n\x03')},
     _wear_old_log)
 try:
-    _wear_old = zpl_status.query_printer_specs('h', 9100)
+    _wear_old = zpl_status.query_printer_specs(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 check("query_printer_specs(): and so does the ~HQOD fallback",
@@ -10533,7 +10539,7 @@ zpl_printer_io.send = _status_fake(
      'memory.flash_size': b'"67108864 Bytes"',
      'memory.flash_free': b'"66369536 Bytes Free"'}, _mem_log)
 try:
-    _mem_act = zpl_status.query_printer_activity('h', 9100)
+    _mem_act = zpl_status.query_printer_activity(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 _mem = [s for s in _mem_act.sections if s.title == 'Memory'][0]
@@ -10582,7 +10588,7 @@ zpl_printer_io.send = _status_fake(
                b'\r\n-  66119680 bytes free E: ONBOARD FLASH\r\n')},
     _hw_only_log)
 try:
-    _hw_only = zpl_status.query_printer_activity('h', 9100)
+    _hw_only = zpl_status.query_printer_activity(Connection.network('h', 9100))
 finally:
     zpl_printer_io.send = _status_real_send
 _hw_rows = [s for s in _hw_only.sections
@@ -10608,8 +10614,8 @@ def _status_capture(address, port, payload, timeout, read_reply=False, cancel=No
 _status_sentinel = object()
 zpl_printer_io.send = _status_capture
 try:
-    zpl_status.query_printer_activity('h', 9100, cancel=_status_sentinel)
-    zpl_status.query_printer_specs('h', 9100, cancel=_status_sentinel)
+    zpl_status.query_printer_activity(Connection.network('h', 9100), cancel=_status_sentinel)
+    zpl_status.query_printer_specs(Connection.network('h', 9100), cancel=_status_sentinel)
 finally:
     zpl_printer_io.send = _status_real_send
 check("printer_status: cancel= reaches send from both queries",
@@ -10623,7 +10629,7 @@ try:
     _propagated = []
     for query in (zpl_status.query_printer_activity, zpl_status.query_printer_specs):
         try:
-            query('h', 9100)
+            query(Connection.network('h', 9100))
         except zpl_printer_io.Cancelled:
             _propagated.append(True)
 finally:
@@ -10945,15 +10951,15 @@ try:
     _fw_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: (
         b'\x02ZD420-203dpi,V84.20.18Z,8,8176KB\x03' if payload == b'~HI' else b'')
     check("current_firmware reads the version from ~HI",
-          zpl_firmware.current_firmware('x', 9100) == 'V84.20.18Z')
+          zpl_firmware.current_firmware(Connection.network('x', 9100)) == 'V84.20.18Z')
     _fw_pio.send = lambda *a, **k: b'garbage'
     check("current_firmware: an unreadable reply is None",
-          zpl_firmware.current_firmware('x', 9100) is None)
+          zpl_firmware.current_firmware(Connection.network('x', 9100)) is None)
     def _fw_refuse(*a, **k):
         raise ConnectionRefusedError()
     _fw_pio.send = _fw_refuse
     check("current_firmware: an unreachable printer is None",
-          zpl_firmware.current_firmware('x', 9100) is None)
+          zpl_firmware.current_firmware(Connection.network('x', 9100)) is None)
 finally:
     _fw_pio.send = _fw_real_send
 
@@ -10985,7 +10991,8 @@ with tempfile.TemporaryDirectory() as _fw_dir:
     _fw_got = []; _fw_port, _fw_th = _fw_listener(_fw_got)
     _fw_prog = []
     _fw_sent = zpl_firmware.upload_firmware(
-        '127.0.0.1', _fw_port, _fw_file, progress=lambda a, b: _fw_prog.append((a, b)))
+        Connection.network('127.0.0.1', _fw_port), _fw_file,
+        progress=lambda a, b: _fw_prog.append((a, b)))
     _fw_th.join(3)
     check("upload_firmware sends the file byte for byte, unwrapped",
           b''.join(_fw_got) == _fw_blob and _fw_sent == len(_fw_blob))
@@ -10995,7 +11002,7 @@ with tempfile.TemporaryDirectory() as _fw_dir:
     _fw_empty = Path(_fw_dir) / 'empty.zpl'; _fw_empty.write_bytes(b'')
     for _fw_bad, _fw_why in ((_fw_empty, "empty"), (Path(_fw_dir) / 'none', "missing")):
         try:
-            zpl_firmware.upload_firmware('127.0.0.1', 1, _fw_bad); _fw_o = 'returned'
+            zpl_firmware.upload_firmware(Connection.network('127.0.0.1', 1), _fw_bad); _fw_o = 'returned'
         except ValueError:
             _fw_o = 'ValueError'
         check(f"upload_firmware refuses a {_fw_why} file", _fw_o == 'ValueError', _fw_o)
@@ -11004,7 +11011,7 @@ with tempfile.TemporaryDirectory() as _fw_dir:
     def _fw_stop(a, b):
         _fw_tok.cancel()
     try:
-        zpl_firmware.upload_firmware('127.0.0.1', _fw_port, _fw_file,
+        zpl_firmware.upload_firmware(Connection.network('127.0.0.1', _fw_port), _fw_file,
                                      progress=_fw_stop, cancel=_fw_tok)
         _fw_o = 'returned'
     except _fw_pio.Cancelled:
@@ -11060,8 +11067,7 @@ with tempfile.TemporaryDirectory() as _lp_dir:
     _lp_got, _lp_prog = [], []
     _lp_th = _lp_reader(_lp_fifo, _lp_got)
     _lp_sent = zpl_firmware.upload_firmware(
-        'unused', 0, _lp_file, progress=lambda a, b: _lp_prog.append((a, b)),
-        local=_lp_port)
+        _lp_port, _lp_file, progress=lambda a, b: _lp_prog.append((a, b)))
     _lp_th.join(3)
     check("upload_firmware down a local port sends the file byte for byte",
           b''.join(_lp_got) == _fw_blob and _lp_sent == len(_fw_blob),
@@ -11082,9 +11088,9 @@ with tempfile.TemporaryDirectory() as _lp_dir:
     _lp_tok = _fw_pio.CancelToken(); _lp_got = []
     _lp_th = _lp_reader(_lp_fifo, _lp_got)
     try:
-        zpl_firmware.upload_firmware('unused', 0, _lp_file,
+        zpl_firmware.upload_firmware(_lp_port, _lp_file,
                                      progress=lambda a, b: _lp_tok.cancel(),
-                                     cancel=_lp_tok, local=_lp_port)
+                                     cancel=_lp_tok)
         _lp_o = 'returned'
     except _fw_pio.Cancelled:
         _lp_o = 'Cancelled'
@@ -11112,8 +11118,7 @@ with tempfile.TemporaryDirectory() as _lp_dir:
               f"'{_lp_group}' group (sudo usermod -aG {_lp_group} $USER) "
               "and log in again."), _lp_o)
     try:
-        zpl_firmware.current_firmware('unused', 0,
-                                      local=zpl_local.LocalPort(str(_lp_locked)))
+        zpl_firmware.current_firmware(zpl_local.LocalPort(str(_lp_locked)))
         _lp_o = 'returned'
     except PermissionError:
         _lp_o = 'PermissionError'
@@ -11131,11 +11136,221 @@ def _lp_answer():
     os.write(_lp_master, b'\x02ZT410-200dpi,V75.20.21Z,8,4096KB\x03\r\n')
 _lp_th = _fw_threading.Thread(target=_lp_answer, daemon=True); _lp_th.start()
 _lp_version = zpl_firmware.current_firmware(
-    'unused', 0, local=zpl_local.LocalPort(os.ttyname(_lp_slave)))
+    zpl_local.LocalPort(os.ttyname(_lp_slave)))
 _lp_th.join(3)
 os.close(_lp_master); os.close(_lp_slave)
 check("current_firmware asks ~HI down a local port and reads the version back",
       _lp_heard == [b'~HI'] and _lp_version == 'V75.20.21Z', (_lp_heard, _lp_version))
+
+# --- zplcore.connection: a network printer or a USB one, chosen by the user
+import errno as _cn_errno, configparser as _cn_cp
+from zplcore import connection as zpl_connection
+
+_cn_net = Connection.network('192.168.50.94', 9100)
+_cn_usb = Connection.usb('18J165111007', 'Zebra Technologies ZTC UPS ZT400')
+check("Connection.where(): an address and port, or the USB printer's name",
+      (_cn_net.where(), _cn_net.where(with_port=False), _cn_usb.where(),
+       Connection.usb('SN9').where())
+      == ('192.168.50.94:9100', '192.168.50.94',
+          'Zebra Technologies ZTC UPS ZT400 (USB)', 'USB printer SN9'))
+_cn_both = _cn_net.as_usb('18J165111007', 'Zebra Technologies ZTC UPS ZT400')
+check("choosing USB keeps the network address, and choosing it back keeps "
+      "the USB printer",
+      _cn_both.is_usb and _cn_both.address == '192.168.50.94'
+      and _cn_both.as_network('10.0.0.2', 9200).usb_serial == '18J165111007'
+      and not _cn_both.as_network('10.0.0.2', 9200).is_usb, _cn_both)
+check("Connection.key(): only the chosen half says which printer it is",
+      _cn_both.key() == _cn_usb.key() != _cn_net.key()
+      and _cn_both.as_network('192.168.50.94', 9100).key() == _cn_net.key()
+      and Connection.usb('', 'Brother HL').key() == ('usb', 'Brother HL'))
+
+def _cn_read(text, fallback=Connection.network('192.168.50.21', 9100)):
+    parser = _cn_cp.ConfigParser(); parser.read_string(text)
+    return Connection.read(parser, fallback)
+
+def _cn_round(printer):
+    parser = _cn_cp.ConfigParser()
+    parser.read_string("[printer]\ndpi = 203\nusb_serial = OLD\n")
+    printer.write(parser)
+    return Connection.read(parser, Connection()), dict(parser['printer'])
+
+_cn_back_net, _cn_keys_net = _cn_round(_cn_net)
+_cn_back_usb, _cn_keys_usb = _cn_round(_cn_both)
+check("Connection.write/read: each kind comes back as it went, beside the "
+      "section's other keys",
+      _cn_back_net == _cn_net and _cn_back_usb == _cn_both
+      and _cn_keys_net['dpi'] == '203' and 'usb_serial' not in _cn_keys_net
+      and _cn_keys_usb['connection'] == 'usb', (_cn_keys_net, _cn_keys_usb))
+check("a settings file from before USB printing reads as the network printer "
+      "it names",
+      _cn_read("[printer]\naddress = 10.0.0.7\nport = 9300\n")
+      == Connection.network('10.0.0.7', 9300))
+check("a USB entry that names no printer falls back to the network one",
+      _cn_read("[printer]\naddress = 10.0.0.7\nconnection = usb\n")
+      == Connection.network('10.0.0.7', 9100)
+      and _cn_read("[printer]\nconnection = USB\nusb_name = Zebra\n").is_usb)
+try:
+    _cn_read("[printer]\nport = wide\n"); _cn_o = 'returned'
+except ValueError:
+    _cn_o = 'ValueError'
+check("a malformed port raises, as configparser does, for the caller's "
+      "fallback", _cn_o == 'ValueError', _cn_o)
+
+with tempfile.TemporaryDirectory() as _cn_dir:
+    _cn_root = Path(_cn_dir)
+    (_cn_root / 'dev' / 'usb').mkdir(parents=True)
+    for _cn_name, _cn_id, _cn_serial in (
+            ('lp1', 'MFG:Brother;MDL:HL-2140 series;', None),
+            ('lp2', 'MANUFACTURER:Zebra Technologies ;MODEL:ZTC UPS ZT400;',
+             '18J165111007\n')):
+        (_cn_root / 'dev' / 'usb' / _cn_name).touch()
+        _cn_dev = _cn_root / 'sys' / 'class' / 'usbmisc' / _cn_name / 'device'
+        _cn_dev.mkdir(parents=True)
+        (_cn_dev / 'ieee1284_id').write_text(_cn_id)
+        if _cn_serial:
+            # device/.. is the USB device, which holds the serial number
+            (_cn_dev.parent / 'serial').write_text(_cn_serial)
+    _cn_found = zpl_local.list_printers(str(_cn_root / 'dev'),
+                                        str(_cn_root / 'sys'))
+    check("list_printers: each node's description and USB serial number, "
+          "empty where it has none",
+          [(Path(f.path).name, f.description, f.serial) for f in _cn_found]
+          == [('lp1', 'Brother HL-2140 series', ''),
+              ('lp2', 'Zebra Technologies ZTC UPS ZT400', '18J165111007')],
+          _cn_found)
+
+_cn_real_list = zpl_local.list_printers
+_cn_present = []
+zpl_local.list_printers = lambda *a: list(_cn_present)
+try:
+    _cn_present[:] = [
+        zpl_local.UsbPrinter('/dev/usb/lp1', 'Zebra Technologies ZTC UPS ZT400', 'OTHER'),
+        zpl_local.UsbPrinter('/dev/usb/lp3', 'Zebra Technologies ZTC UPS ZT400',
+                             '18J165111007'),
+        zpl_local.UsbPrinter('/dev/usb/lp4', 'Brother HL', ''),
+        zpl_local.UsbPrinter('/dev/usb/lp5', 'Brother HL', '')]
+    check("list_usb: every USB printer present, as a Connection and its node",
+          [(c.usb_serial, path) for c, path in zpl_connection.list_usb()]
+          == [('OTHER', '/dev/usb/lp1'), ('18J165111007', '/dev/usb/lp3'),
+              ('', '/dev/usb/lp4'), ('', '/dev/usb/lp5')])
+    check("resolve: a USB printer is found by its serial number, wherever it "
+          "is now, not by a same-model neighbour",
+          zpl_connection.resolve(_cn_usb) == zpl_local.LocalPort('/dev/usb/lp3'))
+    check("resolve: one without a serial number by its name, the lowest node "
+          "winning",
+          zpl_connection.resolve(Connection.usb('', 'Brother HL'))
+          == zpl_local.LocalPort('/dev/usb/lp4'))
+    _cn_present[:] = _cn_present[2:]
+    try:
+        zpl_connection.resolve(_cn_usb); _cn_o = 'returned'
+    except OSError as e:
+        _cn_o = (e.errno, str(e).split('] ')[-1])
+    check("resolve: one that is not plugged in is an OSError saying so",
+          _cn_o == (_cn_errno.ENODEV, "Zebra Technologies ZTC UPS ZT400 "
+                    "(serial number 18J165111007) is not connected by USB."),
+          _cn_o)
+    check("and a query through it reads as a printer that could not be asked",
+          zpl_fonts.query_printer_dpi(_cn_usb) is None)
+finally:
+    zpl_local.list_printers = _cn_real_list
+
+# Dispatch: a network Connection to a socket, a USB one to whichever node its
+# serial number has.
+_cn_got = []; _cn_port, _cn_th = _fw_listener(_cn_got)
+zpl_connection.send(Connection.network('127.0.0.1', _cn_port), b'^XA^XZ', 5)
+_cn_th.join(3)
+check("connection.send: a network printer gets the payload over TCP",
+      b''.join(_cn_got) == b'^XA^XZ', _cn_got)
+
+with tempfile.TemporaryDirectory() as _cn_dir:
+    _cn_fifo = Path(_cn_dir) / 'lp7'; os.mkfifo(_cn_fifo)
+    zpl_local.list_printers = lambda *a: [
+        zpl_local.UsbPrinter(str(_cn_fifo), 'Zebra', '18J165111007')]
+    try:
+        _cn_got = []; _cn_th = _lp_reader(_cn_fifo, _cn_got)
+        zpl_connection.send(_cn_usb, b'^XA^FDusb^FS^XZ', 5)
+        _cn_th.join(3)
+        check("connection.send: a USB printer gets it down the node its "
+              "serial number has", b''.join(_cn_got) == b'^XA^FDusb^FS^XZ',
+              _cn_got)
+
+        # usblp refuses a second open with EBUSY; the send waits for it.
+        class _CnBusy:
+            def __init__(self, refusals):
+                self.refusals = refusals
+            def __getattr__(self, name):
+                return getattr(os, name)
+            def open(self, *args, **kwargs):
+                if self.refusals:
+                    self.refusals -= 1
+                    raise OSError(_cn_errno.EBUSY, 'Device or resource busy')
+                return os.open(*args, **kwargs)
+
+        zpl_local.os = _CnBusy(2)
+        _cn_got = []; _cn_th = _lp_reader(_cn_fifo, _cn_got)
+        _cn_t0 = time.monotonic()
+        try:
+            zpl_connection.send(_cn_usb, b'after', 5)
+        finally:
+            zpl_local.os = os
+        _cn_th.join(3)
+        check("a node another process holds is waited for, then sent to",
+              b''.join(_cn_got) == b'after'
+              and time.monotonic() - _cn_t0 >= 2 * zpl_local.TICK,
+              (_cn_got, time.monotonic() - _cn_t0))
+
+        zpl_local.os = _CnBusy(10 ** 6)
+        try:
+            zpl_connection.send(_cn_usb, b'never', 0.5); _cn_o = 'returned'
+        except OSError as e:
+            _cn_o = (e.errno, e.strerror)
+        finally:
+            zpl_local.os = os
+        check("one still held after the timeout says it is in use, and by "
+              "what, likely",
+              _cn_o[0] == _cn_errno.EBUSY
+              and _cn_o[1].startswith(f"{_cn_fifo} is in use by another program")
+              and 'CUPS' in _cn_o[1], _cn_o)
+
+        zpl_local.os = _CnBusy(10 ** 6)
+        _cn_tok = _fw_pio.CancelToken()
+        _fw_threading.Timer(0.3, _cn_tok.cancel).start()
+        _cn_t0 = time.monotonic()
+        try:
+            zpl_connection.send(_cn_usb, b'never', 30, cancel=_cn_tok)
+            _cn_o = 'returned'
+        except _fw_pio.Cancelled:
+            _cn_o = 'Cancelled'
+        finally:
+            zpl_local.os = os
+        check("and Cancel ends the wait",
+              _cn_o == 'Cancelled' and time.monotonic() - _cn_t0 < 2,
+              (_cn_o, time.monotonic() - _cn_t0))
+    finally:
+        zpl_local.list_printers = _cn_real_list
+
+# A late reply waits on the device for whoever opens it next. Over USB it
+# would be read as the start of the next answer, so it is thrown away first.
+_cn_master, _cn_slave = _lp_pty.openpty()
+_lp_tty.setraw(_cn_slave)
+os.write(_cn_master, b'\x02late end of an earlier ^HW listing\x03\r\n')
+_cn_heard = []
+def _cn_answer():
+    _cn_heard.append(os.read(_cn_master, 64))
+    os.write(_cn_master, b'\x02ZT410-200dpi,V75.20.21Z,8,4096KB\x03\r\n')
+_cn_th = _fw_threading.Thread(target=_cn_answer, daemon=True); _cn_th.start()
+zpl_local.list_printers = lambda *a: [
+    zpl_local.UsbPrinter(os.ttyname(_cn_slave), 'Zebra', '18J165111007')]
+try:
+    _cn_reply = zpl_connection.send_command(_cn_usb, '~HI', timeout=2)
+finally:
+    zpl_local.list_printers = _cn_real_list
+_cn_th.join(3)
+os.close(_cn_master); os.close(_cn_slave)
+check("a reply left over from an earlier request is not read as this one's",
+      _cn_heard == [b'~HI']
+      and _cn_reply == '\x02ZT410-200dpi,V75.20.21Z,8,4096KB\x03\r\n',
+      (_cn_heard, _cn_reply))
 
 _fw_texts = None
 for _fw_act in _cw_win.menuBar().actions():
@@ -11150,7 +11365,8 @@ _lp_real_list, _lp_real_help = zpl_local.list_ports, qt_dialogs.show_help
 try:
     zpl_local.list_ports = lambda: [('/dev/usb/lp3', 'Zebra Technologies ZTC UPS ZT400'),
                                     ('/dev/usb/lp4', '')]
-    _lp_dlg = qt_dialogs.PrinterFirmwareDialog(None, '192.168.50.94', 9100)
+    _lp_dlg = qt_dialogs.PrinterFirmwareDialog(
+        None, Connection.network('192.168.50.94', 9100))
     _lp_items = [_lp_dlg._connection.itemText(i) for i in range(_lp_dlg._connection.count())]
     check("Qt Firmware Update: the network printer first, then each USB printer",
           _lp_items == ["Network: 192.168.50.94:9100",
@@ -11295,7 +11511,7 @@ try:
     _wh_modal("grid_settings",
               lambda: qt_dialogs.grid_settings_dialog(None, _wh_grid.Grid(), 203))
     _wh_modal("default_printer", lambda: qt_dialogs.printer_settings_dialog(
-        None, "10.0.0.1", 9100, 203, "E"))
+        None, Connection.network("10.0.0.1", 9100), 203, "E"))
     _wh_modal("print", lambda: qt_dialogs.print_dialog(
         None, _wh_doc, _PW_PRINTER, _PW_DEFAULT))
     _wh_modal("local_fonts", lambda: qt_dialogs.LocalFontsDialog(None).exec_())
@@ -11309,7 +11525,7 @@ try:
     _wh_dead = _wh_sock.getsockname()[1]
     _wh_sock.close()
     _wh_win = qt_main.ZPLDesignerWindow()
-    _wh_win.printer_address, _wh_win.printer_port = "127.0.0.1", _wh_dead
+    _wh_win.printer_connection = Connection.network("127.0.0.1", _wh_dead)
     _wh_modal("printer_fonts", _wh_win.on_printer_fonts)
     _wh_modal("printer_graphics", _wh_win.on_printer_graphics)
     _wh_modal("printer_objects", _wh_win.on_printer_objects)
@@ -12747,7 +12963,7 @@ _t_windows = {
     'Grid Settings': (lambda: qt_dialogs.grid_settings_dialog(
         None, zpl_grid.Grid(), 203), {'grid_major'}),
     'Default Printer': (lambda: qt_dialogs.printer_settings_dialog(
-        None, '10.0.0.1', 9100, 203, 'E'),
+        None, Connection.network('10.0.0.1', 9100), 203, 'E'),
         {'port', 'dpi', 'font_device', 'test_connection'}),
     'Store Graphic As': (lambda: qt_dialogs.store_graphic_dialog(None), {'device'}),
     'Upload Font To': (lambda: qt_dialogs.font_device_dialog(None, 'E'),
@@ -12775,11 +12991,11 @@ qt_dialogs.PrinterFirmwareDialog._ask_version = lambda self, *a: None
 zpl_local.list_ports = lambda: []
 try:
     _t_managers = {
-        'Graphics': (qt_dialogs.PrinterGraphicsDialog(None, '127.0.0.1', 9),
+        'Graphics': (qt_dialogs.PrinterGraphicsDialog(None, Connection.network('127.0.0.1', 9)),
                      {'store_graphic', 'retrieve_graphic'}),
-        'Objects': (qt_dialogs.PrinterObjectsDialog(None, '127.0.0.1', 9),
+        'Objects': (qt_dialogs.PrinterObjectsDialog(None, Connection.network('127.0.0.1', 9)),
                     {'store_object', 'retrieve_object', 'delete_object'}),
-        'Firmware': (qt_dialogs.PrinterFirmwareDialog(None, '127.0.0.1', 9),
+        'Firmware': (qt_dialogs.PrinterFirmwareDialog(None, Connection.network('127.0.0.1', 9)),
                      {'firmware_connection', 'firmware_refresh'}),
         'Local Fonts': (qt_dialogs.LocalFontsDialog(None), {'extra_font_folder'}),
     }

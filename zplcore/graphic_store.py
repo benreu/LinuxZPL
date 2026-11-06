@@ -24,7 +24,8 @@ from typing import List, Optional
 from PIL import Image as PILImage
 
 from . import graphics
-from . import printer_io
+from . import connection
+from .connection import Printer
 
 _STORE: dict = {}
 
@@ -132,7 +133,7 @@ def device_name(spec: str) -> str:
 # --- printer I/O --------------------------------------------------------
 # Real printer memory, not this module's own dict above - reached the same
 # way zplcore/fonts.py already reaches a printer's fonts: raw ZPL/control
-# commands over the print socket (zplcore/printer_io.py). Store and Retrieve
+# commands over the print connection (zplcore/connection.py). Store and Retrieve
 # also mirror their result into the in-session store above, purely so an
 # already-placed ^XG/^IM/^IL updates on screen without a second round trip -
 # the same way upload_font's caller also registers the font locally. Delete
@@ -153,7 +154,7 @@ _OBJECT_SPEC = re.compile(
     r'\*\s*(?:[A-Za-z]:)?([A-Za-z0-9_\-]+)\.([A-Za-z0-9_\-]+)', re.IGNORECASE)
 
 
-def query_printer_graphics(address: str, port: int, timeout: float = 5,
+def query_printer_graphics(printer: Printer, timeout: float = 5,
                            cancel=None) -> Optional[List[str]]:
     """Every `d:o.GRF` object stored on the printer, across R:/E:/B:/A:,
     with the devices that could not be read, or None if the printer could not
@@ -191,7 +192,7 @@ def query_printer_graphics(address: str, port: int, timeout: float = 5,
     for index, device in enumerate(DEVICES):
         payload = f'^XA^HW{device}:*.{GRAPHIC_EXTENSION}^XZ'.encode('ascii')
         try:
-            reply = printer_io.send(address, port, payload, timeout,
+            reply = connection.send(printer, payload, timeout,
                                     read_reply=True, cancel=cancel)
         except OSError:
             if index == 0:
@@ -233,11 +234,11 @@ def build_graphic_upload(raw_spec: str, image: PILImage.Image) -> bytes:
     return header.encode('ascii') + data.encode('ascii')
 
 
-def upload_graphic(address: str, port: int, raw_spec: str,
+def upload_graphic(printer: Printer, raw_spec: str,
                    image: PILImage.Image, timeout: float = 30,
                    cancel=None) -> None:
     """Store `image` on the printer as `raw_spec`. Raises on failure."""
-    printer_io.send(address, port, build_graphic_upload(raw_spec, image), timeout,
+    connection.send(printer, build_graphic_upload(raw_spec, image), timeout,
                     cancel=cancel)
 
 
@@ -287,7 +288,7 @@ def parse_hg_reply(reply: bytes) -> Optional[PILImage.Image]:
     return graphics.to_image(raw[:rows * bytes_per_row], bytes_per_row)
 
 
-def retrieve_printer_graphic(address: str, port: int, raw_spec: str,
+def retrieve_printer_graphic(printer: Printer, raw_spec: str,
                              timeout: float = 30, cancel=None) -> PILImage.Image:
     """Fetch `raw_spec`'s real pixels from the printer via ^HG (Host
     Graphic) - the same request/read-reply shape ^HW already uses.
@@ -303,7 +304,7 @@ def retrieve_printer_graphic(address: str, port: int, raw_spec: str,
     """
     device, name, ext = split_device_spec(raw_spec)
     payload = f"^XA^HG{device}:{name.upper()}.{ext.upper()}^XZ".encode('ascii')
-    reply = printer_io.send(address, port, payload, timeout, read_reply=True,
+    reply = connection.send(printer, payload, timeout, read_reply=True,
                             cancel=cancel)
     if not reply:
         raise OSError(f"No reply retrieving {raw_spec}")
@@ -323,10 +324,10 @@ def retrieve_printer_graphic(address: str, port: int, raw_spec: str,
         f"image - first bytes: {preview}") from None
 
 
-def delete_printer_graphic(address: str, port: int, raw_spec: str,
+def delete_printer_graphic(printer: Printer, raw_spec: str,
                            timeout: float = 10, cancel=None) -> None:
     """Delete `raw_spec` from the printer via ^ID - the same shape
     fonts.delete_printer_font already uses. Raises on failure."""
     device, name, ext = split_device_spec(raw_spec)
     payload = f"^XA^ID{device}:{name.upper()}.{ext.upper()}^FS^XZ".encode('ascii')
-    printer_io.send(address, port, payload, timeout, cancel=cancel)
+    connection.send(printer, payload, timeout, cancel=cancel)

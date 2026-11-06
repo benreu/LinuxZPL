@@ -242,8 +242,11 @@ zplcore/    no GUI toolkit, runs headless
                     any device including Z:, any extension)
   printer_status.py  what the printer reports about itself, for Printer ->
                     Status... (faults, work state, memory, head wear)
-  printer_io.py  the raw socket send/reply fonts.py, graphic_store.py,
-                    printer_objects.py and printer_status.py share
+  connection.py  which printer: a network address or a USB printer found
+                    by its serial number, and the one send/reply fonts.py,
+                    graphic_store.py, printer_objects.py, printer_status.py
+                    and both windows use, whichever it is
+  printer_io.py  the raw socket send/reply underneath, for a network one
   local_port.py  the same send/reply down a USB printer node, /dev/usb/lpN
   firmware.py    the version ~HI reports, and a firmware file sent to the
                     printer for Printer -> Firmware Update...
