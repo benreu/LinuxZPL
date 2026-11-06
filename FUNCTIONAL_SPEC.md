@@ -926,6 +926,13 @@ their marks from the core, so they number the same ones.
     gaps, each take the largest whole magnification of the 24 dot cell that
     fits, written as `font_height` and `font_width` - transposed at a quarter
     turn - and the box snaps to the cells (§3.3)
+  - stored graphic (`^XG`/`^IM`, §11): once this session has the graphic, its
+    box is the graphic's own size in dots times the magnification, so a drag
+    of an `^XG` asks for a magnification on each axis - the nearest whole one,
+    1 to 10 - and the box snaps to what that prints; an `^IM`, which has no
+    magnification, offers no handles, as a MaxiCode offers none. Until the
+    session has the graphic nothing says how big it is, and its box is a
+    placeholder the handles size freely
   - text: `font_height` is set to the new height, `font_width` is solved so the
     text prints at the new width, and the box is then snapped to that printed
     width — the outline the user drags is the outline that prints. At a quarter
@@ -951,7 +958,10 @@ their marks from the core, so they number the same ones.
   two; an ellipse's thickness by the smaller factor, then held under half its
   shorter side, as a frame's is; a diagonal line's thickness by the factor
   across, since it is a run
-  along each row, then held under its width; an image's box,
+  along each row, then held under its width; a stored graphic's `^XG`
+  magnifications by their factors, rounded, 1 to 10, and its box back from
+  them, while an `^IM` is moved without resizing and a placeholder's box
+  scales as any box does; an image's box,
   its bitmap re-dithering at the new size on the next paint. Members have no
   minimum of their own — a group holding a 12-dot text still shrinks — only a
   floor of one dot on every size. Because the members snap to what will print,
@@ -2726,6 +2736,18 @@ device path a real printer still needs to look the object up by.
 | `^FO50,50^IMR:LOGO.GRF^FS` | the same, unmagnified | `^FO50,50^IMR:LOGO.GRF^FS` |
 | `^ILR:LOGO.GRF` | the document's `image_load`; drawn as a background at 0,0 if resolved | `^ILR:LOGO.GRF`, right after `^XA` |
 | `^ISR:LOGO.GRF,Y^FS` | recorded on the document; captures everything drawn before it into the store | `^ISR:LOGO.GRF,Y^FS`, after the elements it captured |
+
+**A stored graphic's box is the size it prints** once this session has the
+graphic: its own width and height in dots times `^XG`'s magnifications, or
+times 1 for `^IM`. It follows a change of magnification or command in the
+editor, a graphic stored, retrieved or deleted through Printer ▸ Graphics or
+Objects (`Document.sync_stored_graphics`), and an undo, since what the session
+has stored is not part of a snapshot. The box is not written to the file, so
+none of that is a change to the label: no undo entry, nothing unsaved. Both
+canvases draw the graphic dot for dot - each dot magnified as the printer
+repeats it, never smoothed. Until the session has the graphic, the box is a
+placeholder (200 × 200 for a new one) that stands in for it while the label is
+laid out.
 
 A `+ Graphic` button creates an `^XG`/`^IM` reference the same way `+ Time` and
 `+ Serial` create theirs; double-clicking one opens an editor for its command,

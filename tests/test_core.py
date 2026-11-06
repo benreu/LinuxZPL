@@ -8021,6 +8021,100 @@ check("delete() normalises its spec the same way store()/recall() do",
       graphic_store.delete('e:sample.grf') is True, graphic_store.items())
 graphic_store.clear()
 
+# --- a stored graphic's box is the size the printer prints it ----------------
+graphic_store.store('R:HELPLOGO.GRF', Image.new('1', (30, 20), 0))
+_sb_doc = Document(812, 1218, dpi=203)
+_sb = _sb_doc.add_stored_graphic_element(device_spec='R:HELPLOGO.GRF')
+check("a stored graphic this session has takes the graphic's own size",
+      (_sb.width, _sb.height) == (30, 20), (_sb.width, _sb.height))
+_sb_form = qt_dialogs.stored_graphic_form(_sb)
+_sb_form.body.findChild(qt_dialogs.QSpinBox, 'mag_x').setValue(2)
+_sb_form.body.findChild(qt_dialogs.QSpinBox, 'mag_y').setValue(3)
+_sb_form.apply()
+check("...and its magnification: the box follows the panel's Magnification rows",
+      (_sb.width, _sb.height) == (60, 60), (_sb.width, _sb.height))
+geometry.resize_by_handle(_sb_doc, _sb, 'br', 31, 5)
+check("a handle asks for the nearest whole magnification, and the box snaps to it",
+      (_sb.mag_x, _sb.mag_y, _sb.width, _sb.height) == (3, 3, 90, 60),
+      (_sb.mag_x, _sb.mag_y, _sb.width, _sb.height))
+geometry.resize_by_handle(_sb_doc, _sb, 'br', 2000, 2000)
+check("...no more than 10 times", (_sb.mag_x, _sb.mag_y) == (10, 10),
+      (_sb.mag_x, _sb.mag_y))
+_sb.mag_x = _sb.mag_y = 2
+_sb.sync_box()
+_sb_doc.select(_sb)
+_sb_frame = _sb_doc.add_frame_element()
+_sb_doc.select_many([_sb, _sb_frame]); _sb_doc.group_selected()
+_sb_box = geometry.selection_bounds([_sb, _sb_frame])
+geometry.resize_by_handle(_sb_doc, _sb_doc.resize_target(), 'br', _sb_box[2], _sb_box[3])
+check("a group scaled twice over doubles its magnifications",
+      (_sb.mag_x, _sb.mag_y, _sb.width, _sb.height) == (4, 4, 120, 80),
+      (_sb.mag_x, _sb.mag_y, _sb.width, _sb.height))
+_sb_doc.ungroup_selected()
+_sb_form = qt_dialogs.stored_graphic_form(_sb)
+_sb_cmd = _sb_form.body.findChild(qt_dialogs.QComboBox, 'command')
+_sb_cmd.setCurrentIndex(_sb_cmd.findData('IM'))
+_sb_form.apply()
+_sb_doc.select(_sb)
+check("an ^IM prints the graphic at its own size, and offers no handles",
+      (_sb.width, _sb.height) == (30, 20) and not _sb.resizable
+      and _sb_doc.resize_target() is None, (_sb.width, _sb.height, _sb.resizable))
+
+_sb_wait = _sb_doc.add_stored_graphic_element(device_spec='R:NOTYET.GRF')
+geometry.resize_by_handle(_sb_doc, _sb_wait, 'br', 17, 9)
+check("a graphic not yet seen keeps a placeholder box, which its handles size",
+      (_sb_wait.width, _sb_wait.height) == (217, 209) and _sb_wait.resizable,
+      (_sb_wait.width, _sb_wait.height))
+_sb_snap = _sb_doc.snapshot()
+graphic_store.store('R:NOTYET.GRF', Image.new('1', (40, 10), 0))
+check("once the session has it, the document's stored graphics are sized from it",
+      _sb_doc.sync_stored_graphics() and (_sb_wait.width, _sb_wait.height) == (40, 10),
+      (_sb_wait.width, _sb_wait.height))
+_sb_doc.restore(_sb_snap)
+_sb_back = [e for e in _sb_doc.elements if getattr(e, 'device_spec', '') == 'R:NOTYET.GRF'][0]
+check("...and an undo past that moment keeps the size it now knows",
+      (_sb_back.width, _sb_back.height) == (40, 10), (_sb_back.width, _sb_back.height))
+
+# Learning a graphic re-sizes the label's stored graphics without touching
+# the undo history or the unsaved flag: the box is not in the file.
+_sb_win = qt_main.ZPLDesignerWindow()
+_sb_win._save_settings = lambda *a: None
+_sb_late = _sb_win.document.add_stored_graphic_element(device_spec='R:LATER.GRF')
+_sb_win.canvas.commit()
+_sb_win.unsaved_changes = False
+_sb_undo = len(_sb_win._undo_stack)
+graphic_store.store('R:LATER.GRF', Image.new('1', (24, 16), 0))
+_sb_win._graphics_changed()
+check("Qt: a graphic stored in Printer > Graphics re-sizes the field that names "
+      "it, as no change to the label",
+      (_sb_late.width, _sb_late.height) == (24, 16)
+      and not _sb_win.unsaved_changes and len(_sb_win._undo_stack) == _sb_undo,
+      (_sb_late.width, _sb_late.height, _sb_win.unsaved_changes))
+
+# Drawn dot for dot, as the printer repeats a magnified dot: a black dot and
+# a white one, magnified 10 times, meet at a hard edge with no grey between.
+graphic_store.store('R:EDGE.GRF', Image.frombytes('1', (2, 1), bytes([0b01000000])))
+_sb_win.document.elements[:] = []
+_sb_edge = _sb_win.document.add_stored_graphic_element(device_spec='R:EDGE.GRF')
+_sb_edge.mag_x = _sb_edge.mag_y = 10
+_sb_edge.sync_box()
+_sb_edge.x, _sb_edge.y = 0, 0
+_sb_win.document.clear_selection()
+# At 3x, so the row sampled, half way down, is well clear of the outline
+_sb_win.canvas.set_zoom(3.0)
+_sb_scale = _sb_win.canvas._scale()
+_sb_img = QImage(int(40 * _sb_scale) + 4, int(20 * _sb_scale) + 4, QImage.Format_ARGB32)
+_sb_img.fill(Qt.white)
+_sb_win.canvas.render(_sb_img)
+_sb_row = [QColor(_sb_img.pixel(x, int(5 * _sb_scale))).lightness()
+           for x in range(int(2 * _sb_scale), int(18 * _sb_scale))]
+check("Qt draws a magnified stored graphic dot for dot, not smoothed",
+      _sb_row and set(_sb_row) <= {0, 255} and 0 in _sb_row and 255 in _sb_row,
+      sorted(set(_sb_row))[:6])
+_sb_win.unsaved_changes = False
+_sb_win.close(); _sb_win.deleteLater()
+graphic_store.clear()
+
 # graphic_store.split_device_spec(): a `d:o.x` spec taken apart for an
 # editor's separate fields - moved here from zplcore/model.py so the network
 # builders below can use it without a circular import.

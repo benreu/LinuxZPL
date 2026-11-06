@@ -1707,6 +1707,8 @@ def stored_graphic_form(element) -> EditorForm:
             element.mag_y = mag_y_spin.value()
         else:
             element.mag_x = element.mag_y = 1
+        # The box is the size it prints, once the graphic is known
+        element.sync_box()
 
     return editor.finish(_apply)
 

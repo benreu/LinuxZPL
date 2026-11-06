@@ -1239,6 +1239,8 @@ def stored_graphic_form(window, content, element) -> EditorForm:
             element.mag_y = int(mag_y_spin.get_value())
         else:
             element.mag_x = element.mag_y = 1
+        # The box is the size it prints, once the graphic is known
+        element.sync_box()
 
     return editor.finish(apply)
 

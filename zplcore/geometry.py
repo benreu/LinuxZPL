@@ -680,6 +680,14 @@ def scale_element(document, element, ax: int, ay: int, sx: float, sy: float) -> 
         # Its thickness is a run of dots along each row, so it scales with
         # the width - which keeps the line the same shape at any factor.
         element.thickness = _scaled(element.thickness, sx)
+    elif kind == 'stored_graphic' and element.resolve() is not None:
+        # Printed at its own size times ^XG's whole magnifications, so those
+        # scale, 1 to 10, and the box comes back from them. An ^IM has none
+        # and is moved without resizing.
+        if element.command == 'XG':
+            element.mag_x = element._nearest(element.mag_x * sx, 1)
+            element.mag_y = element._nearest(element.mag_y * sy, 1)
+        element.sync_box()
     elif kind == 'barcode' and element.symbology in symbology.FIXED_SIZE:
         # The one size the printer fixes. A group scaled round it moves it;
         # a change of resolution re-draws it at the same size on paper, which
@@ -834,6 +842,12 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
     if element.element_type == 'graphic_symbol':
         # The dragged box asks for an h and a w; the box then snaps to the
         # whole cells they make, turned as the symbols are.
+        element.fit(element.width, element.height)
+
+    if element.element_type == 'stored_graphic':
+        # A graphic this session has is printed at its own size times ^XG's
+        # magnifications, so the drag asks for those and the box snaps to
+        # them; a placeholder, standing in until it is known, takes the box.
         element.fit(element.width, element.height)
 
     if element.element_type == 'text':

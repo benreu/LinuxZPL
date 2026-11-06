@@ -3119,12 +3119,14 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.run()
         busy.abandon()
         dialog.destroy()
-        # Storing/retrieving/deleting a graphic changes no Document state, so
-        # this is a plain repaint - queue_draw(), never on_canvas_changed() -
-        # so an ^XG/^IM/^IL that now resolves differently is shown without
-        # marking the file dirty or pushing a bogus undo entry.
+        # Storing/retrieving/deleting a graphic changes nothing the file
+        # holds, so this is a plain repaint - queue_draw(), never
+        # on_canvas_changed() - so an ^XG/^IM/^IL that now resolves
+        # differently is shown without marking the file dirty or pushing a
+        # bogus undo entry. A stored graphic's box follows the graphic it now
+        # has; the box is not written to the file either.
         if changed_any:
-            self.design_canvas.queue_draw()
+            self._graphics_changed()
 
     def on_printer_objects_clicked(self, widget):
         """Every object on the real printer, across R:/E:/B:/A:/Z: and any
@@ -3363,7 +3365,14 @@ class ZPLViewerWindow(Gtk.Window):
         # Same reasoning as on_printer_graphics_clicked: deleting an object
         # changes no Document state, so this is a plain repaint.
         if changed_any:
-            self.design_canvas.queue_draw()
+            self._graphics_changed()
+
+    def _graphics_changed(self):
+        """Re-size the stored graphics to what this session now has stored
+        under their names, and repaint."""
+        self.design_canvas.document.sync_stored_graphics()
+        self.design_canvas.queue_draw()
+        self.properties.queue_sync()
 
     def on_printer_console_clicked(self, widget):
         """A free-form send/reply console for whatever the type-specific

@@ -2407,6 +2407,44 @@ check("GTK editors take ZPL's ranges: a frame typed 3 dots tall and solid, "
       (lim_frame.height, lim_frame.thickness, lim_thick.get_adjustment().get_upper(),
        lim_bar.bar_height))
 
+# A stored graphic's box is the size it prints: the graphic times ^XG's
+# magnification, followed through the editor, and drawn dot for dot.
+from PIL import Image as _SbImage
+from zplcore import graphic_store as _sb_store
+_sb_store.store('R:EDGE.GRF', _SbImage.frombytes('1', (2, 1), bytes([0b01000000])))
+sb_el = window.design_canvas.document.add_stored_graphic_element(device_spec='R:EDGE.GRF')
+sb_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+sb_form = gtk_editors.stored_graphic_form(window, sb_box, sb_el)
+sb_spins = {w.get_name(): w for w in _find_all(sb_box, Gtk.SpinButton)}
+sb_spins['mag_x'].set_value(10)
+sb_spins['mag_y'].set_value(10)
+sb_form.apply()
+check("GTK: the stored graphic editor's magnification re-sizes the box to what prints",
+      (sb_el.width, sb_el.height) == (20, 10), (sb_el.width, sb_el.height))
+sb_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 90, 60)
+sb_ctx = cairo.Context(sb_surface)
+sb_ctx.set_source_rgb(1, 1, 1); sb_ctx.paint()
+sb_ctx.scale(3, 3)
+sb_el.x, sb_el.y = 0, 0
+window.design_canvas._draw_stored_graphic_element(sb_ctx, sb_el, False)
+sb_surface.flush()
+sb_data, sb_stride = sb_surface.get_data(), sb_surface.get_stride()
+sb_row = {sb_data[15 * sb_stride + 4 * x] for x in range(6, 54)}
+check("GTK draws a magnified stored graphic dot for dot, not smoothed",
+      sb_row <= {0, 255} and sb_row == {0, 255}, sorted(sb_row)[:6])
+window.design_canvas.document.elements.remove(sb_el)
+sb_late = window.design_canvas.document.add_stored_graphic_element(device_spec='R:LATER.GRF')
+window.on_canvas_changed()
+sb_undo = len(window._undo_stack)
+_sb_store.store('R:LATER.GRF', _SbImage.new('1', (24, 16), 0))
+window._graphics_changed()
+check("GTK: a graphic stored in Printer > Graphics re-sizes the field that names "
+      "it, with no undo entry",
+      (sb_late.width, sb_late.height) == (24, 16) and len(window._undo_stack) == sb_undo,
+      (sb_late.width, sb_late.height, len(window._undo_stack), sb_undo))
+window.design_canvas.document.elements.remove(sb_late)
+_sb_store.clear()
+
 ff_maxi_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 ff_maxi = gtk_editors.barcode_form(
     window, ff_maxi_box, BarcodeElement(0, 0, 10, 'AB', symbology='maxicode'))

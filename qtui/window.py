@@ -1251,7 +1251,7 @@ class ZPLDesignerWindow(QMainWindow):
         # marking the file dirty or pushing a bogus undo entry.
         dialog = qt_dialogs.PrinterGraphicsDialog(
             self, self.printer_connection,
-            on_changed=lambda *_a: self.canvas.update())
+            on_changed=lambda *_a: self._graphics_changed())
         dialog.exec_()
 
     def on_printer_objects(self):
@@ -1259,8 +1259,17 @@ class ZPLDesignerWindow(QMainWindow):
         # no Document state, so this is a plain repaint, never a commit().
         dialog = qt_dialogs.PrinterObjectsDialog(
             self, self.printer_connection,
-            on_changed=lambda *_a: self.canvas.update())
+            on_changed=lambda *_a: self._graphics_changed())
         dialog.exec_()
+
+    def _graphics_changed(self):
+        """A graphic was stored, retrieved or deleted: re-size the stored
+        graphics that name it to what the printer will print, and repaint.
+        The boxes are not written to the file, so this is no change to the
+        label - no undo entry, nothing unsaved."""
+        self.document.sync_stored_graphics()
+        self.canvas.update()
+        self.properties.queue_sync()
 
     def on_printer_firmware(self):
         qt_dialogs.PrinterFirmwareDialog(self, self.printer_connection).exec_()

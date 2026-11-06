@@ -2342,9 +2342,53 @@ class StoredGraphicElement(DesignElement):
         self.mag_y = mag_y or 1
         self.element_type = 'stored_graphic'
 
+    # ^XG's magnification on each axis, 1 to 10
+    MAX_MAGNIFICATION = 10
+
     def resolve(self):
         """The real image this reference names, if this session has it."""
         return graphic_store.recall(self.device_spec)
+
+    def magnification(self):
+        """What the printer multiplies the graphic by: ^XG's two factors, and
+        1 by 1 for ^IM, which has none."""
+        return (self.mag_x, self.mag_y) if self.command == 'XG' else (1, 1)
+
+    def sync_box(self) -> None:
+        """Make the box the size the printer prints: the graphic's own size
+        in dots times the magnification, once this session has the graphic.
+        Until then nothing says how big it is, and the box is a placeholder
+        that stands in for it while the label is laid out."""
+        image = self.resolve()
+        if image is None:
+            return
+        mag_x, mag_y = self.magnification()
+        self.width, self.height = image.width * mag_x, image.height * mag_y
+
+    @property
+    def resizable(self) -> bool:
+        """An ^IM of a graphic this session has is the one size the printer
+        prints it at, so it offers no handles, as a MaxiCode offers none. An
+        ^XG's handles ask for a magnification; a placeholder's resize it."""
+        return not (self.command == 'IM' and self.resolve() is not None)
+
+    def fit(self, width: int, height: int) -> None:
+        """Take a dragged box as a request for ^XG's magnifications: the
+        nearest whole one on each axis, 1 to 10, of the graphic's own size;
+        the box then snaps to what that prints. A placeholder keeps the box
+        it was given."""
+        image = self.resolve()
+        if image is None:
+            return
+        if self.command == 'XG':
+            self.mag_x = self._nearest(width, image.width)
+            self.mag_y = self._nearest(height, image.height)
+        self.sync_box()
+
+    @classmethod
+    def _nearest(cls, wanted: int, size: int) -> int:
+        return max(1, min(cls.MAX_MAGNIFICATION,
+                          int(round(wanted / max(1, size)))))
 
     def to_zpl(self, offset=(0, 0)) -> str:
         zpl = self.origin_zpl(offset) + self.reverse_zpl()
@@ -2882,8 +2926,23 @@ class Document:
                                    device_spec: str = 'R:UNKNOWN.GRF',
                                    at=None) -> StoredGraphicElement:
         offset = self._stagger(20)
-        return self._append(StoredGraphicElement(50 + offset, 50 + offset, 200, 200,
-                                                  command=command, device_spec=device_spec), at)
+        element = StoredGraphicElement(50 + offset, 50 + offset, 200, 200,
+                                       command=command, device_spec=device_spec)
+        element.sync_box()
+        return self._append(element, at)
+
+    def sync_stored_graphics(self) -> bool:
+        """Re-size every stored graphic to the graphic this session now has
+        under its name, after one is stored, retrieved or forgotten. The box
+        is not written to the file, so this is no change to the label: no
+        undo entry and nothing unsaved. True if any box changed."""
+        changed = False
+        for element in self.elements:
+            if element.element_type == 'stored_graphic':
+                before = (element.width, element.height)
+                element.sync_box()
+                changed |= (element.width, element.height) != before
+        return changed
 
     def _append(self, element: DesignElement, at=None) -> DesignElement:
         """Add a new element and select it.
@@ -3309,9 +3368,11 @@ class Document:
         self.media_settings = dict(media_settings)
         # The resolution is not part of the snapshot, so an undo across a
         # change of printer would otherwise bring back a MaxiCode drawn for
-        # the old one.
+        # the old one. Nor is what this session has stored, so a graphic
+        # learned since the snapshot is sized from it again.
         for element in self.elements:
             self._stamp_dpi(element)
+        self.sync_stored_graphics()
 
     # --- geometry ------------------------------------------------------------
 

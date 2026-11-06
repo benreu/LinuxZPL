@@ -938,7 +938,9 @@ class DesignCanvas(QWidget):
 
         if qimage is not None and not qimage.isNull():
             painter.save()
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            # Each dot magnified as the printer repeats it, not smoothed: the
+            # box is the graphic times ^XG's whole magnifications
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
             painter.drawImage(
                 QRectF(element.x, element.y, element.width, element.height), qimage)
             painter.restore()

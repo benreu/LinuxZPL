@@ -1235,7 +1235,9 @@ class DesignCanvas(Gtk.DrawingArea):
             context.scale(element.width / pixbuf.get_width(),
                           element.height / pixbuf.get_height())
             Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
-            context.get_source().set_filter(cairo.Filter.GOOD)
+            # Each dot magnified as the printer repeats it, not smoothed: the
+            # box is the graphic times ^XG's whole magnifications
+            context.get_source().set_filter(cairo.Filter.NEAREST)
             context.paint()
             context.restore()
         else:
