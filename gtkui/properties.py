@@ -183,7 +183,7 @@ class PropertiesPanel(Gtk.Box):
             self.finish_edit()
         if shown:
             if self._floating is not None:
-                self._floating.show_all()
+                self._show_all(self._floating)
             else:
                 self.show()
             self.queue_sync()
@@ -242,18 +242,32 @@ class PropertiesPanel(Gtk.Box):
                                    lambda *_a: self.finish_edit())
             self._floating.connect("set-focus", self._on_set_focus)
             self._floating.add(self)
-            self._floating.show_all()
+            self._show_all(self._floating)
         else:
             self._remember_floating_geometry()
             self._floating.remove(self)
             self._floating.destroy()
             self._floating = None
             window.paned.pack2(self, False, False)
-            self.show_all()
+            self._show_all(self)
             window.place_panel()
         self._update_float_button()
         self.queue_sync()
         self.on_shown_changed(self.shown)
+
+    def _show_all(self, widget):
+        """show_all() on `widget`, which holds the panel, without bringing
+        back the rows its editor hid.
+
+        show_all() shows every widget under it, the rows an editor keeps
+        hidden included - every symbology's rows on a Code 128, a text
+        block's Block Height on a field block - so the editor's own pass that
+        hides them runs again after it, as it does once its rows are first
+        built (_rebuild). The rows are the ones already there: nothing is
+        rebuilt and no edit is made."""
+        widget.show_all()
+        if self._form is not None:
+            self._form.after_show()
 
     def _remember_floating_geometry(self):
         if self._floating is not None and self._floating.get_visible():

@@ -967,6 +967,53 @@ _ppump()
 check("docked again, it is back beside the canvas",
       pp.get_parent() is pw.paned and pp.shown)
 
+# Floating it, docking it and reopening it closed show its window with
+# show_all(), which shows every widget under it - the rows an editor keeps
+# hidden too. They stay hidden: a Code 128 has none of the other
+# symbologies' rows, and a field block no Block Height.
+def _p_rows():
+    """The labels of the editor rows on show, in order."""
+    return [row.get_children()[0].get_text()
+            for row in pp._form.content.get_children()
+            if isinstance(row, Gtk.Box) and row.get_visible()
+            and row.get_children()
+            and isinstance(row.get_children()[0], Gtk.Label)]
+
+
+p_code, p_block = pdoc.add_barcode_element(), pdoc.add_text_element()
+pw.on_canvas_changed()
+p_shown, p_depth = {}, _pdepth()
+for p_kind, p_element in (('Code 128', p_code), ('text', p_block)):
+    pdoc.select(p_element)
+    pp.sync()
+    _ppump()
+    p_seen = [('docked', _p_rows())]
+    pp.set_floating(True)
+    _ppump()
+    p_seen.append(('floating', _p_rows()))
+    pp.set_shown(False)
+    pp.set_shown(True)
+    _ppump()
+    p_seen.append(('reopened', _p_rows()))
+    pp.set_floating(False)
+    _ppump()
+    p_seen.append(('docked again', _p_rows()))
+    p_shown[p_kind] = p_seen
+check("floated, reopened and docked again, the panel shows the rows it did "
+      "docked, none of those its editor hides",
+      all(rows == seen[0][1] for seen in p_shown.values() for _w, rows in seen)
+      and 'Error Correction:' not in p_shown['Code 128'][0][1]
+      and 'Block Height:' not in p_shown['text'][0][1],
+      dict((kind, [(where, len(rows)) for where, rows in seen])
+           for kind, seen in p_shown.items()))
+check("and showing it so makes no edit", _pdepth() == p_depth and not pp._pending,
+      (_pdepth() - p_depth, pp._pending))
+for p_element in (p_code, p_block):
+    pdoc.elements.remove(p_element)
+pdoc.clear_selection()
+pw.on_canvas_changed()
+pp.sync()
+
 # The right-click menu is popped up and left to the main loop, so it is caught
 # on its way up and its Properties item activated by hand.
 pdoc.select_many([p_frame, p_other])
