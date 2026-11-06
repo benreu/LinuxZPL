@@ -270,8 +270,14 @@ half the shorter side, so the radius is `rounding / 8 × min(width, height) / 2`
 A border insets its own radius by half the thickness, as it insets its path.
 
 Thickness is a border drawn inward from the element bounds. Its useful maximum
-is `min(width, height) / 2`, at which point the border meets in the middle and
-the frame is a solid filled rectangle. Clamp to that maximum, minimum 1.
+is `min(width, height) / 2` **rounded up**, at which point the border meets in
+the middle and the frame is a solid filled rectangle. Clamp to that maximum,
+minimum 1. Rounded up, not down: `^GB400,3,3` is a solid 3 dot rule, and half
+of 3 rounded down is a border of 1 that leaves a white row through it.
+
+The sides are `^GB`'s own range, 1 to 32000 - "value of t to 32000", the
+thickness held to fit the sides rather than the sides to fit it - so a rule
+one dot thick can be typed, and a box can run the width of any label.
 
 #### Circle
 
@@ -291,8 +297,8 @@ A circle is the same shape as a frame whose rounding meets in the middle: a
 square rounded by half its side. That is how it is drawn, through the frame's
 own drawing, so what a frame does with its colour, with a border thick enough
 to fill it and with `^FR` a circle does too. Thickness is a border drawn inward
-from the circumference, and its useful maximum is the radius, `diameter / 2`,
-where the circle is a solid disc. Clamp to that maximum, minimum 1.
+from the circumference, and its useful maximum is the radius, `diameter / 2`
+rounded up, where the circle is a solid disc. Clamp to that maximum, minimum 1.
 
 #### Ellipse
 
@@ -304,8 +310,8 @@ where the circle is a solid disc. Clamp to that maximum, minimum 1.
 
 An ellipse fills its `width × height` box, and its two sides are free: nothing
 holds it round, as a circle is held. Thickness is a border drawn inward from
-the outline, as a frame's is, and its useful maximum is `min(width, height) / 2`,
-where the ellipse is solid. Clamp to that maximum, minimum 1.
+the outline, as a frame's is, and its useful maximum is `min(width, height) / 2`
+rounded up, where the ellipse is solid. Clamp to that maximum, minimum 1.
 
 **The ring is the ellipse less an inset one.** The hole is the ellipse filling
 the box inset by the thickness on every side, `(t, t, w − 2t, h − 2t)` from the
@@ -897,11 +903,15 @@ their marks from the core, so they number the same ones.
   size is rarely the dragged one, so a top or left handle anchors the opposite
   edge of the box as it was at the press. Growing from the dragged corner instead
   walks the element up or along the label, a step per motion event.
-- Resizing enforces a **minimum of 20 × 20 dots** and clamps the element to the
-  label bounds — origin first, then the size against the room left beyond it, so
-  a box dragged larger than the label is cut down rather than pushed off the left
-  edge — and then applies per-type rules:
-  - frame: thickness clamped to `min(width, height) / 2`
+- Resizing enforces a **minimum of 20 dots on each side the handle moves** -
+  or the side's size at the press, where that was already less - and none on a
+  side it leaves alone. So the end handle of a 3 dot rule leaves it 3 dots
+  thick, and its bottom handle grows it from 3 rather than jumping to 20; a
+  side under 20 is a typed value, never a dragged one. It then clamps the
+  element to the label bounds — origin first, then the size against the room
+  left beyond it, so a box dragged larger than the label is cut down rather
+  than pushed off the left edge — and then applies per-type rules:
+  - frame: thickness clamped to `min(width, height) / 2`, rounded up
   - circle: the box is taken as a request for one diameter. A side handle
     means its own axis - the width for the left and right handles, the height
     for the top and bottom - and a corner handle the smaller of the two, which
@@ -909,7 +919,8 @@ their marks from the core, so they number the same ones.
     one magnification does. Held to the label's shorter side, then the box
     snaps to the circle and grows from the edge the drag left alone; the
     thickness is clamped to the radius
-  - ellipse: thickness clamped to `min(width, height) / 2`, as a frame's is
+  - ellipse: thickness clamped to `min(width, height) / 2`, rounded up, as a
+    frame's is
   - diagonal line: thickness clamped to the width
   - graphic symbol: the stack and the run, divided among the cells and their
     gaps, each take the largest whole magnification of the 24 dot cell that
@@ -925,8 +936,8 @@ their marks from the core, so they number the same ones.
   edge is the anchor; a corner scales both axes, a side handle one, each freely
   — as a single element resizes, and as ZPL's independent font height and width
   allow. The moving edge may go as far as the room its fixed edge leaves, so the
-  anchor never has to move, and the joint box is held to the same **20 × 20
-  minimum**. Every member is put back to how it was at the press and scaled
+  anchor never has to move, and the joint box is held to the same **20 dot
+  minimum** on each side the handle moves. Every member is put back to how it was at the press and scaled
   from there, about the anchor, by the same rule a change of print resolution
   applies (§11) with one factor per axis: positions and boxes outright; a text
   element's font height by the factor across its lines and its font width by
@@ -1445,6 +1456,12 @@ each element's own, and only the panel for one element offers them.
 
 ### 7.3 Every editor, and the other dialogs
 
+- **An editor's ranges are its command's own**, from the manual, held on the
+  element's class (`FrameElement.MIN_SIDE`, `TextElement.MAX_FONT_SIZE`,
+  `FieldBlock.MAX_LINES`, each shape's `thickness_limit`, the symbology
+  table's heights) and read by both frontends' editors and by the Properties
+  panel's shared rows, so the three cannot disagree. The label's own size is
+  not a limit on a typed value; a drag is held inside the label (§5).
 - **Label Settings carries the label home; the Print window carries what
   prints it** — `^LH`'s x and y stay beside the size because preprinted stock
   is a design decision. `^PO`, `^PM` and `^LR`, the copies and the rest of
@@ -1471,13 +1488,13 @@ file choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
 |---|---|---|
-| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Direction; Character Gap; Reverse; Font (Choose… / Clear); Wrap; Block; Wrap Width; Block Height; Max Lines; Line Spacing; Justification; Indent; ID | Heights and widths 8–500 dots. Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The wrap fields are the block (§3.3). Block is "Field block (^FB)" or "Text block (^TB)", the list both frontends share. A `^FB` shows Max Lines, Line Spacing, its Justification and Indent: 1–64 lines, −100–100 spacing, the justification list of §3.3 and 0–2000 indent. A `^TB` shows Block Height, 1–32000 dots, and a Justification of Left or Right, which is the field's own `z` (§11): Right makes it right justified, and Left makes a right justified field left, leaving a left or auto one as it was. The box does not move for it, but the edge the `^FO` names is then the one a change of size keeps still. Wrap Width, 10–2000 dots, is either's. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at, and Block Height at the lines it takes there. A text block breaks no line at `\&`, so while one is chosen the text is shown as written and a line break typed into it is written as a space. Direction and Character Gap are `^FP` (§3.3): the list of directions both frontends share, and 0–9999 dots. Direction is insensitive while Wrap is ticked, and keeps whatever the element has. Reverse is `^FR` (§3.2), a checkbox shared in name, effect and tooltip across every element editor that has one. |
-| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 10–800, 10–1200, and 1 to `min(width, height) / 2` — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) inverts whatever is already on the label, ignoring Colour (§18). |
-| **Edit Circle** | Diameter; Thickness; Colour; Reverse | Diameter 3–4095, `^GC`'s own range, so a small circle from a file is not enlarged by accepting an editor it was only looked at in. Thickness 1 to `diameter / 2`, the maximum updating live as the diameter changes. Colour and Reverse as Edit Frame's. |
-| **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2`, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
+| **Edit Text** | Text (multi-line); Font Height; Font Width; Orientation; Direction; Character Gap; Reverse; Font (Choose… / Clear); Wrap; Block; Wrap Width; Block Height; Max Lines; Line Spacing; Justification; Indent; ID | Heights and widths 8–32000 dots: up to `^A`'s 32000, from 8 rather than `^A`'s 10 so that no label which opens today is refused one of its own sizes (a bitmap font rounds any of them to its cell's whole magnifications). Choose… lists installed TrueType families only; Clear reverts to the document default, shown as "Default (family)". The wrap fields are the block (§3.3). Block is "Field block (^FB)" or "Text block (^TB)", the list both frontends share. A `^FB` shows Max Lines, Line Spacing, its Justification and Indent: 1–9999 lines, −9999–9999 spacing, the justification list of §3.3 and 0–9999 indent, `^FB`'s own ranges. A `^TB` shows Block Height, 1–32000 dots, and a Justification of Left or Right, which is the field's own `z` (§11): Right makes it right justified, and Left makes a right justified field left, leaving a left or auto one as it was. The box does not move for it, but the edge the `^FO` names is then the one a change of size keeps still. Wrap Width, 1–32000 dots, is either's. All but the checkbox are insensitive while Wrap is clear; Wrap Width starts at the width the text already prints at, and Block Height at the lines it takes there. A text block breaks no line at `\&`, so while one is chosen the text is shown as written and a line break typed into it is written as a space. Direction and Character Gap are `^FP` (§3.3): the list of directions both frontends share, and 0–9999 dots. Direction is insensitive while Wrap is ticked, and keeps whatever the element has. Reverse is `^FR` (§3.2), a checkbox shared in name, effect and tooltip across every element editor that has one. |
+| **Edit Frame** | Width; Height; Thickness; Colour; Corner Rounding; Reverse | 1–32000 each, `^GB`'s own range, and 1 to `min(width, height) / 2` rounded up — the thickness maximum updates live as the size fields change. Colour is `^GB`'s `B`/`W`, rounding its 0–8 (§3.3). Reverse (`^FR`) inverts whatever is already on the label, ignoring Colour (§18). |
+| **Edit Circle** | Diameter; Thickness; Colour; Reverse | Diameter 3–4095, `^GC`'s own range, so a small circle from a file is not enlarged by accepting an editor it was only looked at in. Thickness 1 to `diameter / 2` rounded up, the maximum updating live as the diameter changes. Colour and Reverse as Edit Frame's. |
+| **Edit Ellipse** | Width; Height; Thickness; Colour; Reverse | Width and height 3–4095, `^GE`'s own range, so an ellipse from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to `min(width, height) / 2` rounded up, the maximum updating live as either side changes. Colour and Reverse as Edit Frame's. |
 | **Edit Diagonal Line** | Width; Height; Thickness; Colour; Direction; Reverse | Width and height 3–32000, `^GD`'s own range, so a line from a file is neither cut down nor enlarged by accepting an editor it was only looked at in. Thickness 1 to the width, the maximum updating live as the width changes. Direction is right-leaning ( / ) or left-leaning ( \ ) (§3.3). Colour and Reverse as Edit Frame's. |
 | **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse; ID | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
-| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; ID; and the chosen symbology's own rows | Bar height 20–300 dots (1–9999 dots for PDF417 and MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a PDF417 with rows 3 dots tall and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A parameter two symbologies share takes each one's own label and choices: a Data Matrix's columns and rows are Least Columns and Least Rows from 10 up, and a PDF417's are Columns, 1–30, and Rows, 3–90, so a row never offers, or writes back, a value from the other's list. Their tooltips are each symbology's too, as is Check Digit's, whose label names three different checksums and three choices of showing one (§7.1). A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert applies at once. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
+| **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; ID; and the chosen symbology's own rows | Bar height 1–32000 dots, `^BC`'s and its kin's own range (1–9999 dots for PDF417 and MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a PDF417 with rows 3 dots tall and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A parameter two symbologies share takes each one's own label and choices: a Data Matrix's columns and rows are Least Columns and Least Rows from 10 up, and a PDF417's are Columns, 1–30, and Rows, 3–90, so a row never offers, or writes back, a value from the other's list. Their tooltips are each symbology's too, as is Check Digit's, whose label names three different checksums and three choices of showing one (§7.1). A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert applies at once. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
 | **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI; Home X and Y | Home is `^LH`, 0–32000 dots. 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Grid Settings** | Unit; Spacing; Major line every | Unit is Inches, Millimetres or Dots. Spacing is 0.005–2 in to three decimals, 0.1–50 mm to two, or 1–400 dots; one that comes out under a dot at the label's resolution is held at one. Changing the unit converts the spacing, so the grid stays its size as far as the new unit's precision and range allow: 0.1 in becomes 2.54 mm, not 0.1 mm. Major line every is 1–100 spaces. A live hint gives a physical spacing in dots at the label's resolution, where a fraction means the lines are not evenly spaced, and a dot spacing in inches. Only the spacing is here; showing the grid is the View menu's (§6.3). Accepting redraws the grid and remembers it (§13). It changes nothing in the label and records no undo entry (§12). |
@@ -3107,21 +3124,21 @@ message — never a swallowed exception or a placeholder.
 | Default printer | `192.168.50.21:9100`, 203 dpi |
 | Supported resolutions | 203, 300, 600 dpi |
 | Text | `^AF`, 26 dot height, 26 dot width - font F once down and twice across, so it prints at the size it says - `"New Text"` |
-| Text dialog limits | font height and width 8–500 dots, character gap 0–9999 dots |
+| Text dialog limits | font height and width 8–32000 dots, character gap 0–9999 dots, wrap width 1–32000, max lines 1–9999, line spacing −9999–9999, indent 0–9999 |
 | Frame | 200 × 150 dots, 2 dot thickness |
-| Frame dialog limits | width 10–800, height 10–1200, thickness 1 to `min(w,h)/2` |
+| Frame dialog limits | width and height 1–32000, thickness 1 to `min(w,h)/2` rounded up |
 | Circle | 150 dot diameter, 2 dot thickness, black |
-| Circle dialog limits | diameter 3–4095, thickness 1 to `diameter/2` |
+| Circle dialog limits | diameter 3–4095, thickness 1 to `diameter/2` rounded up |
 | Ellipse | 200 × 150 dots, 2 dot thickness, black |
-| Ellipse dialog limits | width and height 3–4095, thickness 1 to `min(w,h)/2` |
+| Ellipse dialog limits | width and height 3–4095, thickness 1 to `min(w,h)/2` rounded up |
 | Diagonal line | 200 × 150 dots, 4 dot thickness, black, leaning right |
 | Diagonal line dialog limits | width and height 3–32000, thickness 1 to the width |
 | Graphic symbol | `A` (®), 48 × 48 dots, upright |
 | Graphic symbol dialog limits | height and width 1–32000 |
 | Barcode | Code 128, `"123456789"`, 100 dot bar height, module width 2, value printed below |
-| Barcode dialog limits | bar height 20–300 dots, module width 1–20, interpretation line height 6–200, ratio 2.0–3.0 |
+| Barcode dialog limits | bar height 1–32000 dots (PDF417 and MicroPDF417 rows 1–9999), module width 1–20, interpretation line height 6–200, ratio 2.0–3.0 |
 | Image | 200 × 200 dots, JPEG/PNG source |
-| Minimum element size when resizing | 20 × 20 dots |
+| Minimum element size when resizing | 20 dots on each side the handle moves, or that side's size at the press if less; typed values go lower |
 | Resize handle size and hit radius | 8 **screen pixels** — `8 / scale` dots, so it neither shrinks out of reach when zoomed out nor covers the element when zoomed in; where the radius puts two handles in reach, the nearer wins |
 | Resize drag origin | the box the element had at the press — a resize snaps to a derived size, so a delta measured from the previous motion event would be lost |
 | Zoom range | 5% to 800%, along a fixed ladder of steps |

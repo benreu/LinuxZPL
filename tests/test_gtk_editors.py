@@ -2382,6 +2382,31 @@ check("adding an ^FM position is a change", ff_heard == ['barcode'], ff_heard)
 ff_heard.clear()
 _named_button(ff_bbox, 'remove_position').clicked()
 check("removing one is a change", ff_heard == ['barcode'], ff_heard)
+# ZPL's own ranges in the editors: a 3 dot rule typed into a frame, and a
+# bar 600 dots tall (2 inches at 300 dpi).
+lim_frame = gtk_editors.FrameElement(10, 10, 400, 40, 2)
+lim_fbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+lim_ff = gtk_editors.frame_form(window, lim_fbox, lim_frame)
+lim_spins = {w.get_name(): w for w in _find_all(lim_fbox, Gtk.SpinButton)}
+lim_spins['height'].set_value(3)
+lim_thick = next(w for w in _find_all(lim_fbox, Gtk.SpinButton)
+                 if w.get_name() not in ('width', 'height', 'rounding'))
+lim_thick.set_value(2)
+lim_ff.apply()
+lim_bar = BarcodeElement(0, 0, 100, '1234')
+lim_bbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+lim_bf = gtk_editors.barcode_form(window, lim_bbox, lim_bar)
+lim_bf.after_show()
+next(w for w in _find_all(lim_bbox, Gtk.SpinButton)
+     if w.get_name() == 'bar_height').set_value(600)
+lim_bf.apply()
+check("GTK editors take ZPL's ranges: a frame typed 3 dots tall and solid, "
+      "and a bar 600 dots tall",
+      (lim_frame.height, lim_frame.thickness) == (3, 2)
+      and lim_thick.get_adjustment().get_upper() == 2 and lim_bar.bar_height == 600,
+      (lim_frame.height, lim_frame.thickness, lim_thick.get_adjustment().get_upper(),
+       lim_bar.bar_height))
+
 ff_maxi_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 ff_maxi = gtk_editors.barcode_form(
     window, ff_maxi_box, BarcodeElement(0, 0, 10, 'AB', symbology='maxicode'))

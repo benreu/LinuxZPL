@@ -316,6 +316,14 @@ class FieldBlock:
     """
 
     JUSTIFICATIONS = ('L', 'C', 'R', 'J')
+    # The editors' ranges, from ^FB's own: a width up to 32000 dots (the
+    # manual says "to the width of the label", which the label's own size
+    # then holds it to), up to 9999 lines, spacing and indent within 9999.
+    # A wrap width is shared with ^TB, whose own range is the same.
+    MIN_WIDTH, MAX_WIDTH = 1, 32000
+    MAX_LINES = 9999
+    MIN_SPACING, MAX_SPACING = -9999, 9999
+    MAX_INDENT = 9999
 
     def __init__(self, width: int, max_lines: int = 1, line_spacing: int = 0,
                  justification: str = 'L', indent: int = 0):
@@ -584,6 +592,12 @@ class TextElement(DesignElement):
     # ^FP's directions, and the most extra dots it will put between characters
     DIRECTIONS = ('H', 'V', 'R')
     MAX_CHAR_GAP = 9999
+
+    # The Font Height and Font Width rows: up to ^A's 32000. The minimum is
+    # 8, under ^A's 10, so that no label which opens today is refused one of
+    # its own sizes. A bitmap font rounds whatever is asked to its cell's
+    # whole magnifications, 1 to 10, so a size past ten cells prints as ten.
+    MIN_FONT_SIZE, MAX_FONT_SIZE = 8, 32000
 
     def __init__(self, x: int = 50, y: int = 50, text: str = "Label",
                  font_height: int = 26, font_width: int = 26,
@@ -940,6 +954,9 @@ class FrameElement(DesignElement):
     DEFAULTS = ('B', 0)
     COLOURS = ('B', 'W')
     MAX_ROUNDING = 8
+    # ^GB's own range for a side, "value of t to 32000": the thickness is
+    # held to fit the sides rather than the sides to fit it.
+    MIN_SIDE, MAX_SIDE = 1, 32000
 
     def __init__(self, x: int = 100, y: int = 100, width: int = 200,
                  height: int = 150, thickness: int = 2,
@@ -955,9 +972,17 @@ class FrameElement(DesignElement):
         self.rounding = max(0, min(int(rounding or 0), self.MAX_ROUNDING))
         self.element_type = 'frame'
 
+    @staticmethod
+    def thickness_limit(width: int, height: int) -> int:
+        """Thickest useful border for a box this size: half the shorter side,
+        rounded up, where the border meets in the middle and fills solid.
+        Rounded up, not down, so a side of an odd number of dots can be
+        filled: ^GB400,3,3 is a solid 3 dot rule, and half of 3 rounded down
+        would leave a white row through the middle of it."""
+        return max(1, (min(width, height) + 1) // 2)
+
     def max_thickness(self) -> int:
-        """Thickest useful border: at half the smaller side it fills solid."""
-        return max(1, min(self.width, self.height) // 2)
+        return self.thickness_limit(self.width, self.height)
 
     def corner_radius(self) -> float:
         """The corner radius in dots, from ^GB's 0-8 rounding index.
@@ -1028,9 +1053,14 @@ class CircleElement(DesignElement):
         self.sync_box()
         self.thickness = max(1, min(self.thickness, self.max_thickness()))
 
+    @staticmethod
+    def thickness_limit(diameter: int) -> int:
+        """Thickest useful border: the radius, rounded up so an odd diameter
+        can be filled, where the circle is a solid disc."""
+        return max(1, (diameter + 1) // 2)
+
     def max_thickness(self) -> int:
-        """Thickest useful border: at the radius it fills solid."""
-        return max(1, self.diameter // 2)
+        return self.thickness_limit(self.diameter)
 
     def corner_radius(self) -> float:
         """Half the side, which is what makes the frame's drawing a circle."""
@@ -1077,9 +1107,14 @@ class EllipseElement(DesignElement):
             self.colour = 'B'
         self.element_type = 'ellipse'
 
+    @staticmethod
+    def thickness_limit(width: int, height: int) -> int:
+        """Thickest useful border: half the shorter side, rounded up as a
+        frame's is, where the ellipse is solid."""
+        return max(1, (min(width, height) + 1) // 2)
+
     def max_thickness(self) -> int:
-        """Thickest useful border: at half the shorter side it fills solid."""
-        return max(1, min(self.width, self.height) // 2)
+        return self.thickness_limit(self.width, self.height)
 
     def to_zpl(self, offset=(0, 0)) -> str:
         """Convert to ZPL commands."""
@@ -1125,9 +1160,13 @@ class DiagonalLineElement(DesignElement):
             self.direction = 'R'
         self.element_type = 'diagonal'
 
-    def max_thickness(self) -> int:
+    @staticmethod
+    def thickness_limit(width: int) -> int:
         """Thickest useful line: at the full width the box fills solid."""
-        return max(1, self.width)
+        return max(1, width)
+
+    def max_thickness(self) -> int:
+        return self.thickness_limit(self.width)
 
     def to_zpl(self, offset=(0, 0)) -> str:
         """Convert to ZPL commands."""

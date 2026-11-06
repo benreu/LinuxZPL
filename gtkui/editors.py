@@ -384,7 +384,7 @@ def _text_format_rows(window, editor, content, element, show_text=None):
     make_row("Block:", kind_combo, tip='block_kind')
 
     block_width_spin = _make_spin((element.block or block).width,
-                                  10, 2000)
+                                  FieldBlock.MIN_WIDTH, FieldBlock.MAX_WIDTH)
     block_width_spin.set_name("block_width")
     make_row("Wrap Width:", block_width_spin, tip='block_width')
 
@@ -393,11 +393,12 @@ def _text_format_rows(window, editor, content, element, show_text=None):
     block_height_spin.set_name("block_height")
     height_row = make_row("Block Height:", block_height_spin, tip='block_height')
 
-    max_lines_spin = _make_spin(block.max_lines, 1, 64)
+    max_lines_spin = _make_spin(block.max_lines, 1, FieldBlock.MAX_LINES)
     max_lines_spin.set_name("max_lines")
     lines_row = make_row("Max Lines:", max_lines_spin, tip='max_lines')
 
-    spacing_spin = _make_spin(block.line_spacing, -100, 100)
+    spacing_spin = _make_spin(block.line_spacing, FieldBlock.MIN_SPACING,
+                              FieldBlock.MAX_SPACING)
     spacing_spin.set_name("line_spacing")
     spacing_row = make_row("Line Spacing:", spacing_spin, tip='line_spacing')
 
@@ -416,7 +417,7 @@ def _text_format_rows(window, editor, content, element, show_text=None):
     text_justify_combo.set_name("text_justification")
     text_justify_row = make_row("Justification:", text_justify_combo, tip='text_justification')
 
-    indent_spin = _make_spin(block.indent, 0, 2000)
+    indent_spin = _make_spin(block.indent, 0, FieldBlock.MAX_INDENT)
     indent_spin.set_name("indent")
     indent_row = make_row("Indent:", indent_spin, tip='indent')
 
@@ -545,10 +546,12 @@ def time_form(window, content, element) -> EditorForm:
     text_entry.set_name("clock_text")
     make_row("Format:", text_entry, tip='clock_text')
 
-    height_spin = _make_spin(element.font_height, 8, 500)
+    height_spin = _make_spin(element.font_height, TextElement.MIN_FONT_SIZE,
+                             TextElement.MAX_FONT_SIZE)
     make_row("Font Height:", height_spin)
 
-    width_spin = _make_spin(element.font_width, 8, 500)
+    width_spin = _make_spin(element.font_width, TextElement.MIN_FONT_SIZE,
+                            TextElement.MAX_FONT_SIZE)
     width_spin.set_name("font_width")
     make_row("Font Width:", width_spin, tip='font_width')
 
@@ -632,10 +635,12 @@ def serial_form(window, content, element) -> EditorForm:
     leading_zero_check.set_name("serial_leading_zero")
     make_row("", leading_zero_check, tip='serial_leading_zero')
 
-    height_spin = _make_spin(element.font_height, 8, 500)
+    height_spin = _make_spin(element.font_height, TextElement.MIN_FONT_SIZE,
+                             TextElement.MAX_FONT_SIZE)
     make_row("Font Height:", height_spin)
 
-    width_spin = _make_spin(element.font_width, 8, 500)
+    width_spin = _make_spin(element.font_width, TextElement.MIN_FONT_SIZE,
+                            TextElement.MAX_FONT_SIZE)
     width_spin.set_name("font_width")
     make_row("Font Width:", width_spin, tip='font_width')
 
@@ -727,10 +732,12 @@ def numbered_form(window, content, element) -> EditorForm:
     prompt_entry.set_name("field_prompt")
     make_row("Field Name:", prompt_entry, tip='field_prompt')
 
-    height_spin = _make_spin(element.font_height, 8, 500)
+    height_spin = _make_spin(element.font_height, TextElement.MIN_FONT_SIZE,
+                             TextElement.MAX_FONT_SIZE)
     make_row("Font Height:", height_spin)
 
-    width_spin = _make_spin(element.font_width, 8, 500)
+    width_spin = _make_spin(element.font_width, TextElement.MIN_FONT_SIZE,
+                            TextElement.MAX_FONT_SIZE)
     width_spin.set_name("font_width")
     make_row("Font Width:", width_spin, tip='font_width')
 
@@ -803,10 +810,12 @@ def text_form(window, content, element) -> EditorForm:
     text_scroll.add(text_view)
     make_row("Text:", text_scroll)
 
-    height_spin = _make_spin(element.font_height, 8, 500)
+    height_spin = _make_spin(element.font_height, TextElement.MIN_FONT_SIZE,
+                             TextElement.MAX_FONT_SIZE)
     make_row("Font Height:", height_spin)
 
-    width_spin = _make_spin(element.font_width, 8, 500)
+    width_spin = _make_spin(element.font_width, TextElement.MIN_FONT_SIZE,
+                            TextElement.MAX_FONT_SIZE)
     width_spin.set_name("font_width")
     make_row("Font Width:", width_spin, tip='font_width')
 
@@ -1242,23 +1251,26 @@ def frame_form(window, content, element) -> EditorForm:
     width_label = Gtk.Label(label="Width:")
     content.pack_start(width_label, False, False, 0)
     width_spin = Gtk.SpinButton()
-    width_adj = Gtk.Adjustment(value=element.width, lower=10, upper=800, step_increment=1)
+    width_adj = Gtk.Adjustment(value=element.width, lower=FrameElement.MIN_SIDE,
+                               upper=FrameElement.MAX_SIDE, step_increment=1)
     width_spin.set_adjustment(width_adj)
+    width_spin.set_name("width")
     content.pack_start(width_spin, False, False, 0)
 
     # Frame height
     height_label = Gtk.Label(label="Height:")
     content.pack_start(height_label, False, False, 0)
     height_spin = Gtk.SpinButton()
-    height_adj = Gtk.Adjustment(value=element.height, lower=10, upper=1200, step_increment=1)
+    height_adj = Gtk.Adjustment(value=element.height, lower=FrameElement.MIN_SIDE,
+                                upper=FrameElement.MAX_SIDE, step_increment=1)
     height_spin.set_adjustment(height_adj)
+    height_spin.set_name("height")
     content.pack_start(height_spin, False, False, 0)
 
-    # Frame thickness. ^GB has no fixed limit; the useful maximum is
-    # half the smaller side, where the border meets and fills solid.
+    # Frame thickness, up to where the border meets and fills solid
     def max_thickness():
-        return max(1, min(int(width_spin.get_value()),
-                          int(height_spin.get_value())) // 2)
+        return FrameElement.thickness_limit(int(width_spin.get_value()),
+                                            int(height_spin.get_value()))
 
     thickness_label = Gtk.Label(label="Thickness:")
     content.pack_start(thickness_label, False, False, 0)
@@ -1327,7 +1339,7 @@ def circle_form(window, content, element) -> EditorForm:
 
     # The border meets in the middle at the radius, and fills solid.
     def max_thickness():
-        return max(1, int(diameter_spin.get_value()) // 2)
+        return CircleElement.thickness_limit(int(diameter_spin.get_value()))
 
     content.pack_start(Gtk.Label(label="Thickness:"), False, False, 0)
     thickness_spin = _make_spin(min(element.thickness, max_thickness()),
@@ -1450,8 +1462,8 @@ def ellipse_form(window, content, element) -> EditorForm:
     # The border meets in the middle at half the shorter side, and
     # the ellipse fills solid.
     def max_thickness():
-        return max(1, min(int(width_spin.get_value()),
-                          int(height_spin.get_value())) // 2)
+        return EllipseElement.thickness_limit(int(width_spin.get_value()),
+                                              int(height_spin.get_value()))
 
     content.pack_start(Gtk.Label(label="Thickness:"), False, False, 0)
     thickness_spin = _make_spin(min(element.thickness, max_thickness()),
@@ -1516,7 +1528,7 @@ def diagonal_form(window, content, element) -> EditorForm:
     # Each row's run meets the far side at the full width, and the
     # box fills solid.
     def max_thickness():
-        return max(1, int(width_spin.get_value()))
+        return DiagonalLineElement.thickness_limit(int(width_spin.get_value()))
 
     content.pack_start(Gtk.Label(label="Thickness:"), False, False, 0)
     thickness_spin = _make_spin(min(element.thickness, max_thickness()),

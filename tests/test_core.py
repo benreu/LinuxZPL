@@ -1359,8 +1359,51 @@ el = w.document.add_frame_element()
 w.document.selected_element = el
 geometry.resize_by_handle(w.document, el, 'br', -5000, -5000)
 check("resize keeps a 20x20 minimum", el.width >= 20 and el.height >= 20, (el.width, el.height))
-check("frame thickness clamped to min(w,h)/2",
-      el.thickness <= max(1, min(el.width, el.height) // 2), el.thickness)
+check("frame thickness clamped to half the shorter side, rounded up",
+      el.thickness <= max(1, (min(el.width, el.height) + 1) // 2), el.thickness)
+
+# --- size limits: ZPL's own ranges, held on each element class ---------------
+from zplcore import properties as _lim_props, symbology as _lim_sym
+from zplcore.model import (CircleElement as _LimCircle, EllipseElement as _LimEllipse,
+                           DiagonalLineElement as _LimDiagonal, FieldBlock as _LimBlock)
+_lim_rows = {prop.key: prop for prop in _lim_props.SHARED}
+_lim_frame = FrameElement(10, 10, 400, 3, 3)
+_lim_text = TextElement(10, 10, "x")
+check("a frame's Width and Height rows are ^GB's 1-32000",
+      _lim_rows['width'].limits(None, [_lim_frame]) == (1, 32000)
+      and _lim_rows['height'].limits(None, [_lim_frame]) == (1, 32000),
+      (_lim_rows['width'].limits(None, [_lim_frame]), _lim_rows['height'].limits(None, [_lim_frame])))
+check("the font rows reach ^A's 32000 and keep the minimum of 8",
+      _lim_rows['font_height'].limits(None, [_lim_text]) == (8, 32000)
+      and _lim_rows['font_width'].limits(None, [_lim_text]) == (8, 32000))
+check("a linear barcode's Bar Height is 1-32000, as ^BC's is",
+      _lim_sym.BARCODE_FEATURES['code128']['height'] == (1, 32000)
+      and _lim_sym.BARCODE_FEATURES['pdf417']['height'] == (1, 9999))
+check("a field block's rows reach ^FB's own limits",
+      (_LimBlock.MAX_WIDTH, _LimBlock.MAX_LINES, _LimBlock.MIN_SPACING,
+       _LimBlock.MAX_SPACING, _LimBlock.MAX_INDENT) == (32000, 9999, -9999, 9999, 9999))
+check("an odd shorter side can be filled: half of it rounded up",
+      FrameElement.thickness_limit(400, 3) == 2 and _LimCircle.thickness_limit(5) == 3
+      and _LimEllipse.thickness_limit(9, 40) == 5 and _LimDiagonal.thickness_limit(7) == 7
+      and FrameElement.thickness_limit(400, 4) == 2)
+
+# A solid 3 dot rule from another program stays solid through a resize
+_lim_doc = zpl_parser.parse_zpl("^XA^FO20,40^GB400,3,3^FS^XZ")[0]
+_lim_rule = _lim_doc.elements[0]
+geometry.resize_by_handle(_lim_doc, _lim_rule, 'mr', 50, 0)
+check("^GB400,3,3 resized by a handle still writes a thickness that fills it",
+      _lim_rule.width == 450 and _lim_rule.height == 3
+      and 2 * _lim_rule.thickness >= _lim_rule.height
+      and "^GB450,3," in _lim_doc.to_zpl(), (_lim_rule.width, _lim_rule.height,
+                                             _lim_rule.thickness))
+_lim_tall = _lim_rule.height
+geometry.resize_by_handle(_lim_doc, _lim_rule, 'bm', 0, 5)
+_lim_grown = _lim_rule.height
+geometry.resize_by_handle(_lim_doc, _lim_rule, 'bm', 0, -50)
+check("a thin rule's bottom handle grows it from where it was, and never "
+      "shrinks it below that, rather than jumping to 20",
+      _lim_tall == 3 and _lim_grown == 8 and _lim_rule.height == 8,
+      (_lim_tall, _lim_grown, _lim_rule.height))
 te = w.document.add_text_element('snap'); te.font_path = FONT
 w.document.sync_text_width(te); w.document.selected_element = te
 geometry.resize_by_handle(w.document, te, 'br', 120, 20)
@@ -4508,6 +4551,25 @@ check("...and so is editing the position it added", _ff_heard == ['barcode'],
 _ff_heard.clear()
 _ff_bf.body.findChild(_QPushButton, 'remove_position').click()
 check("removing one is a change", _ff_heard == ['barcode'], _ff_heard)
+# ZPL's own ranges in the editors: a 3 dot rule typed into a frame, a bar
+# 600 dots tall (2 inches at 300 dpi), and text 600 dots high.
+_lim_qframe = FrameElement(10, 10, 400, 40, 2)
+_lim_qff = qt_dialogs.frame_form(_lim_qframe)
+_lim_qff.body.findChild(qt_dialogs.QSpinBox, 'height').setValue(3)
+_lim_qthick = _lim_qff.body.findChild(qt_dialogs.QSpinBox, 'thickness')
+_lim_qthick.setValue(2)
+_lim_qff.apply()
+_lim_qbar = BarcodeElement(0, 0, 100, '1234')
+_lim_qbf = qt_dialogs.barcode_form(_lim_qbar)
+_lim_qbf.body.findChild(qt_dialogs.QSpinBox, 'bar_height').setValue(600)
+_lim_qbf.apply()
+check("Qt editors take ZPL's ranges: a frame typed 3 dots tall and solid, "
+      "and a bar 600 dots tall",
+      (_lim_qframe.height, _lim_qframe.thickness) == (3, 2)
+      and _lim_qthick.maximum() == 2 and _lim_qbar.bar_height == 600,
+      (_lim_qframe.height, _lim_qframe.thickness, _lim_qthick.maximum(),
+       _lim_qbar.bar_height))
+
 _ff_maxi = qt_dialogs.barcode_form(BarcodeElement(0, 0, 10, 'AB', symbology='maxicode'))
 _ff_heard.clear()
 _ff_maxi.on_change(lambda: _ff_heard.append('insert'))
@@ -12054,8 +12116,8 @@ _poval = EllipseElement(0, 0, 30, 20, 2)
 check("a shared range is the narrowest: a 30x20 ellipse holds the frame's "
       "thickness to 10", _pthick.limits(_pd, [_pf1, _poval]) == (1, 10),
       _pthick.limits(_pd, [_pf1, _poval]))
-check("...and the frame editor's 10-800 width is narrower than ^GE's",
-      zpl_props.find('width').limits(_pd, [_pf1, _poval]) == (10, 800),
+check("...and the shared width is the narrower of ^GB's 1-32000 and ^GE's 3-4095",
+      zpl_props.find('width').limits(_pd, [_pf1, _poval]) == (3, 4095),
       zpl_props.find('width').limits(_pd, [_pf1, _poval]))
 _pthick.write(_pd, [_pf1, _pf2], 3)
 check("writing a shared value writes it to every element",

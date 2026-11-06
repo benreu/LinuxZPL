@@ -777,7 +777,7 @@ def _text_format_rows(editor, form, element: TextElement,
     set_tip(kind_combo, 'block_kind', form)
 
     block_width = QSpinBox()
-    block_width.setRange(10, 2000)
+    block_width.setRange(FieldBlock.MIN_WIDTH, FieldBlock.MAX_WIDTH)
     block_width.setObjectName("block_width")
     block_width.setValue((element.block or block).width)
     form.addRow("Wrap Width:", block_width)
@@ -791,14 +791,14 @@ def _text_format_rows(editor, form, element: TextElement,
     set_tip(block_height, 'block_height', form)
 
     max_lines = QSpinBox()
-    max_lines.setRange(1, 64)
+    max_lines.setRange(1, FieldBlock.MAX_LINES)
     max_lines.setObjectName("max_lines")
     max_lines.setValue(block.max_lines)
     form.addRow("Max Lines:", max_lines)
     set_tip(max_lines, 'max_lines', form)
 
     spacing_spin = QSpinBox()
-    spacing_spin.setRange(-100, 100)
+    spacing_spin.setRange(FieldBlock.MIN_SPACING, FieldBlock.MAX_SPACING)
     spacing_spin.setObjectName("line_spacing")
     spacing_spin.setValue(block.line_spacing)
     form.addRow("Line Spacing:", spacing_spin)
@@ -826,7 +826,7 @@ def _text_format_rows(editor, form, element: TextElement,
     set_tip(text_justify_combo, 'text_justification', form)
 
     indent_spin = QSpinBox()
-    indent_spin.setRange(0, 2000)
+    indent_spin.setRange(0, FieldBlock.MAX_INDENT)
     indent_spin.setObjectName("indent")
     indent_spin.setValue(block.indent)
     form.addRow("Indent:", indent_spin)
@@ -943,13 +943,13 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
     form.addRow("Text:", text_edit)
 
     height_spin = QSpinBox()
-    height_spin.setRange(8, 500)
+    height_spin.setRange(TextElement.MIN_FONT_SIZE, TextElement.MAX_FONT_SIZE)
     height_spin.setValue(element.font_height)
     form.addRow("Font Height:", height_spin)
 
     width_spin = QSpinBox()
     width_spin.setObjectName("font_width")
-    width_spin.setRange(8, 500)
+    width_spin.setRange(TextElement.MIN_FONT_SIZE, TextElement.MAX_FONT_SIZE)
     width_spin.setValue(element.font_width)
     form.addRow("Font Width:", width_spin)
     set_tip(width_spin, 'font_width', form)
@@ -1015,13 +1015,13 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
     set_tip(text_edit, 'clock_text', form)
 
     height_spin = QSpinBox()
-    height_spin.setRange(8, 500)
+    height_spin.setRange(TextElement.MIN_FONT_SIZE, TextElement.MAX_FONT_SIZE)
     height_spin.setValue(element.font_height)
     form.addRow("Font Height:", height_spin)
 
     width_spin = QSpinBox()
     width_spin.setObjectName("font_width")
-    width_spin.setRange(8, 500)
+    width_spin.setRange(TextElement.MIN_FONT_SIZE, TextElement.MAX_FONT_SIZE)
     width_spin.setValue(element.font_width)
     form.addRow("Font Width:", width_spin)
     set_tip(width_spin, 'font_width', form)
@@ -1113,13 +1113,13 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
     set_tip(leading_zero, 'serial_leading_zero', form)
 
     height_spin = QSpinBox()
-    height_spin.setRange(8, 500)
+    height_spin.setRange(TextElement.MIN_FONT_SIZE, TextElement.MAX_FONT_SIZE)
     height_spin.setValue(element.font_height)
     form.addRow("Font Height:", height_spin)
 
     width_spin = QSpinBox()
     width_spin.setObjectName("font_width")
-    width_spin.setRange(8, 500)
+    width_spin.setRange(TextElement.MIN_FONT_SIZE, TextElement.MAX_FONT_SIZE)
     width_spin.setValue(element.font_width)
     form.addRow("Font Width:", width_spin)
     set_tip(width_spin, 'font_width', form)
@@ -1217,13 +1217,13 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
     set_tip(prompt, 'field_prompt', form)
 
     height_spin = QSpinBox()
-    height_spin.setRange(8, 500)
+    height_spin.setRange(TextElement.MIN_FONT_SIZE, TextElement.MAX_FONT_SIZE)
     height_spin.setValue(element.font_height)
     form.addRow("Font Height:", height_spin)
 
     width_spin = QSpinBox()
     width_spin.setObjectName("font_width")
-    width_spin.setRange(8, 500)
+    width_spin.setRange(TextElement.MIN_FONT_SIZE, TextElement.MAX_FONT_SIZE)
     width_spin.setValue(element.font_width)
     form.addRow("Font Width:", width_spin)
     set_tip(width_spin, 'font_width', form)
@@ -1285,12 +1285,14 @@ def frame_form(element) -> EditorForm:
     form = editor.rows
 
     width_spin = QSpinBox()
-    width_spin.setRange(10, 800)
+    width_spin.setObjectName("width")
+    width_spin.setRange(FrameElement.MIN_SIDE, FrameElement.MAX_SIDE)
     width_spin.setValue(element.width)
     form.addRow("Width:", width_spin)
 
     height_spin = QSpinBox()
-    height_spin.setRange(10, 1200)
+    height_spin.setObjectName("height")
+    height_spin.setRange(FrameElement.MIN_SIDE, FrameElement.MAX_SIDE)
     height_spin.setValue(element.height)
     form.addRow("Height:", height_spin)
 
@@ -1300,9 +1302,8 @@ def frame_form(element) -> EditorForm:
     set_tip(thickness_spin, 'thickness', form)
 
     def max_thickness():
-        # ^GB has no fixed limit; the useful maximum is half the smaller side,
-        # where the border meets in the middle and the frame fills solid.
-        return max(1, min(width_spin.value(), height_spin.value()) // 2)
+        # Up to where the border meets in the middle and the frame fills solid
+        return FrameElement.thickness_limit(width_spin.value(), height_spin.value())
 
     def sync_thickness_range():
         # Shrinking the frame must not leave an illegal thickness selectable.
@@ -1374,7 +1375,7 @@ def circle_form(element) -> EditorForm:
 
     def max_thickness():
         # The border meets in the middle at the radius, and fills solid.
-        return max(1, diameter_spin.value() // 2)
+        return CircleElement.thickness_limit(diameter_spin.value())
 
     def sync_thickness_range():
         # Shrinking the circle must not leave an illegal thickness selectable.
@@ -1444,7 +1445,7 @@ def ellipse_form(element) -> EditorForm:
     def max_thickness():
         # The border meets in the middle at half the shorter side, and the
         # ellipse fills solid.
-        return max(1, min(width_spin.value(), height_spin.value()) // 2)
+        return EllipseElement.thickness_limit(width_spin.value(), height_spin.value())
 
     def sync_thickness_range():
         # Shrinking the ellipse must not leave an illegal thickness selectable.
@@ -1515,7 +1516,7 @@ def diagonal_form(element) -> EditorForm:
     def sync_thickness_range():
         # Each row's run meets the far side at the full width, and the box
         # fills solid; narrowing it must not leave a thicker one selectable.
-        thickness_spin.setRange(1, max(1, width_spin.value()))
+        thickness_spin.setRange(1, DiagonalLineElement.thickness_limit(width_spin.value()))
 
     sync_thickness_range()
     thickness_spin.setValue(min(element.thickness, element.max_thickness()))

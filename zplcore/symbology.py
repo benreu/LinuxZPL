@@ -484,7 +484,7 @@ class Spin:
         self.lower, self.upper = lower, upper
 
 
-def _features(mode=False, ratio=False, check_digit=None, height=(20, 300),
+def _features(mode=False, ratio=False, check_digit=None, height=(1, 32000),
               module_width="Module Width", text=True, orientation=True,
               control_chars=False):
     return {'mode': mode, 'ratio': ratio, 'check_digit': check_digit,

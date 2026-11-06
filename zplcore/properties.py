@@ -178,13 +178,11 @@ def _turns(element) -> bool:
 
 # --- the sides of the shapes that have two -----------------------------------
 #
-# Each type's editor range: ^GB's frame editor offers 10-800 by 10-1200, ^GE
-# and ^GD their own commands' ranges.
+# Each type's range is its own command's, held on the element class: ^GB's,
+# ^GE's and ^GD's.
 
 def _side_limits(axis):
     def limits(element):
-        if isinstance(element, FrameElement):
-            return (10, 800) if axis == 'width' else (10, 1200)
         return element.MIN_SIDE, element.MAX_SIDE
     return limits
 
@@ -266,11 +264,11 @@ SHARED = (
     Property('font_height', "Font Height:", INT, applies=_is(TextElement),
              get=lambda element: element.font_height,
              put=_put_settled('font_height'),
-             limits=lambda element: (8, 500)),
+             limits=lambda element: (element.MIN_FONT_SIZE, element.MAX_FONT_SIZE)),
     Property('font_width', "Font Width:", INT, applies=_is(TextElement),
              get=lambda element: element.font_width,
              put=_put_settled('font_width'),
-             limits=lambda element: (8, 500)),
+             limits=lambda element: (element.MIN_FONT_SIZE, element.MAX_FONT_SIZE)),
     Property('bar_height', "Bar Height:", INT,
              applies=lambda element: (isinstance(element, BarcodeElement)
                                       and _features(element)['height'] is not None),

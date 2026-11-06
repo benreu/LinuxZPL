@@ -727,13 +727,13 @@ def _resize_group(document, handle: str, dx: int, dy: int, origin: dict) -> None
 
     width, height = ow, oh
     if left:
-        width = max(MIN_SIZE, min(ow - dx, ox + ow))
+        width = max(_floor(ow), min(ow - dx, ox + ow))
     elif right:
-        width = max(MIN_SIZE, min(ow + dx, document.label_width - ox))
+        width = max(_floor(ow), min(ow + dx, document.label_width - ox))
     if top:
-        height = max(MIN_SIZE, min(oh - dy, oy + oh))
+        height = max(_floor(oh), min(oh - dy, oy + oh))
     elif bottom:
-        height = max(MIN_SIZE, min(oh + dy, document.label_height - oy))
+        height = max(_floor(oh), min(oh + dy, document.label_height - oy))
     sx, sy = width / max(1, ow), height / max(1, oh)
     ax = ox + ow if left else ox
     ay = oy + oh if top else oy
@@ -758,8 +758,19 @@ def _resize_group(document, handle: str, dx: int, dy: int, origin: dict) -> None
         element.y += ddy
 
 
-def _clamp_resized(document, element) -> None:
+def _floor(pressed: int) -> int:
+    """The least a handle may leave a side it moves: MIN_SIZE, or the side's
+    size at the press when that was already less. A 3 dot rule's bottom
+    handle grows it from 3 rather than jumping to 20, and its end handle,
+    which moves only the other side, leaves its height alone."""
+    return max(1, min(MIN_SIZE, pressed))
+
+
+def _clamp_resized(document, element, handle=None, box=None) -> None:
     """Hold a resized element to the minimum size and inside the label.
+
+    The minimum is held only on a side the handle moves (`handle`, with the
+    box at the press, `box`), never on one it leaves alone.
 
     The origin comes first, then the size against the room left beyond it, then
     the origin again now that the size is known. Clamping the origin against a
@@ -771,9 +782,13 @@ def _clamp_resized(document, element) -> None:
     element.x = max(0, element.x)
     element.y = max(0, element.y)
 
-    element.width = max(MIN_SIZE,
+    moves_x = handle is None or handle[1] in 'lr'
+    moves_y = handle is None or handle[0] in 'tb'
+    least_w = _floor(box['width']) if moves_x and box else MIN_SIZE if moves_x else 1
+    least_h = _floor(box['height']) if moves_y and box else MIN_SIZE if moves_y else 1
+    element.width = max(least_w,
                         min(element.width, document.label_width - element.x))
-    element.height = max(MIN_SIZE,
+    element.height = max(least_h,
                          min(element.height, document.label_height - element.y))
 
     element.x = min(element.x, document.label_width - element.width)
@@ -808,7 +823,7 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
 
     element.x, element.y = x, y
     element.width, element.height = width, height
-    _clamp_resized(document, element)
+    _clamp_resized(document, element, handle, box)
 
     if element.element_type in ('frame', 'ellipse', 'diagonal'):
         element.thickness = max(1, min(element.thickness, element.max_thickness()))
