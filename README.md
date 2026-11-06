@@ -60,7 +60,7 @@ disagree.
   printer node (`/dev/usb/lpN`), with no printing subsystem or driver
   involved. A USB printer is remembered by its serial number, so it is found
   again when it comes back under another node number. USB needs membership of
-  the `lp` group; the Qt frontend offers it so far
+  the `lp` group
 - **Select more than one**: shift-click, or drag a band across the canvas, and
   the whole selection moves together; Select All, Deselect All and Invert
   Selection are in the Edit menu

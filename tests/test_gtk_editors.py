@@ -1899,6 +1899,241 @@ _pw_named(_pw_dialog, 'use_default').clicked()
 check("Use Default refills the printer from the persisted default",
       _pw_finish(Gtk.ResponseType.OK)[1] == _PW_DEFAULT)
 
+# --- the printer rows: a network printer or a USB one ----------------------
+# The USB printers present are stood in for, and the window's error dialog
+# only records, so a refusal does not wait for a click.
+import pty as _ur_pty, tty as _ur_tty, threading as _ur_threading
+from zplcore import local_port as _ur_local, connection as _ur_conn
+from zplcore import firmware as _ur_firmware
+from gtkui.busy import BusyBar as _UrBusy
+
+_ur_real = (_ur_local.list_printers, _ur_local.list_detached,
+            pw.show_error_dialog)
+_ur_present, _ur_loose, _ur_errors = [], [], []
+_ur_local.list_printers = lambda *a: list(_ur_present)
+_ur_local.list_detached = lambda *a: list(_ur_loose)
+pw.show_error_dialog = _ur_errors.append
+_UR_NAME = 'Zebra Technologies ZTC ZT410-203dpi ZPL'
+_UR_ZEBRA = Connection.usb('18J181107685', _UR_NAME)
+_UR_HERE = [_ur_local.UsbPrinter('/dev/usb/lp2', _UR_NAME, '18J181107685')]
+
+def _ur_pump_until(done, seconds=5):
+    until = _pw_time.monotonic() + seconds
+    while not done() and _pw_time.monotonic() < until:
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        _pw_time.sleep(0.01)
+    while Gtk.events_pending():
+        Gtk.main_iteration()
+
+def _ur_busy_done(container):
+    bars = [w for w in _pw_widgets(container) if isinstance(w, _UrBusy)]
+    return lambda: not any(bar.running for bar in bars)
+
+def _ur_shown(dialog):
+    """Whether Address, Port, the USB Printer list and Refresh are shown:
+    the widget and every box around it up to the dialog."""
+    def shown(widget):
+        while widget is not None and widget is not dialog:
+            if not widget.get_visible():
+                return False
+            widget = widget.get_parent()
+        return True
+    return tuple(shown(_pw_named(dialog, name))
+                 for name in ('address', 'port', 'usb_printer', 'usb_refresh'))
+
+def _ur_build(printer, default=_PW_DEFAULT):
+    return gtk_main._build_print_dialog(pw, _pw_doc, (printer, 203, 'E'), default)
+
+try:
+    _ur_present[:] = _UR_HERE
+    _ur_dialog, _ur_finish = _ur_build(_PW_PRINTER[0])
+    _ur_network_rows = _ur_shown(_ur_dialog)
+    _pw_named(_ur_dialog, 'connection_usb').set_active(True)
+    _ur_usb_rows = _ur_shown(_ur_dialog)
+    _ur_listed = [row[0] for row in _pw_named(_ur_dialog, 'usb_printer').get_model()]
+    _ur_chosen = _ur_finish(Gtk.ResponseType.OK)
+    check("GTK: the printer rows show Address and Port for a network printer, "
+          "and only the USB Printer list and Refresh once USB is chosen",
+          _ur_network_rows == (True, True, False, False)
+          and _ur_usb_rows == (False, False, True, True),
+          (_ur_network_rows, _ur_usb_rows))
+    check("GTK: the USB Printer list names each printer with its node",
+          _ur_listed == [f'{_UR_NAME} (lp2)'], _ur_listed)
+    check("GTK: choosing USB gives that printer, the network address carried",
+          _ur_chosen[1] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME),
+                            203, 'E'), _ur_chosen[1])
+
+    _ur_dialog, _ur_finish = _ur_build(
+        _PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME))
+    _ur_usb_first = _ur_shown(_ur_dialog)
+    _pw_named(_ur_dialog, 'connection_network').set_active(True)
+    _ur_net = _ur_finish(Gtk.ResponseType.OK)
+    check("GTK: a USB printer opens on the USB rows, and Network gives back "
+          "the address it carried",
+          _ur_usb_first == (False, False, True, True)
+          and _ur_net[1] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME)
+                             .as_network('192.168.1.50', 9100), 203, 'E'),
+          (_ur_usb_first, _ur_net))
+
+    _ur_present[:] = []
+    _ur_away = Connection.usb('OLD1', 'Zebra old')
+    _ur_dialog, _ur_finish = _ur_build(_ur_away)
+    _ur_text = _pw_named(_ur_dialog, 'usb_printer').get_active_text()
+    _ur_kept = _ur_finish(Gtk.ResponseType.OK)
+    check("GTK: a USB printer that is not plugged in stays chosen, said to be "
+          "not connected", _ur_text == 'Zebra old (not connected)'
+          and _ur_kept[1] == (_ur_away, 203, 'E'), (_ur_text, _ur_kept))
+
+    _ur_dialog, _ur_finish = _ur_build(_PW_PRINTER[0])
+    _pw_named(_ur_dialog, 'connection_usb').set_active(True)
+    del _ur_errors[:]
+    _ur_none = _ur_finish(Gtk.ResponseType.OK)
+    check("GTK: USB with no USB printer to choose is refused, saying so",
+          _ur_none is None and _ur_errors == [_ur_conn.NO_USB_CHOSEN],
+          (_ur_none, _ur_errors))
+    _ur_dialog, _ur_finish = _ur_build(Connection.network('', 9100))
+    del _ur_errors[:]
+    _ur_finish(Gtk.ResponseType.OK)
+    check("GTK: and Network with no address, as before",
+          _ur_errors == [_ur_conn.NO_ADDRESS], _ur_errors)
+
+    _ur_present[:] = _UR_HERE
+    _UR_DEFAULT = (Connection.network('10.0.0.1', 9300)
+                   .as_usb(_UR_ZEBRA.usb_serial, _UR_NAME), 203, 'R')
+    _ur_dialog, _ur_finish = _ur_build(_PW_PRINTER[0], _UR_DEFAULT)
+    _pw_named(_ur_dialog, 'use_default').clicked()
+    _ur_default_rows = _ur_shown(_ur_dialog)
+    check("GTK: Use Default brings back a USB default printer, on the USB rows",
+          _ur_finish(Gtk.ResponseType.OK)[1] == _UR_DEFAULT
+          and _ur_default_rows == (False, False, True, True), _ur_default_rows)
+
+    # Test Connection by USB: a pty plays the printer, answering ~HI.
+    _ur_master, _ur_slave = _ur_pty.openpty()
+    _ur_tty.setraw(_ur_slave)
+    _ur_present[:] = [_ur_local.UsbPrinter(os.ttyname(_ur_slave), _UR_NAME,
+                                           '18J181107685')]
+    _ur_heard = []
+    def _ur_answer():
+        _ur_heard.append(os.read(_ur_master, 64))
+        os.write(_ur_master, b'\x02ZT410-200dpi,V75.20.21,8,4096KB\x03\r\n')
+    _ur_th = _ur_threading.Thread(target=_ur_answer, daemon=True)
+    _ur_th.start()
+    _ur_dialog, _ur_finish = gtk_main._build_print_dialog(
+        pw, _pw_doc, (_UR_ZEBRA, 300, 'E'), _PW_DEFAULT)
+    _pw_named(_ur_dialog, 'test_connection').clicked()
+    _ur_pump_until(_ur_busy_done(_ur_dialog))
+    _ur_th.join(3)
+    _ur_result = _pw_named(_ur_dialog, 'test_result').get_text()
+    _ur_finish(Gtk.ResponseType.CANCEL)
+    os.close(_ur_master); os.close(_ur_slave)
+    check("GTK: Test Connection opens a USB printer and asks its resolution",
+          _ur_heard == [b'~HI']
+          and _ur_result == f"✓ Connected to {_UR_NAME} (USB) — 203 dpi",
+          (_ur_heard, _ur_result))
+
+    _ur_present[:] = []
+    _ur_loose[:] = [_ur_local.UsbPrinter('', _UR_NAME, '18J181107685',
+                                         '3-1.1.2.1:1.0')]
+    _ur_dialog, _ur_finish = _ur_build(_UR_ZEBRA)
+    _pw_named(_ur_dialog, 'test_connection').clicked()
+    _ur_pump_until(_ur_busy_done(_ur_dialog))
+    _ur_result = _pw_named(_ur_dialog, 'test_result').get_text()
+    _ur_finish(Gtk.ResponseType.CANCEL)
+    check("GTK: and for one with no usblp driver, says how to give it back",
+          _ur_result.startswith(f"✗ {_UR_NAME} (serial number 18J181107685) "
+                                "is plugged in")
+          and 'echo 3-1.1.2.1:1.0 | sudo tee' in _ur_result, _ur_result)
+    _ur_loose[:] = []
+
+    # The managers say what is wrong with a USB port, not "could not reach".
+    _ur_said = {}
+    _ur_run = Gtk.Dialog.run
+    def _ur_read_status(dialog):
+        _ur_pump_until(_ur_busy_done(dialog))
+        _ur_said[dialog.get_title()] = [
+            w.get_text() for w in _pw_widgets(dialog)
+            if isinstance(w, Gtk.Label) and w.get_text().startswith(_UR_NAME)]
+        return Gtk.ResponseType.CLOSE
+    Gtk.Dialog.run = _ur_read_status
+    _ur_was = pw.printer_connection
+    pw.printer_connection = _UR_ZEBRA
+    try:
+        pw.on_printer_fonts_clicked(None)
+        pw.on_printer_graphics_clicked(None)
+        pw.on_printer_objects_clicked(None)
+    finally:
+        Gtk.Dialog.run = _ur_run
+    _ur_message = f"{_UR_NAME} (serial number 18J181107685) is not connected by USB."
+    check("GTK: the printer's managers say a USB printer is not connected, "
+          "rather than that it could not be reached",
+          sorted(_ur_said) == ['Printer Fonts', 'Printer Graphics',
+                               'Printer Objects']
+          and all(said == [_ur_message] for said in _ur_said.values()), _ur_said)
+
+    # Firmware Update: the network printer first, then each USB printer by
+    # path, opening on the session's USB printer wherever it is now.
+    _ur_present[:] = [_ur_local.UsbPrinter('/dev/usb/lp1', 'Brother HL', ''),
+                      _ur_local.UsbPrinter('/dev/usb/lp4', _UR_NAME,
+                                           '18J181107685')]
+    _ur_fw = {}
+    def _ur_read_connection(dialog):
+        combo = _pw_named(dialog, 'firmware_connection')
+        _ur_fw[len(_ur_fw)] = ([row[0] for row in combo.get_model()],
+                               combo.get_active_id())
+        _ur_pump_until(_ur_busy_done(dialog))
+        return Gtk.ResponseType.CLOSE
+    _ur_ask = _ur_firmware.current_firmware
+    _ur_firmware.current_firmware = lambda *a, **k: None
+    Gtk.Dialog.run = _ur_read_connection
+    try:
+        pw.printer_connection = _PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial,
+                                                      _UR_NAME)
+        pw.on_printer_firmware_clicked(None)
+        pw.printer_connection = _PW_PRINTER[0]
+        pw.on_printer_firmware_clicked(None)
+    finally:
+        Gtk.Dialog.run = _ur_run
+        _ur_firmware.current_firmware = _ur_ask
+        pw.printer_connection = _ur_was
+    check("GTK: Firmware Update lists the network printer, then each USB "
+          "printer by path",
+          _ur_fw[0][0] == ['Network: 192.168.1.50:9100',
+                           'USB: /dev/usb/lp1 (Brother HL)',
+                           f'USB: /dev/usb/lp4 ({_UR_NAME})'], _ur_fw)
+    check("GTK: and opens on the USB printer in use, and on the network for a "
+          "network one",
+          _ur_fw[0][1] == '/dev/usb/lp4' and _ur_fw[1][1] == '', _ur_fw)
+
+    # The window: Quick Print goes down the USB printer's node, and says so.
+    with tempfile.TemporaryDirectory() as _ur_dir:
+        _ur_fifo = os.path.join(_ur_dir, 'lp2')
+        os.mkfifo(_ur_fifo)
+        _ur_present[:] = [_ur_local.UsbPrinter(_ur_fifo, _UR_NAME,
+                                               '18J181107685')]
+        _ur_got = []
+        def _ur_read():
+            with open(_ur_fifo, 'rb') as f:
+                _ur_got.append(f.read())
+        _ur_reader = _ur_threading.Thread(target=_ur_read, daemon=True)
+        _ur_reader.start()
+        uw = ZPLViewerWindow()
+        uw.design_canvas.add_frame_element()
+        uw.printer_connection = _UR_ZEBRA
+        uw.quick_print_item.activate()
+        _ur_pump_until(lambda: _ur_got and not uw._busy.running)
+        _ur_reader.join(3)
+        _ur_status = uw.status_bar.get_message_area().get_children()[0].get_text()
+        check("GTK: Quick Print sends the label to a USB printer, and says where",
+              _ur_got and b'^GB' in _ur_got[0]
+              and _ur_status == f"Sent to {_UR_NAME} (USB)",
+              (_ur_status, _ur_got[:1]))
+        uw.unsaved_changes = False
+        uw.destroy()
+finally:
+    (_ur_local.list_printers, _ur_local.list_detached,
+     pw.show_error_dialog) = _ur_real
+
 # Label Settings has lost Copies and the flips, and keeps the home. Its
 # dialog is run modally, so run() is stood in for while it is looked at.
 _ls_seen = {}
@@ -2953,7 +3188,7 @@ _t_print_rows = {'pause_count', 'replicates', 'override_pause', 'cut_on_error',
                  'darkness', 'print_speed', 'slew_speed', 'backfeed_speed',
                  'print_mode', 'prepeel', 'media_tracking', 'mark_offset',
                  'media_type', 'port', 'dpi', 'font_device', 'test_connection',
-                 'use_default'}
+                 'use_default', 'usb_printer', 'usb_refresh'}
 check("GTK: the Print window explains its rows from the table, each label too",
       set(_t_found) == _t_print_rows and not _t_wrong,
       (sorted(set(_t_found) ^ _t_print_rows), _t_wrong))
@@ -2992,7 +3227,8 @@ try:
              {'dpi', 'home_x', 'home_y'}),
             ("Default Printer", lambda: gtk_main._printer_picker_dialog(
                 tw, "Default Printer", Connection.network('10.0.0.1', 9100), 203),
-             {'port', 'dpi', 'font_device', 'test_connection'}),
+             {'port', 'dpi', 'font_device', 'test_connection', 'usb_printer',
+              'usb_refresh'}),
             ("Store Graphic As", lambda: tw._ask_device_spec(tw), {'device'}),
             ("Upload Font To", lambda: tw._ask_font_device(tw), {'font_device'}),
             ("Store Object As", lambda: tw._ask_object_name(tw, 'X', 'DAT'),
@@ -3020,12 +3256,8 @@ check("GTK: Label Settings, Grid Settings, Default Printer, the store windows "
 tw.unsaved_changes = False
 tw.destroy()
 
-# The USB printer rows reach GTK in the next section; until then only Qt has
-# them. Remove this when GTK's printer rows gain the USB list.
-_tip_qt_only = {'usb_printer', 'usb_refresh'}
 check("GTK: every tip in the table is shown somewhere in the GTK frontend",
-      set(zpl_tips.TIPS) - _tip_qt_only <= _tip_seen,
-      sorted(set(zpl_tips.TIPS) - _tip_qt_only - _tip_seen))
+      set(zpl_tips.TIPS) <= _tip_seen, sorted(set(zpl_tips.TIPS) - _tip_seen))
 
 print("ALL GTK EDITOR CHECKS PASSED" if not fails
       else f"{len(fails)} FAILED: {fails}")

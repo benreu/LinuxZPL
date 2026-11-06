@@ -29,7 +29,7 @@ from zplcore import model
 from zplcore import parser as zpl_parser
 from zplcore import view as zpl_view
 from zplcore import workflow
-from zplcore.connection import Connection
+from zplcore.connection import Connection, PortProblem
 from zplcore import graphic_symbols
 from zplcore.model import STORED_GRAPHIC_DEVICES, Document
 from zplcore.print_settings import AsWritten, PrintSettings
@@ -119,15 +119,20 @@ def add_help(window, dialog, key: str, row=None):
 
 
 class _PrinterRows:
-    """Address, Port, DPI, Font memory and Test Connection, plus Use Default
-    when there is a default to go back to. The GTK twin of
-    qtui.dialogs._PrinterRows.
+    """Connection (Network or USB), then Address and Port or the USB Printer
+    list, DPI, Font memory and Test Connection, plus Use Default when there
+    is a default to go back to. The GTK twin of qtui.dialogs._PrinterRows.
 
     Default Printer and the Print window both build their printer from these
     rows, so the two can't drift apart. `box` is the widget holding them.
     `withhold(widgets)` adds the busy row, and the widgets it names are
     withheld while a probe is out, so a half-finished one can't be accepted
     as an answer.
+
+    Only the rows for the chosen connection are shown, but both halves are
+    kept: the address typed stays while USB is chosen, and the other way
+    round, so switching back offers what was there. Those rows are kept out
+    of a dialog's show_all(), which would otherwise show both.
 
     Font memory belongs here rather than beside each text element. Which
     memory a printer keeps its fonts in is a property of the printer being
@@ -140,19 +145,47 @@ class _PrinterRows:
         self._dpi = dpi
         # Carried so whatever the rows do not show survives a visit.
         self._printer = printer
+        # What value() found missing, when it gives None.
+        self.problem = None
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+
+        kinds = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.network_radio = Gtk.RadioButton.new_with_label_from_widget(
+            None, "Network")
+        self.network_radio.set_name("connection_network")
+        self.usb_radio = Gtk.RadioButton.new_with_label_from_widget(
+            self.network_radio, "USB")
+        self.usb_radio.set_name("connection_usb")
+        kinds.pack_start(self.network_radio, False, False, 0)
+        kinds.pack_start(self.usb_radio, False, False, 0)
+        _make_row(self.box, "Connection:", kinds, self.LABEL_WIDTH)
 
         self.address_entry = Gtk.Entry()
         self.address_entry.set_name("address")
         self.address_entry.set_text(printer.address)
         # Enter in the address is the dialog's default button.
         self.address_entry.set_activates_default(True)
-        _make_row(self.box, "Address:", self.address_entry, self.LABEL_WIDTH)
+        self._address_row, _ = _make_row(self.box, "Address:",
+                                         self.address_entry, self.LABEL_WIDTH)
 
         self.port_spin = _make_spin(printer.port, 1, 65535)
         self.port_spin.set_name("port")
-        _make_row(self.box, "Port:", self.port_spin, self.LABEL_WIDTH,
-                  tip='port')
+        self._port_row, _ = _make_row(self.box, "Port:", self.port_spin,
+                                      self.LABEL_WIDTH, tip='port')
+
+        usb_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.usb_combo = Gtk.ComboBoxText()
+        self.usb_combo.set_name("usb_printer")
+        usb_box.pack_start(self.usb_combo, True, True, 0)
+        self.usb_refresh_btn = Gtk.Button(label="Refresh")
+        self.usb_refresh_btn.set_name("usb_refresh")
+        set_tip(self.usb_refresh_btn, 'usb_refresh')
+        usb_box.pack_start(self.usb_refresh_btn, False, False, 0)
+        self._usb_row, usb_label = _make_row(self.box, "Printer:", usb_box,
+                                             self.LABEL_WIDTH)
+        set_tip(self.usb_combo, 'usb_printer', usb_label)
+        self._usb_entries = []
+        self._list_usb(printer)
 
         self.dpi_combo = _dpi_combo(dpi)
         _make_row(self.box, "DPI:", self.dpi_combo, self.LABEL_WIDTH, tip='dpi')
@@ -186,10 +219,23 @@ class _PrinterRows:
         self.box.pack_start(self._test_row, False, False, 0)
 
         self.result = Gtk.Label()
+        self.result.set_name("test_result")
         self.result.set_halign(Gtk.Align.START)
         self.result.set_line_wrap(True)
         self.box.pack_start(self.result, False, False, 0)
         self.busy = None
+
+        # Shown once, inside, then left to _show_kind: a later show_all()
+        # does not reach into them.
+        for row in (self._address_row, self._port_row, self._usb_row):
+            row.show_all()
+            row.set_no_show_all(True)
+        (self.usb_radio if printer.is_usb else self.network_radio).set_active(True)
+        self.network_radio.connect("toggled", self._show_kind)
+        self.usb_refresh_btn.connect(
+            "clicked",
+            lambda _b: self._list_usb(self._chosen_usb() or self._printer))
+        self._show_kind()
 
     def withhold(self, widgets) -> None:
         self.busy = BusyBar((self.test_btn, *widgets),
@@ -201,15 +247,51 @@ class _PrinterRows:
             self.busy.abandon()
 
     def value(self):
-        """(Connection, dpi, font_device), or None when no address is
-        given."""
-        address = self.address_entry.get_text().strip()
-        if not address:
+        """(Connection, dpi, font_device), or None when there is no printer
+        to give - no address, or no USB printer - with `problem` saying
+        which, for the caller to report."""
+        printer, self.problem = self._chosen()
+        if printer is None:
             return None
-        return (self._printer.as_network(address,
-                                         int(self.port_spin.get_value())),
-                _dpi_from(self.dpi_combo, self._dpi),
+        return (printer, _dpi_from(self.dpi_combo, self._dpi),
                 self._font_device_codes[self.font_device_combo.get_active()])
+
+    def _chosen(self):
+        """(Connection, None) for the printer the rows describe, or (None,
+        what is missing)."""
+        address = self.address_entry.get_text().strip()
+        port = int(self.port_spin.get_value())
+        if self.usb_radio.get_active():
+            usb = self._chosen_usb()
+            if usb is None:
+                return None, zpl_connection.NO_USB_CHOSEN
+            carried = (self._printer.as_network(address, port) if address
+                       else self._printer)
+            return carried.as_usb(usb.usb_serial, usb.usb_name), None
+        if not address:
+            return None, zpl_connection.NO_ADDRESS
+        return self._printer.as_network(address, port), None
+
+    def _chosen_usb(self):
+        index = self.usb_combo.get_active()
+        if 0 <= index < len(self._usb_entries):
+            return self._usb_entries[index]
+        return None
+
+    def _list_usb(self, keep) -> None:
+        """Fill the USB Printer list afresh, on `keep` if it is there."""
+        entries, index = zpl_connection.usb_choices(keep)
+        self.usb_combo.remove_all()
+        for label, _printer in entries:
+            self.usb_combo.append_text(label)
+        self._usb_entries = [printer for _label, printer in entries]
+        self.usb_combo.set_active(index)
+
+    def _show_kind(self, _radio=None) -> None:
+        network = self.network_radio.get_active()
+        self._address_row.set_visible(network)
+        self._port_row.set_visible(network)
+        self._usb_row.set_visible(not network)
 
     def _set_result(self, colour, text):
         self.result.set_markup(
@@ -232,17 +314,18 @@ class _PrinterRows:
         self._printer = printer
         self.address_entry.set_text(printer.address)
         self.port_spin.set_value(printer.port)
+        self._list_usb(printer)
+        (self.usb_radio if printer.is_usb else self.network_radio).set_active(True)
         self._set_dpi(dpi)
         if font_device in self._font_device_codes:
             self.font_device_combo.set_active(
                 self._font_device_codes.index(font_device))
 
     def _on_test(self, _btn):
-        addr = self.address_entry.get_text().strip()
-        if not addr:
-            self._set_result("red", "Address is required")
+        printer, problem = self._chosen()
+        if printer is None:
+            self._set_result("red", problem)
             return
-        printer = Connection.network(addr, int(self.port_spin.get_value()))
         self._set_result("gray", f"Connecting to {printer.where()}…")
         connected = f"✓ Connected to {printer.where()}"
         busy = self.busy
@@ -250,6 +333,7 @@ class _PrinterRows:
         def probe(cancel):
             # Connect and send nothing: reachability first, on its own, so
             # an unreachable printer reads as that rather than as "no dpi".
+            # For a USB printer that is finding its node and opening it.
             zpl_connection.send(printer, b'', 5, cancel=cancel)
             busy.report(f"{connected} — asking its resolution…")
             return zpl_fonts.query_printer_dpi(printer, cancel=cancel)
@@ -298,7 +382,7 @@ def _printer_picker_dialog(parent, title, printer, dpi, font_device=None):
     result = rows.value() if response == Gtk.ResponseType.OK else None
     dialog.destroy()
     if response == Gtk.ResponseType.OK and result is None:
-        parent.show_error_dialog("Printer address cannot be empty.")
+        parent.show_error_dialog(rows.problem)
     return result
 
 
@@ -557,7 +641,7 @@ def _build_print_dialog(parent, document, printer, default):
         result.media_type = chosen(media_type, media_types)
         dialog.destroy()
         if chosen_printer is None:
-            parent.show_error_dialog("Printer address cannot be empty.")
+            parent.show_error_dialog(rows.problem)
             return None
         action = 'print' if response == PRINT_RESPONSE else 'ok'
         return action, chosen_printer, result
@@ -2336,7 +2420,10 @@ class ZPLViewerWindow(Gtk.Window):
                     return
                 answer, detected = (None, None) if error is not None else result
                 fonts, unreadable = (None, ()) if answer is None else answer
-                if fonts is None:
+                if isinstance(error, PortProblem):
+                    # A USB port with a fix the user needs to hear about.
+                    status.set_text(str(error))
+                elif fonts is None:
                     status.set_text(f"Could not reach the printer at "
                                     f"{self.printer_connection.where()}.")
                 else:
@@ -2595,6 +2682,9 @@ class ZPLViewerWindow(Gtk.Window):
         """
         network = Connection.network(self.printer_connection.address,
                                      self.printer_connection.port)
+        # It opens on the session's printer: the USB one, wherever it is now,
+        # when that is the one in use.
+        opening_path = zpl_connection.node_of(self.printer_connection)
         dialog = Gtk.Dialog(title="Firmware Update", parent=self, flags=0)
         dialog.set_default_size(460, 200)
         content = dialog.get_content_area()
@@ -2656,6 +2746,8 @@ class ZPLViewerWindow(Gtk.Window):
             """Network first (id ""), then every USB printer, keeping the
             one chosen if it is still there."""
             was = connection.get_active_id()
+            if was is None:
+                was = opening_path
             connection.handler_block(changed_id)
             connection.remove_all()
             connection.append("", f"Network: {network.where()}")
@@ -2682,7 +2774,7 @@ class ZPLViewerWindow(Gtk.Window):
                     current.set_text(f"Current firmware: {version}")
                 else:
                     current.set_text("Current firmware: unavailable")
-                if isinstance(error, PermissionError):
+                if isinstance(error, PortProblem):
                     status.set_text(str(error))
 
             busy.run(lambda cancel: zpl_firmware.current_firmware(
@@ -2847,6 +2939,9 @@ class ZPLViewerWindow(Gtk.Window):
                 nonlocal entries
                 if isinstance(error, printer_io.Cancelled):
                     status.set_text("Listing cancelled.")
+                    return
+                if isinstance(error, PortProblem):
+                    status.set_text(str(error))
                     return
                 if specs is None or error is not None:
                     status.set_text(f"Could not reach the printer at "
@@ -3112,6 +3207,9 @@ class ZPLViewerWindow(Gtk.Window):
             def done(specs, error):
                 if isinstance(error, printer_io.Cancelled):
                     status.set_text("Listing cancelled.")
+                    return
+                if isinstance(error, PortProblem):
+                    status.set_text(str(error))
                     return
                 if specs is None or error is not None:
                     status.set_text(f"Could not reach the printer at "
