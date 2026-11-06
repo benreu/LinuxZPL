@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="elements">
+  <info>
+    <link type="guide" xref="index#elements"/>
+    <title type="sort">0</title>
+    <link type="seealso" xref="canvas"/>
+    <link type="seealso" xref="properties-panel"/>
+    <desc>Why an element's box is the size it is, why some boxes snap back
+    after a drag, and the ZPL each element becomes.</desc>
+  </info>
+
+  <title>How elements work</title>
+
+  <p>Everything on a label is an element: a line of text, a barcode, a box, a
+  picture. Each one becomes a few lines of ZPL, the language Zebra printers
+  read, and the canvas draws it the way the printer will print it. Most of
+  what can look odd about the canvas, such as text that will not stretch or
+  a barcode that springs back after a drag, comes from that.</p>
+
+  <section id="dots">
+    <title>Everything is measured in dots</title>
+    <p>A thermal printer prints rows of tiny dots, and every position and size
+    in LinuxZPL is a whole number of them. How big a dot is depends on the
+    printer's resolution:</p>
+    <table frame="all" rules="rows">
+      <thead>
+        <tr><td><p>Resolution</p></td><td><p>Dots per millimetre</p></td>
+        <td><p>Dots per inch</p></td><td><p>One dot</p></td></tr>
+      </thead>
+      <tbody>
+        <tr><td><p>203 dpi</p></td><td><p>8</p></td><td><p>203</p></td><td><p>0.125 mm</p></td></tr>
+        <tr><td><p>300 dpi</p></td><td><p>12</p></td><td><p>300</p></td><td><p>0.083 mm</p></td></tr>
+        <tr><td><p>600 dpi</p></td><td><p>24</p></td><td><p>600</p></td><td><p>0.042 mm</p></td></tr>
+      </tbody>
+    </table>
+    <p><gui>X</gui> and <gui>Y</gui> in the Properties panel are the top left
+    corner of the element's box, counted in dots from the label's top left
+    corner. The same design is a different size on paper at another
+    resolution: see <link xref="resolution"/>.</p>
+  </section>
+
+  <section id="box">
+    <title>The box is what prints</title>
+    <p>Each element's box is measured the way the printer will print it:</p>
+    <list>
+      <item><p>Text is measured from its font, so the box is as wide as the
+      printed words.</p></item>
+      <item><p>A barcode is measured from its value once it has been
+      encoded, so the box is as wide as the printed bars.</p></item>
+      <item><p>A circle's box is its diameter, and a frame's box is its
+      outside edge.</p></item>
+    </list>
+    <p>The outlines, the light tint behind text and frames, and the handles
+    are there only to show you the element. None of them prints. The box does
+    not include the blank margin a barcode needs either side for a scanner:
+    leave that clear yourself (see <link xref="barcode"/>).</p>
+  </section>
+
+  <section id="turned">
+    <title>Turned elements</title>
+    <p>An element turned 90° or 270° still has an upright box: its width and
+    height simply swap. Selecting, dragging, the handles and
+    <gui>Align</gui> all work on that box, the same at every turn.</p>
+  </section>
+
+  <section id="handles">
+    <title>What the handles change</title>
+    <p>Dragging a handle does not always just stretch the box. For many
+    elements it asks for a new value of one of the element's own settings,
+    and the box then becomes whatever that setting prints:</p>
+    <table frame="all" rules="rows">
+      <thead>
+        <tr><td><p>Element</p></td><td><p>A handle changes</p></td></tr>
+      </thead>
+      <tbody>
+        <tr><td><p>Frame, ellipse, diagonal line, image</p></td>
+        <td><p>The box itself, exactly as dragged.</p></td></tr>
+        <tr><td><p>Text</p></td>
+        <td><p>The font height (top and bottom handles) and the font width
+        (side handles).</p></td></tr>
+        <tr><td><p>Wrapped text</p></td>
+        <td><p>The wrap width (sides), and the number of lines or the block's
+        height (top and bottom). The text re-flows; the font stays.</p></td></tr>
+        <tr><td><p>Barcode</p></td>
+        <td><p>The module width (sides) and the bar height (top and bottom).
+        A two-dimensional code has one size, the largest that fits the box
+        you dragged.</p></td></tr>
+        <tr><td><p>Circle</p></td>
+        <td><p>Its one diameter.</p></td></tr>
+        <tr><td><p>Graphic symbol</p></td>
+        <td><p>Its size, in steps of 24 dots.</p></td></tr>
+        <tr><td><p>Stored graphic</p></td>
+        <td><p>Its magnification, once LinuxZPL has seen the graphic; until
+        then, the stand-in box.</p></td></tr>
+        <tr><td><p>MaxiCode, TLC39, a PDF417 split over several symbols, and
+        a stored graphic printed with <gui>Image Move</gui></p></td>
+        <td><p>Nothing: they have no handles, because the printer decides
+        their size.</p></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="snap">
+    <title>Why some boxes snap back</title>
+    <p>The printer can only print whole dots, whole barcode modules and whole
+    steps of a built-in font. So when a drag asks for a size between two that
+    can print, the box comes back to the nearest one that can, the moment you
+    move the pointer. What you see after the drag is what will print, not the
+    rectangle you dragged. The box grows or shrinks from the edge you did not
+    drag, so the element stays where you put it.</p>
+    <p>For the same reason, text and barcodes have no <gui>Width</gui> row in
+    the Properties panel. Their width follows from the text, the font and the
+    module width, so change one of those instead.</p>
+  </section>
+
+  <section id="limits">
+    <title>Limits</title>
+    <list>
+      <item><p>A handle never makes a side smaller than 20 dots, so an
+      element can't be squeezed out of reach of the pointer. Type a smaller
+      size in the Properties panel instead. A side that is already smaller,
+      such as a 3-dot rule's thickness, keeps its size when you drag a handle
+      on the other side.</p></item>
+      <item><p>Nothing can be dragged off the label. An element pushed
+      against an edge stays against it.</p></item>
+      <item><p>Typed sizes go as far as ZPL allows, mostly 32000 dots, and
+      are not held to the label's size.</p></item>
+    </list>
+  </section>
+
+  <section id="ink">
+    <title>Black, white and Reverse</title>
+    <p>A thermal printer can only add black; it cannot erase. So:</p>
+    <list>
+      <item><p>Elements that overlap all print. An image laid over text does
+      not hide the text: the text prints through the image's white parts,
+      and the canvas shows it that way.</p></item>
+      <item><p>A shape whose <gui>Colour</gui> is <gui>White</gui> prints
+      nothing on bare labels. It shows only where it lies over something
+      black.</p></item>
+      <item><p><gui>Reverse</gui> prints an element white wherever something
+      is already printed beneath it, and black elsewhere. "Beneath" means
+      earlier in the stacking order, which is also what decides which
+      element a click picks (see <link xref="canvas#order"/>).</p></item>
+      <item><p>To keep an element in the design but off the printed label,
+      clear <gui>Print This Element</gui>.</p></item>
+    </list>
+  </section>
+
+  <section id="groups">
+    <title>Groups</title>
+    <p>Dragging a selected group's handles scales every element in it, each
+    by its own rule: text changes its font size, a barcode its module width
+    and bar height, a circle stays round. The group therefore ends up close
+    to, but not always exactly, the size you dragged.</p>
+  </section>
+
+  <section id="from-elsewhere">
+    <title>Labels made by other programs</title>
+    <p>LinuxZPL opens ZPL written by other programs and keeps how they
+    placed each field, so saving the label does not move anything:</p>
+    <list>
+      <item><p>A field placed by its text's baseline (<code>^FT</code>) rather
+      than its top left corner (<code>^FO</code>) is saved the same way.
+      <gui>X</gui> and <gui>Y</gui> still show the top left of its
+      box.</p></item>
+      <item><p>A field pinned by its right edge keeps that edge still: longer
+      text grows to the left.</p></item>
+      <item><p>A field with no position of its own, which the printer puts
+      where the previous field ended, keeps following that field until you
+      drag it on its own.</p></item>
+      <item><p>A field the file places partly off the label is left there,
+      since moving it would change what prints.</p></item>
+      <item><p>The author's comments (<code>^FX</code>) stay with their
+      fields.</p></item>
+      <item><p>Commands LinuxZPL does not understand are listed when the
+      file opens. They are not drawn, and saving does not keep
+      them.</p></item>
+    </list>
+  </section>
+
+  <section id="zpl">
+    <title>The ZPL each element writes</title>
+    <p>Useful when reading a label file, or when typing commands in the
+    <link xref="printer-status#console">printer console</link>. Every field
+    starts at <code>^FO</code> (or <code>^FT</code>) and ends at
+    <code>^FS</code>, and <gui>Reverse</gui> adds <code>^FR</code>.</p>
+    <table frame="all" rules="rows">
+      <thead>
+        <tr><td><p>Element</p></td><td><p>ZPL</p></td></tr>
+      </thead>
+      <tbody>
+        <tr><td><p>Text</p></td><td><p><code>^A</code> (a built-in font) or
+        <code>^A@</code> (a TrueType font by name), then <code>^FD</code> and
+        the text; <code>^FB</code> or <code>^TB</code> when it wraps, and
+        <code>^FP</code> for its direction and character gap</p></td></tr>
+        <tr><td><p>Date or time</p></td><td><p><code>^FC</code>, with the
+        format in <code>^FD</code></p></td></tr>
+        <tr><td><p>Serial number</p></td><td><p><code>^SN</code></p></td></tr>
+        <tr><td><p>Numbered field</p></td><td><p><code>^FN</code></p></td></tr>
+        <tr><td><p>Frame</p></td><td><p><code>^GB</code></p></td></tr>
+        <tr><td><p>Circle</p></td><td><p><code>^GC</code></p></td></tr>
+        <tr><td><p>Ellipse</p></td><td><p><code>^GE</code></p></td></tr>
+        <tr><td><p>Diagonal line</p></td><td><p><code>^GD</code></p></td></tr>
+        <tr><td><p>Graphic symbol</p></td><td><p><code>^GS</code></p></td></tr>
+        <tr><td><p>Barcode</p></td><td><p><code>^BY</code> for the module
+        width, then the barcode's own command, such as <code>^BC</code> for
+        Code 128 or <code>^BQ</code> for a QR Code, and the value in
+        <code>^FD</code></p></td></tr>
+        <tr><td><p>Image</p></td><td><p><code>^GF</code>, the picture's dots
+        written out in full</p></td></tr>
+        <tr><td><p>Stored graphic</p></td><td><p><code>^XG</code> (Recall
+        Graphic) or <code>^IM</code> (Image Move), naming the graphic on the
+        printer</p></td></tr>
+      </tbody>
+    </table>
+    <p>The label itself starts with <code>^XA</code>, gives its size with
+    <code>^PW</code> and <code>^LL</code>, and ends with <code>^XZ</code>.
+    What only the designer needs, such as the resolution and groups, goes in
+    <code>^FX</code> comments, which printers ignore.</p>
+  </section>
+</page>

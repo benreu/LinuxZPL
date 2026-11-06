@@ -62,6 +62,10 @@
       narrowest bar.</p></item>
       <item><p>A <em>circle</em> stays round.</p></item>
     </list>
+    <p>A handle never makes a side smaller than 20 dots; type a smaller size
+    in the Properties panel. <link xref="elements#handles"/> lists what each
+    element's handles change, and <link xref="elements#snap"/> says
+    why.</p>
   </section>
 
   <section id="group">
