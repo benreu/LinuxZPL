@@ -16,6 +16,10 @@ linuxzpl \- design Zebra ZPL labels, and fill and save ZPL templates
 \fB\-\-load\-file\fR \fIFILE\fR
 [\fB\-\-field\fR \fIN=DATA\fR]...
 \fB\-\-save\-file\fR \fIFILE\fR
+.br
+.B linuxzpl.py
+[\fB\-\-gtk\fR | \fB\-\-qt\fR]
+\fB\-\-show\-help\fR [\fITOPIC\fR]
 .SH DESCRIPTION
 LinuxZPL is a visual designer for labels in ZPL, the language of Zebra
 thermal printers.
@@ -34,6 +38,8 @@ template is filled in with the \fB\-\-field\fR data and written out, for use
 from a script.
 .PP
 The designer's own help is under \fBHelp \(-> Contents\fR (F1).
+It opens in Yelp, or where Yelp is not installed, in LinuxZPL's own help
+viewer, which \fB\-\-show\-help\fR opens alone.
 .SH OPTIONS
 .TP
 \fB\-\-gtk\fR
@@ -64,6 +70,17 @@ Anything in the template the file cannot keep is named on standard error.
 Needs \fB\-\-load\-file\fR, and is not taken with \fB\-\-gtk\fR or
 \fB\-\-qt\fR.
 .TP
+\fB\-\-show\-help\fR [\fITOPIC\fR]
+Open only the help, in LinuxZPL's own viewer, without the designer.
+\fITOPIC\fR is a page of the help, by the name of its file in
+\fBhelp/C\fR without \fB.page\fR, or a section of one,
+\fIpage\fR\fB#\fR\fIsection\fR; without it, the viewer opens at the
+contents.
+Topics written to standard input, one to a line, open in the same window,
+which is how the designer sends it the help asked for next.
+Not taken with \fB\-\-load\-file\fR, \fB\-\-field\fR or
+\fB\-\-save\-file\fR.
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Show a summary of the options and exit.
 .SH EXIT STATUS
@@ -75,7 +92,8 @@ Success: the window was closed, or \fB\-\-save\-file\fR wrote its file.
 The template could not be read or saved; a \fB\-\-field\fR was not
 \fIN=DATA\fR; \fB\-\-field\fR or \fB\-\-save\-file\fR came without
 \fB\-\-load\-file\fR, or \fB\-\-save\-file\fR with \fB\-\-gtk\fR or
-\fB\-\-qt\fR; or the GUI toolkit needed is not installed.
+\fB\-\-qt\fR; \fB\-\-show\-help\fR named no page of the help, or came
+with a template; or the GUI toolkit needed is not installed.
 The message on standard error says which.
 .TP
 .B 2

@@ -445,5 +445,225 @@ check("with none after it, the message says it could not show the page's PDF",
       following.message.startswith("xdg-open could not show the page's PDF (exit status 2).")
       and "No other PDF viewer" in following.message, following.message)
 
+# --- the Qt viewer -------------------------------------------------------------------
+
+try:
+    from PySide2.QtCore import QEvent, QPointF, Qt, QUrl
+    from PySide2.QtGui import QKeySequence, QMouseEvent, QTextCursor
+    from PySide2.QtWidgets import QApplication
+except ImportError:
+    print("SKIPPED: PySide2 is not installed, so the Qt viewer is not checked")
+else:
+    import subprocess
+    import time
+    app = QApplication.instance() or QApplication([])
+    from qtui import helpviewer as qviewer
+
+    def settle(cond, seconds=3.0):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            app.processEvents()
+            if cond():
+                return True
+            time.sleep(0.02)
+        return cond()
+
+    qt_ini = Path(tempfile.mkdtemp(prefix="linuxzpl-qt-viewer-")) / "settings.ini"
+    w = qviewer.HelpWindow(HELP, settings_files=[qt_ini])
+    w.resize(900, 600)
+    w.show()
+    app.processEvents()
+    bar = w.page.verticalScrollBar()
+
+    check("Qt: the header has Back, Forward, Search and the menu, Back and Forward greyed",
+          set(w.buttons) == {"back", "forward", "search", "menu"}
+          and not w.buttons["back"].isEnabled() and not w.buttons["forward"].isEnabled())
+    menu = [a.objectName() or None for a in w.menu.actions()]
+    check("Qt: the menu holds the shared list, in order",
+          [m or None for m in menu] == list(helpview.MENU), menu)
+    keys = {name: [k.toString() for k in w.actions[name].shortcuts()]
+            for name in helpview.COMMANDS}
+    want = {name: [QKeySequence(k).toString() for k in ks]
+            for name, (_l, ks) in helpview.COMMANDS.items()}
+    check("Qt: every command has its keys", keys == want, keys)
+
+    shown = []
+    for pid in sorted(docs):
+        w.open(pid)
+        if (w.title_label.text() != docs[pid].title or w.windowTitle() != docs[pid].title
+                or w.page.document().isEmpty()):
+            shown.append(pid)
+    check("Qt: every page opens, its title in the header and the window's",
+          not shown and w.subtitle_label.text() == "LinuxZPL Help", shown)
+
+    def anchor_top(name):
+        """Where the heading with anchor `name` starts on the page."""
+        qdoc = w.page.document()
+        block = qdoc.begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                if name in it.fragment().charFormat().anchorNames():
+                    return qdoc.documentLayout().blockBoundingRect(block).top()
+                it += 1
+            block = block.next()
+        return None
+
+    misplaced, moved = [], 0
+    for topic in sorted(set(helpdocs.WINDOW_HELP.values())):
+        w.open(topic)
+        _page, section = helpdocs.split_topic(topic)
+        if not section:
+            continue
+        top = anchor_top(section)
+        if top is None or abs(bar.value() - min(round(top), bar.maximum())) > 2:
+            misplaced.append((topic, top, bar.value(), bar.maximum()))
+        moved += bar.value() > 0
+    check("Qt: each window's Help topic opens scrolled to its section",
+          not misplaced and moved >= 5, (misplaced, moved))
+
+    def click_text(text):
+        """Click the middle of the first place `text` is shown, as a mouse does."""
+        found = w.page.document().find(text)
+        cursor = QTextCursor(w.page.document())
+        cursor.setPosition((found.selectionStart() + found.selectionEnd()) // 2)
+        point = QPointF(w.page.cursorRect(cursor).center())
+        for kind in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            QApplication.sendEvent(w.page.viewport(), QMouseEvent(
+                kind, point, Qt.LeftButton,
+                Qt.LeftButton if kind == QEvent.MouseButtonPress else Qt.NoButton,
+                Qt.NoModifier))
+        app.processEvents()
+
+    w.history = helpview.History()
+    w.open("index")
+    click_text("Design and print a first label")
+    check("Qt: clicking a topic link opens that page",
+          w.document.id == "getting-started" and w.buttons["back"].isEnabled(), w.document.id)
+    click_text("A printer plugged in by USB")
+    check("Qt: a link to another page's section opens it there",
+          w.history.current.topic == "printing#usb" and w.document.id == "printing"
+          and abs(bar.value() - min(round(anchor_top("usb")), bar.maximum())) <= 2,
+          w.history.current)
+    bar.setValue(bar.maximum() // 2)
+    left_at = bar.value()
+    click_text("Printing")  # the trail's link to its guide's section
+    check("Qt: the trail's links lead back to the contents",
+          w.history.current.topic == "index#printing", w.history.current)
+    w.actions["back"].trigger()
+    check("Qt: Back returns to the page before, scrolled where it was left",
+          w.document.id == "printing" and bar.value() == left_at
+          and w.buttons["forward"].isEnabled(), (w.document.id, bar.value(), left_at))
+    w.actions["forward"].trigger()
+    check("Qt: and Forward goes on again",
+          w.history.current.topic == "index#printing" and not w.buttons["forward"].isEnabled())
+    w.actions["contents"].trigger()
+    check("Qt: Contents opens the contents at its top",
+          w.document.id == "index" and bar.value() == 0)
+    w.actions["viewer_help"].trigger()
+    check("Qt: F1 opens the viewer's own page, or the contents until there is one",
+          w.document.id == HELP.viewer_topic())
+
+    opened_urls = []
+    real_open_url = qviewer.QDesktopServices.openUrl
+    qviewer.QDesktopServices.openUrl = lambda url: opened_urls.append(url.toString())
+    try:
+        w.follow_link(QUrl("https://www.zebra.com/"))
+    finally:
+        qviewer.QDesktopServices.openUrl = real_open_url
+    check("Qt: a link out of the help goes to the desktop's browser",
+          opened_urls == ["https://www.zebra.com/"] and w.document.id == HELP.viewer_topic())
+
+    w.actions["search"].trigger()
+    check("Qt: Search shows the search bar, its button pressed",
+          w.search_bar.isVisible() and w.buttons["search"].isChecked())
+    w.search_entry.setText("  firmware  ")
+    w.search_entry.returnPressed.emit()
+    check("Qt: Enter shows the results as a page of their own",
+          w.document.id == "search:firmware"
+          and w.title_label.text() == "Search results for “firmware”"
+          and not w.actions["print"].isEnabled(), w.document.id)
+    click_text("Update a printer's firmware")
+    check("Qt: a result opens its page, and Print can print it",
+          w.document.id == "firmware-update" and w.actions["print"].isEnabled())
+    w.actions["back"].trigger()
+    check("Qt: Back returns to the results", w.document.id == "search:firmware")
+    w.set_search_shown(False)
+    check("Qt: the search bar hides again",
+          not w.search_bar.isVisible() and not w.buttons["search"].isChecked())
+
+    w.open("printing")
+    w.actions["find"].trigger()
+    w.find_entry.setText("PRINTER")
+    count = len(w.matches)
+    check("Qt: Find marks every place the words are, in any letter case",
+          w.find_bar.isVisible() and count > 3 and len(w.page.extraSelections()) == count
+          and w.find_count.text() == f"1 of {count}", (count, w.find_count.text()))
+    w.find_next(1)
+    check("Qt: Next goes to the next", w.find_count.text() == f"2 of {count}")
+    w.find_next(-1)
+    w.find_next(-1)
+    check("Qt: Previous from the first wraps to the last",
+          w.find_count.text() == f"{count} of {count}")
+    w.open("fonts")
+    check("Qt: on another page Find looks again",
+          w.find_count.text().startswith("1 of") and len(w.matches) != count)
+    w.find_entry.setText("zzzznotaword")
+    check("Qt: words not on the page say so",
+          w.matches == [] and w.find_count.text() == "Not found")
+    w.hide_find()
+    check("Qt: closing Find clears its marks",
+          not w.find_bar.isVisible() and w.page.extraSelections() == [])
+
+    size_before = w.page.document().defaultFont().pointSizeF()
+    w.actions["larger"].trigger()
+    check("Qt: Larger Text sets the page larger, and remembers it",
+          w.text_size == 110 and helpview.load_text_size([qt_ini]) == 110
+          and abs(w.page.document().defaultFont().pointSizeF() - size_before * 1.1) < 0.05)
+    again = qviewer.HelpWindow(HELP, settings_files=[qt_ini])
+    check("Qt: a new window opens at the size remembered", again.text_size == 110)
+    again.close()
+    for _ in range(12):
+        w.actions["smaller"].trigger()
+    check("Qt: Smaller Text stops at the smallest, and greys itself there",
+          w.text_size == helpview.TEXT_SIZES[0] and not w.actions["smaller"].isEnabled())
+    w.set_text_size(100)
+
+    printed, said = [], []
+    real_open_pdf = helpdocs.open_pdf
+    helpdocs.open_pdf = lambda topic, *a, **k: printed.append(topic) or helpdocs.Launch(
+        None, "No PDF viewer was found to print the page from.", topic, printing=True)
+    w.say = said.append
+    try:
+        w.open("fonts#manager")
+        w.actions["print"].trigger()
+    finally:
+        helpdocs.open_pdf = real_open_pdf
+    check("Qt: Print opens the page's PDF, and says why if it cannot",
+          printed == ["fonts"] and said == ["No PDF viewer was found to print the page from."],
+          (printed, said))
+
+    read_end, write_end = os.pipe()
+    w.listen(read_end)
+    os.write(write_end, b"printing#usb\nnowhere\nfon")
+    check("Qt: a topic from the designer opens in the same window",
+          settle(lambda: w.history.current.topic == "printing#usb"), w.history.current)
+    os.write(write_end, b"ts#manager\n")
+    check("Qt: one that does not exist is passed over, and one sent in pieces arrives whole",
+          settle(lambda: w.history.current.topic == "fonts#manager")
+          and [e.topic for e in w.history.entries[-2:]] == ["printing#usb", "fonts#manager"],
+          w.history.entries[-3:])
+    os.close(write_end)
+    check("Qt: when the designer's end closes, the window stops listening and stays",
+          settle(lambda: not w._notifier.isEnabled()) and w.isVisible())
+    os.close(read_end)
+    w.close()
+
+    run = subprocess.run([sys.executable, str(helpdocs.PAGES.parent.parent / "linuxzpl.py"),
+                          "--qt", "--show-help", "fonts#nowhere"],
+                         capture_output=True, text=True, timeout=60)
+    check("Qt: --show-help with a topic that does not exist says so and exits 1",
+          run.returncode == 1 and "no section 'nowhere'" in run.stderr, run.stderr)
+
 print("ALL HELP VIEWER CHECKS PASSED" if not failures else f"{failures} FAILED")
 sys.exit(1 if failures else 0)

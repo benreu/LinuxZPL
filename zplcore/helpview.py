@@ -188,6 +188,42 @@ def is_search(topic: str) -> bool:
     return topic.startswith(SEARCH_PREFIX)
 
 
+# --- the window's commands ----------------------------------------------------------
+
+# Every command both viewers have, by name: its label and its keys, Yelp's
+# own where Yelp has the command. Back, Forward and Search are buttons in the
+# header bar; MENU is the menu button's list, in order, None a separator.
+COMMANDS = {
+    "back": ("Back", ("Alt+Left",)),
+    "forward": ("Forward", ("Alt+Right",)),
+    "search": ("Search", ("Ctrl+S",)),
+    "find": ("Find…", ("Ctrl+F",)),
+    "print": ("Print…", ("Ctrl+P",)),
+    "larger": ("Larger Text", ("Ctrl++", "Ctrl+=")),
+    "smaller": ("Smaller Text", ("Ctrl+-",)),
+    "contents": ("Contents", ("Alt+Home",)),
+    "viewer_help": ("Help", ("F1",)),
+    "close": ("Close", ("Ctrl+W",)),
+}
+MENU = ("find", "print", None, "larger", "smaller", None, "contents",
+        "viewer_help", None, "close")
+HEADER_BUTTONS = ("back", "forward", "search")
+WINDOW_TITLE = "LinuxZPL Help"  # under each page's title, as Yelp shows the document's
+# The viewer's own page, which F1 in it opens; the contents until it exists.
+VIEWER_PAGE = "help-viewer"
+
+_GTK_KEYS = {"Ctrl": "<Control>", "Alt": "<Alt>", "Shift": "<Shift>"}
+_GTK_NAMES = {"+": "plus", "=": "equal", "-": "minus"}
+
+
+def gtk_accelerator(keys: str) -> str:
+    """"Ctrl++" as GTK spells it, "<Control>plus"; a letter in lower case,
+    as GTK matches it."""
+    *mods, key = keys[:-2].split("+") + ["+"] if keys.endswith("++") else keys.split("+")
+    key = key.lower() if len(key) == 1 else key
+    return "".join(_GTK_KEYS[m] for m in mods) + _GTK_NAMES.get(key, key)
+
+
 # --- runs ---------------------------------------------------------------------------
 
 def _collapse(runs: List[Run]) -> Runs:
@@ -501,6 +537,11 @@ class Help:
             heading = _text(_section(root, section).find(NS + "title"))
             title = heading if guide_section else title + TRAIL_SEP + heading
         return TopicEntry(topic, title, reader.runs(desc) if desc is not None else ())
+
+    def viewer_topic(self) -> str:
+        """What F1 in the viewer opens: the viewer's own page, or the
+        contents where there is none."""
+        return VIEWER_PAGE if VIEWER_PAGE in self.pages else helpdocs.CONTENTS
 
     def documents(self) -> List[Document]:
         return [self.document(pid) for pid in sorted(self.pages)]

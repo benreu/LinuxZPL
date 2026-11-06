@@ -398,7 +398,8 @@ for action in linuxzpl.build_parser()._actions:
     for option in action.option_strings:
         options.add(option)
         takes = action.nargs != 0 and action.metavar
-        expected.append(f"{option} {action.metavar}" if takes else option)
+        value = f"[{action.metavar}]" if action.nargs == "?" else action.metavar
+        expected.append(f"{option} {value}" if takes else option)
 missing = [e for e in expected if e not in man_words]
 check("the man page names every option linuxzpl.py takes, with its value",
       not missing and len(expected) >= 7, (missing, expected))

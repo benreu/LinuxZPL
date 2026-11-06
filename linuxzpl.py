@@ -36,6 +36,27 @@ def run(frontend: str, path: str = None, fields=None) -> int:
     return main(path, fields) or 0
 
 
+def show_help(frontend: str, topic: str) -> int:
+    """LinuxZPL's own help viewer alone, at `topic`, as the designer starts
+    it when there is no Yelp."""
+    if frontend == 'qt':
+        from qtui.helpviewer import main
+    else:
+        from gtkui.helpviewer import main
+    return main(topic) or 0
+
+
+def check_topic(topic: str) -> str:
+    """A message saying why `topic` is not a help page, or a section of one;
+    "" when it is."""
+    from zplcore import helpview
+    try:
+        helpview.Help().check(topic)
+    except ValueError as e:
+        return f"--show-help: {e}"
+    return ""
+
+
 def save_filled(path: str, out: str, pairs) -> int:
     """Write the template at `path`, filled in with `pairs`, to `out`."""
     from zplcore import Label
@@ -77,6 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help='write the template, with any --field data filled in, '
                              'to FILE and exit without opening a window or needing a GUI '
                              'toolkit (needs --load-file)')
+    parser.add_argument('--show-help', dest='show_help', nargs='?', const='index',
+                        metavar='TOPIC',
+                        help="open only the help, in LinuxZPL's own viewer, at TOPIC: a "
+                             "page of it, or page#section (the contents if none is given)")
     return parser
 
 
@@ -100,6 +125,16 @@ def main() -> int:
             print(e, file=sys.stderr)
             return 1
 
+    if args.show_help is not None:
+        if path or args.fields or args.save_file:
+            print("--show-help opens only the help, so --load-file, --field and "
+                  "--save-file do not apply", file=sys.stderr)
+            return 1
+        problem = check_topic(args.show_help)
+        if problem:
+            print(problem, file=sys.stderr)
+            return 1
+
     if args.save_file:
         if not path:
             print("--save-file needs --load-file: there is no template to save",
@@ -119,15 +154,18 @@ def main() -> int:
             print(f"The {wanted} frontend needs {module}, which is not installed.\n"
                   f"  install: {install}", file=sys.stderr)
             return 1
+        if args.show_help is not None:
+            return show_help(wanted, args.show_help)
         return run(wanted, path, fields)
 
     # Nothing asked for, so use what is here. GTK is the default because it is
     # the frontend this project shipped first; Qt takes over only when GTK is
     # not installed.
-    if _have('gi'):
-        return run('gtk', path, fields)
-    if _have('PySide2'):
-        return run('qt', path, fields)
+    for frontend, module in (('gtk', 'gi'), ('qt', 'PySide2')):
+        if _have(module):
+            if args.show_help is not None:
+                return show_help(frontend, args.show_help)
+            return run(frontend, path, fields)
     print("No supported GUI toolkit found. Install one of:\n"
           f"  Qt:  {QT_INSTALL}\n"
           f"  GTK: {GTK_INSTALL}", file=sys.stderr)
