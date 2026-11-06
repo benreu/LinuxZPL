@@ -427,6 +427,15 @@ def _decode_gfa_image(x: int, y: int, params: str, preview_b64, path_hint):
     thing to edit from - it has already been dithered. So the original file
     wins, then the embedded JPEG, and the ^GF data is the last resort (and the
     only option for ZPL that came from another tool).
+
+    The size is the image's own. ^GF rows are whole bytes, so its width is
+    a multiple of 8 dots; the designer's preview is saved at the element's
+    width, and says what it was - a 203 dot image came back 208 wide, and
+    was drawn again stretched by the 5 dots of padding. A ^GF from another
+    program has no preview, and is the whole raster it prints.
+
+    The ^GF's dots are kept as what prints until the image is resized or
+    replaced, so a label that is only opened and saved sends the same dots.
     """
     decoded = graphics.decode(params)
     header = graphics.header(params)
@@ -439,38 +448,53 @@ def _decode_gfa_image(x: int, y: int, params: str, preview_b64, path_hint):
     # disagree about which is which.
     gf_h = (len(decoded[0]) // bpr) if decoded else (header[2] // bpr)
 
-    # 1. Original file still present - highest quality
-    if path_hint and os.path.exists(path_hint):
-        try:
-            return ImageElement(x, y, gf_w, gf_h, image_path=path_hint)
-        except Exception:
-            pass
-
-    # 2. Embedded JPEG preview - same quality as first import
+    preview = None
     if preview_b64:
         try:
             from PIL import Image
             jpeg_data = base64.b64decode(preview_b64)
-            pil_img = Image.open(io.BytesIO(jpeg_data)).convert('RGB')
-            return ImageElement(x, y, gf_w, gf_h, _pil_image=pil_img)
+            preview = Image.open(io.BytesIO(jpeg_data)).convert('RGB')
         except Exception:
-            pass
+            preview = None
+    width = gf_w
+    if preview is not None and 0 < preview.width <= gf_w and preview.width > gf_w - 8:
+        width = preview.width
 
-    # 3. Decode the 1-bit ^GF data - last resort
+    raster = None
     if decoded is not None:
-        raw, bpr = decoded
         try:
             import numpy as np
             from PIL import Image
+            raw = decoded[0]
             rows = len(raw) // bpr
-            arr = np.frombuffer(raw, dtype=np.uint8).reshape(rows, bpr)
-            unpacked = np.unpackbits(arr, axis=1)[:, :gf_w]
-            # A set bit is black, so the bits invert to greyscale levels.
-            pixel_data = ((1 - unpacked) * 255).astype(np.uint8)
-            pil_img = Image.fromarray(pixel_data, mode='L').convert('RGB')
-            return ImageElement(x, y, gf_w, rows, _pil_image=pil_img)
+            arr = np.frombuffer(raw[:rows * bpr], dtype=np.uint8).reshape(rows, bpr)
+            unpacked = np.unpackbits(arr, axis=1)[:, :width]
+            # A set bit is black; PIL's mode 1 has black as 0.
+            raster = Image.fromarray(((1 - unpacked) * 255).astype(np.uint8),
+                                     mode='L').convert('1')
+        except Exception:
+            raster = None
+
+    def finish(element):
+        if raster is not None and raster.size == (element.width, element.height):
+            element._print_raster = raster
+        return element
+
+    # 1. Original file still present - highest quality
+    if path_hint and os.path.exists(path_hint):
+        try:
+            return finish(ImageElement(x, y, width, gf_h, image_path=path_hint))
         except Exception:
             pass
+
+    # 2. Embedded JPEG preview - same quality as first import
+    if preview is not None:
+        return finish(ImageElement(x, y, width, gf_h, _pil_image=preview))
+
+    # 3. Decode the 1-bit ^GF data - last resort
+    if raster is not None:
+        return finish(ImageElement(x, y, width, raster.height,
+                                   _pil_image=raster.convert('RGB')))
     return None
 
 

@@ -2069,6 +2069,19 @@ gathered into one run the first time their depth is changed (§6.2).
 3. decoding the 1-bit `^GF` data, in any of the encodings of §8.1 (the only
    option for ZPL from other tools)
 
+**Its width is its own, not the `^GF`'s.** `^GF` rows are whole bytes, so a
+203 dot image is sent 208 dots wide. The embedded preview is saved at the
+element's own width, so a file this designer wrote says what that was, and
+the image reopens 203 wide rather than stretched across the padding. A `^GF`
+with no preview - from another tool - is the whole raster it prints, at
+`bytes_per_row × 8`.
+
+**Its dots are the `^GF`'s until it is resized or replaced.** The source -
+the original file, or the preview, which is a JPEG and lossy - is what a new
+size is dithered from, but the bitmap the file already sends is kept as what
+prints at the size it was saved, so a label that is only opened and saved
+writes the same dots.
+
 ### 8.4 The clipboard
 
 **What Copy puts on the clipboard is ZPL**, as plain text: the copied elements
@@ -3717,7 +3730,8 @@ rather than requirements:
   Paste parses it (§8.4), so a pasted element is what a save and a reopen
   would give back, not the object copied: an image with no source file left
   on disk comes back from its embedded JPEG preview, one generation further
-  from the original, so its dither can differ from the copy's by a few dots;
+  from the original - with the copy's own dots, until it is resized, when
+  the preview is what it is dithered from;
   and a field printing in the document's font arrives naming that font as its
   own, so it keeps printing in it on a label whose document font is another.
   Duplicate copies the elements themselves and loses neither. A copy made in

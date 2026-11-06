@@ -443,6 +443,38 @@ check("GFA bytes identical to the GTK app's output",
       re.search(r'\^GFA,\d+,\d+,\d+,([0-9A-F]+)', orig).group(1) ==
       re.search(r'\^GFA,\d+,\d+,\d+,([0-9A-F]+)', once).group(1))
 
+# --- a reopened image keeps its width, and its dots ------------------------
+# ^GF rows are whole bytes, so a 203 dot image is sent 208 wide. Reopened, it
+# must come back 203 wide, with the dots it was saved with, whether or not
+# its original file is still where it was.
+_rw_dir = Path(tempfile.mkdtemp(prefix="linuxzpl-reopen-"))
+_rw_src = _rw_dir / "pic.png"
+Image.linear_gradient('L').resize((300, 120)).save(_rw_src)
+_rw_doc = Document(812, 1218, dpi=203)
+_rw_el = _rw_doc.add_image_element(str(_rw_src))
+_rw_el.width, _rw_el.height = 203, 81
+_rw_dots = _rw_el.get_print_bitmap().tobytes()
+_rw_zpl = _rw_doc.to_zpl()
+_rw_present = zpl_parser.parse_zpl(_rw_zpl)[0].elements[0]
+_rw_src.rename(_rw_dir / "moved.png")
+_rw_moved = zpl_parser.parse_zpl(_rw_zpl)[0].elements[0]
+check("a reopened image keeps its width rather than the ^GF's whole bytes, "
+      "with its original file in place and with it moved away",
+      [(e.width, e.height) for e in (_rw_present, _rw_moved)] == [(203, 81), (203, 81)],
+      [(e.width, e.height) for e in (_rw_present, _rw_moved)])
+check("...and prints the same dots, so opening and saving changes nothing",
+      _rw_present.get_print_bitmap().tobytes() == _rw_dots
+      and _rw_moved.get_print_bitmap().tobytes() == _rw_dots
+      and re.search(r'\^GFA[^\n]*', _rw_doc.to_zpl()).group(0)
+      == re.search(r'\^GFA[^\n]*', zpl_parser.parse_zpl(_rw_zpl)[0].to_zpl()).group(0))
+_rw_moved.width = 150
+check("resized after reopening, it is dithered again at the new size",
+      _rw_moved.get_print_bitmap().size == (150, 81))
+_rw_foreign = zpl_parser.parse_zpl("^XA^FO1,1^GFA,8,8,1,FF00FF00FF00FF00^FS^XZ")[0].elements[0]
+check("a ^GF from another program, with no preview, is its whole raster",
+      (_rw_foreign.width, _rw_foreign.height) == (8, 8),
+      (_rw_foreign.width, _rw_foreign.height))
+
 # --- empty document ---------------------------------------------------------
 check("blank document refuses to save", Document().is_empty())
 check("document with an element is savable", not d1.is_empty())

@@ -2185,12 +2185,18 @@ class ImageElement(DesignElement):
         self._source_image = None     # cached decode of the original
         self._sized_cache = None      # ((w, h), resized image)
         self._render_cache = None     # ((w, h), frontend image)
+        # The 1-bit dots a label opened from a file already sends, kept as
+        # what prints until the image is resized or replaced: dithering the
+        # saved preview again - a JPEG, and lossy - would change the dots of
+        # a label that was only opened and saved.
+        self._print_raster = None
 
     def reload(self):
         """Drop the cached renderings after the source image changes."""
         self._source_image = None
         self._sized_cache = None
         self._render_cache = None
+        self._print_raster = None
 
     def _get_source_image(self):
         """Decoded source image, cached so redraws do not re-read the file."""
@@ -2228,6 +2234,9 @@ class ImageElement(DesignElement):
 
     def get_print_bitmap(self):
         """The exact 1-bit bitmap the printer receives (Floyd-Steinberg dithered)."""
+        raster = self._print_raster
+        if raster is not None and raster.size == (self.width, self.height):
+            return raster
         sized = self._get_sized_image()
         if sized is None:
             return None
