@@ -485,6 +485,29 @@ check("a new barcode names its value's font, so it prints in the font the "
       and _vf.height == _vf.bar_height + _vf.DEFAULT_FONT[1] + _vf.TEXT_GAP,
       (_vf.font, _vf_zpl))
 
+# An opened barcode with no ^A prints its line in the file's ^CF font. ^CF is
+# not written back, so the barcode takes that font as its own, as a text field
+# does, and saving the label changes nothing that prints.
+def _vf_open(src):
+    opened = zpl_parser.parse_zpl(src)[0]
+    return opened.elements[0], opened.to_zpl()
+
+_vf_cf, _vf_cf_zpl = _vf_open("^XA^CF0,30^FO10,10^BY2^BC,100^FD123^FS^XZ")
+check("an opened barcode with no ^A keeps the file's ^CF font when saved",
+      _vf_cf.font == ('0', 30, 30) and '^A0N,30,30\n^BC,100' in _vf_cf_zpl,
+      (_vf_cf.font, _vf_cf_zpl))
+_vf_cases = {
+    "no ^CF": "^XA^FO10,10^BY2^BC,100^FD123^FS^XZ",
+    "no value line": "^XA^CF0,30^FO10,10^BY2^BCN,100,N^FD123^FS^XZ",
+    "a matrix code": "^XA^CF0,30^FO10,10^BQN,2,4^FDQA,hello^FS^XZ",
+}
+_vf_left = {name: _vf_open(src)[0].font for name, src in _vf_cases.items()}
+_vf_own, _ = _vf_open("^XA^CF0,30^FO10,10^AFN,26,13^BY2^BC,100^FD123^FS^XZ")
+check("...and is left alone with no ^CF, no value line, or no line to print, "
+      "while its own ^A wins over the ^CF",
+      all(font is None for font in _vf_left.values()) and _vf_own.font == ('F', 26, 13),
+      (_vf_left, _vf_own.font))
+
 # --- empty document ---------------------------------------------------------
 check("blank document refuses to save", Document().is_empty())
 check("document with an element is savable", not d1.is_empty())
@@ -4651,11 +4674,13 @@ check("with no ^CF at all, ZPL's own default font applies",
       (bare.elements[0].font_code, bare.elements[0].font_height,
        bare.elements[0].font_width) == ('A', 9, 5),
       (bare.elements[0].font_code, bare.elements[0].font_height))
-# a barcode names no font of its own and must go on naming none
+# A barcode with no ^A prints its line in ^CF's font, and a save writes no
+# ^CF, so it takes that font as its own ^A: the file grows one, and prints
+# what it printed (FUNCTIONAL_SPEC 8.3).
 bc_cf = zpl_parser.parse_zpl(
     "^XA^PW812^LL1218^CF0,40,40\n^FO50,50^BY2^BC,100^FD123^FS^XZ")[0]
-check("^CF does not put an ^A on a barcode that had none",
-      '^A' not in bc_cf.elements[0].to_zpl(),
+check("^CF puts its font on a barcode that had none, so a save keeps what prints",
+      '^A0N,40,40\n^BC' in bc_cf.elements[0].to_zpl(),
       bc_cf.elements[0].to_zpl().replace('\n', ' '))
 
 # ^CI used to be reported as a command a save would drop, which it was; it

@@ -1697,7 +1697,7 @@ def _build_element(field, doc, renderer):
             x = y = 0
             field['typeset'], field['follows'], field['justify'] = \
                 False, None, None
-        return BarcodeElement(x, y, height=bc['height'],
+        element = BarcodeElement(x, y, height=bc['height'],
                               barcode_value=value,
                               module_width=module_width,
                               params=bc['params'],
@@ -1721,6 +1721,19 @@ def _build_element(field, doc, renderer):
                               origins=origins,
                               font=(font['code'], font['height'], font['width'])
                               if font else None)
+        # With no ^A of its own, the line prints in whatever ^CF last set. The
+        # ^CF is read, not written back - a text field bakes it into its own
+        # ^A - so a barcode left without one would print its line in the
+        # printer's power-up font once the label was saved. Give it the ^CF's
+        # font, as a text field gets it; one the file left at the power-up
+        # font prints the same either way and is left as it was.
+        default = field['default_font']
+        if (font is None and element.show_text
+                and symbologies.BARCODE_FEATURES[element.symbology]['text']
+                and _font_key(default) != _font_key(DEFAULT_FONT)):
+            element.font = _font_key(default)
+            element.sync_box()
+        return element
 
     if field['glyph'] is not None:
         # Nothing to print without data, as for text - unless the printer
@@ -1754,6 +1767,11 @@ def _build_element(field, doc, renderer):
         return _build_text(x, y, field, doc, renderer)
 
     return None
+
+
+def _font_key(font: dict) -> tuple:
+    """A font as a barcode holds it: (code, height, width)."""
+    return (font['code'], font['height'], font['width'])
 
 
 def _build_text(x, y, field, doc, renderer):

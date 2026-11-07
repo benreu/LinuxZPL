@@ -461,7 +461,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `quality` | QR's error correction: `Q` when `^BQ` leaves it out, `M` when `^BQ` names a letter QR has no level for - the manual distinguishes the two |
 | `qr_model` | `2`, the model the manual recommends. `1` is carried but drawn as 2 |
 | `qr_mask` | `7`, the manual's own default rather than "whichever scores best" |
-| `font` | `('0', 20, 20)` for a new barcode, font 0 at 20 dots - the `^A` before the barcode command, which sets the interpretation line's font; for one read from a file, the `^A` it had, or none |
+| `font` | `('0', 20, 20)` for a new barcode, font 0 at 20 dots - the `^A` before the barcode command, which sets the interpretation line's font; for one read from a file, the `^A` it had, else the file's `^CF` font when its line prints (§8.3), else none |
 
 **`width` and `height` are the footprint, not the bars.** The element box is
 the symbol plus the interpretation line, transposed when the barcode is
@@ -1768,8 +1768,17 @@ dots. Requiring an explicit `^A` before building a text element does not
 degrade such a field — it **discards** it, and the element is gone from the
 canvas, the preview and the next save.
 
-The default applies to text only. A barcode that named no font of its own must
-go on naming none, or a file that had no `^A` before its `^BC` grows one.
+**A barcode whose line prints takes a `^CF` font as its own `^A`.** Its
+interpretation line prints in the `^CF` font too, and a save writes no `^CF`
+- a text field carries the font in the `^A` it is written with - so a barcode
+left naming none would print its line in the printer's power-up font once the
+label was saved, and opening and saving would change what prints. It is
+therefore given the `^CF`'s font, and the file grows an `^A` before its `^BC`
+that prints exactly what the `^CF` did. A barcode is left naming none when
+nothing would change: no `^CF` other than the power-up font A at 9 × 5, a line
+switched off, or a symbology with no line (a matrix code). Until 2026-11-07
+the rule was the reverse - never grow an `^A` - which kept the file's spelling
+and lost what it printed.
 
 **`^FW` is the default orientation, and a field that leaves its orientation
 out is not an upright field.** `^FW<r>` sets the orientation every later
