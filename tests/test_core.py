@@ -475,6 +475,16 @@ check("a ^GF from another program, with no preview, is its whole raster",
       (_rw_foreign.width, _rw_foreign.height) == (8, 8),
       (_rw_foreign.width, _rw_foreign.height))
 
+# --- a new barcode names the font its value prints in ----------------------
+_vf_doc = Document(812, 1218, dpi=203)
+_vf = _vf_doc.add_barcode_element()
+_vf_zpl = _vf_doc.to_zpl()
+check("a new barcode names its value's font, so it prints in the font the "
+      "canvas draws rather than whatever ^CF the printer last selected",
+      _vf.font == _vf.DEFAULT_FONT and '^BY2\n^A0N,20,20\n^BC,100' in _vf_zpl
+      and _vf.height == _vf.bar_height + _vf.DEFAULT_FONT[1] + _vf.TEXT_GAP,
+      (_vf.font, _vf_zpl))
+
 # --- empty document ---------------------------------------------------------
 check("blank document refuses to save", Document().is_empty())
 check("document with an element is savable", not d1.is_empty())

@@ -2925,7 +2925,15 @@ class Document:
 
     def add_barcode_element(self, at=None) -> BarcodeElement:
         offset = self._stagger(20)
-        return self._append(BarcodeElement(50 + offset, 250 + offset), at)
+        element = BarcodeElement(50 + offset, 250 + offset)
+        # Name the font its value prints in, as its editor does the first
+        # time it applies. Left unnamed, the printer prints the value in
+        # whatever font its ^CF last selected, while the canvas drew it in
+        # DEFAULT_FONT.
+        if element.show_text and element.font is None:
+            element.font = element.DEFAULT_FONT
+            element.sync_box()
+        return self._append(element, at)
 
     def add_image_element(self, image_path: str, at=None) -> ImageElement:
         offset = self._stagger(20)

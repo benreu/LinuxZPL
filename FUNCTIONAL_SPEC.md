@@ -461,7 +461,7 @@ else, so a symbology that is not bars and spaces needs nothing from them.
 | `quality` | QR's error correction: `Q` when `^BQ` leaves it out, `M` when `^BQ` names a letter QR has no level for - the manual distinguishes the two |
 | `qr_model` | `2`, the model the manual recommends. `1` is carried but drawn as 2 |
 | `qr_mask` | `7`, the manual's own default rather than "whichever scores best" |
-| `font` | none - the `^A` before the barcode command, which sets the interpretation line's font |
+| `font` | `('0', 20, 20)` for a new barcode, font 0 at 20 dots - the `^A` before the barcode command, which sets the interpretation line's font; for one read from a file, the `^A` it had, or none |
 
 **`width` and `height` are the footprint, not the bars.** The element box is
 the symbol plus the interpretation line, transposed when the barcode is
@@ -603,8 +603,13 @@ run costs more than it saves.
 The interpretation line prints the encoded value - including a check digit
 when there is one, and EAN-13's own thirteenth digit or the extension's fitted
 length always - in the font the `^A` selected, at that font's dot height. A
-barcode whose line is switched on and whose file named no font is given one, so
-what prints is stated rather than inherited from the printer's `^CF`.
+new barcode is given one, `DEFAULT_FONT` (font 0 at 20 dots, the font the
+canvas already drew its line in), and so is any barcode its editor applies with
+the line switched on, so what prints is stated rather than inherited from
+whatever `^CF` the printer last selected. UPC-A is the manual's exception: its
+line's font is chosen by the module width - OCR-B from 3 dots up at 203 dpi,
+font A below - whatever `^A` precedes it, and the canvas does not yet draw
+that (§18).
 
 **EAN-13 and the UPC/EAN extension fit the value to a fixed length rather than
 validating it.** EAN-13 takes the last 12 digits (padding on the left with
@@ -3211,6 +3216,12 @@ message — never a swallowed exception or a placeholder.
 Behaviours in the current implementation that a port should treat as decisions
 rather than requirements:
 
+- **UPC-A's interpretation line is drawn in its element's font, not the
+  printer's choice.** The manual gives `^BU` a line whose font depends on the
+  module width - OCR-B from 2 dots up at 6 dots/mm, 3 at 8, 5 at 12 and 9 at
+  24, font A below - whatever `^A` precedes it. The canvas draws the line in
+  the element's font like any other barcode's, so a UPC-A's printed digits can
+  differ in face from the canvas's, though the bars do not.
 - **Canvas text is truncated to the first 20 characters for display**, while
   the element box and the printed output use the whole string. A longer text
   element therefore shows less on screen than it prints. Text in a block is

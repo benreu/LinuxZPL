@@ -107,7 +107,11 @@
         <title><gui>Value Text</gui> and <gui>Text Height</gui></title>
         <p>Whether the value is printed in words <gui>Below the bars</gui>,
         <gui>Above the bars</gui>, or <gui>Not printed</gui>, and how
-        tall.</p>
+        tall. LinuxZPL names the font the value prints in, the printer's
+        font 0 at <gui>Text Height</gui>, so it prints as the canvas shows
+        it. UPC-A is the exception: its printer picks the value's font
+        itself, from the module width, which the canvas does not
+        show.</p>
       </item>
       <item>
         <title>The check digit</title>
