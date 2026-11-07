@@ -136,11 +136,12 @@ arrange.
 
 **Help → Contents** (F1) opens the help in Yelp. The pages are Mallard, in
 `help/C/`, and are read from there, so nothing needs installing. Yelp comes with
-GNOME, Cinnamon and MATE. Without it, LinuxZPL makes each page into a PDF, kept
-in `~/.cache/linuxzpl/help/`, and opens it in your PDF viewer; the PDFs link to
-one another as the pages do. With neither, it says where the pages are.
-Each window's **Help** button, or F1 inside it, opens the page about that
-window.
+GNOME, Cinnamon and MATE. Without it, LinuxZPL opens the help in a viewer of its
+own, made to look and work like Yelp - Back and Forward, Search, Find, larger
+and smaller text - in the frontend's toolkit; `./linuxzpl.py --show-help` opens
+it alone. Its Print makes the page into a PDF, kept in `~/.cache/linuxzpl/help/`,
+and opens it in your PDF viewer to print from. Each window's **Help** button, or
+F1 inside it, opens the page about that window.
 
 ### From Python
 
@@ -256,8 +257,10 @@ zplcore/    no GUI toolkit, runs headless
   firmware.py    the version ~HI reports, and a firmware file sent to the
                     printer for Printer -> Firmware Update...
   helpdocs.py    the help pages in help/C, and starting a viewer for them
-  helppdf.py     the help pages made into linked PDFs, for a system
-                 without Yelp
+  helpview.py    the help pages as the built-in viewer draws them, its
+                 search, Back and Forward, and text size
+  helppdf.py     the help pages made into linked PDFs, for the viewer's
+                 Print
   renderer.py    ZPL to a PIL image, for file chooser previews
   geometry.py    handles, hit-testing, dragging, resizing
   grid.py        the grid over the canvas: its unit, where its lines fall,
@@ -280,8 +283,8 @@ zplcore/    no GUI toolkit, runs headless
                  barcode encoding, one file per symbology
 help/C/     the help, as Mallard pages
 help/linuxzpl.1  the man page: the command line and the Python API
-gtkui/      GTK3 frontend: Cairo painting, dialogs, menus
-qtui/       PySide2/Qt5 frontend: QPainter painting, dialogs, menus
+gtkui/      GTK3 frontend: Cairo painting, dialogs, menus, the help viewer
+qtui/       PySide2/Qt5 frontend: QPainter painting, dialogs, menus, the help viewer
 tests/      core checks, and the conformance suite the frontends must agree on
 ```
 

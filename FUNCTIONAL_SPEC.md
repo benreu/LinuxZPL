@@ -1346,33 +1346,77 @@ wait for it:
    and its trail back to the contents work. A topic naming a section, as
    `fonts#manager` does, is given as the page's file with that fragment, and
    Yelp opens scrolled to the section.
-2. **A PDF of the page**, opened with `xdg-open` - so in whatever the desktop
-   opens PDFs with - or, without it, in the first of evince, okular, atril,
-   xreader, qpdfview, zathura and mupdf on the PATH. A PDF opens at its
-   page's top, section or not: `xdg-open` has no way to pass a place in the
-   file. Every page is its own
-   PDF, named for the page's id, so a Help button opens just its topic. A
-   link to another page opens that page's PDF beside it, the contents lists
-   every topic as it does in Yelp, a topic starts with the trail back to the
-   contents, and a page's sections are the viewer's outline. The PDFs are
-   made from the Mallard pages (`zplcore/helppdf.py`, with reportlab), set in
-   DejaVu Sans when it is installed and the PDF base fonts when not, into the
-   user cache (`$XDG_CACHE_HOME/linuxzpl/help/`), once for each version of
-   the pages. A page using Mallard the converter does not know is refused
-   rather than shown with words missing; the test suite makes every shipped
-   page.
-3. **Neither:** a message says no help viewer was found, to install Yelp or
-   any PDF viewer, and where the pages are.
+2. **LinuxZPL's own viewer** (below), in the toolkit the designer runs in,
+   at the topic and its section.
+3. **Neither:** a message says neither could be started, to install Yelp,
+   and where the pages are.
 
-No viewer is on every Linux system - Yelp comes with GNOME, Cinnamon and
-MATE, not with KDE or a minimal install; a PDF viewer comes with nearly
-every desktop - hence the list. A viewer that cannot show the help usually
-says so at once by exiting with an error, as `xdg-open` does with nothing
-set to open a PDF, so the one started is watched for its first five
-seconds, and an error hands over to the next way down the list; when none
-is left, the message says which failed and its exit status. The pages, the
-list, the watching and the messages are shared (`zplcore/helpdocs.py`); a
-frontend only runs the timer and shows the message.
+Yelp comes with GNOME, Cinnamon and MATE, not with KDE or a minimal install,
+hence the viewer of LinuxZPL's own. A viewer that cannot show the help
+usually says so at once by exiting with an error, so the one started is
+watched for its first five seconds, and an error hands over to the next way
+down the list; when none is left, the message says which failed and its
+exit status. The pages, the list, the watching and the messages are shared
+(`zplcore/helpdocs.py`); a frontend only runs the timer and shows the
+message.
+
+#### The built-in viewer
+
+A window made to look and work like Yelp 42, for a system without Yelp. Each
+page is the same Mallard, read by the same reader as the PDFs below
+(`zplcore/helpview.py` turns it into runs and blocks; `qtui/helpviewer.py`
+draws them into a `QTextDocument` through a `QTextCursor`, and
+`gtkui/helpviewer.py` into a `Gtk.TextBuffer` with tags - no HTML in
+either). A page using Mallard the reader does not know is refused rather
+than shown with words missing, and the test suite opens every shipped page
+in both.
+
+- **Its own program.** `linuxzpl.py --qt|--gtk --show-help TOPIC`, started
+  as Yelp is: almost every Help button sits in a modal window, which blocks
+  every other window of the program that opened it, and the help stays open
+  after the designer closes. While it runs, a later topic is written to its
+  standard input, one to a line, and it goes there and comes to the front,
+  so there is one help window, as there is one Yelp window. At the end of
+  its input it stops listening and stays open.
+- **The look.** Yelp's header bar: Back and Forward at the left, the page's
+  title over "LinuxZPL Help", Search and the menu at the right. A topic
+  opens with its trail back to the contents in a grey band; the title and
+  section headings are grey, each section heading over a rule; topic links
+  are blue over a grey description; `<gui>` words are grey and keys are
+  keycaps; steps sit beside a yellow bar, notes in a grey box behind the
+  desktop theme's information, warning or error icon (its label where the
+  theme has none); a table has a shaded heading row; and a topic ends,
+  under a blue rule, with **More Information** - the sections of the
+  contents that list it - and **See Also**, each link followed by a dash and
+  its description. Colours and sizes are measured from Yelp's own pages.
+- **Commands,** one table (`helpview.COMMANDS`) both viewers read, which the
+  conformance suite compares:
+
+  | Command | Keys | Where |
+  |---|---|---|
+  | Back, Forward | Alt+Left, Alt+Right | header; each place keeps where it was scrolled |
+  | Search | Ctrl+S | header: a search bar, its results a page of their own |
+  | Find… | Ctrl+F | menu: a bar below the page, every match marked, Previous/Next, "n of m" |
+  | Print… | Ctrl+P | menu: the page's PDF in a PDF viewer, to print from there |
+  | Larger Text, Smaller Text | Ctrl++ (or Ctrl+=), Ctrl+- | menu: 70 % to 200 %, kept in settings.ini `[help] text_size` |
+  | Contents | Alt+Home | menu |
+  | Help | F1 | menu: the viewer's own page |
+  | Close | Ctrl+W | menu |
+
+- **Search** finds the pages holding every word, in any letter case: those
+  with every word in the title first, then in the title and description,
+  then in a section's title, then in its text, a page found by a section
+  linked at that section.
+- **Print** opens the page's PDF, which is also how the help prints: every
+  page is its own PDF, named for the page's id, opened with `xdg-open` - so
+  in whatever the desktop opens PDFs with - or, without it, in the first of
+  evince, okular, atril, xreader, qpdfview, zathura and mupdf on the PATH,
+  at its top. A link to another page opens that page's PDF beside it, and a
+  page's sections are the PDF viewer's outline. The PDFs are made from the
+  Mallard pages (`zplcore/helppdf.py`, with reportlab), set in DejaVu Sans
+  when it is installed and the PDF base fonts when not, into the user cache
+  (`$XDG_CACHE_HOME/linuxzpl/help/`), once for each version of the pages.
+  With no PDF viewer, a message gives the PDF's path.
 
 ---
 
@@ -3221,7 +3265,7 @@ message — never a swallowed exception or a placeholder.
 | Vector drawing | Canvas rendering with a uniform scale transform, translucency and alpha compositing | |
 | TCP sockets | All printer communication | Plain sockets; no printing subsystem is involved |
 | Registering a font at runtime | So a chosen font can be drawn before it is installed anywhere | Optional; without it the canvas may fall back to a default face |
-| Starting a program apart from this one | Showing the help in Yelp or a PDF viewer (§6.8) | Optional; without a viewer, a message says what to install |
+| Starting a program apart from this one | Showing the help in Yelp or LinuxZPL's own viewer, and the viewer's Print in a PDF viewer (§6.8) | Optional; without either viewer, a message says what to install |
 
 ---
 

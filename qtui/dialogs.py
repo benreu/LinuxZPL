@@ -115,7 +115,7 @@ def show_error(parent, message: str):
 def show_help(parent, topic: str = helpdocs.CONTENTS):
     """Open the help page `topic` in a viewer of its own (zplcore/helpdocs.py),
     or say why none could be started."""
-    _follow_help(parent, helpdocs.launch(topic))
+    _follow_help(parent, helpdocs.launch(topic, frontend="qt"))
 
 
 def _follow_help(parent, launched):

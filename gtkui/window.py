@@ -4820,7 +4820,7 @@ class ZPLViewerWindow(Gtk.Window):
     def show_help(self, parent, topic: str = helpdocs.CONTENTS):
         """Open the help page `topic` in a viewer of its own
         (zplcore/helpdocs.py), or say why none could be started."""
-        self._follow_help(parent, helpdocs.launch(topic))
+        self._follow_help(parent, helpdocs.launch(topic, frontend="gtk"))
 
     def _follow_help(self, parent, launched):
         """Say why no viewer could be started, or watch the one that was for

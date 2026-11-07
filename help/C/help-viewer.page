@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<page xmlns="http://projectmallard.org/1.0/"
+      type="topic" id="help-viewer">
+  <info>
+    <link type="guide" xref="index#start"/>
+    <title type="sort">2</title>
+    <link type="seealso" xref="keyboard-shortcuts"/>
+    <desc>Go back, search the help, find words on a page, make the text
+    larger, and print a page.</desc>
+  </info>
+
+  <title>Reading this help</title>
+
+  <p>The help opens in Yelp, the help viewer that comes with GNOME,
+  Cinnamon and MATE. Where Yelp is not installed, LinuxZPL opens it in a
+  help viewer of its own, which looks and works the same way. Either way
+  there is one help window: <gui>Help</gui> in another window shows that
+  window's page in it. The help window stays open after LinuxZPL is
+  closed.</p>
+
+  <section id="moving">
+    <title>Moving around</title>
+    <p>Click a blue link to go to that page. The line at the top of a page
+    leads back to its part of the contents, and the foot of a page lists
+    the contents' part again under <gui>More Information</gui> and related
+    pages under <gui>See Also</gui>. <gui>Back</gui> and <gui>Forward</gui>,
+    the arrows at the left of the title, go back to the pages you came
+    through, each where you left it. In LinuxZPL's own viewer,
+    <guiseq><gui>Menu</gui><gui>Contents</gui></guiseq> goes to the
+    contents.</p>
+  </section>
+
+  <section id="search">
+    <title>Searching the help</title>
+    <p>Click the search button, type some words and press
+    <key>Enter</key>. The pages holding every word are listed, those with
+    the words in their title first. Click one to open it, at the part of
+    the page the words are in.</p>
+  </section>
+
+  <section id="find">
+    <title>Finding words on this page</title>
+    <p><guiseq><gui>Menu</gui><gui>Find…</gui></guiseq> opens a find bar.
+    Type the words and every place they are on the page is marked, with the
+    page scrolled to the first. In LinuxZPL's own viewer the bar is below
+    the page: <key>Enter</key> or the down arrow goes to the next place,
+    <keyseq><key>Shift</key><key>Enter</key></keyseq> or the up arrow to
+    the one before, and <key>Escape</key> closes the bar.</p>
+  </section>
+
+  <section id="size">
+    <title>Larger text</title>
+    <p><guiseq><gui>Menu</gui><gui>Larger Text</gui></guiseq> and
+    <gui>Smaller Text</gui> change the size of the pages' text. LinuxZPL's
+    own viewer remembers the size for the next time it opens.</p>
+  </section>
+
+  <section id="print">
+    <title>Printing a page</title>
+    <p><guiseq><gui>Menu</gui><gui>Print…</gui></guiseq> in LinuxZPL's own
+    viewer opens the page as a PDF in your PDF viewer, to print from
+    there. Making the PDFs takes a few seconds the first time. With no PDF
+    viewer installed, a message says where the PDF is.</p>
+  </section>
+
+  <section id="keys">
+    <title>Keys</title>
+    <p>These are Yelp's keys, and LinuxZPL's own viewer has the same.</p>
+    <table>
+      <thead>
+        <tr><td><p>Keys</p></td><td><p>Does</p></td></tr>
+      </thead>
+      <tbody>
+        <tr><td><p><keyseq><key>Alt</key><key>Left</key></keyseq>, <keyseq><key>Alt</key><key>Right</key></keyseq></p></td><td><p>Back, Forward</p></td></tr>
+        <tr><td><p><keyseq><key>Ctrl</key><key>S</key></keyseq></p></td><td><p>Search the help</p></td></tr>
+        <tr><td><p><keyseq><key>Ctrl</key><key>F</key></keyseq></p></td><td><p>Find words on this page</p></td></tr>
+        <tr><td><p><keyseq><key>Ctrl</key><key>+</key></keyseq>, <keyseq><key>Ctrl</key><key>-</key></keyseq></p></td><td><p>Larger text, smaller text</p></td></tr>
+        <tr><td><p><keyseq><key>Ctrl</key><key>P</key></keyseq></p></td><td><p>Print the page</p></td></tr>
+        <tr><td><p><keyseq><key>Ctrl</key><key>W</key></keyseq></p></td><td><p>Close the help</p></td></tr>
+        <tr><td><p><keyseq><key>Alt</key><key>Home</key></keyseq></p></td><td><p>The contents (LinuxZPL's own viewer)</p></td></tr>
+        <tr><td><p><key>F1</key></p></td><td><p>This page (LinuxZPL's own viewer)</p></td></tr>
+      </tbody>
+    </table>
+  </section>
+</page>

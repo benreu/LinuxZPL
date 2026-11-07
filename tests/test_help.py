@@ -85,34 +85,52 @@ started = []
 CACHE = Path(tempfile.mkdtemp(prefix="linuxzpl-help-cache-"))
 
 
+class Pipe:
+    """The built-in viewer's standard input: what was written, or a pipe
+    whose reader has gone."""
+
+    def __init__(self, broken=False):
+        self.written, self.broken = [], broken
+
+    def write(self, data):
+        if self.broken:
+            raise BrokenPipeError(32, "Broken pipe")
+        self.written.append(data)
+
+    def flush(self):
+        pass
+
+
 class FakeProcess:
     """A viewer that started; poll() answers with `code`, None while running."""
     code = None
 
-    def __init__(self, argv):
-        self.argv = argv
+    def __init__(self, argv, stdin=None):
+        self.argv, self.stdin_kind = argv, stdin
+        self.stdin = Pipe() if stdin is subprocess.PIPE else None
 
     def poll(self):
         return self.code
 
 
-def fake_start(argv):
+def fake_start(argv, stdin=subprocess.DEVNULL):
     started.append(argv)
-    return FakeProcess(argv)
+    return FakeProcess(argv, stdin)
 
 
 def start_failing_for(*names):
-    """_start() as it is when a program on PATH will not run."""
-    def start(argv):
-        return None if os.path.basename(argv[0]) in names else fake_start(argv)
+    """_start() as it is when a program will not run: by its name on PATH,
+    or "python" for the built-in viewer."""
+    def start(argv, stdin=subprocess.DEVNULL):
+        name = "python" if argv[0] == sys.executable else os.path.basename(argv[0])
+        return None if name in names else fake_start(argv, stdin)
     return start
 
 
 def stubbed(have, start=fake_start):
     """PATH holding only the programs in `have`, and nothing really started.
     _start() is replaced rather than subprocess.Popen, which would be
-    replaced for everything - fc-list, as the PDF's fonts are looked up,
-    too."""
+    replaced for everything - fc-list, as fonts are looked up, too."""
     helpdocs.shutil.which = lambda name: f"/usr/bin/{name}" if name in have else None
     helpdocs._start = start
 
@@ -121,14 +139,17 @@ def unstub():
     helpdocs.shutil.which, helpdocs._start = real_which, real_start
 
 
-def run(topic=None, have=(), start=fake_start):
-    """launch(topic) on a machine whose PATH has only the programs in `have`."""
+def run(topic=None, have=(), start=fake_start, fresh=True, frontend="qt"):
+    """launch(topic) on a machine whose PATH has only the programs in `have`;
+    with no built-in viewer running unless `fresh` is False."""
     del started[:]
+    if fresh:
+        helpdocs._viewer = None
     stubbed(have, start)
     try:
         if topic is None:
-            return helpdocs.launch(cache=CACHE)
-        return helpdocs.launch(topic, cache=CACHE)
+            return helpdocs.launch(cache=CACHE, frontend=frontend)
+        return helpdocs.launch(topic, cache=CACHE, frontend=frontend)
     finally:
         unstub()
 
@@ -137,17 +158,26 @@ def argvs():
     return list(started)
 
 
+def builtin(frontend, topic):
+    return [sys.executable, str(helpdocs.PROGRAM), f"--{frontend}", "--show-help", topic]
+
+
 popened = []
 real_popen = helpdocs.subprocess.Popen
 helpdocs.subprocess.Popen = lambda argv, **kwargs: popened.append((argv, kwargs)) or "process"
 try:
     detached = helpdocs._start(["/usr/bin/yelp", "x"])
+    piped = helpdocs._start(["/usr/bin/python3", "x"], stdin=subprocess.PIPE)
 finally:
     helpdocs.subprocess.Popen = real_popen
 check("a viewer is started detached, with nothing tied to this process's terminal",
       detached == "process" and popened[0][1].get("start_new_session") is True
       and all(popened[0][1].get(s) is subprocess.DEVNULL
               for s in ("stdin", "stdout", "stderr")), popened)
+check("the built-in viewer is too, but for a pipe to its standard input",
+      piped == "process" and popened[1][1].get("start_new_session") is True
+      and popened[1][1].get("stdin") is subprocess.PIPE
+      and popened[1][1].get("stdout") is subprocess.DEVNULL, popened[1:])
 
 
 def popen_missing(argv, **kwargs):
@@ -172,43 +202,59 @@ check("with Yelp, a topic opens Yelp on that page's file",
       and launched.message is None, started)
 
 launched = run("firmware-update", have=("xdg-open", "evince"))
-check("with no Yelp, the topic's PDF is made and opened with xdg-open",
-      launched.viewer == "xdg-open" and launched.pdf is not None
-      and launched.pdf.name == "firmware-update.pdf" and launched.pdf.is_file()
-      and argvs() == [["/usr/bin/xdg-open", str(launched.pdf)]], (launched, started))
+check("with no Yelp, LinuxZPL's own viewer is started at the topic, in the toolkit "
+      "asked for, with a pipe to its standard input",
+      launched.viewer == helpdocs.BUILTIN and launched.message is None
+      and argvs() == [builtin("qt", "firmware-update")]
+      and launched.process.stdin_kind is subprocess.PIPE and launched.pdf is None
+      and helpdocs.PROGRAM.is_file(), (launched, started))
 
-launched = run(have=("zathura", "evince"))
-check("with no xdg-open either, the first PDF viewer in the list is used",
-      launched.viewer == "evince"
-      and argvs() == [["/usr/bin/evince", str(launched.pdf)]]
-      and launched.pdf.name == "index.pdf", started)
+launched = run(have=(), frontend="gtk")
+check("and in GTK for the GTK frontend, at the contents",
+      argvs() == [builtin("gtk", "index")], started)
 
-launched = run(have=("yelp", "xdg-open"), start=start_failing_for("yelp"))
-check("a Yelp that cannot be started hands over to the PDF",
-      launched.viewer == "xdg-open" and launched.message is None, launched)
+launched = run(have=("yelp",), start=start_failing_for("yelp"))
+check("a Yelp that cannot be started hands over to the built-in viewer",
+      launched.viewer == helpdocs.BUILTIN and argvs() == [builtin("qt", "index")], launched)
 
-launched = run(have=())
-check("with no viewer at all, nothing is started", started == [] and launched.process is None)
-check("and the message says to install Yelp or a PDF viewer, and where the pages are",
-      launched.message and "yelp" in launched.message and "PDF viewer" in launched.message
+launched = run(have=("yelp",), start=start_failing_for("yelp", "python"))
+check("with neither, nothing is started", started == [] and launched.process is None)
+check("and the message names both, says to install Yelp, and where the pages are",
+      launched.message and "Neither Yelp nor LinuxZPL's own help viewer" in launched.message
+      and "yelp" in launched.message and "PDF" not in launched.message
       and str(helpdocs.PAGES) in launched.message, launched.message)
-
-real_build = helppdf.build
-helppdf.build = lambda pages, cache=None, fonts=None: (_ for _ in ()).throw(
-    OSError("No space left on device"))
-try:
-    launched = run(have=("xdg-open",))
-finally:
-    helppdf.build = real_build
-check("a PDF that cannot be made gives a message with the reason, and starts nothing",
-      started == [] and launched.message and "No space left on device" in launched.message
-      and "yelp" in launched.message, launched.message)
 
 try:
     run("no-such-topic", have=("yelp",))
     check("asking for a page that does not exist is an error", False)
 except ValueError:
     check("asking for a page that does not exist is an error", started == [])
+
+# --- one built-in viewer, given each topic in turn -----------------------------
+
+first = run("fonts", have=())
+second = run("printing#usb", have=(), fresh=False)
+check("while the built-in viewer runs, the next topic is written to it, not "
+      "another started",
+      started == [] and second.handed and second.process is first.process
+      and first.process.stdin.written == [b"printing#usb\n"], (started, second))
+check("and a topic it was handed is not watched", helpdocs.follow(second, 0.0) is None)
+yelp_now = run("printing", have=("yelp",), fresh=False)
+check("with Yelp found again, Yelp opens it, as it comes first",
+      yelp_now.viewer == "yelp" and not yelp_now.handed)
+first.process.code = 0
+third = run("text", have=(), fresh=False)
+check("once that viewer has closed, a new one is started",
+      argvs() == [builtin("qt", "text")] and not third.handed
+      and third.process is not first.process)
+other = run("text", have=(), fresh=False, frontend="gtk")
+check("a viewer in the other toolkit is not handed the topic",
+      argvs() == [builtin("gtk", "text")] and not other.handed)
+helpdocs._viewer.stdin.broken = True
+after = run("frame", have=(), fresh=False, frontend="gtk")
+check("nor is one whose pipe has broken, and a new one starts",
+      argvs() == [builtin("gtk", "frame")] and not after.handed, (started, after))
+helpdocs._viewer = None
 
 # --- a section of a page, and each window's Help -------------------------------
 
@@ -231,9 +277,9 @@ check("with Yelp, a topic with a section opens the page's file at that section",
       and launched.topic == "fonts#manager", started)
 
 launched = run("fonts#manager", have=("xdg-open",))
-check("with no Yelp, it opens the page's PDF, at its top",
-      launched.pdf is not None and launched.pdf.name == "fonts.pdf"
-      and argvs() == [["/usr/bin/xdg-open", str(launched.pdf)]], (launched, started))
+check("with no Yelp, the built-in viewer is given the section too",
+      argvs() == [builtin("qt", "fonts#manager")] and launched.topic == "fonts#manager",
+      (launched, started))
 
 for bad in ("fonts#nowhere", "nowhere#manager", "nowhere"):
     try:
@@ -295,39 +341,37 @@ def follow(launched, elapsed, have=()):
         unstub()
 
 
-base = helpdocs.Launch(None, None, "firmware-update", "xdg-open", helpdocs.PAGES,
-                       None, CACHE)
+base = helpdocs.Launch(None, None, "firmware-update", "yelp", helpdocs.PAGES,
+                       None, CACHE, frontend="qt")
 check("a viewer still starting is watched again",
       follow(base._replace(process=Running([])), 1.0) is helpdocs.WATCHING)
 check("one that has lasted WATCH_SECONDS is left to it",
       follow(base._replace(process=Running([])), helpdocs.WATCH_SECONDS) is None)
 check("one that exited cleanly, having handed the file on, is left to it",
-      follow(base._replace(process=Exited([])), 0.5, have=("evince",)) is None
+      follow(base._replace(process=Exited([])), 0.5, have=("yelp",)) is None
       and started == [])
 
-following = follow(base._replace(process=Failed([])), 0.5, have=("xdg-open", "evince"))
-check("an xdg-open that failed hands over to the next PDF viewer, not to itself again",
-      isinstance(following, helpdocs.Launch) and following.viewer == "evince"
-      and argvs() == [["/usr/bin/evince", str(following.pdf)]]
-      and following.pdf.name == "firmware-update.pdf", (following, started))
+helpdocs._viewer = None
+following = follow(base._replace(process=Failed([])), 0.5, have=("yelp",))
+check("a Yelp that failed hands over to the built-in viewer, not to itself again",
+      isinstance(following, helpdocs.Launch) and following.viewer == helpdocs.BUILTIN
+      and argvs() == [builtin("qt", "firmware-update")], (following, started))
 
-following = follow(base._replace(process=Failed([])), 0.5, have=("xdg-open",))
-check("with nothing after it, the message names what failed and how",
+helpdocs._viewer = None
+following = follow(base._replace(process=Failed([]), topic="fonts#manager",
+                                 frontend="gtk"), 0.5, have=("yelp",))
+check("one asked for a section hands over that section, in the same toolkit",
+      following.viewer == helpdocs.BUILTIN and argvs() == [builtin("gtk", "fonts#manager")],
+      (following, started))
+
+helpdocs._viewer = None
+following = follow(base._replace(process=Failed([]), viewer=helpdocs.BUILTIN), 0.5,
+                   have=("yelp",))
+check("with nothing after it, the message names what failed, in words, and how",
       following.process is None and following.message.startswith(
-          "xdg-open could not show the help (exit status 3).")
-      and "No other help viewer was found" in following.message, following.message)
-
-following = follow(base._replace(process=Failed([]), viewer="yelp"), 0.5,
-                   have=("yelp", "xdg-open"))
-check("a Yelp that failed hands over to the PDF",
-      following.viewer == "xdg-open" and following.pdf.name == "firmware-update.pdf",
-      following)
-
-following = follow(base._replace(process=Failed([]), viewer="yelp", topic="fonts#manager"),
-                   0.5, have=("yelp", "xdg-open"))
-check("and one asked for a section hands over that section's page",
-      following.viewer == "xdg-open" and following.pdf.name == "fonts.pdf"
-      and following.topic == "fonts#manager", following)
+          "LinuxZPL's own help viewer could not show the help (exit status 3).")
+      and "Neither Yelp nor" in following.message, following.message)
+helpdocs._viewer = None
 
 # --- the PDFs -----------------------------------------------------------------------
 

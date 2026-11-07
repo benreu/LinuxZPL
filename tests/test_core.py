@@ -11959,7 +11959,7 @@ class _HdViewer:
 
 try:
     qt_dialogs.QMessageBox = _HdBox
-    _hd.launch = lambda topic=_hd.CONTENTS: (_hd_asked.append(topic),
+    _hd.launch = lambda topic=_hd.CONTENTS, **_kw: (_hd_asked.append(topic),
                                              _hd.Launch(_HdViewer(0), None))[1]
     _hd_win = qt_main.ZPLDesignerWindow()
     _hd_win.help_contents_action.trigger()
@@ -11968,13 +11968,13 @@ try:
           _hd_asked == [_hd.CONTENTS] and _hd_shown == []
           and _hd_win.help_contents_action.shortcut().toString() == "F1",
           (_hd_asked, _hd_shown))
-    _hd.launch = lambda topic=_hd.CONTENTS: _hd.Launch(None, "install yelp")
+    _hd.launch = lambda topic=_hd.CONTENTS, **_kw: _hd.Launch(None, "install yelp")
     qt_dialogs.show_help(_hd_win, "firmware-update")
     check("Qt: with no viewer, Help says so in a message box",
           _hd_shown == [("Help", "No help viewer", "install yelp")], _hd_shown)
 
     # xdg-open failing at once, with nothing after it in the list
-    _hd.launch = lambda topic=_hd.CONTENTS, pages=_hd.PAGES, cache=None, start_after="": (
+    _hd.launch = lambda topic=_hd.CONTENTS, pages=_hd.PAGES, cache=None, start_after="", **_kw: (
         _hd.Launch(None, f"nothing after {start_after}") if start_after
         else _hd.Launch(_HdViewer(3), None, topic, "xdg-open"))
     del _hd_shown[:]
@@ -12149,6 +12149,9 @@ try:
           and _wp_f1_panel == ["barcode"] and _wp_f1_canvas == [_hd.CONTENTS]
           and _wp_none == [_hd.PANEL],
           (_wp_clicked, _wp_in_panel, _wp_f1_panel, _wp_f1_canvas, _wp_none))
+    check("Qt: Help > Contents opens the contents even with the focus in the "
+          "panel, where F1 opens the panel's page",
+          _wp_menu_panel == [_hd.CONTENTS], _wp_menu_panel)
     _wp_win.unsaved_changes = False
     _wp_win.close(); _wp_win.deleteLater()
 finally:

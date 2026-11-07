@@ -12,10 +12,12 @@ No help viewer is on every Linux system, so launch() tries in turn:
    its trail back to the contents work. A topic may name a section of its
    page, "fonts#manager" as in a Mallard xref, and Yelp is given the file
    with that fragment, which opens it scrolled to the section.
-2. A PDF of the page (helppdf.py), opened with xdg-open, so with whatever
-   the desktop opens PDFs in, or else the first of the usual PDF viewers on
-   PATH. Nearly every desktop has one. It opens at the page's top: xdg-open
-   has no way to pass a place in the file.
+2. LinuxZPL's own viewer, made to look and work like Yelp (helpview.py,
+   qtui/helpviewer.py and gtkui/helpviewer.py), in the toolkit the
+   designer runs in. It is a program of its own, linuxzpl.py --show-help,
+   as Yelp is, so it opens from a modal window and outlives the designer.
+   While it runs, a later topic is written to its standard input instead,
+   and it goes there and comes to the front: one help window, as Yelp has.
 3. Neither: nothing is started, and a message for the frontend to show says
    what to install and where the pages are.
 
@@ -34,6 +36,7 @@ show a message in their own way.
 
 import shutil
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, NamedTuple, Optional, Set, Tuple, Union
@@ -45,7 +48,11 @@ CONTENTS = "index"
 # xdg-open, or one on which xdg-open fails; their own order is arbitrary.
 PDF_VIEWERS = ("xdg-open", "evince", "okular", "atril", "xreader",
                "qpdfview", "zathura", "mupdf")
-VIEWERS = ("yelp",) + PDF_VIEWERS
+BUILTIN = "linuxzpl"        # LinuxZPL's own viewer, by its name in VIEWERS
+VIEWERS = ("yelp", BUILTIN)
+# How a message names a viewer that failed.
+VIEWER_NAMES = {"yelp": "Yelp", BUILTIN: "LinuxZPL's own help viewer"}
+PROGRAM = PAGES.parent.parent / "linuxzpl.py"
 WATCH_SECONDS = 5.0
 POLL_MS = 250
 # follow()'s answer while the viewer is still starting: ask again.
@@ -90,6 +97,8 @@ class Launch(NamedTuple):
     pdf: Optional[Path] = None  # the PDF shown, when a PDF viewer was used
     cache: Optional[Path] = None
     printing: bool = False      # from open_pdf(), so handed over down PDF_VIEWERS
+    handed: bool = False        # given to the built-in viewer already running
+    frontend: str = ""          # the toolkit the built-in viewer runs in
 
 
 def topics(pages: Path = PAGES) -> List[str]:
@@ -140,7 +149,7 @@ def section_ids(page: Path) -> Set[str]:
             if el.get("id")}
 
 
-INSTALL = "Install Yelp (the yelp package) or any PDF viewer, then try again."
+INSTALL = "Install Yelp (the yelp package), then try again."
 
 
 def _where(pages: Path, pdf: Optional[Path]) -> str:
@@ -150,14 +159,8 @@ def _where(pages: Path, pdf: Optional[Path]) -> str:
 
 def missing_viewer_message(pages: Path = PAGES, pdf: Optional[Path] = None,
                            other: bool = False) -> str:
-    return (f"No {'other ' if other else ''}help viewer was found. {INSTALL}"
-            f"\n\n{_where(pages, pdf)}")
-
-
-def unmade_message(pages: Path, error: Exception) -> str:
-    return (f"No Yelp was found, and the help could not be made into PDF: "
-            f"{error}\n\nInstall Yelp (the yelp package), then try again.\n\n"
-            f"{_where(pages, None)}")
+    return (f"Neither Yelp nor LinuxZPL's own help viewer could be started. "
+            f"{INSTALL}\n\n{_where(pages, pdf)}")
 
 
 def no_pdf_viewer_message(pdf: Path, other: bool = False) -> str:
@@ -170,12 +173,13 @@ def pdf_unmade_message(error: Exception) -> str:
     return f"The page could not be made into a PDF: {error}"
 
 
-def _start(argv: List[str]) -> Optional[subprocess.Popen]:
+def _start(argv: List[str], stdin=subprocess.DEVNULL) -> Optional[subprocess.Popen]:
     """Start a viewer apart from this process: in a session of its own, so
     it neither dies with the designer nor takes a Ctrl+C meant for it, and
-    with nothing tied to the designer's terminal."""
+    with nothing tied to the designer's terminal - but for the built-in
+    viewer's standard input, a pipe the designer sends later topics down."""
     try:
-        return subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+        return subprocess.Popen(argv, stdin=stdin,
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL,
                                 start_new_session=True)
@@ -220,38 +224,74 @@ def open_pdf(topic: str, pages: Path = PAGES, cache: Optional[Path] = None,
                   pages, pdf, cache, True)
 
 
+# The built-in viewer started last, and its toolkit, while it may still run.
+_viewer: Optional[subprocess.Popen] = None
+_viewer_frontend = ""
+
+
+def _frontend(frontend: Optional[str]) -> str:
+    """The toolkit for the built-in viewer: the one asked for, or the one
+    this process has loaded."""
+    return frontend or ("qt" if "PySide2.QtWidgets" in sys.modules else "gtk")
+
+
+def builtin_argv(frontend: str, topic: str) -> List[str]:
+    return [sys.executable, str(PROGRAM), f"--{frontend}", "--show-help", topic]
+
+
+def _hand_to_viewer(topic: str, frontend: str) -> Optional[subprocess.Popen]:
+    """Give `topic` to the built-in viewer already running in `frontend`,
+    down its standard input; None if there is none, or it has gone."""
+    global _viewer
+    if _viewer is None or _viewer_frontend != frontend or _viewer.poll() is not None:
+        return None
+    try:
+        _viewer.stdin.write(f"{topic}\n".encode("utf-8"))
+        _viewer.stdin.flush()
+    except (OSError, ValueError):  # closed between the poll and the write
+        _viewer = None
+        return None
+    return _viewer
+
+
 def launch(topic: str = CONTENTS, pages: Path = PAGES,
-           cache: Optional[Path] = None, start_after: str = "") -> Launch:
+           cache: Optional[Path] = None, start_after: str = "",
+           frontend: Optional[str] = None) -> Launch:
     """Show the help page `topic`, or the contents, with the first viewer in
     VIEWERS after `start_after` that is on PATH and starts. Never waits for
-    it. `topic` may name a section, "page#section", which Yelp opens at.
-    The PDFs are made, into `cache` (helppdf.cache_dir() if None), only
-    when it comes to a PDF viewer. Asking for a page or a section that does
-    not exist is a programming error."""
-    page_id, section, page = _check(topic, pages)
+    it. `topic` may name a section, "page#section", which either viewer
+    opens at. The built-in viewer runs in `frontend`, "qt" or "gtk" (by
+    default the toolkit loaded here), and while one runs it is given the
+    topic rather than another started. `cache` is for the PDFs a viewer's
+    Print makes, passed on unchanged. Asking for a page or a section that
+    does not exist is a programming error."""
+    global _viewer, _viewer_frontend
+    _page_id, section, page = _check(topic, pages)
+    frontend = _frontend(frontend)
     names = VIEWERS[VIEWERS.index(start_after) + 1:] if start_after else VIEWERS
-    pdf = None
     for name in names:
+        if name == BUILTIN:
+            running = _hand_to_viewer(topic, frontend)
+            if running is not None:
+                return Launch(running, None, topic, name, pages, None, cache,
+                              handed=True, frontend=frontend)
+            process = _start(builtin_argv(frontend, topic), stdin=subprocess.PIPE)
+            if process is not None:
+                _viewer, _viewer_frontend = process, frontend
+                return Launch(process, None, topic, name, pages, None, cache,
+                              frontend=frontend)
+            continue
         path = shutil.which(name)
         if not path:
             continue
-        if name == "yelp":
-            target = (pages if topic == CONTENTS
-                      else f"{page}#{section}" if section else page)
-        else:
-            if pdf is None:
-                try:
-                    from . import helppdf
-                    pdf = helppdf.build(pages, cache) / f"{page_id}.pdf"
-                except Exception as e:  # the help must never take the designer down
-                    return Launch(None, unmade_message(pages, e), topic, "",
-                                  pages, None, cache)
-            target = pdf
+        target = (pages if topic == CONTENTS
+                  else f"{page}#{section}" if section else page)
         process = _start([path, str(target)])
         if process is not None:
-            return Launch(process, None, topic, name, pages, pdf, cache)
-    return Launch(None, missing_viewer_message(pages, pdf, bool(start_after)),
-                  topic, "", pages, pdf, cache)
+            return Launch(process, None, topic, name, pages, None, cache,
+                          frontend=frontend)
+    return Launch(None, missing_viewer_message(pages, None, bool(start_after)),
+                  topic, "", pages, None, cache, frontend=frontend)
 
 
 def follow(launched: Launch, elapsed: float) -> Union[str, None, Launch]:
@@ -262,17 +302,24 @@ def follow(launched: Launch, elapsed: float) -> Union[str, None, Launch]:
     failed, the next viewer down the list has been started, and this is
     that Launch, to be followed in turn - or nothing else could be started,
     and its message says which viewer failed and why none other was used."""
+    if launched.handed:
+        return None
     code = launched.process.poll()
     if code is None:
         return WATCHING if elapsed < WATCH_SECONDS else None
     if code == 0:
         return None
-    again = open_pdf if launched.printing else launch
-    following = again(launched.topic, launched.pages, launched.cache,
-                      start_after=launched.viewer)
+    if launched.printing:
+        following = open_pdf(launched.topic, launched.pages, launched.cache,
+                             start_after=launched.viewer)
+    else:
+        following = launch(launched.topic, launched.pages, launched.cache,
+                           start_after=launched.viewer,
+                           frontend=launched.frontend or None)
     if following.message:
         what = "the page's PDF" if launched.printing else "the help"
+        name = VIEWER_NAMES.get(launched.viewer, launched.viewer)
         return following._replace(
-            message=f"{launched.viewer} could not show {what} "
+            message=f"{name} could not show {what} "
                     f"(exit status {code}).\n\n{following.message}")
     return following

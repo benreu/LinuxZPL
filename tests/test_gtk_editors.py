@@ -2763,7 +2763,7 @@ try:
         def poll(self):
             return self.code
 
-    helpdocs.launch = lambda topic=helpdocs.CONTENTS: (
+    helpdocs.launch = lambda topic=helpdocs.CONTENTS, **_kw: (
         asked.append(topic), helpdocs.Launch(Viewer(0), None))[1]
     Gtk.MessageDialog.run = lambda self: (shown.append(
         (self.get_title(), self.props.text, self.props.secondary_text)),
@@ -2776,14 +2776,14 @@ try:
           "nothing of its own when a viewer started",
           len(f1) == 1 and f1[0].get_label() == "_Contents"
           and asked == [helpdocs.CONTENTS] and shown == [], (asked, shown))
-    helpdocs.launch = lambda topic=helpdocs.CONTENTS: helpdocs.Launch(
+    helpdocs.launch = lambda topic=helpdocs.CONTENTS, **_kw: helpdocs.Launch(
         None, "install yelp")
     hw.show_help(hw, "firmware-update")
     check("GTK: with no viewer, Help says so in a message box",
           shown == [("Help", "No help viewer", "install yelp")], shown)
 
     # xdg-open failing at once, with nothing after it in the list
-    helpdocs.launch = lambda topic=helpdocs.CONTENTS, pages=helpdocs.PAGES, cache=None, start_after="": (
+    helpdocs.launch = lambda topic=helpdocs.CONTENTS, pages=helpdocs.PAGES, cache=None, start_after="", **_kw: (
         helpdocs.Launch(None, f"nothing after {start_after}") if start_after
         else helpdocs.Launch(Viewer(3), None, topic, "xdg-open"))
     del shown[:]
