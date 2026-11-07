@@ -12,7 +12,7 @@ for suite in tests/test_core.py tests/test_deviations.py tests/test_font_fallbac
   QT_QPA_PLATFORM=offscreen python3 -u "$suite" || status=1
 done
 
-for suite in tests/test_gtk_editors.py tests/test_conformance.py; do
+for suite in tests/test_gtk_editors.py tests/test_helpview_gtk.py tests/test_conformance.py; do
   [ -f "$suite" ] || continue
   echo "=== $suite ==="
   # The windows go to a virtual display, out of the way of whoever is at the

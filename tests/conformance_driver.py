@@ -560,6 +560,30 @@ class GtkDriver:
                 walk(top.get_submenu(), 1)
         return '\n'.join(lines)
 
+    def help_viewer(self):
+        """The built-in help viewer's header buttons, menu, and the keys the
+        window really answers to, command by command."""
+        import tempfile
+        from gi.repository import Gtk
+        from gtkui.helpviewer import HelpWindow
+        viewer = HelpWindow(settings_files=[Path(tempfile.mkdtemp()) / 'settings.ini'])
+        lines = ['[header]'] + [f'{name}\t{viewer.buttons[name].get_tooltip_text()}'
+                                for name in ('back', 'forward', 'search', 'menu')]
+        lines.append('[menu]')
+        for item in viewer.menu.get_children():
+            lines.append('---' if isinstance(item, Gtk.SeparatorMenuItem)
+                         else menu_label(item.get_label(), '_'))
+        lines.append('[keys]')
+        for name, accels in viewer.accelerators.items():
+            bound = []
+            for accel in accels:
+                key, mods = Gtk.accelerator_parse(accel)
+                if viewer.accel_group.query(key, mods):
+                    bound.append(menu_accel(Gtk.accelerator_get_label(key, mods)))
+            lines.append(f'{name}\t{", ".join(bound)}')
+        viewer.destroy()
+        return '\n'.join(lines)
+
     def to_zpl(self):
         return self.canvas.to_zpl()
 
@@ -948,6 +972,25 @@ class QtDriver:
                 walk(top.menu(), 1)
         return '\n'.join(lines)
 
+    def help_viewer(self):
+        """The built-in help viewer's header buttons, menu, and the keys the
+        window really answers to, command by command."""
+        import tempfile
+        from qtui.helpviewer import HelpWindow
+        viewer = HelpWindow(settings_files=[Path(tempfile.mkdtemp()) / 'settings.ini'])
+        lines = ['[header]'] + [f'{name}\t{viewer.buttons[name].toolTip()}'
+                                for name in ('back', 'forward', 'search', 'menu')]
+        lines.append('[menu]')
+        for action in viewer.menu.actions():
+            lines.append('---' if action.isSeparator() else menu_label(action.text(), '&'))
+        lines.append('[keys]')
+        for name, action in viewer.actions.items():
+            keys = [menu_accel(k.toString()) for k in action.shortcuts()]
+            lines.append(f'{name}\t{", ".join(keys)}')
+        viewer.close()
+        viewer.deleteLater()
+        return '\n'.join(lines)
+
     def to_zpl(self):
         return self.document.to_zpl()
 
@@ -968,6 +1011,9 @@ def sequence(driver, record):
     # toolkit in one frontend and an old name for the program in the other,
     # and never the label in front of the user.
     record('the titlebar with no file open', driver.title())
+    # The built-in help viewer is a window of each frontend's own, with no
+    # menu bar and no ZPL: what it offers, and the keys it answers to.
+    record("the help viewer's header, menu and keys", driver.help_viewer())
 
     driver.set_label_size(812, 1218)
     record('empty 4x6 label')
