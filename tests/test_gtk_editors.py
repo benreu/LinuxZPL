@@ -2924,12 +2924,33 @@ next(w for w in _pw_widgets(wp_win.properties)
      if isinstance(w, Gtk.Entry) and w.get_mapped()).grab_focus()
 wh_pump()
 wp_in_panel = wp_win.properties.has_focus_within()
-Gtk.accel_groups_activate(wp_win, Gdk.KEY_F1, 0)
+
+
+def wp_press_f1(window):
+    """F1 as the keyboard gives it to a window: its key handler, then its
+    accelerators. The hardware keycode is the one accelerators match by."""
+    event = Gdk.Event.new(Gdk.EventType.KEY_PRESS)
+    event.key.keyval = Gdk.KEY_F1
+    event.key.state = 0
+    event.key.window = window.get_window()
+    found, keys = Gdk.Keymap.get_for_display(window.get_display()).get_entries_for_keyval(Gdk.KEY_F1)
+    if found:
+        event.key.hardware_keycode = keys[0].keycode
+    window.emit("key-press-event", event)
+    wh_pump()
+
+
+wp_press_f1(wp_win)
 wp_f1_panel = list(wh_asked)
+del wh_asked[:]
+# Help > Contents from the menu - its accelerator, as the menu item gives it -
+# with the focus still in the panel
+Gtk.accel_groups_activate(wp_win, Gdk.KEY_F1, 0)
+wp_menu_panel = list(wh_asked)
 del wh_asked[:]
 wp_win.design_canvas.grab_focus()
 wh_pump()
-Gtk.accel_groups_activate(wp_win, Gdk.KEY_F1, 0)
+wp_press_f1(wp_win)
 wp_f1_canvas = list(wh_asked)
 del wh_asked[:]
 wp_win.design_canvas.document.clear_selection()
@@ -2943,6 +2964,9 @@ check("GTK: the panel's Help opens the selected element's page, and so does "
       and wp_f1_panel == ["barcode"] and wp_f1_canvas == [helpdocs.CONTENTS]
       and wp_none == [helpdocs.PANEL],
       (wp_clicked, wp_in_panel, wp_f1_panel, wp_f1_canvas, wp_none))
+check("GTK: Help > Contents opens the contents even with the focus in the "
+      "panel, where F1 opens the panel's page",
+      wp_menu_panel == [helpdocs.CONTENTS], wp_menu_panel)
 wp_win.destroy()
 
 for wh_key, wh_topic in sorted(helpdocs.WINDOW_HELP.items()):

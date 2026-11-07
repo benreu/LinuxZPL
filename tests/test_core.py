@@ -12117,12 +12117,25 @@ try:
          if w.isVisible()).setFocus()
     QApplication.processEvents()
     _wp_in_panel = _wp_panel.has_focus_within()
-    _wp_win.help_contents_action.trigger()
+
+    def _wp_press_f1():
+        """F1 as the keyboard gives it to the focused widget: Qt offers a
+        key that is not the platform's own to the shortcuts first."""
+        from PySide2.QtGui import QKeyEvent
+        QApplication.sendEvent(QApplication.focusWidget(),
+                               QKeyEvent(QEvent.KeyPress, Qt.Key_F1, Qt.NoModifier))
+        QApplication.processEvents()
+
+    _wp_press_f1()
     _wp_f1_panel = list(_wh_asked)
+    del _wh_asked[:]
+    # Help > Contents from the menu, the focus still in the panel
+    _wp_win.help_contents_action.trigger()
+    _wp_menu_panel = list(_wh_asked)
     del _wh_asked[:]
     _wp_win.canvas.setFocus()
     QApplication.processEvents()
-    _wp_win.help_contents_action.trigger()
+    _wp_press_f1()
     _wp_f1_canvas = list(_wh_asked)
     del _wh_asked[:]
     _wp_win.document.clear_selection()

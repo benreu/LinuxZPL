@@ -12,7 +12,8 @@ import os
 import sys
 from pathlib import Path
 
-from PySide2.QtCore import QByteArray, QMimeData, QPoint, QSize, Qt, QTimer
+from PySide2.QtCore import (QByteArray, QEvent, QMimeData, QObject, QPoint, QSize, Qt,
+                            QTimer)
 from PySide2.QtGui import QCursor, QDrag, QIcon, QImage, QKeySequence, QPixmap
 from PySide2.QtWidgets import (QAction, QApplication, QFileDialog, QHBoxLayout, QLabel,
                                QMainWindow, QMenu, QMessageBox, QScrollArea,
@@ -36,6 +37,29 @@ from .busy import BusyBar
 from .canvas import PALETTE_MIME, DesignCanvas, to_qimage
 from .properties import PropertiesPanel
 from .rulers import RULER_SIZE, Ruler, RulerCorner
+
+class PanelF1(QObject):
+    """F1 with the focus in the Properties panel, docked or floating: help
+    on what the panel shows, rather than the contents Help > Contents
+    opens. F1 is that menu item's shortcut, and a shortcut does not say
+    whether it came from the key or the menu, so the key is caught first:
+    accepting the shortcut override has Qt hand the panel the key press
+    instead of firing the shortcut."""
+
+    def __init__(self, panel):
+        super().__init__(panel)
+        self.panel = panel
+
+    def eventFilter(self, _obj, event):
+        if (event.type() in (QEvent.ShortcutOverride, QEvent.KeyPress)
+                and event.key() == Qt.Key_F1 and event.modifiers() == Qt.NoModifier
+                and self.panel.has_focus_within()):
+            if event.type() == QEvent.KeyPress and not event.isAutoRepeat():
+                self.panel.open_help()
+            event.accept()
+            return True
+        return False
+
 
 # The align commands, in menu order: the three horizontal, then the three
 # vertical. The GTK frontend spells the same six the same way, and the
@@ -158,6 +182,8 @@ class ZPLDesignerWindow(QMainWindow):
         # The selection's properties, edited live, beside the canvas. Built
         # before the actions, every one of which ends its burst of edits.
         self.properties = PropertiesPanel(self)
+        self._panel_f1 = PanelF1(self.properties)
+        QApplication.instance().installEventFilter(self._panel_f1)
         self.addDockWidget(Qt.RightDockWidgetArea, self.properties)
 
         self._build_actions()
@@ -1302,14 +1328,10 @@ class ZPLDesignerWindow(QMainWindow):
         dialog.show()
 
     def on_help_contents(self):
-        # F1 with the focus in the Properties panel, docked or floating, is
-        # help on what the panel shows: the shortcut is the window's, and Qt
-        # keeps a window's shortcuts working while its floating dock is
-        # active.
-        if self.properties.has_focus_within():
-            self.properties.open_help()
-        else:
-            qt_dialogs.show_help(self)
+        """Help > Contents: the contents, wherever the focus is. F1 is the
+        same command, but with the focus in the Properties panel it is help
+        on what the panel shows (PanelF1)."""
+        qt_dialogs.show_help(self)
 
     # --- files ---------------------------------------------------------------
 

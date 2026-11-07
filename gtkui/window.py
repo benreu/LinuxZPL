@@ -1550,6 +1550,13 @@ class ZPLViewerWindow(Gtk.Window):
         shortcuts. A key that reaches one ends the panel's burst first, so
         the command is an undo entry of its own.
         """
+        if (event.keyval == Gdk.KEY_F1
+                and not event.state & Gtk.accelerator_get_default_mod_mask()
+                and self.properties.has_focus_within()):
+            # F1 in the panel, docked or floating, is help on what it shows;
+            # Help > Contents, whose accelerator F1 is, stays the contents.
+            self.properties.open_help()
+            return True
         focus = window.get_focus()
         if (focus is not None and self.properties.holds(focus)
                 and isinstance(focus, (Gtk.Editable, Gtk.TextView))):
@@ -4805,13 +4812,10 @@ class ZPLViewerWindow(Gtk.Window):
         dialog.destroy()
 
     def on_help_contents(self):
-        """Help > Contents, and F1: the contents, or with the focus in the
-        Properties panel, help on what it shows. The floating panel's window
-        shares this window's keys, so F1 reaches here from it too."""
-        if self.properties.has_focus_within():
-            self.properties.open_help()
-        else:
-            self.show_help(self)
+        """Help > Contents: the contents, wherever the focus is. F1 is its
+        accelerator, but with the focus in the Properties panel the window's
+        key handler takes it first, for help on what the panel shows."""
+        self.show_help(self)
 
     def show_help(self, parent, topic: str = helpdocs.CONTENTS):
         """Open the help page `topic` in a viewer of its own

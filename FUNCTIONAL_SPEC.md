@@ -1283,7 +1283,9 @@ effect of building elements while parsing.
 
 ### 6.8 Help
 
-The last menu in the bar. **Contents** (F1) opens LinuxZPL's help.
+The last menu in the bar. **Contents** (F1) opens LinuxZPL's help at its
+contents, wherever the focus is. F1 is the same command but for one place,
+the Properties panel (below).
 
 Each window has a **Help** button of its own that opens the page about that
 window, at the section about it, and F1 inside the window does the same. The
@@ -1323,7 +1325,10 @@ barcode page; the stored graphics page at using one - or, with nothing or
 more than one element selected, the panel's own page
 (`helpdocs.element_topic`). F1 with the focus in the panel, docked or
 floating, does the same; F1 anywhere else in the main window opens the
-contents.
+contents. Help > Contents chosen from the menu opens the contents even with
+the focus in the panel: the key is caught before it reaches the menu item's
+shortcut (Qt's shortcut override, GTK's window key handler), so only F1
+follows the focus.
 
 A window whose question was a stock one-line prompt is a small window of its
 own instead, so it can hold the button: Upload Template's name is asked for
