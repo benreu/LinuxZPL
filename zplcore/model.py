@@ -3527,10 +3527,18 @@ class Document:
         zpl_fonts.register_app_font(font_path)
         self.sync_text_width(element)
 
-    def printer_font_names(self, exclude=None) -> set:
-        """Printer font names already used by the label's text elements."""
+    def printer_font_names(self, exclude=None, same_file=None) -> set:
+        """Printer font names already used by the label's text elements.
+
+        `same_file` leaves out the names held by elements already using that
+        font file: those are not taken *from* it, they are its own name, and
+        counting them would give one font a second, suffixed name that no
+        later session can resolve.
+        """
         return {el.printer_font_name for el in self.elements
-                if el is not exclude and getattr(el, 'printer_font_name', None)}
+                if el is not exclude and getattr(el, 'printer_font_name', None)
+                and not (same_file
+                         and getattr(el, 'font_path', None) == same_file)}
 
     def font_sources(self) -> dict:
         """Printer font spec ('d:NAME.TTF') -> local .ttf path, for fonts

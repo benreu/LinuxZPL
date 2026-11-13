@@ -41,9 +41,9 @@ Compare specs, not names. The same name on two drives is two different objects,
 and a `^A@` naming `E:MYFONT.TTF` is not satisfied by the printer holding
 `R:MYFONT.TTF` — the printer would not find it either and would silently fall
 back to a substitute face. `Document.font_sources()`
-([zplcore/model.py:1993](zplcore/model.py#L1993)) and
+([zplcore/model.py:3543](zplcore/model.py#L3543)) and
 `workflow.missing_printer_fonts()`
-([zplcore/workflow.py:70](zplcore/workflow.py#L70)) both key on the full spec
+([zplcore/workflow.py:182](zplcore/workflow.py#L182)) both key on the full spec
 for exactly this reason.
 
 ---
@@ -51,8 +51,10 @@ for exactly this reason.
 ## 2. Deriving the name from a file (forward direction)
 
 `fonts.printer_font_name(path, taken=())`
-([zplcore/fonts.py:305](zplcore/fonts.py#L305)):
+([zplcore/fonts.py:712](zplcore/fonts.py#L712)):
 
+0. If `font_names.ini` gives this file a name, that is the name — `taken`
+   and the steps below do not apply (§3.3).
 1. Take the **filename stem** — `Path(path).stem`. *Not* the family name
    recorded inside the font.
 2. Upper-case it.
@@ -61,8 +63,9 @@ for exactly this reason.
    replaced with an underscore.
 5. Truncate to 8 characters (`MAX_NAME_LEN`).
 6. An empty result becomes `FONT`.
-7. If the result is in `taken`, append `2`, `3`, … trimming the stem to keep
-   the total at 8 (see §3.2 — this step does not survive a session).
+7. If the result is in `taken`, or is a name `font_names.ini` gives some
+   other file, append `2`, `3`, … trimming the stem to keep the total at 8
+   (see §3.2 — this step does not survive a session).
 
 Verified output:
 
@@ -90,8 +93,9 @@ unlikely to match a packaged one at all. See §7.
 ## 3. Mapping a name back to a file (reverse direction)
 
 `fonts.file_for_printer_name(name)`
-([zplcore/fonts.py:194](zplcore/fonts.py#L194)) is how a reopened label finds
-its real font again: it derives an object name for every installed `.ttf`
+([zplcore/fonts.py:464](zplcore/fonts.py#L464)) is how a reopened label finds
+its real font again. A name `font_names.ini` gives is answered from the map
+alone (§3.3). Any other name is found the old way: it derives an object name for every installed `.ttf`
 (`_all_ttf_paths()`) and returns the first path that matches. Ties — and
 truncation makes them common — are broken by preferring the face the family
 listing already picked as canonical, then the shortest filename, so
@@ -115,7 +119,7 @@ Split first, always with the **font** splitter:
 device, name = fonts.split_font_spec('E:DEJAVUSA.TTF')   # ('E', 'DEJAVUSA')
 ```
 
-`fonts.split_font_spec` ([zplcore/fonts.py:336](zplcore/fonts.py#L336)) defaults
+`fonts.split_font_spec` ([zplcore/fonts.py:750](zplcore/fonts.py#L750)) defaults
 a driveless spec to `E:` (the font default). Do **not** reach for
 `graphic_store.split_device_spec` here: it defaults to `R:` and `.GRF`, which is
 right for a graphic and wrong for a font — a delete aimed at the wrong drive
@@ -143,10 +147,60 @@ reopens with the second one:
 - **absent from `uploadable`**, so "Upload & Print" cannot send it — only
   "Print Anyway" remains.
 
-If a label must carry two faces of one family across sessions, give the files
-names that differ within the first 8 characters (`DJVSANS.ttf`,
-`DJVBOLD.ttf`) before choosing them, so each derives to its own unsuffixed
-name on every machine.
+If a label must carry two faces of one family across sessions, name them in
+`font_names.ini` (§3.3). Failing that, give the files names that differ
+within the first 8 characters (`DJVSANS.ttf`, `DJVBOLD.ttf`) before choosing
+them, so each derives to its own unsuffixed name on every machine.
+
+A suffix is only ever for a *different* file. Picking the same file for a
+second element gives it the name the first one has, not `…2`: the editors pass
+the chosen path as `Document.printer_font_names(exclude=…, same_file=…)`, which
+leaves out names that file already holds.
+
+### 3.3 Fixing names with `font_names.ini`
+
+Deriving can't make a name unique: every Liberation face on a stock install
+truncates to `LIBERATI`, and `file_for_printer_name('LIBERATI')` picks one of
+them (Liberation **Mono**, on a typical machine). When names have to mean one
+face on every machine, list them in a `font_names.ini` in the **Extra Font
+Folder**:
+
+```ini
+# NAME = file, relative to this folder or absolute
+LIBSANR  = LiberationSans-Regular.ttf
+LIBSANNB = LiberationSansNarrow-Bold.ttf
+DEJAVUSB = /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+```
+
+What a map entry does, in `fonts.py`:
+
+| Call | With the map |
+|---|---|
+| `printer_font_name(path, taken)` | A mapped file returns its name, ignoring `taken`. Any other file treats every mapped name as taken, so system Liberation derives to `LIBERAT2`, never onto a mapped `LIBERATI`. |
+| `file_for_printer_name(name)` | A mapped name returns its file. If that file has gone it returns **`None`** — it does not fall back to deriving, which is what would pick a lookalike. |
+| `font_name_map()` | `NameMap(source, names, by_path, problems)`, cached; `set_extra_font_dir()` drops it. |
+| `mapped_fonts()` | One `MappedFont(name, family, style, path)` per entry, for the choosers. |
+
+Rules for the file:
+
+- Read whether or not `fc-list` works. (The folder's *fonts* are still only
+  scanned by the fallback; a mapped file is loaded by path and registered with
+  the toolkits when it is used, so fontconfig never needs to know about it.)
+- Names are upper-cased and must be 1–8 of `A-Z 0-9 _ -`. Files must exist and
+  end in `.ttf`; they are compared by real path.
+- `#` starts a comment; a `[section]` line is ignored.
+- A bad line is skipped and reported, never guessed at: a bad name, a missing
+  file, a name repeated, or a file given a second name. The first entry wins.
+  **Settings → Local Fonts…** lists what was read and every skipped line with
+  its line number.
+
+In the editors, **Printer names…** (beside Choose…) lists the map by name, face
+and file, so `LIBSANR` and `LIBSANB` can be told apart — the family chooser
+can't. Printer → Fonts… has **Upload by name…** for the same list. Both
+buttons are there only when a map is loaded.
+
+The map changes no `.zpl`: `^A@` paths are still written back exactly as the
+file gave them (§1). It only decides which local file a name means.
 
 ---
 
@@ -162,7 +216,7 @@ fonts.upload_font('10.0.0.50', 9100,
 ```
 
 `fonts.build_font_upload()`
-([zplcore/fonts.py:351](zplcore/fonts.py#L351)) is the payload builder, and
+([zplcore/fonts.py:765](zplcore/fonts.py#L765)) is the payload builder, and
 useful on its own for tests or for writing a payload to a file:
 
 ```
@@ -208,7 +262,7 @@ each `^A@`.
 Picking a font only records it, so choosing one never blocks on the network.
 The pre-print chain is three steps a frontend runs itself, because the middle
 one is a prompt and the other two are network calls that must stay off the GUI
-thread ([zplcore/workflow.py:62](zplcore/workflow.py#L62)):
+thread ([zplcore/workflow.py:182](zplcore/workflow.py#L182)):
 
 ```python
 if not document.font_sources():          # built-in fonts only: nothing to check
@@ -292,7 +346,7 @@ Four contracts to respect:
   which is why it rides alongside the result instead of replacing it. Use it to
   say which drives a listing is short of, rather than presenting a partial
   listing as complete. `workflow.listing_status(address, noun, devices, specs,
-  unreadable)` ([zplcore/workflow.py:107](zplcore/workflow.py#L107)) composes
+  unreadable)` ([zplcore/workflow.py:219](zplcore/workflow.py#L219)) composes
   that sentence, and both frontends share it so the wording cannot drift.
 - **How unreachability is judged.** A failure to *connect* on the very first
   device (`R:`) is decisive and returns `None` immediately, so a dead host
@@ -421,6 +475,12 @@ click report success and change nothing.
 Two sessions — a second machine, a colleague, a CI job, a later checkout —
 match fonts only if they agree on the spec. Work through these in order.
 
+**0. Better: share a name map.** Put the fonts and a `font_names.ini` in one
+folder every session can read and set it as each one's Extra Font Folder
+(§3.3). Mapped names then mean the same file everywhere, whatever each
+machine's own fonts are called, and steps 1–2 only matter for fonts outside
+the map.
+
 **1. Agree on the filename, not the typeface.** The object name comes from the
 filename stem (§2). Before assuming two machines match, compare derivations,
 not fonts:
@@ -440,8 +500,9 @@ scan) and re-pick the font in the label.
 
 **2. Check for collisions and suffixes.** Any name in the list above appearing
 twice is a latent collision; any `…2`/`…3` name already inside a `.zpl` is an
-unrecoverable reference (§3.2). Fix it by renaming the files so the first 8
-characters differ, then re-picking.
+unrecoverable reference (§3.2). Fix it by mapping each face in
+`font_names.ini`, or by renaming the files so the first 8 characters differ,
+then re-picking.
 
 **3. Agree on the drive.** Font memory is a per-installation setting, not part
 of the label. It only affects fonts *this app assigns*; elements loaded from a
@@ -634,4 +695,5 @@ clash = [p for p in fonts._all_ttf_paths() if fonts.printer_font_name(p) == name
 - [tests/test_core.py](tests/test_core.py) — naming, `^HW` judging,
   `ObjectNotRetrievable`, cancel plumbing, `upload_fonts` device routing;
   [tests/test_font_fallback.py](tests/test_font_fallback.py) — discovery
-  without `fc-list`
+  without `fc-list`; [tests/test_font_names.py](tests/test_font_names.py) —
+  `font_names.ini`

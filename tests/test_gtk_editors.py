@@ -1647,6 +1647,47 @@ finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
 
+# --- Printer names...: a font_names.ini face, picked by its name -----------
+import shutil as _shutil
+from gtkui import editors as _gtk_editors
+
+def _font_names_button(dialog):
+    return next((b for b in _find_all(_editor_body(dialog), Gtk.Button)
+                 if b.get_name() == 'font_names'), None)
+
+pn_el = document.add_text_element("named")
+window.open_editor_window(pn_el)
+check("without a font_names.ini, Edit Text has no Printer names... button",
+      _font_names_button(window._editors[id(pn_el)]) is None)
+window._editors[id(pn_el)].response(Gtk.ResponseType.CANCEL)
+
+pn_dir = Path(tempfile.mkdtemp())
+_shutil.copy('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+             pn_dir / 'DejaVuSans-Bold.ttf')
+(pn_dir / 'font_names.ini').write_text("DJVBOLD = DejaVuSans-Bold.ttf\n")
+real_choose = _gtk_editors.choose_mapped_font
+try:
+    gtk_main.zpl_fonts.set_extra_font_dir(str(pn_dir))
+    window.open_editor_window(pn_el)
+    pn_dialog = window._editors[id(pn_el)]
+    pn_button = _font_names_button(pn_dialog)
+    check("with a font_names.ini, Edit Text offers Printer names...",
+          pn_button is not None)
+    _font_names_tip = pn_button.get_tooltip_text() if pn_button else None
+    entry = gtk_main.zpl_fonts.mapped_fonts()[0]
+    _gtk_editors.choose_mapped_font = lambda *_a, **_k: entry
+    pn_button.clicked()
+    pn_dialog.response(Gtk.ResponseType.OK)
+    check("choosing DJVBOLD there gives the element that printer name",
+          pn_el.printer_font_name == 'DJVBOLD'
+          and pn_el.font_path == entry.path,
+          (pn_el.printer_font_name, pn_el.font_path))
+finally:
+    _gtk_editors.choose_mapped_font = real_choose
+    gtk_main.zpl_fonts.set_extra_font_dir('')
+    _shutil.rmtree(pn_dir, ignore_errors=True)
+document.elements.remove(pn_el)
+
 # --- the Print window's printer never touches the persisted default --------
 # The DPI is held fixed across the dialogs below so none of them takes the
 # rescale-prompt path, which would otherwise open a real (blocking) dialog.
@@ -3126,6 +3167,11 @@ check("GTK: floating, the float button's tip offers to dock it",
       tw.properties._float_button.get_tooltip_text() == zpl_tips.TIPS['dock_panel'],
       tw.properties._float_button.get_tooltip_text())
 _tip_seen.add('dock_panel')
+# Printer names... is only there when a font_names.ini is; its tip was read
+# off the button where the Printer names... checks built one.
+check("GTK: Printer names... explains itself from the table",
+      _font_names_tip == zpl_tips.TIPS['font_names'], _font_names_tip)
+_tip_seen.add('font_names')
 tw.properties.set_floating(False)
 _t_text = tdoc.add_text_element()
 tw.on_canvas_changed()

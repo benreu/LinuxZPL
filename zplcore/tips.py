@@ -300,7 +300,11 @@ TIPS = {
         "and can't be deleted.",
     'extra_font_folder':
         "Also search a folder of your own for .ttf fonts, for when the "
-        "system's font list misses them.",
+        "system's font list misses them. A font_names.ini there fixes "
+        "the printer name of each font it lists.",
+    'font_names':
+        "Pick a font by the printer name font_names.ini gives it, so the "
+        "same name means the same face on every computer.",
 }
 
 # The palette's buttons whose name alone doesn't say what they add, by the

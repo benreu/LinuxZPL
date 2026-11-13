@@ -4494,6 +4494,37 @@ check("the font chooser is modal to the editor window the rows are in",
       _ff_parents == [_ff_dlg], _ff_parents)
 _ff_dlg.reject()
 
+# Printer names...: only with a font_names.ini, and its pick is the
+# element's printer name on apply.
+import shutil as _pn_shutil
+check("without a font_names.ini, Edit Text has no Printer names... button",
+      _ff_tf.body.findChild(_QPushButton, 'font_names') is None)
+_pn_dir = Path(tempfile.mkdtemp())
+_pn_shutil.copy('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                _pn_dir / 'DejaVuSans-Bold.ttf')
+(_pn_dir / 'font_names.ini').write_text("DJVBOLD = DejaVuSans-Bold.ttf\n")
+_pn_real = qt_dialogs.choose_mapped_font
+try:
+    zpl_fonts.set_extra_font_dir(str(_pn_dir))
+    _pn_text = _ff_doc.add_text_element("named")
+    _pn_form = qt_dialogs.text_form(_pn_text, _ff_doc)
+    _pn_button = _pn_form.body.findChild(_QPushButton, 'font_names')
+    check("with a font_names.ini, Edit Text offers Printer names...",
+          _pn_button is not None)
+    _font_names_tip = _pn_button.toolTip() if _pn_button else ''
+    _pn_entry = zpl_fonts.mapped_fonts()[0]
+    qt_dialogs.choose_mapped_font = lambda *_a, **_k: _pn_entry
+    _pn_button.click()
+    _pn_form.apply()
+    check("choosing DJVBOLD there gives the element that printer name",
+          _pn_text.printer_font_name == 'DJVBOLD'
+          and _pn_text.font_path == _pn_entry.path,
+          (_pn_text.printer_font_name, _pn_text.font_path))
+finally:
+    qt_dialogs.choose_mapped_font = _pn_real
+    zpl_fonts.set_extra_font_dir('')
+    _pn_shutil.rmtree(_pn_dir, ignore_errors=True)
+
 _ff_pdf = BarcodeElement(0, 0, 10, 'AB', symbology='pdf417')
 _ff_bf = qt_dialogs.barcode_form(_ff_pdf)
 _ff_heard.clear()
@@ -13324,6 +13355,13 @@ finally:
 check("the printer's managers explain the buttons that need it, Firmware's "
       "Connection label too",
       not _t_manager_tips, _t_manager_tips)
+
+# Printer names... is only there when a font_names.ini is; its tip was read
+# off the button the Printer names... checks built.
+check("Printer names... explains itself from the table",
+      _font_names_tip == qt_dialogs.tip_markup(zpl_tips.TIPS['font_names']),
+      _font_names_tip)
+_tip_seen.add('font_names')
 
 # The GTK panel draws its own header, with a close and a float button; Qt's
 # dock has a title bar for that.

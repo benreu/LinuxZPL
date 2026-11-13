@@ -127,6 +127,51 @@ def set_tip_text(widget, text: str, label=None) -> None:
         label.set_tooltip_text(text)
 
 
+def choose_mapped_font(parent, title="Printer Names"):
+    """The font_names.ini entry the user picks, or None.
+
+    A plain list of name, face and file: the family chooser cannot show a
+    face on its own, and these are the faces the map tells apart.
+    """
+    entries = zpl_fonts.mapped_fonts()
+    if not entries:
+        return None
+    dialog = Gtk.Dialog(title=title, transient_for=parent, modal=True)
+    dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+    dialog.add_button("OK", Gtk.ResponseType.OK)
+    dialog.set_default_response(Gtk.ResponseType.OK)
+    dialog.set_default_size(520, 360)
+
+    store = Gtk.ListStore(str, str, str)
+    for entry in entries:
+        face = f"{entry.family} {entry.style}".strip()
+        store.append([entry.name, face, entry.path])
+    view = Gtk.TreeView(model=store)
+    view.set_name("font_names_list")
+    for column, heading in enumerate(("Name", "Face", "File")):
+        view.append_column(Gtk.TreeViewColumn(
+            heading, Gtk.CellRendererText(), text=column))
+    view.connect("row-activated",
+                 lambda *_a: dialog.response(Gtk.ResponseType.OK))
+    view.get_selection().select_path(Gtk.TreePath(0))
+
+    scroller = Gtk.ScrolledWindow()
+    scroller.set_vexpand(True)
+    scroller.add(view)
+    box = dialog.get_content_area()
+    box.set_border_width(8)
+    box.pack_start(scroller, True, True, 0)
+    dialog.show_all()
+
+    response = dialog.run()
+    model_, treeiter = view.get_selection().get_selected()
+    chosen = None
+    if response == Gtk.ResponseType.OK and treeiter is not None:
+        chosen = entries[model_.get_path(treeiter).get_indices()[0]]
+    dialog.destroy()
+    return chosen
+
+
 def _make_row(content, label_text, widget, label_width: int = 130,
               tip: str = None):
     """One labelled row in a dialog's content area, explained by the tip
@@ -303,6 +348,9 @@ def _text_format_rows(window, editor, content, element, show_text=None):
 
     def _font_display():
         if selected_font[1]:
+            mapped = zpl_fonts.mapped_name_for_file(selected_font[0])
+            if mapped:
+                return f"{selected_font[1]} ({mapped})"
             return selected_font[1]
         canvas_family = window.design_canvas.font_family
         return f"Default ({canvas_family})" if canvas_family else "Default"
@@ -314,6 +362,14 @@ def _text_format_rows(window, editor, content, element, show_text=None):
 
     choose_font_btn = Gtk.Button(label="Choose\u2026")
     font_row.pack_start(choose_font_btn, False, False, 0)
+
+    # Only when font_names.ini has something to offer
+    mapped_font_btn = None
+    if zpl_fonts.mapped_fonts():
+        mapped_font_btn = Gtk.Button(label="Printer names\u2026")
+        mapped_font_btn.set_name("font_names")
+        set_tip(mapped_font_btn, 'font_names')
+        font_row.pack_start(mapped_font_btn, False, False, 0)
 
     clear_font_btn = Gtk.Button(label="Clear")
     font_row.pack_start(clear_font_btn, False, False, 0)
@@ -356,8 +412,18 @@ def _text_format_rows(window, editor, content, element, show_text=None):
         font_name_lbl.set_text(_font_display())
         editor.changed()
 
+    def on_mapped_font(btn):
+        entry = choose_mapped_font(content.get_toplevel())
+        if entry is None:
+            return
+        selected_font[0], selected_font[1] = entry.path, entry.family
+        font_name_lbl.set_text(_font_display())
+        editor.changed()
+
     choose_font_btn.connect("clicked", on_choose_font)
     clear_font_btn.connect("clicked", on_font_clear)
+    if mapped_font_btn is not None:
+        mapped_font_btn.connect("clicked", on_mapped_font)
 
     # Wrapping (^FB or ^TB). Each kind's fields start from the
     # element's block when it is that kind, and otherwise from one
@@ -504,7 +570,8 @@ def _text_format_rows(window, editor, content, element, show_text=None):
                 # The font is only recorded here; it is uploaded at print
                 # time, so choosing a font never blocks on the network.
                 printer_name = zpl_fonts.printer_font_name(
-                    new_path, taken=window._printer_font_names(exclude=element))
+                    new_path, taken=window._printer_font_names(
+                        exclude=element, same_file=new_path))
                 window.design_canvas.set_element_font(element, new_path, new_family, printer_name)
                 window.renderer.register_font(printer_name, new_path)
             else:

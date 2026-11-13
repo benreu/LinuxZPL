@@ -7,6 +7,7 @@ the printer.
 """
 
 import ctypes
+import os
 import re
 from pathlib import Path
 from typing import Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
@@ -202,6 +203,159 @@ _families_cache: Optional[Dict[str, str]] = None
 _paths_cache: Optional[list] = None
 _scan_cache: Optional[FontScanReport] = None
 
+
+# --- the printer name map ----------------------------------------------------
+#
+# A name derived from a filename is only as unique as the first 8 characters
+# of that filename: every Liberation face gives LIBERATI, every DejaVu Sans
+# face DEJAVUSA. A font_names.ini in the Extra Font Folder fixes names by
+# hand instead - NAME = file - and is consulted before anything is derived,
+# so a mapped name means exactly one file on every machine that has the map.
+
+FONT_NAME_MAP_FILE = 'font_names.ini'
+_VALID_NAME = re.compile(r'[A-Z0-9_-]{1,%d}' % MAX_NAME_LEN)
+
+
+class NameMap(NamedTuple):
+    """What font_names.ini says, and what in it could not be used."""
+    source: Optional[str]      # the map file read, or None when there is none
+    names: Dict[str, str]      # NAME -> real path of its .ttf
+    by_path: Dict[str, str]    # real path -> NAME
+    problems: List[str]        # one line per skipped entry, with its line number
+
+
+_EMPTY_MAP = NameMap(None, {}, {}, [])
+_name_map_cache: Optional[NameMap] = None
+
+
+def read_name_map(map_path: str) -> NameMap:
+    """Parse one font_names.ini.
+
+    Line by line rather than with configparser, so a problem can say which
+    line it is on. A bad line is skipped and reported, never guessed at: the
+    first entry for a name or a file wins, and a later one that repeats either
+    is a problem rather than a silent override.
+    """
+    path = Path(map_path)
+    folder = path.parent
+    names: Dict[str, str] = {}
+    by_path: Dict[str, str] = {}
+    problems: List[str] = []
+    try:
+        lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+    except OSError as error:
+        return NameMap(str(path), {}, {}, [f"could not read it: {error}"])
+
+    for number, raw in enumerate(lines, 1):
+        line = raw.split('#', 1)[0].strip()
+        if not line or (line.startswith('[') and line.endswith(']')):
+            continue
+        where = f"line {number}"
+        if '=' not in line:
+            problems.append(f"{where}: no '=' in {raw.strip()!r}")
+            continue
+        name, _, file = (part.strip() for part in line.partition('='))
+        name = name.upper()
+        if not _VALID_NAME.fullmatch(name):
+            problems.append(f"{where}: {name!r} is not 1-{MAX_NAME_LEN} of "
+                            f"A-Z 0-9 _ -")
+            continue
+        if not file:
+            problems.append(f"{where}: {name} names no file")
+            continue
+        target = Path(file).expanduser()
+        if not target.is_absolute():
+            target = folder / target
+        if target.suffix.lower() != '.ttf':
+            problems.append(f"{where}: {name} = {file} is not a .ttf")
+            continue
+        if not target.is_file():
+            problems.append(f"{where}: {name} = {file} does not exist")
+            continue
+        real = os.path.realpath(target)
+        if name in names:
+            problems.append(f"{where}: {name} is already mapped, to "
+                            f"{names[name]}")
+            continue
+        if real in by_path:
+            problems.append(f"{where}: {file} already has the name "
+                            f"{by_path[real]}")
+            continue
+        names[name] = real
+        by_path[real] = name
+    return NameMap(str(path), names, by_path, problems)
+
+
+def font_name_map(refresh: bool = False) -> NameMap:
+    """The map in the Extra Font Folder, or an empty one when there is none.
+
+    Read whether or not fc-list works: unlike the folder's fonts, which only
+    the fallback scan needs, the names have to agree on every machine.
+    """
+    global _name_map_cache
+    if _name_map_cache is not None and not refresh:
+        return _name_map_cache
+    result = _EMPTY_MAP
+    if EXTRA_FONT_DIR:
+        candidate = Path(EXTRA_FONT_DIR).expanduser() / FONT_NAME_MAP_FILE
+        if candidate.is_file():
+            result = read_name_map(str(candidate))
+    _name_map_cache = result
+    return result
+
+
+class MappedFont(NamedTuple):
+    """One usable font_names.ini entry, as a chooser lists it."""
+    name: str
+    family: str
+    style: str
+    path: str
+
+
+def mapped_fonts() -> List[MappedFont]:
+    """Every usable entry in font_names.ini, by name.
+
+    The family choosers stop at the family, so they cannot tell
+    LIBSANR from LIBSANB; this is the list that can.
+    """
+    entries = []
+    for name, path in sorted(font_name_map().names.items()):
+        try:
+            family, style = _name_and_style(path)
+        except Exception:
+            family, style = '', ''
+        entries.append(MappedFont(name, family or Path(path).stem,
+                                  style or '', path))
+    return entries
+
+
+def name_map_report(refresh: bool = False) -> List[str]:
+    """The Local Fonts... dialog's account of font_names.ini, as lines."""
+    name_map = font_name_map(refresh=refresh)
+    lines = ["Printer name map", "-" * 60, ""]
+    if name_map.source is None:
+        where = (Path(EXTRA_FONT_DIR).expanduser() / FONT_NAME_MAP_FILE
+                 if EXTRA_FONT_DIR else None)
+        lines.append(f"No {FONT_NAME_MAP_FILE} at {where}" if where else
+                     f"No Extra Font Folder, so no {FONT_NAME_MAP_FILE}")
+        return lines
+    lines.append(f"Read: {name_map.source}")
+    lines.append(f"  {len(name_map.names)} name(s) mapped")
+    for name, path in sorted(name_map.names.items()):
+        lines.append(f"  {name:<8} = {path}")
+    if name_map.problems:
+        lines.append("")
+        lines.append(f"  {len(name_map.problems)} line(s) skipped:")
+        lines.extend(f"  {problem}" for problem in name_map.problems)
+    return lines
+
+
+def mapped_name_for_file(font_path: Optional[str]) -> Optional[str]:
+    """The name font_names.ini gives this file, or None."""
+    if not font_path:
+        return None
+    return font_name_map().by_path.get(os.path.realpath(font_path))
+
 # Font files this session has registered, and the subset Qt has been given.
 # Kept apart because Qt cannot be told about a font until it has an
 # application; see register_app_fonts_with_qt().
@@ -312,11 +466,19 @@ def file_for_printer_name(name: str) -> Optional[str]:
 
     A saved .zpl only records the printer name (E:ANI.TTF), but that name is
     derived from the file, so it can be mapped back - which is what lets a
-    reopened label render in its real font instead of a substitute.
+    reopened label render in its real font instead of a substitute. A name
+    font_names.ini gives is answered from the map alone.
     """
     if not name:
         return None
     wanted = name.upper()
+    # A mapped name is that file and nothing else. If the file has gone,
+    # the answer is None: deriving instead is exactly how a name ends up
+    # drawn in whichever face happens to truncate to it.
+    name_map = font_name_map()
+    if wanted in name_map.names:
+        mapped = name_map.names[wanted]
+        return mapped if Path(mapped).is_file() else None
     matches = [p for p in _all_ttf_paths() if printer_font_name(p) == wanted]
     if not matches:
         return None
@@ -361,16 +523,19 @@ def _fallback_directories() -> List[str]:
 def set_extra_font_dir(path: str):
     """Choose the one extra folder the fallback scan covers ('' for none).
 
-    Only the fallback consults it, so with a working fc-list it changes
-    nothing. The scan and the lookups built on it are dropped, so the next
-    call sees the new folder.
+    Its fonts are scanned only by the fallback, so with a working fc-list
+    they add nothing to the chooser - but a font_names.ini in it is read
+    either way (font_name_map). The scan, the map and the lookups built on
+    them are dropped, so the next call sees the new folder.
     """
     global EXTRA_FONT_DIR, _families_cache, _paths_cache, _scan_cache
+    global _name_map_cache
     path = (path or '').strip()
     if path == EXTRA_FONT_DIR:
         return
     EXTRA_FONT_DIR = path
     _families_cache = _paths_cache = _scan_cache = None
+    _name_map_cache = None
 
 
 def scan_font_directories(refresh: bool = False) -> FontScanReport:
@@ -552,12 +717,19 @@ def printer_font_name(font_path: str, taken: Iterable[str] = ()) -> str:
     family like "Catrina Demo" being the common case. Truncation also makes
     collisions easy (DejaVuSans and DejaVuSans-Bold both start DEJAVUSA), so a
     name already in `taken` gets a numeric suffix instead of overwriting it.
+
+    A file font_names.ini names gets that name, whatever `taken` says - it is
+    the one name that file has everywhere. Every other file treats all the
+    mapped names as taken, so it can never be derived onto one of them.
     """
+    mapped = mapped_name_for_file(font_path)
+    if mapped:
+        return mapped
     stem = Path(font_path).stem.upper()
     stem = stem.encode('ascii', 'ignore').decode('ascii')
     name = _UNSAFE_CHARS.sub('', stem)[:MAX_NAME_LEN] or 'FONT'
 
-    used = {t.upper() for t in taken}
+    used = {t.upper() for t in taken} | set(font_name_map().names)
     if name not in used:
         return name
     for n in range(2, 1000):

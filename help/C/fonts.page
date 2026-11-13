@@ -30,6 +30,27 @@
     and <gui>Rescan</gui> looks again.</p>
   </section>
 
+  <section id="names">
+    <title>Fixing printer names with font_names.ini</title>
+    <p>A printer font name is cut from the font's file name, so faces of one
+    family often end up with the same name: every Liberation face becomes
+    <sys>LIBERATI</sys>. To give each face a name of its own, put a
+    <file>font_names.ini</file> in the Extra Font Folder, one font per
+    line:</p>
+    <code>LIBSANR  = LiberationSans-Regular.ttf
+LIBSANNB = LiberationSansNarrow-Bold.ttf</code>
+    <p>A file can be given relative to that folder, or as a full path. A name
+    in the map always means that file, and no other font can take it. Every
+    computer that shares the folder agrees on the names.
+    <gui>Local Fonts…</gui> lists what the map holds, and any line it had to
+    skip.</p>
+    <p>With a map in place, <gui>Printer names…</gui> beside
+    <gui>Choose…</gui> in the text editors picks a font by its name. This is
+    how to choose a Bold face rather than its family.
+    <guiseq><gui>Printer</gui><gui>Fonts…</gui></guiseq> has
+    <gui>Upload by name…</gui> for the same list.</p>
+  </section>
+
   <section id="check">
     <title>Before printing: does the printer have them?</title>
     <p>Choosing a font never waits on the printer. When you print, LinuxZPL
@@ -57,8 +78,9 @@
     <p>On the printer, a font is named from its file name: upper case, letters,
     digits, <sys>_</sys> and <sys>-</sys> only, at most eight characters, so
     <file>DejaVuSans.ttf</file> becomes <sys>DEJAVUSA.TTF</sys>. Two fonts
-    whose names would clash on one label get a number to tell them
-    apart.</p>
+    whose names would clash on one label get a number to tell them apart,
+    but the number is lost when the label is opened again. A
+    <link xref="#names">name map</link> avoids the clash altogether.</p>
   </section>
 
   <section id="memory">
