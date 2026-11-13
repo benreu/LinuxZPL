@@ -372,11 +372,10 @@ class FieldBlock:
         """Dots it takes down the field, holding `lines` lines."""
         return max(1, lines * pitch)
 
-    def fit(self, run: int, stack: int, pitch: int) -> None:
-        """Take a dragged box, along the lines and across them, as a wrap
-        width and a number of lines."""
-        self.width = max(1, int(run))
-        self.max_lines = max(1, int(round(stack / max(1, pitch))))
+    def needs(self, lines: int, pitch: int, font_height: int) -> int:
+        """Dots down the field `lines` lines need to print whole: a pitch
+        each, since that is how a ^FB's depth grows."""
+        return lines * pitch
 
     def scale(self, run: float, stack: float) -> None:
         """Scale by `run` along the lines and `stack` across them. A block
@@ -487,11 +486,11 @@ class TextBlock:
         """Its own height, however many lines it holds."""
         return self.height
 
-    def fit(self, run: int, stack: int, pitch: int) -> None:
-        """Take a dragged box, along the lines and across them, as its
-        width and height."""
-        self.width = max(1, int(run))
-        self.height = max(1, int(stack))
+    def needs(self, lines: int, pitch: int, font_height: int) -> int:
+        """Dots down it `lines` lines need to print whole: the last needs
+        only its own height, the rest of its pitch being the gap to a line
+        that is not there."""
+        return (lines - 1) * pitch + font_height
 
     def scale(self, run: float, stack: float) -> None:
         """Scale by `run` along the lines and `stack` across them."""
@@ -3487,6 +3486,70 @@ class Document:
         if anchor != pinned:
             element.x = max(0, element.x + pinned[0] - anchor[0])
             element.y = max(0, element.y + pinned[1] - anchor[1])
+
+    def shrink_to_block(self, element, smallest: int = 1) -> bool:
+        """Make a wrapped text's font smaller until every line of it prints
+        inside its block, rather than the printer dropping the lines past
+        the bottom. Whether it changed.
+
+        The block keeps its size in dots: a ^TB's height, and a ^FB's
+        max_lines at the font it has now, which the smaller font then fills
+        with more lines. Height and width shrink by the same factor, so the
+        letters keep their shape, and only ever shrink - text that already
+        fits is left at the size it was given. Neither goes below `smallest`,
+        an editor's own floor, which a font that fits at no larger size is
+        left at. Through the field's cell, so a bitmap font lands on one of
+        its magnifications.
+        """
+        block = getattr(element, 'block', None)
+        if getattr(element, 'element_type', None) != 'text' or block is None:
+            return False
+        from . import textraster
+        shown = self.display_text(element)
+        face = element.face(self.font_path)
+        height, width = element.font_height, element.font_width
+        before = element.cell(self.font_path, self.dpi)
+        # The block at its fullest: every line it holds, at the font it has
+        pitch = block.pitch(before.height)
+        depth = block.depth(block.line_limit(pitch), pitch)
+
+        def fits(font_height):
+            element.font_height = font_height
+            element.font_width = max(smallest, int(round(
+                width * font_height / max(1, height))))
+            cell = element.cell(self.font_path, self.dpi)
+            return textraster.fits_block(shown, face, cell.height, cell.width,
+                                         block, depth, cell.row_gap)
+
+        smallest = max(1, smallest)
+        if height <= smallest or fits(height):
+            element.font_height, element.font_width = height, width
+            return False
+        # The largest height that fits, or the floor when none does
+        low, high = smallest, height - 1
+        while low < high:
+            middle = (low + high + 1) // 2
+            if fits(middle):
+                low = middle
+            else:
+                high = middle - 1
+        fits(low)
+        cell = element.cell(self.font_path, self.dpi)
+        if cell[:2] == before[:2]:
+            # A bitmap font already at its smallest cell: nothing smaller
+            # prints, so only the numbers would change
+            element.font_height, element.font_width = height, width
+            return False
+        if cell.baseline is not None:
+            # A bitmap font, written as the cell it prints rather than as
+            # whichever height in that magnification the search ended on
+            element.font_height, element.font_width = cell.height, cell.width
+        if isinstance(block, FieldBlock):
+            # Assigned rather than mutated: an undo snapshot may hold it
+            element.block = block.copy()
+            element.block.max_lines = max(1, depth // block.pitch(cell.height))
+        self.sync_text_width(element)
+        return True
 
     def sync_to_dpi(self) -> None:
         """Re-size everything whose size in dots is the resolution's, after

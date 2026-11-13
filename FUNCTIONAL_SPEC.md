@@ -214,15 +214,35 @@ is written with rather than breaking:
 - switching wrapping off joins the lines back into one with spaces, rather than
   leaving a break behind for the printer to print
 
-**The resize handles ask a block for a wrap, not a rectangle.** The side handles
-set the block width and the text re-flows; the top and bottom handles set the
-maximum number of lines, so dragging the bottom edge up cuts lines the printer
-would then drop and dragging it down reveals them. A text block's top and
-bottom handles set its height in dots instead. The box is then whatever the
-block makes of that - it is never stretched to fill the dragged rectangle, and
-the font size is the dialog's business alone. At `R` and `B` the handles along
-the lines set the width and those across them the lines or the height, as the
-footprint is transposed.
+**The resize handles scale a block's text; they never re-wrap it.** A block is
+scaled as a single line of text is: each handle reads only the axes it moves,
+and the font height goes with the stack of lines and the font width with the
+run, together with the block - a `^FB`'s wrap width, line spacing and indent,
+a `^TB`'s width and height. A `^FB` keeps its maximum number of lines. The
+lines therefore break in the same places and none is dropped, where taking a
+narrower or shorter box as a narrower wrap or fewer lines silently lost the
+lines the printer then discarded. The font width and the wrap width round
+separately, so the block is widened to the widest of the lines it held before
+when that is a dot or two more than the drag asked for, and the font is then
+shrunk to fit (below) should a line still not. Each motion event scales from
+the element as it was when the button went down, its `^FP` gap and its ends
+included. At `R` and `B` the handles along the lines scale the run and those
+across them the stack, as the footprint is transposed. Where the lines break
+is the editor's business: Wrap Width, Max Lines and Block Height.
+
+**Typing that overflows a block shrinks its font; nothing else does.** When an
+editor's text changes and the block no longer holds every line, the font
+height and width shrink by one factor - the largest size at which every line
+fits - rather than the printer dropping the lines past the bottom or past a
+`^FB`'s last line. A line fits when no line is wider than the block (a `^FB`
+keeps a word too long for it whole) and the lines fit its depth: a `^FB`'s
+depth is its maximum lines at the font it had, which it keeps in dots, so the
+smaller font gets more lines; a `^TB`'s is its height, and its last line needs
+only the font's height rather than a whole pitch. A bitmap font lands on one
+of its magnifications, and one already at its smallest cell is left as it is.
+It never goes below the editor's own minimum font size. It only shrinks:
+deleting text leaves the font where it went, and a font size typed into the
+editor is the user's even when the text then overflows.
 
 **`^FP` lays the characters out one at a time, inside the element's own
 upright frame; `orientation` then turns that frame as it turns any text.** The

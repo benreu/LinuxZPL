@@ -976,7 +976,28 @@ def _text_format_rows(editor, form, element: TextElement,
                 element.font_family = None
                 element.printer_font_name = None
 
-    return SimpleNamespace(text_block_chosen=text_block_chosen, apply=apply)
+    def shrink_typed(old_text, height_spin, width_spin):
+        """Typing that runs past the block shrinks the font, rather than the
+        printer dropping the lines that no longer fit - but only typing: a
+        font size the user set is theirs. The size rows show where it went,
+        and a ^FB's max lines the more lines the block now holds."""
+        if element.text == old_text:
+            return
+        floor = max(height_spin.minimum(), width_spin.minimum())
+        if not document.shrink_to_block(element, smallest=floor):
+            return
+        for spin, value in ((height_spin, element.font_height),
+                            (width_spin, element.font_width)):
+            spin.blockSignals(True)
+            try:
+                spin.setValue(value)
+            finally:
+                spin.blockSignals(False)
+        if isinstance(element.block, FieldBlock):
+            show_block(element.block)
+
+    return SimpleNamespace(text_block_chosen=text_block_chosen, apply=apply,
+                           shrink_typed=shrink_typed)
 
 
 
@@ -1027,6 +1048,7 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
     def _apply():
         apply_name(element)
         # A ^TB has no line break to write a typed one as, so it is a space
+        old_text = element.text
         element.text = (textraster.from_editor_unbroken
                         if fmt.text_block_chosen()
                         else textraster.from_editor)(text_edit.toPlainText())
@@ -1035,6 +1057,7 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
         element.orientation = orientation_combo.currentData()
         element.height = element.font_height
         fmt.apply()
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
 
     return editor.finish(_apply)
@@ -1103,6 +1126,7 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
 
     def _apply():
         apply_name(element)
+        old_text = element.text
         element.text = text_edit.text()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -1119,6 +1143,7 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
         # Last, because the box is measured from what the canvas will draw,
         # and that is the wrapped marker for as long as this stays a clock
         # field.
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
 
     return editor.finish(_apply)
@@ -1201,6 +1226,7 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
 
     def _apply():
         apply_name(element)
+        old_text = element.text
         element.text = text_edit.text()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -1220,6 +1246,7 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
         # Last, because the box is measured from what the canvas will draw,
         # and that is the wrapped marker for as long as this stays a serial
         # field.
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
 
     return editor.finish(_apply)
@@ -1305,6 +1332,7 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
 
     def _apply():
         apply_name(element)
+        old_text = element.text
         element.text = text_edit.text()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -1320,6 +1348,7 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
         # Last, because the box is measured from what the canvas will draw,
         # and that is the placeholder for as long as this stays a numbered
         # field with no literal of its own.
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
 
     return editor.finish(_apply)

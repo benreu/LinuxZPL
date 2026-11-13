@@ -2412,6 +2412,39 @@ check("clearing the font is a change, though no input shows it",
       ff_heard == ['text'], ff_heard)
 document.elements.remove(ff_text)
 
+# Typing past the bottom of a wrapped block shrinks its font, and the rows
+# show the size it went to. Font 0, since font F's smallest cell is 26.
+from zplcore.model import FieldBlock as _ShBlock
+sh_text = document.add_text_element("aa")
+sh_text.font_code = '0'
+sh_text.block = _ShBlock(150, 2)
+document.sync_text_width(sh_text)
+sh_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+sh_form = gtk_editors.text_form(window, sh_box, sh_text)
+sh_spins = _find_all(sh_box, Gtk.SpinButton)
+sh_height = sh_spins[0]                 # Font Height, the first of them
+sh_lines = next(s for s in sh_spins if s.get_name() == 'max_lines')
+sh_buffer = _find_all(sh_box, Gtk.TextView)[0].get_buffer()
+sh_buffer.set_text("the quick brown fox jumps over the lazy dog " * 3)
+sh_form.apply()
+check("GTK: typing past a block's bottom shrinks the font, and the rows show it",
+      sh_text.font_height < 26
+      and int(sh_height.get_value()) == sh_text.font_height
+      and sh_text.block.max_lines > 2
+      and int(sh_lines.get_value()) == sh_text.block.max_lines,
+      (sh_text.font_height, sh_height.get_value(), sh_text.block,
+       sh_lines.get_value()))
+sh_small = sh_text.font_height
+sh_buffer.set_text("short")
+sh_form.apply()
+check("GTK: and deleting text leaves it at that size",
+      sh_text.font_height == sh_small, (sh_small, sh_text.font_height))
+sh_height.set_value(40)
+sh_form.apply()
+check("GTK: a font height typed into its row is the user's, overflow or not",
+      sh_text.font_height == 40, sh_text.font_height)
+document.elements.remove(sh_text)
+
 ff_pdf = BarcodeElement(0, 0, 10, 'AB', symbology='pdf417')
 ff_bbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 ff_bf = gtk_editors.barcode_form(window, ff_bbox, ff_pdf)

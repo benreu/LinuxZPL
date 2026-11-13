@@ -85,10 +85,20 @@
         becomes a space.</p>
       </item>
     </terms>
-    <p>With a block, the side handles set the wrap width and the text
-    re-flows; the top and bottom handles set the number of lines, or a text
-    block's height. Clearing <gui>Wrap</gui> joins the lines back into
-    one.</p>
+    <p>Dragging a block's handles makes its text bigger or smaller, as it
+    does for a single line, and the block grows or shrinks with it, so the
+    lines break in the same places and none of them is lost. The corner
+    handles scale the whole block. The top and bottom handles make the
+    letters taller or shorter. The side handles make the letters and the
+    wrap width wider or narrower together. To change where the lines break,
+    set <gui>Wrap Width</gui>, <gui>Max Lines</gui> or <gui>Block
+    Height</gui> in the Properties panel.</p>
+    <p>If you type more text than the block holds, the font gets smaller so
+    that every line still fits. The block keeps its size, and a field block
+    gets as many more lines as the smaller font makes room for. Deleting
+    text does not make the font bigger again; set <gui>Font Height</gui> and
+    <gui>Font Width</gui> for that. Clearing <gui>Wrap</gui> joins the lines
+    back into one.</p>
   </section>
 
   <section id="time">

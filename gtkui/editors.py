@@ -580,8 +580,26 @@ def _text_format_rows(window, editor, content, element, show_text=None):
                 element.printer_font_name = None
                 window.design_canvas.queue_draw()
 
+    def shrink_typed(old_text, height_spin, width_spin):
+        """Typing that runs past the block shrinks the font, rather than the
+        printer dropping the lines that no longer fit - but only typing: a
+        font size the user set is theirs. The size rows show where it went,
+        and a ^FB's max lines the more lines the block now holds."""
+        if element.text == old_text:
+            return
+        floor = int(max(height_spin.get_adjustment().get_lower(),
+                        width_spin.get_adjustment().get_lower()))
+        if not document.shrink_to_block(element, smallest=floor):
+            return
+        with editor.muted():
+            height_spin.set_value(element.font_height)
+            width_spin.set_value(element.font_width)
+        if isinstance(element.block, FieldBlock):
+            show_block(element.block)
+
     return SimpleNamespace(text_block_chosen=text_block_chosen,
                            apply=apply,
+                           shrink_typed=shrink_typed,
                            sync=lambda: on_wrap_toggled(wrap_check))
 
 
@@ -639,6 +657,7 @@ def time_form(window, content, element) -> EditorForm:
 
     def apply():
         apply_name(element)
+        old_text = element.text
         element.text = text_entry.get_text()
         element.font_height = int(height_spin.get_value())
         element.font_width = int(width_spin.get_value())
@@ -656,6 +675,7 @@ def time_form(window, content, element) -> EditorForm:
         # Last, because the box is measured from what the canvas
         # will draw, and that is the wrapped marker for as long
         # as this stays a clock field.
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         window.design_canvas.document.sync_text_width(element)
 
     return editor.finish(apply, after_show=fmt.sync)
@@ -726,6 +746,7 @@ def serial_form(window, content, element) -> EditorForm:
 
     def apply():
         apply_name(element)
+        old_text = element.text
         element.text = text_entry.get_text()
         element.font_height = int(height_spin.get_value())
         element.font_width = int(width_spin.get_value())
@@ -746,6 +767,7 @@ def serial_form(window, content, element) -> EditorForm:
         # Last, because the box is measured from what the canvas
         # will draw, and that is the wrapped marker for as long
         # as this stays a serial field.
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         window.design_canvas.document.sync_text_width(element)
 
     return editor.finish(apply, after_show=fmt.sync)
@@ -821,6 +843,7 @@ def numbered_form(window, content, element) -> EditorForm:
 
     def apply():
         apply_name(element)
+        old_text = element.text
         element.text = text_entry.get_text()
         element.font_height = int(height_spin.get_value())
         element.font_width = int(width_spin.get_value())
@@ -837,6 +860,7 @@ def numbered_form(window, content, element) -> EditorForm:
         # Last, because the box is measured from what the canvas
         # will draw, and that is the placeholder for as long as
         # this stays a numbered field with no literal of its own.
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         window.design_canvas.document.sync_text_width(element)
 
     return editor.finish(apply, after_show=fmt.sync)
@@ -890,6 +914,7 @@ def text_form(window, content, element) -> EditorForm:
 
     def apply():
         apply_name(element)
+        old_text = element.text
         buffer = text_view.get_buffer()
         # A ^TB has no line break to write a typed one as, so it
         # is a space
@@ -904,6 +929,7 @@ def text_form(window, content, element) -> EditorForm:
             orientation_combo.get_active()]
         fmt.apply()
 
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         window.design_canvas.document.sync_text_width(element)
 
     # _open_editor's own show_all() would otherwise re-show every row
