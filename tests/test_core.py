@@ -4715,6 +4715,25 @@ check("Qt: given an ID, it prints its whole Wrap Width",
       (_hg_text.block, _hg_wrap.value()))
 _ff_doc.elements.remove(_hg_text)
 
+# Typing past the label's edge wraps there, and the font shrinks when the
+# lines then run past the bottom, rather than the box running off the label
+_he_text = _ff_doc.add_text_element("aa")
+_he_text.font_code = '0'
+_he_text.font_height, _he_text.font_width = 30, 20
+_he_text.block = FieldBlock(700, 2)
+_ff_doc.sync_text_width(_he_text)
+_he_text.x = _ff_doc.label_width - 212
+_he_form = qt_dialogs.text_form(_he_text, _ff_doc)
+_he_form.body.findChild(_FText, 'text').setPlainText(
+    "the quick brown fox jumps over the lazy dog " * 3)
+_he_form.apply()
+check("Qt: typing past the label's edge wraps there and shrinks the font",
+      _he_text.x + _he_text.width <= _ff_doc.label_width
+      and _he_text.font_height < 30 and _he_text.block.wrap_width == 700,
+      (box_of(_he_text), _he_text.font_height, _he_text.block,
+       _he_text.block.limit))
+_ff_doc.elements.remove(_he_text)
+
 # Printer names...: only with a font_names.ini, and its pick is the
 # element's printer name on apply.
 import shutil as _pn_shutil
@@ -10427,6 +10446,7 @@ def _hug_edit(document, element, text=None):
     block = element.block.copy()
     block.width, block.limit = block.wrap_width, None
     element.block = block
+    document.cap_block(element, before)
     document.sync_text_width(element)
     document.hug_block(element, before)
 
@@ -10446,6 +10466,7 @@ def _at(block, width):
     return wide
 
 _hg_doc, _hg = _hug_label("New Text\\&dsgdsfgsfd")
+_hg.x = 20                  # room on the label for all 733 dots
 _hg_lines = _printed_lines(_hg_doc, _hg)
 _hug_edit(_hg_doc, _hg)
 _hg_full = _hg.block.width
@@ -10548,14 +10569,90 @@ _hs_doc.set_element_font(_hs, _COND, 'DejaVu Serif Condensed', 'DEJAVUSC')
 check("a font switch scales the Wrap Width with the width",
       _hs.block.wrap_width < 733 and _hs.block.width < _hs.block.wrap_width,
       (_hs.block, _hs.block.limit))
-_hs_doc, _hs = _hug_label("New Text\\&dsgdsfg")
+_hs_doc = _tb("^FO20,300^A0N,60,40^FDx^FS")
+_hs = _hs_doc.elements[0]
+_hs_doc.set_element_font(_hs, _MONO, 'DejaVu Sans Mono', 'DEJAVUSM')
+_hs.text, _hs.block = "aaaa bbbb cccc", FieldBlock(800, 2)
+_hs_doc.sync_text_width(_hs)
 _hug_edit(_hs_doc, _hs)
-_hs_limit = _hs.block.wrap_width
-geometry.resize_by_handle(_hs_doc, _hs, 'br', _hs.width // 2, _hs.height // 2)
-check("and so does a handle",
-      _hs.block.wrap_width > _hs_limit * 1.3
-      and _hs.block.width < _hs.block.wrap_width,
-      (_hs.block, _hs.block.limit, _hs_limit))
+_hs_doc.set_element_font(_hs, _MONO, 'DejaVu Sans Mono', 'DEJAVUSM')
+_hs_doc.set_element_font(_hs, FONT, 'DejaVu Sans', 'DEJAVUSA')
+_hs_doc.set_element_font(_hs, _MONO, 'DejaVu Sans Mono', 'DEJAVUSM')
+check("but never past the width of the label",
+      _hs.block.wrap_width <= _hs_doc.label_width,
+      (_hs.block, _hs.block.limit))
+
+# A handle drag makes the Wrap Width the box it drags to: scaled with the
+# box, a 218-dot block dragged across a 4" label took 733 to 2663, and typing
+# grew the box towards that, off the label
+_hd_doc, _hd = _hug_label("New Text\\&dsgdsfgsfd")
+_hd.x = 20
+_hug_edit(_hd_doc, _hd)
+geometry.resize_by_handle(_hd_doc, _hd, 'mr', 812 - (_hd.x + _hd.width), 0)
+geometry.resize_by_handle(_hd_doc, _hd, 'ml', -_hd.x, 0)
+check("a block dragged edge to edge across a 4\" label has a Wrap Width of 812",
+      (_hd.x, _hd.width) == (0, 812) and _hd.block.limit is None
+      and _hd.block.wrap_width == 812, (box_of(_hd), _hd.block, _hd.block.limit))
+_hug_edit(_hd_doc, _hd, "New Text\\&dsgdsfgsfd and then some more words")
+check("and text typed into it wraps at the label's edge",
+      _hd.x + _hd.width <= 812 and len(_printed_lines(_hd_doc, _hd)) > 2,
+      (box_of(_hd), _printed_lines(_hd_doc, _hd)))
+_hd_doc, _hd = _hug_label("aaa bbb")
+_hd_other = _hd_doc.add_frame_element()
+_hug_edit(_hd_doc, _hd)
+_hd_group = geometry.GroupBox([_hd, _hd_other])
+geometry.resize_by_handle(_hd_doc, _hd_group, 'mr', 50, 0)
+check("so does dragging a group it is in",
+      _hd.block.limit is None and _hd.block.wrap_width == _hd.block.width,
+      (_hd.block, _hd.block.limit))
+_hd_doc, _hd = _hug_label("aaa bbb")
+_hug_edit(_hd_doc, _hd)
+_hd_narrow = _hd.block.width
+_hd_doc.rescale(300 / 203)
+check("but a rescale to another resolution scales it with the block",
+      _hd.block.wrap_width == round(733 * 300 / 203)
+      and _hd.block.width == round(_hd_narrow * 300 / 203),
+      (_hd.block, _hd.block.limit))
+
+# Nor does typing run a block off the label, from wherever its lines are
+# justified to, whichever way it is turned: it wraps at the edge
+_he_off = []
+for _turn in 'NRIB':
+    for _just in 'LCR':
+        _he_doc, _he = _hug_label("aaa", _just, _turn, 733)
+        _he.x, _he.y = 40, 40
+        _hug_edit(_he_doc, _he)
+        # Narrowed, and then moved to the middle of the label, where a
+        # left or right justified one has less than 733 dots to grow into
+        _he.x = (_he_doc.label_width - _he.width) // 2
+        _he.y = (_he_doc.label_height - _he.height) // 2
+        _hug_edit(_he_doc, _he, "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk")
+        if (_he.x < 0 or _he.y < 0 or _he.x + _he.width > _he_doc.label_width
+                or _he.y + _he.height > _he_doc.label_height
+                or _he.block.wrap_width != 733
+                or len(_printed_lines(_he_doc, _he)) < 2):
+            _he_off.append((_turn, _just, box_of(_he), _he.block,
+                            _printed_lines(_he_doc, _he)))
+check("typing never runs a block off the label, turned and justified any way",
+      not _he_off, _he_off)
+_he_doc = _tb("^FO600,60^A0N,30,20^FB700,2^FDaa^FS")
+_he = _he_doc.elements[0]
+_hug_edit(_he_doc, _he)
+_he_before = _he_doc.block_place(_he)
+_he.text = "the quick brown fox jumps over the lazy dog"
+_he.block = FieldBlock(700, 2)
+_he_doc.cap_block(_he, _he_before)
+_hf_doc, _hf = _hug_label("aaa bbb", 'C')
+_hf.x = 500                 # its middle past the label's right edge
+_hug_edit(_hf_doc, _hf)
+check("a block whose middle is off the label is not squeezed to nothing",
+      _hf.block.width >= int(_widest(_hf_doc, _hf))
+      and _printed_lines(_hf_doc, _hf) == ['aaa bbb'],
+      (_hf.block, _printed_lines(_hf_doc, _hf)))
+check("and an overflow is measured at the label's edge, so the font shrinks",
+      _he.block.width == 812 - 600 and _he.block.wrap_width == 700
+      and _he_doc.shrink_to_block(_he) and _he.font_height < 30,
+      (_he.block, _he.block.limit, _he.font_height))
 
 # Label Settings sets the label size, which clamps every element to it: a
 # turned block's box width is its stack of lines, and was once made its wrap

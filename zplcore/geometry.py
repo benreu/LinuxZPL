@@ -753,6 +753,7 @@ def _resize_group(document, handle: str, dx: int, dy: int, origin: dict) -> None
     for element, state in origin['members']:
         restore_state(element, state)
         scale_element(document, element, ax, ay, sx, sy)
+        _wrap_to_box(element)
         if element.element_type in ('frame', 'circle', 'ellipse', 'diagonal'):
             element.thickness = max(1, min(element.thickness, element.max_thickness()))
 
@@ -881,6 +882,7 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
             # Rounding can still leave a line a dot too wide for the block,
             # and a ^FB would drop the one it pushed past the bottom.
             document.shrink_to_block(element)
+            _wrap_to_box(element)
         else:
             # The run is along the text and the stack across it, so a quarter
             # turn swaps which side of the box is the font height - the same
@@ -938,6 +940,23 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
         element.x = box['x'] + box['width'] - element.width
     element.x = max(0, min(element.x, document.label_width - element.width))
     element.y = max(0, min(element.y, document.label_height - element.height))
+
+
+def _wrap_to_box(element) -> None:
+    """Make a dragged field block's Wrap Width the box it was dragged to.
+
+    A block narrowed to its text (Document.hug_block) keeps a wider Wrap
+    Width to grow back to, which a scale would scale with it - by the box's
+    own factor, so a 218-dot block dragged across a 4" label took a Wrap
+    Width of 733 to 2663, which typing then grew the box towards, off the
+    label. The box dragged to is the width asked for. A rescale to another
+    resolution, through scale_element too, still scales it.
+    """
+    block = getattr(element, 'block', None)
+    if getattr(block, 'limit', None) is not None:
+        # Assigned rather than mutated: an undo snapshot may hold it
+        element.block = block.copy()
+        element.block.limit = None
 
 
 def _resize_circle(document, element, handle: str) -> None:

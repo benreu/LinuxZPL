@@ -284,8 +284,25 @@ the canvas shows: an element with an ID (`Label.fill`), a `^FN` field, a
 goes back to it. Nor is a `^TB`, a box of fixed size. ZPL has room for one
 width, and nothing else is written: a saved label reopens with the narrowed
 width as its Wrap Width, and opening a label never narrows a block - a file
-prints as it did until the element is edited. A handle drag scales the limit
-with the block.
+prints as it did until the element is edited.
+
+**A narrowed `^FB` never grows past the label.** The lines break at the Wrap
+Width or at the room the label leaves the block, whichever is less
+(`Document.wrap_room`): measured from the point its lines are justified to,
+as the edit found it, to the far edge from their start, to the near edge from
+their end, and as far each way from their middle - a `^FB` is "0 to the width
+of the label". Each editor holds the block it builds to that room before a
+typed overflow is measured (`Document.cap_block`), so text that reaches the
+edge wraps there and shrinks the font past the bottom, rather than the box
+running off the label; the Wrap Width the user set stays, and a block moved
+back from the edge may grow to it again. A block whose point is already off
+the label is held to nothing, and none is held narrower than one character,
+which would stack its text a letter to a line. A handle drag, of the block
+or a group it is in, makes the Wrap Width the box dragged to (the limit is
+dropped): scaled with the box, a 218-dot block dragged across a 4" label at
+203 dpi took a Wrap Width of 733 to 2663, and typing then grew the box past
+the label. A rescale to another resolution still scales the limit with the
+block, and a font switch scales it no wider than the label.
 
 **`^FP` lays the characters out one at a time, inside the element's own
 upright frame; `orientation` then turns that frame as it turns any text.** The

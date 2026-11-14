@@ -2508,6 +2508,29 @@ check("GTK: given an ID, it prints its whole Wrap Width",
       (hg_text.block, hg_wrap.get_value()))
 document.elements.remove(hg_text)
 
+# Typing past the label's edge wraps there, and the font shrinks when the
+# lines then run past the bottom, rather than the box running off the label
+# The window's own document: the one `document` names was replaced when
+# a file was opened above, and the label is the window's
+he_doc = window.design_canvas.document
+he_text = he_doc.add_text_element("aa")
+he_text.font_code = '0'
+he_text.font_height, he_text.font_width = 30, 20
+he_text.block = _ShBlock(700, 2)
+he_doc.sync_text_width(he_text)
+he_text.x = he_doc.label_width - 212
+he_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+he_form = gtk_editors.text_form(window, he_box, he_text)
+_find_all(he_box, Gtk.TextView)[0].get_buffer().set_text(
+    "the quick brown fox jumps over the lazy dog " * 3)
+he_form.apply()
+check("GTK: typing past the label's edge wraps there and shrinks the font",
+      he_text.x + he_text.width <= he_doc.label_width
+      and he_text.font_height < 30 and he_text.block.wrap_width == 700,
+      (he_text.x, he_text.width, he_text.font_height, he_text.block,
+       he_text.block.limit))
+he_doc.elements.remove(he_text)
+
 ff_pdf = BarcodeElement(0, 0, 10, 'AB', symbology='pdf417')
 ff_bbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 ff_bf = gtk_editors.barcode_form(window, ff_bbox, ff_pdf)

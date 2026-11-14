@@ -3815,8 +3815,11 @@ class Document:
             FieldBlock.MAX_WIDTH, int(round(block.width * now / widest))))
         if getattr(block, 'limit', None) is not None:
             # The Wrap Width a hugging block may grow back to, in proportion
+            # - but no wider than the label, which a ^FB may not be
+            length = (self.label_height if element.rotated()
+                      else self.label_width)
             element.block.limit = max(element.block.width, min(
-                FieldBlock.MAX_WIDTH, int(round(block.limit * now / widest))))
+                length, int(round(block.limit * now / widest))))
         self.keep_breaks(element, lines)
 
     # --- a field block that hugs its text -----------------------------------
@@ -3854,15 +3857,16 @@ class Document:
         side; `before` is block_place from ahead of the edit.
 
         The lines break at the Wrap Width (FieldBlock.wrap_width), which
-        becomes the block's limit, and the block is the widest of them -
-        plus the indent its lines start at, for left and justified - so
-        every line still fits and none can take the next word, which did
-        not fit the wider Wrap Width: ^FB breaks them where the canvas did.
-        Never narrower than the font, below which a printer prints nothing
-        of a ^FB. The point the lines are justified to stays where it was -
-        their start, their end for right, their middle for centred - so the
-        text does not move; a centred block keeps the parity of its width,
-        so the move is a whole number of dots and edits do not creep.
+        becomes the block's limit - or at the edge of the label, should that
+        come first (wrap_room) - and the block is the widest of them, plus
+        the indent its lines start at for left and justified, so every line
+        still fits and none can take the next word, which did not fit the
+        wider width: ^FB breaks them where the canvas did. Never narrower
+        than the font, below which a printer prints nothing of a ^FB. The
+        point the lines are justified to stays where it was - their start,
+        their end for right, their middle for centred - so the text does not
+        move; a centred block keeps the parity of its width, so the move is
+        a whole number of dots and edits do not creep.
 
         A block that does not hug (hugs) is left as the editor built it.
         """
@@ -3870,19 +3874,28 @@ class Document:
         if not self.hugs(element):
             return
         from . import textraster
+        if before is not None and before[3] != element.orientation:
+            # Turned by this edit: where it was says nothing about where
+            # its lines now run
+            before = None
         limit = block.wrap_width
         cell = element.cell(self.font_path, self.dpi)
+        # Never held narrower than a character, which would stack the text
+        # a letter to a line
+        wrap = min(limit, max(cell.width, self.wrap_room(
+            element, before if before is not None
+            else self.block_place(element))))
         wrapped = block.copy()
-        wrapped.width, wrapped.limit = limit, None
+        wrapped.width, wrapped.limit = wrap, None
         widest = textraster.widest_line(
             self.display_text(element), element.face(self.font_path),
             cell.height, cell.width, wrapped, cell.row_gap)
         width = int(math.ceil(widest))
         if block.justification in ('L', 'J'):
             width += max(0, block.indent)
-        width = min(limit, max(FieldBlock.MIN_WIDTH, cell.width, width))
+        width = min(wrap, max(FieldBlock.MIN_WIDTH, cell.width, width))
         if (block.justification == 'C' and before is not None
-                and (before[0] - width) % 2 and width < limit):
+                and (before[0] - width) % 2 and width < wrap):
             width += 1
         hugged = block.copy()
         hugged.width = width
@@ -3891,21 +3904,69 @@ class Document:
             # Assigned rather than mutated: an undo snapshot may hold it
             element.block = hugged
             self.sync_text_width(element)
-        if before is not None and before[3] == element.orientation:
+        if before is not None:
             self._keep_block_place(element, before)
 
-    @staticmethod
-    def _keep_block_place(element, before) -> None:
-        """Move a field block whose width just changed so the point its
-        lines are justified to is where it was before (block_place).
+    def cap_block(self, element, place) -> None:
+        """Hold a field block an editor just built at its Wrap Width to the
+        room the label leaves it (wrap_room), keeping the Wrap Width as its
+        limit; `place` is block_place from before the edit.
 
-        Along the lines, which a quarter turn runs down the label and a half
-        turn runs right to left: the start of an inverted block's lines is
-        its right edge."""
-        old_width, old_x, old_y, _turn = before
+        Before the font is shrunk for typing that overflows: text that would
+        run off the label wraps at its edge instead, and that is the width
+        the overflow is measured against. hug_block narrows it from there.
+        """
+        if place is None or not self.hugs(element):
+            return
+        block = element.block
+        cell = element.cell(self.font_path, self.dpi)
+        room = max(cell.width, self.wrap_room(element, place))
+        if room >= block.width:
+            return
+        capped = block.copy()
+        capped.width, capped.limit = room, block.wrap_width
+        element.block = capped
+
+    @staticmethod
+    def _block_share(element) -> float:
+        """How far along a field block's lines the point they are justified
+        to lies, from where the block starts on the label: 0 for the start
+        of left and justified lines, 1 for the end of right ones, half way
+        for centred. Along the lines, which a quarter turn runs down the
+        label and a half turn runs right to left: the start of an inverted
+        block's lines is its right edge."""
         share = {'C': 0.5, 'R': 1.0}.get(element.block.justification, 0.0)
-        if element.orientation in ('I', 'B'):
-            share = 1.0 - share
+        return 1.0 - share if element.orientation in ('I', 'B') else share
+
+    def wrap_room(self, element, place) -> int:
+        """The widest a field block can be without running off the label,
+        growing from the point its lines are justified to as it was at
+        `place` (block_place): to the far edge from the start of its lines,
+        to the near one from their end, and as far each way from their
+        middle. A ^FB is "0 to the width of the label", the manual says.
+        A block whose point is off the label already has no room the label
+        can say, and is not held to any.
+        """
+        width, x, y, _turn = place
+        share = self._block_share(element)
+        down = element.rotated()
+        length = self.label_height if down else self.label_width
+        point = (y if down else x) + share * width
+        room = float(FieldBlock.MAX_WIDTH)
+        if not 0 <= point <= length:
+            return int(room)
+        if share > 0:
+            room = min(room, point / share)
+        if share < 1:
+            room = min(room, (length - point) / (1 - share))
+        return max(FieldBlock.MIN_WIDTH, int(room))
+
+    @classmethod
+    def _keep_block_place(cls, element, before) -> None:
+        """Move a field block whose width just changed so the point its
+        lines are justified to is where it was before (block_place)."""
+        old_width, old_x, old_y, _turn = before
+        share = cls._block_share(element)
         down = element.rotated()
 
         def point(x, y, width):

@@ -145,7 +145,8 @@
     inside a fixed box whatever its length.</p>
     <p>A field block is only as wide as its widest line. Delete text and the
     box closes in; type more and it widens again, up to <gui>Wrap
-    Width</gui>, where the lines break. Either way the lines break in the same
+    Width</gui> or the edge of the label, whichever comes first, where the
+    lines break. Either way the lines break in the same
     places and the text stays where it is on the label, though justified
     lines stretch to the narrower block. The label saves the width the block
     prints at, so when you open it again that is its <gui>Wrap Width</gui>:
@@ -164,7 +165,9 @@
     lines break in the same places and none of them is lost. The corner
     handles scale the whole block. The top and bottom handles make the
     letters taller or shorter. The side handles make the letters and the
-    wrap width wider or narrower together. To change where the lines break,
+    wrap width wider or narrower together, and the width you drag a field
+    block to becomes its <gui>Wrap Width</gui>: dragged from edge to edge of
+    a 4 inch label at 203 dpi, it is 812. To change where the lines break,
     set <gui>Wrap Width</gui>, <gui>Max Lines</gui> or <gui>Block
     Height</gui> in the Properties panel.</p>
     <p>If you type more text than the block holds, the font gets smaller so

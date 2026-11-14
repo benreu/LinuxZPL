@@ -931,6 +931,9 @@ def _text_format_rows(editor, form, element: TextElement,
         sync_block_fields()
 
     def apply():
+        # Where the block is before this edit, which says how much room
+        # the label leaves it
+        place = document.block_place(element)
         element.direction = direction_combo.currentData()
         element.char_gap = gap_spin.value()
         element.reverse_print = fr_check.isChecked()
@@ -945,6 +948,9 @@ def _text_format_rows(editor, form, element: TextElement,
                                        spacing_spin.value(),
                                        justify_combo.currentData(),
                                        indent_spin.value())
+            # Wrapping at the label's edge rather than past it, before an
+            # overflow is measured
+            document.cap_block(element, place)
         elif element.block is not None:
             # Unticked. A forced break left behind would print as the two
             # characters it is written with, so the lines are joined

@@ -528,6 +528,9 @@ def _text_format_rows(window, editor, content, element, show_text=None):
         on_wrap_toggled(wrap_check)
 
     def apply():
+        # Where the block is before this edit, which says how much room
+        # the label leaves it
+        place = document.block_place(element)
         element.direction = direction_codes[direction_combo.get_active()]
         element.char_gap = int(gap_spin.get_value())
         element.reverse_print = fr_check.get_active()
@@ -546,6 +549,9 @@ def _text_format_rows(window, editor, content, element, show_text=None):
                 int(spacing_spin.get_value()),
                 justify_codes[justify_combo.get_active()],
                 int(indent_spin.get_value()))
+            # Wrapping at the label's edge rather than past it, before an
+            # overflow is measured
+            document.cap_block(element, place)
         elif element.block is not None:
             # Unticked. A forced break left behind would print as the
             # two characters it is written with, so the lines are
