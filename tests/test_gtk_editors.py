@@ -1647,6 +1647,47 @@ finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
 
+# --- Printer names...: a font_names.ini face, picked by its name -----------
+import shutil as _shutil
+from gtkui import editors as _gtk_editors
+
+def _font_names_button(dialog):
+    return next((b for b in _find_all(_editor_body(dialog), Gtk.Button)
+                 if b.get_name() == 'font_names'), None)
+
+pn_el = document.add_text_element("named")
+window.open_editor_window(pn_el)
+check("without a font_names.ini, Edit Text has no Printer names... button",
+      _font_names_button(window._editors[id(pn_el)]) is None)
+window._editors[id(pn_el)].response(Gtk.ResponseType.CANCEL)
+
+pn_dir = Path(tempfile.mkdtemp())
+_shutil.copy('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+             pn_dir / 'DejaVuSans-Bold.ttf')
+(pn_dir / 'font_names.ini').write_text("DJVBOLD = DejaVuSans-Bold.ttf\n")
+real_choose = _gtk_editors.choose_mapped_font
+try:
+    gtk_main.zpl_fonts.set_extra_font_dir(str(pn_dir))
+    window.open_editor_window(pn_el)
+    pn_dialog = window._editors[id(pn_el)]
+    pn_button = _font_names_button(pn_dialog)
+    check("with a font_names.ini, Edit Text offers Printer names...",
+          pn_button is not None)
+    _font_names_tip = pn_button.get_tooltip_text() if pn_button else None
+    entry = gtk_main.zpl_fonts.mapped_fonts()[0]
+    _gtk_editors.choose_mapped_font = lambda *_a, **_k: entry
+    pn_button.clicked()
+    pn_dialog.response(Gtk.ResponseType.OK)
+    check("choosing DJVBOLD there gives the element that printer name",
+          pn_el.printer_font_name == 'DJVBOLD'
+          and pn_el.font_path == entry.path,
+          (pn_el.printer_font_name, pn_el.font_path))
+finally:
+    _gtk_editors.choose_mapped_font = real_choose
+    gtk_main.zpl_fonts.set_extra_font_dir('')
+    _shutil.rmtree(pn_dir, ignore_errors=True)
+document.elements.remove(pn_el)
+
 # --- the Print window's printer never touches the persisted default --------
 # The DPI is held fixed across the dialogs below so none of them takes the
 # rescale-prompt path, which would otherwise open a real (blocking) dialog.
@@ -2370,6 +2411,39 @@ next(b for b in _find_all(ff_tbox, Gtk.Button) if b.get_label() == "Clear").clic
 check("clearing the font is a change, though no input shows it",
       ff_heard == ['text'], ff_heard)
 document.elements.remove(ff_text)
+
+# Typing past the bottom of a wrapped block shrinks its font, and the rows
+# show the size it went to. Font 0, since font F's smallest cell is 26.
+from zplcore.model import FieldBlock as _ShBlock
+sh_text = document.add_text_element("aa")
+sh_text.font_code = '0'
+sh_text.block = _ShBlock(150, 2)
+document.sync_text_width(sh_text)
+sh_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+sh_form = gtk_editors.text_form(window, sh_box, sh_text)
+sh_spins = _find_all(sh_box, Gtk.SpinButton)
+sh_height = sh_spins[0]                 # Font Height, the first of them
+sh_lines = next(s for s in sh_spins if s.get_name() == 'max_lines')
+sh_buffer = _find_all(sh_box, Gtk.TextView)[0].get_buffer()
+sh_buffer.set_text("the quick brown fox jumps over the lazy dog " * 3)
+sh_form.apply()
+check("GTK: typing past a block's bottom shrinks the font, and the rows show it",
+      sh_text.font_height < 26
+      and int(sh_height.get_value()) == sh_text.font_height
+      and sh_text.block.max_lines > 2
+      and int(sh_lines.get_value()) == sh_text.block.max_lines,
+      (sh_text.font_height, sh_height.get_value(), sh_text.block,
+       sh_lines.get_value()))
+sh_small = sh_text.font_height
+sh_buffer.set_text("short")
+sh_form.apply()
+check("GTK: and deleting text leaves it at that size",
+      sh_text.font_height == sh_small, (sh_small, sh_text.font_height))
+sh_height.set_value(40)
+sh_form.apply()
+check("GTK: a font height typed into its row is the user's, overflow or not",
+      sh_text.font_height == 40, sh_text.font_height)
+document.elements.remove(sh_text)
 
 ff_pdf = BarcodeElement(0, 0, 10, 'AB', symbology='pdf417')
 ff_bbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -3213,6 +3287,11 @@ check("GTK: floating, the float button's tip offers to dock it",
       tw.properties._float_button.get_tooltip_text() == zpl_tips.TIPS['dock_panel'],
       tw.properties._float_button.get_tooltip_text())
 _tip_seen.add('dock_panel')
+# Printer names... is only there when a font_names.ini is; its tip was read
+# off the button where the Printer names... checks built one.
+check("GTK: Printer names... explains itself from the table",
+      _font_names_tip == zpl_tips.TIPS['font_names'], _font_names_tip)
+_tip_seen.add('font_names')
 tw.properties.set_floating(False)
 _t_text = tdoc.add_text_element()
 tw.on_canvas_changed()

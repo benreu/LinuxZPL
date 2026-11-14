@@ -485,6 +485,37 @@ def choose_font_family(parent, current_family=None, title="Choose Font"):
     return family, path
 
 
+def choose_mapped_font(parent, title="Printer Names"):
+    """The font_names.ini entry the user picks, or None.
+
+    A plain list of name, face and file: the family chooser cannot show a
+    face on its own, and these are the faces the map tells apart.
+    """
+    entries = zpl_fonts.mapped_fonts()
+    if not entries:
+        return None
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setWindowModality(Qt.WindowModal)
+    dialog.resize(520, 360)
+    layout = QVBoxLayout(dialog)
+    tree = QTreeWidget()
+    tree.setObjectName("font_names_list")
+    tree.setHeaderLabels(["Name", "Face", "File"])
+    tree.setRootIsDecorated(False)
+    for entry in entries:
+        tree.addTopLevelItem(QTreeWidgetItem(
+            [entry.name, f"{entry.family} {entry.style}".strip(), entry.path]))
+    tree.setCurrentItem(tree.topLevelItem(0))
+    tree.itemDoubleClicked.connect(lambda *_a: dialog.accept())
+    layout.addWidget(tree, 1)
+    layout.addWidget(_buttons(dialog))
+    if dialog.exec_() != QDialog.Accepted:
+        return None
+    item = tree.currentItem()
+    return entries[tree.indexOfTopLevelItem(item)] if item else None
+
+
 class LocalFontsDialog(QDialog):
     """What the directory-scan font fallback sees, and whether it is in use.
 
@@ -557,6 +588,7 @@ class LocalFontsDialog(QDialog):
             lines.append("")
         lines.append(f"Total: {len(report.files)} font file(s), "
                      f"{len(report.families)} usable family(ies)")
+        lines += [""] + zpl_fonts.name_map_report(refresh=rescan)
         self._report.setPlainText("\n".join(lines))
 
 
@@ -717,6 +749,9 @@ def _text_format_rows(editor, form, element: TextElement,
 
     def font_display():
         if chosen['family']:
+            mapped = zpl_fonts.mapped_name_for_file(chosen['path'])
+            if mapped:
+                return f"{chosen['family']} ({mapped})"
             return chosen['family']
         return (f"Default ({document.font_family})" if document.font_family
                 else "Default")
@@ -729,6 +764,13 @@ def _text_format_rows(editor, form, element: TextElement,
     clear_btn = QPushButton("Clear")
     font_layout.addWidget(font_label, 1)
     font_layout.addWidget(choose_btn)
+    # Only when font_names.ini has something to offer
+    mapped_btn = None
+    if zpl_fonts.mapped_fonts():
+        mapped_btn = QPushButton("Printer names…")
+        mapped_btn.setObjectName("font_names")
+        set_tip(mapped_btn, 'font_names')
+        font_layout.addWidget(mapped_btn)
     font_layout.addWidget(clear_btn)
     font_row.setObjectName("font")
     form.addRow("Font:", font_row)
@@ -749,8 +791,18 @@ def _text_format_rows(editor, form, element: TextElement,
         font_label.setText(font_display())
         editor.changed()
 
+    def on_mapped():
+        entry = choose_mapped_font(editor.body.window())
+        if entry is None:
+            return
+        chosen['family'], chosen['path'] = entry.family, entry.path
+        font_label.setText(font_display())
+        editor.changed()
+
     choose_btn.clicked.connect(on_choose)
     clear_btn.clicked.connect(on_clear)
+    if mapped_btn is not None:
+        mapped_btn.clicked.connect(on_mapped)
 
     # --- wrapping (^FB or ^TB) ---
     # Each kind's fields start from the element's block when it is that
@@ -915,7 +967,8 @@ def _text_format_rows(editor, form, element: TextElement,
                 # time, so choosing a font never blocks on the network.
                 name = zpl_fonts.printer_font_name(
                     chosen['path'],
-                    taken=document.printer_font_names(exclude=element))
+                    taken=document.printer_font_names(
+                        exclude=element, same_file=chosen['path']))
                 document.set_element_font(element, chosen['path'],
                                           chosen['family'], name)
             else:
@@ -923,7 +976,28 @@ def _text_format_rows(editor, form, element: TextElement,
                 element.font_family = None
                 element.printer_font_name = None
 
-    return SimpleNamespace(text_block_chosen=text_block_chosen, apply=apply)
+    def shrink_typed(old_text, height_spin, width_spin):
+        """Typing that runs past the block shrinks the font, rather than the
+        printer dropping the lines that no longer fit - but only typing: a
+        font size the user set is theirs. The size rows show where it went,
+        and a ^FB's max lines the more lines the block now holds."""
+        if element.text == old_text:
+            return
+        floor = max(height_spin.minimum(), width_spin.minimum())
+        if not document.shrink_to_block(element, smallest=floor):
+            return
+        for spin, value in ((height_spin, element.font_height),
+                            (width_spin, element.font_width)):
+            spin.blockSignals(True)
+            try:
+                spin.setValue(value)
+            finally:
+                spin.blockSignals(False)
+        if isinstance(element.block, FieldBlock):
+            show_block(element.block)
+
+    return SimpleNamespace(text_block_chosen=text_block_chosen, apply=apply,
+                           shrink_typed=shrink_typed)
 
 
 
@@ -974,6 +1048,7 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
     def _apply():
         apply_name(element)
         # A ^TB has no line break to write a typed one as, so it is a space
+        old_text = element.text
         element.text = (textraster.from_editor_unbroken
                         if fmt.text_block_chosen()
                         else textraster.from_editor)(text_edit.toPlainText())
@@ -982,6 +1057,7 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
         element.orientation = orientation_combo.currentData()
         element.height = element.font_height
         fmt.apply()
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
 
     return editor.finish(_apply)
@@ -1050,6 +1126,7 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
 
     def _apply():
         apply_name(element)
+        old_text = element.text
         element.text = text_edit.text()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -1066,6 +1143,7 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
         # Last, because the box is measured from what the canvas will draw,
         # and that is the wrapped marker for as long as this stays a clock
         # field.
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
 
     return editor.finish(_apply)
@@ -1148,6 +1226,7 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
 
     def _apply():
         apply_name(element)
+        old_text = element.text
         element.text = text_edit.text()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -1167,6 +1246,7 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
         # Last, because the box is measured from what the canvas will draw,
         # and that is the wrapped marker for as long as this stays a serial
         # field.
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
 
     return editor.finish(_apply)
@@ -1252,6 +1332,7 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
 
     def _apply():
         apply_name(element)
+        old_text = element.text
         element.text = text_edit.text()
         element.font_height = height_spin.value()
         element.font_width = width_spin.value()
@@ -1267,6 +1348,7 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
         # Last, because the box is measured from what the canvas will draw,
         # and that is the placeholder for as long as this stays a numbered
         # field with no literal of its own.
+        fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
 
     return editor.finish(_apply)
@@ -2976,9 +3058,17 @@ class PrinterFontsDialog(QDialog):
 
         row = QHBoxLayout()
         self._upload_btn = QPushButton("Upload…")
+        # Only when font_names.ini has something to offer
+        self._upload_mapped_btn = None
+        if zpl_fonts.mapped_fonts():
+            self._upload_mapped_btn = QPushButton("Upload by name…")
+            self._upload_mapped_btn.setObjectName("font_names")
+            set_tip(self._upload_mapped_btn, 'font_names')
         self._delete_btn = QPushButton("Delete")
         self._refresh_btn = QPushButton("Refresh")
-        buttons = (self._upload_btn, self._delete_btn, self._refresh_btn)
+        buttons = tuple(b for b in (self._upload_btn, self._upload_mapped_btn,
+                                    self._delete_btn, self._refresh_btn)
+                        if b is not None)
         for b in buttons:
             row.addWidget(b)
         row.addStretch(1)
@@ -2999,6 +3089,8 @@ class PrinterFontsDialog(QDialog):
         layout.addWidget(close)
 
         self._upload_btn.clicked.connect(self._on_upload)
+        if self._upload_mapped_btn is not None:
+            self._upload_mapped_btn.clicked.connect(self._on_upload_mapped)
         self._delete_btn.clicked.connect(self._on_delete)
         self._refresh_btn.clicked.connect(self.refresh)
         self._list.currentItemChanged.connect(self._update_preview)
@@ -3102,8 +3194,15 @@ class PrinterFontsDialog(QDialog):
 
     def _on_upload(self):
         family, path = choose_font_family(self, title="Upload Font to Printer")
-        if not path:
-            return
+        if path:
+            self._upload_path(path)
+
+    def _on_upload_mapped(self):
+        entry = choose_mapped_font(self, title="Upload Font by Name")
+        if entry is not None:
+            self._upload_path(entry.path)
+
+    def _upload_path(self, path):
         device = font_device_dialog(self, self._font_device)
         if device is None:
             return

@@ -1561,17 +1561,26 @@ check("and the slow drag actually moved something",
       [box_of(el) for el in slow_target.members] != [box_of(el) for el in still_target.members])
 
 
-# The bottom handle of a block asks for a line count, and the block keeps every
-# line it is left with. Recomputed from a height that had already snapped back,
-# it collapsed to one line on the first motion event of any drag at all.
+# The bottom handle of a block scales its text, from the press: the lines it
+# breaks into, and every one of them, are kept. Re-wrapping the dragged height
+# as a line count dropped the lines it no longer had room for.
+def _printed_lines(document, element):
+    cell = element.cell(document.font_path, document.dpi)
+    return textraster.wrap(document.display_text(element), element.face(document.font_path),
+                           cell.height, cell.width, element.block, cell.row_gap)
+
 doc_block, block_el = wrapped_text()
 pitch = textraster.pitch(block_el.font_height, block_el.block)
-lines_before = block_el.height // pitch
+lines_before = _printed_lines(doc_block, block_el)
+height_before, width_before = block_el.font_height, block_el.font_width
 drag_slowly(doc_block, block_el, 'bm', 0, -pitch)
-check("a slow drag of the bottom handle cuts one line, not all of them",
-      block_el.height // pitch == lines_before - 1
-      and block_el.block.max_lines == lines_before - 1,
-      (lines_before, block_el.height // pitch, block_el.block.max_lines))
+check("a slow drag of a block's bottom handle makes its letters shorter, keeping every line",
+      block_el.font_height < height_before
+      and block_el.font_width == width_before
+      and block_el.block.max_lines == 4
+      and _printed_lines(doc_block, block_el) == lines_before,
+      (height_before, block_el.font_height, block_el.font_width, block_el.block,
+       _printed_lines(doc_block, block_el)))
 
 # A block's box is its wrap, so the height snaps back after every event. The top
 # handle has to resize against that, not carry the element along with it.
@@ -4063,23 +4072,28 @@ check("a typed break survives the file",
       textraster.to_editor(rebroken.text) == "ACME Widget\nModel 4400",
       rebroken.text)
 
-# dragging a wrapped element asks for a wrap width and a line count
+# dragging a wrapped element scales its text, and the wrap with it
 rd = Document(812, 1218, dpi=203)
 rw = rd.add_text_element('one two three four five six seven eight nine ten')
 rw.font_path = FONT
 rw.block = FieldBlock(300, 8)
 rd.sync_text_width(rw)
+rw_lines = _printed_lines(rd, rw)
+rw_height = rw.font_height
 geometry.resize_by_handle(rd, rw, 'mr', -120, 0)
-check("a side handle sets the wrap width",
-      (rw.block.width, rw.width) == (180, 180), (rw.block.width, rw.width))
-narrowed = len(textraster.wrap(rw.text, FONT, rw.font_height, rw.font_width, rw.block))
-check("the box still equals the wrap after dragging it narrower",
-      rw.height == narrowed * rw.font_height, (rw.height, narrowed))
-geometry.resize_by_handle(rd, rw, 'bm', 0, -rw.font_height)
-check("a bottom handle sets the line count, and the surplus is dropped",
-      rw.block.max_lines == narrowed - 1
-      and rw.height == (narrowed - 1) * rw.font_height,
-      (rw.block.max_lines, rw.height, narrowed))
+# A dot or two wider than dragged, where a line that filled the block would
+# otherwise round past its edge and break a word early
+check("a side handle narrows the letters and the wrap width together",
+      180 <= rw.block.width <= 186 and rw.width == rw.block.width
+      and rw.font_height == rw_height and rw.font_width < rw_height,
+      (rw.block.width, rw.width, rw.font_height, rw.font_width))
+check("so the text breaks into the same lines, none dropped",
+      _printed_lines(rd, rw) == rw_lines, (_printed_lines(rd, rw), rw_lines))
+geometry.resize_by_handle(rd, rw, 'bm', 0, -rw.height // 2)
+check("a bottom handle makes the letters shorter and keeps the line count",
+      rw.block.max_lines == 8 and abs(rw.font_height - rw_height / 2) <= 1
+      and _printed_lines(rd, rw) == rw_lines,
+      (rw.block.max_lines, rw.font_height, _printed_lines(rd, rw)))
 
 # a block is an object, so a snapshot must not be holding the live one
 udoc = Document(812, 1218, dpi=203)
@@ -4601,6 +4615,77 @@ finally:
 check("the font chooser is modal to the editor window the rows are in",
       _ff_parents == [_ff_dlg], _ff_parents)
 _ff_dlg.reject()
+
+# Typing past the bottom of a wrapped block shrinks its font, and the rows
+# show the size it went to. Font 0, since font F's smallest cell is 26.
+from PySide2.QtWidgets import QFormLayout as _ShForm
+
+def _qt_row(form, label):
+    """The field of the row in `form` labelled `label`."""
+    rows = form.rows
+    for row in range(rows.rowCount()):
+        name = rows.itemAt(row, _ShForm.LabelRole)
+        if name is not None and name.widget() and name.widget().text() == label:
+            return rows.itemAt(row, _ShForm.FieldRole).widget()
+    return None
+
+_sh_text = _ff_doc.add_text_element("aa")
+_sh_text.font_code = '0'
+_sh_text.block = FieldBlock(150, 2)
+_ff_doc.sync_text_width(_sh_text)
+_sh_form = qt_dialogs.text_form(_sh_text, _ff_doc)
+_sh_height = _qt_row(_sh_form, "Font Height:")
+_sh_lines = _sh_form.body.findChild(_QSpinBox, "max_lines")
+_sh_form.body.findChild(_FText, 'text').setPlainText(
+    "the quick brown fox jumps over the lazy dog " * 3)
+_sh_form.apply()
+check("Qt: typing past a block's bottom shrinks the font, and the rows show it",
+      _sh_text.font_height < 26 and _sh_height.value() == _sh_text.font_height
+      and _sh_text.block.max_lines > 2
+      and _sh_lines.value() == _sh_text.block.max_lines,
+      (_sh_text.font_height, _sh_height.value(), _sh_text.block,
+       _sh_lines.value()))
+_sh_small = _sh_text.font_height
+_sh_form.body.findChild(_FText, 'text').setPlainText("short")
+_sh_form.apply()
+check("Qt: and deleting text leaves it at that size",
+      _sh_text.font_height == _sh_small, (_sh_small, _sh_text.font_height))
+_sh_height.setValue(40)
+_sh_form.apply()
+check("Qt: a font height typed into its row is the user's, overflow or not",
+      _sh_text.font_height == 40, _sh_text.font_height)
+_ff_doc.elements.remove(_sh_text)
+
+# Printer names...: only with a font_names.ini, and its pick is the
+# element's printer name on apply.
+import shutil as _pn_shutil
+check("without a font_names.ini, Edit Text has no Printer names... button",
+      _ff_tf.body.findChild(_QPushButton, 'font_names') is None)
+_pn_dir = Path(tempfile.mkdtemp())
+_pn_shutil.copy('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                _pn_dir / 'DejaVuSans-Bold.ttf')
+(_pn_dir / 'font_names.ini').write_text("DJVBOLD = DejaVuSans-Bold.ttf\n")
+_pn_real = qt_dialogs.choose_mapped_font
+try:
+    zpl_fonts.set_extra_font_dir(str(_pn_dir))
+    _pn_text = _ff_doc.add_text_element("named")
+    _pn_form = qt_dialogs.text_form(_pn_text, _ff_doc)
+    _pn_button = _pn_form.body.findChild(_QPushButton, 'font_names')
+    check("with a font_names.ini, Edit Text offers Printer names...",
+          _pn_button is not None)
+    _font_names_tip = _pn_button.toolTip() if _pn_button else ''
+    _pn_entry = zpl_fonts.mapped_fonts()[0]
+    qt_dialogs.choose_mapped_font = lambda *_a, **_k: _pn_entry
+    _pn_button.click()
+    _pn_form.apply()
+    check("choosing DJVBOLD there gives the element that printer name",
+          _pn_text.printer_font_name == 'DJVBOLD'
+          and _pn_text.font_path == _pn_entry.path,
+          (_pn_text.printer_font_name, _pn_text.font_path))
+finally:
+    qt_dialogs.choose_mapped_font = _pn_real
+    zpl_fonts.set_extra_font_dir('')
+    _pn_shutil.rmtree(_pn_dir, ignore_errors=True)
 
 _ff_pdf = BarcodeElement(0, 0, 10, 'AB', symbology='pdf417')
 _ff_bf = qt_dialogs.barcode_form(_ff_pdf)
@@ -10059,37 +10144,142 @@ check("a ^TB after a ^FB is the block",
       _tb("^FO50,60^A0N,30,20^FB200,3^TB,150,75^FDaa^FS")
       .elements[0].block == TextBlock(150, 75))
 
-# Handles: a side handle sets the width, a top or bottom one the height
-_tbh_doc = _tb("^FO50,60^A0N,30,20^TBN,150,75^FDaaa bbb ccc ddd eee^FS")
+# Handles: a side handle scales a ^TB's width and its letters' width, a top
+# or bottom one its height and its letters' height
+_tbh_doc = _tb("^FO50,60^A0N,30,20^TBN,150,75^FDaa^FS")
 _tbh = _tbh_doc.elements[0]
 geometry.resize_by_handle(_tbh_doc, _tbh, 'mr', -30, 0)
 geometry.resize_by_handle(_tbh_doc, _tbh, 'bm', 0, 15)
-check("a side handle sets a ^TB's width and a bottom one its height",
+check("a side handle scales a ^TB's width and a bottom one its height",
       _tbh.block == TextBlock(120, 90) and (_tbh.width, _tbh.height)
-      == (120, 90), (_tbh.block, _tbh.width, _tbh.height))
-geometry.resize_by_handle(_tbh_doc, _tbh, 'tm', 0, 20)
-check("a top handle sets it from the bottom edge, which stays put",
-      _tbh.block.height == 70 and _tbh.y + _tbh.height == 150,
-      (_tbh.block, _tbh.y, _tbh.height))
+      == (120, 90) and (_tbh.font_width, _tbh.font_height) == (16, 36),
+      (_tbh.block, _tbh.width, _tbh.height, _tbh.font_width, _tbh.font_height))
+geometry.resize_by_handle(_tbh_doc, _tbh, 'tm', 0, 18)
+check("a top handle scales it from the bottom edge, which stays put",
+      _tbh.block.height == 72 and _tbh.y + _tbh.height == 150
+      and _tbh.font_height == 29,
+      (_tbh.block, _tbh.y, _tbh.height, _tbh.font_height))
 _tbhr_doc = _tb("^FO50,60^A0N,30,20^TBR,150,75^FDaaa bbb ccc^FS")
 _tbhr = _tbhr_doc.elements[0]
-geometry.resize_by_handle(_tbhr_doc, _tbhr, 'bm', 0, 20)
+geometry.resize_by_handle(_tbhr_doc, _tbhr, 'bm', 0, 30)
 geometry.resize_by_handle(_tbhr_doc, _tbhr, 'mr', 15, 0)
 check("turned R, the bottom handle is along the lines and the side across",
-      _tbhr.block == TextBlock(170, 90) and (_tbhr.width, _tbhr.height)
-      == (90, 170), (_tbhr.block, _tbhr.width, _tbhr.height))
-# The same fix reaches a ^FB, which used to take a turned box's width - its
-# stack of lines - as the wrap width
+      _tbhr.block == TextBlock(180, 90) and (_tbhr.width, _tbhr.height)
+      == (90, 180) and (_tbhr.font_width, _tbhr.font_height) == (24, 36),
+      (_tbhr.block, _tbhr.width, _tbhr.height, _tbhr.font_width,
+       _tbhr.font_height))
+# A turned ^FB the same: along its lines is the wrap width, across them its
+# letters' height, and the line count is never the handle's
 _fbhr_doc = _tb("^FO50,60^A0R,30,20^FB150,2^FDaaa bbb ccc ddd^FS")
 _fbhr = _fbhr_doc.elements[0]
-geometry.resize_by_handle(_fbhr_doc, _fbhr, 'bm', 0, 20)
-check("a turned ^FB's handle along its lines sets the wrap width",
-      _fbhr.block.width == 170 and _fbhr.block.max_lines == 2,
-      _fbhr.block)
-geometry.resize_by_handle(_fbhr_doc, _fbhr, 'mr', 30, 0)
-check("and the one across them the line count",
-      _fbhr.block.width == 170 and _fbhr.block.max_lines == 3,
-      _fbhr.block)
+geometry.resize_by_handle(_fbhr_doc, _fbhr, 'bm', 0, 30)
+check("a turned ^FB's handle along its lines scales the wrap width",
+      _fbhr.block.width == 180 and _fbhr.block.max_lines == 2
+      and (_fbhr.font_width, _fbhr.font_height) == (24, 30),
+      (_fbhr.block, _fbhr.font_width, _fbhr.font_height))
+_fbhr_across = _fbhr.width
+geometry.resize_by_handle(_fbhr_doc, _fbhr, 'mr', _fbhr_across // 2, 0)
+check("and the one across them its letters' height, not the line count",
+      _fbhr.block.width == 180 and _fbhr.block.max_lines == 2
+      and _fbhr.font_height == 45,
+      (_fbhr.block, _fbhr.font_height, _fbhr_across))
+
+# A corner scales a ^FB whole: twice the size is the same lines, twice as
+# big, however many motion events the drag took - its ^FP gap and the ends
+# a right to left field is measured from included, which a drag measured
+# from the press used to compound
+def _gapped_block():
+    doc = _tb("^FO50,60^A0N,30,20^FB300,3^FPH,4^FDone two three four five six^FS")
+    return doc, doc.elements[0]
+_cs_doc, _cs = _gapped_block()
+_cs_lines = _printed_lines(_cs_doc, _cs)
+_cs_slow_doc, _cs_slow = _gapped_block()
+drag_slowly(_cs_slow_doc, _cs_slow, 'br', _cs.width, _cs.height)
+geometry.resize_by_handle(_cs_doc, _cs, 'br', _cs.width, _cs.height)
+check("a corner doubles a ^FB's letters, gap and wrap, keeping its lines",
+      (_cs.font_height, _cs.font_width, _cs.char_gap, _cs.block.width,
+       _cs.block.max_lines) == (60, 40, 8, 600, 3)
+      and _printed_lines(_cs_doc, _cs) == _cs_lines,
+      (_cs.font_height, _cs.font_width, _cs.char_gap, _cs.block,
+       _printed_lines(_cs_doc, _cs)))
+check("and dragged slowly it lands where dragged at once",
+      (box_of(_cs_slow), _cs_slow.font_height, _cs_slow.font_width,
+       _cs_slow.char_gap, _cs_slow.ends, _cs_slow.block)
+      == (box_of(_cs), _cs.font_height, _cs.font_width, _cs.char_gap,
+          _cs.ends, _cs.block),
+      ((box_of(_cs_slow), _cs_slow.char_gap, _cs_slow.ends, _cs_slow.block),
+       (box_of(_cs), _cs.char_gap, _cs.ends, _cs.block)))
+
+# Made smaller by any handle, a block keeps every line it printed
+for _handle, _dx, _dy in (('mr', -100, 0), ('bm', 0, -40), ('tl', 60, 30),
+                          ('br', -150, -50), ('ml', 120, 0)):
+    _small_doc = _tb("^FO50,60^A0N,30,20^FB300,99^FDthe quick brown fox jumps "
+                     "over the lazy dog and keeps on running^FS")
+    _small = _small_doc.elements[0]
+    # Every line it holds in use, whatever the face measures
+    _small.block.max_lines = len(_printed_lines(_small_doc, _small))
+    _small_doc.sync_text_width(_small)
+    _small_lines = _printed_lines(_small_doc, _small)
+    geometry.resize_by_handle(_small_doc, _small, _handle, _dx, _dy)
+    check(f"shrinking a full ^FB by its {_handle} handle drops no line",
+          len(_printed_lines(_small_doc, _small)) == len(_small_lines)
+          and ''.join(_printed_lines(_small_doc, _small)).replace(' ', '')
+          == ''.join(_small_lines).replace(' ', ''),
+          (_small_lines, _printed_lines(_small_doc, _small)))
+
+# Typing past the bottom of a block shrinks its font, rather than the printer
+# dropping the lines that no longer fit
+_long = "the quick brown fox jumps over the lazy dog " * 3
+_grow_doc = _tb("^FO50,60^A0N,30,20^FB200,2^FDaaa bbb^FS")
+_grow = _grow_doc.elements[0]
+_grow_depth = 2 * 30
+check("text that fits a block is left at its size",
+      not _grow_doc.shrink_to_block(_grow)
+      and (_grow.font_height, _grow.font_width) == (30, 20))
+_grow.text = _long.strip()
+_overflow = len(textraster.wrap(_grow.text, _grow.face(_grow_doc.font_path),
+                                30, 20, FieldBlock(200, 99)))
+check("text that overflows a ^FB shrinks its font, the same in both directions",
+      _grow_doc.shrink_to_block(_grow)
+      and _grow.font_height < 30
+      and abs(_grow.font_width / _grow.font_height - 20 / 30) < 0.1,
+      (_grow.font_height, _grow.font_width))
+_grow_lines = _printed_lines(_grow_doc, _grow)
+check("until every line prints, inside the depth it had",
+      ' '.join(_grow_lines) == _grow.text
+      and len(_grow_lines) * _grow.font_height <= _grow_depth
+      and _grow.block.max_lines * _grow.font_height <= _grow_depth
+      and _grow.height == len(_grow_lines) * _grow.font_height,
+      (_grow_lines, _grow.block, _grow.font_height, _grow.height, _overflow))
+check("and asked again, it is done",
+      not _grow_doc.shrink_to_block(_grow))
+_tbs_doc = _tb("^FO50,60^A0N,30,20^TBN,150,75^FD" + _long.strip() + "^FS")
+_tbs = _tbs_doc.elements[0]
+check("a ^TB shrinks to its height, which stays",
+      _tbs_doc.shrink_to_block(_tbs) and _tbs.block == TextBlock(150, 75)
+      and ' '.join(_printed_lines(_tbs_doc, _tbs)) == _tbs.text
+      and ((len(_printed_lines(_tbs_doc, _tbs)) - 1)
+           * _tbs.block.pitch(_tbs.font_height) + _tbs.font_height <= 75),
+      (_tbs.font_height, _printed_lines(_tbs_doc, _tbs)))
+_floor_doc = _tb("^FO50,60^A0N,30,20^FB100,1^FD" + _long.strip() + "^FS")
+_floor = _floor_doc.elements[0]
+_floor_doc.shrink_to_block(_floor, smallest=8)
+check("but never below the floor it is given",
+      (_floor.font_height, _floor.font_width) == (8, 8),
+      (_floor.font_height, _floor.font_width))
+_bm_doc = _tb("^FO50,60^AFN,78,39^FB300,2^FD" + _long.strip() + "^FS")
+_bm = _bm_doc.elements[0]
+check("a bitmap font shrinks to a whole magnification of its cell",
+      _bm_doc.shrink_to_block(_bm)
+      and (_bm.font_height, _bm.font_width)
+      == tuple(_bm.cell(_bm_doc.font_path, _bm_doc.dpi)[:2])
+      and _bm.font_height % 26 == 0,
+      (_bm.font_height, _bm.font_width))
+_bm_min_doc = _tb("^FO50,60^AFN,26,13^FB300,2^FD" + _long.strip() + "^FS")
+_bm_min = _bm_min_doc.elements[0]
+check("and one already at its smallest cell is left alone",
+      not _bm_min_doc.shrink_to_block(_bm_min)
+      and (_bm_min.font_height, _bm_min.font_width) == (26, 13))
 
 # Label Settings sets the label size, which clamps every element to it: a
 # turned block's box width is its stack of lines, and was once made its wrap
@@ -13563,6 +13753,13 @@ finally:
 check("the printer's managers explain the buttons that need it, Firmware's "
       "Connection label too",
       not _t_manager_tips, _t_manager_tips)
+
+# Printer names... is only there when a font_names.ini is; its tip was read
+# off the button the Printer names... checks built.
+check("Printer names... explains itself from the table",
+      _font_names_tip == qt_dialogs.tip_markup(zpl_tips.TIPS['font_names']),
+      _font_names_tip)
+_tip_seen.add('font_names')
 
 # The GTK panel draws its own header, with a close and a float button; Qt's
 # dock has a title bar for that.

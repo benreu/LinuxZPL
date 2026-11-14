@@ -214,15 +214,35 @@ is written with rather than breaking:
 - switching wrapping off joins the lines back into one with spaces, rather than
   leaving a break behind for the printer to print
 
-**The resize handles ask a block for a wrap, not a rectangle.** The side handles
-set the block width and the text re-flows; the top and bottom handles set the
-maximum number of lines, so dragging the bottom edge up cuts lines the printer
-would then drop and dragging it down reveals them. A text block's top and
-bottom handles set its height in dots instead. The box is then whatever the
-block makes of that - it is never stretched to fill the dragged rectangle, and
-the font size is the dialog's business alone. At `R` and `B` the handles along
-the lines set the width and those across them the lines or the height, as the
-footprint is transposed.
+**The resize handles scale a block's text; they never re-wrap it.** A block is
+scaled as a single line of text is: each handle reads only the axes it moves,
+and the font height goes with the stack of lines and the font width with the
+run, together with the block - a `^FB`'s wrap width, line spacing and indent,
+a `^TB`'s width and height. A `^FB` keeps its maximum number of lines. The
+lines therefore break in the same places and none is dropped, where taking a
+narrower or shorter box as a narrower wrap or fewer lines silently lost the
+lines the printer then discarded. The font width and the wrap width round
+separately, so the block is widened to the widest of the lines it held before
+when that is a dot or two more than the drag asked for, and the font is then
+shrunk to fit (below) should a line still not. Each motion event scales from
+the element as it was when the button went down, its `^FP` gap and its ends
+included. At `R` and `B` the handles along the lines scale the run and those
+across them the stack, as the footprint is transposed. Where the lines break
+is the editor's business: Wrap Width, Max Lines and Block Height.
+
+**Typing that overflows a block shrinks its font; nothing else does.** When an
+editor's text changes and the block no longer holds every line, the font
+height and width shrink by one factor - the largest size at which every line
+fits - rather than the printer dropping the lines past the bottom or past a
+`^FB`'s last line. A line fits when no line is wider than the block (a `^FB`
+keeps a word too long for it whole) and the lines fit its depth: a `^FB`'s
+depth is its maximum lines at the font it had, which it keeps in dots, so the
+smaller font gets more lines; a `^TB`'s is its height, and its last line needs
+only the font's height rather than a whole pitch. A bitmap font lands on one
+of its magnifications, and one already at its smallest cell is left as it is.
+It never goes below the editor's own minimum font size. It only shrinks:
+deleting text leaves the font where it went, and a font size typed into the
+editor is the user's even when the text then overflows.
 
 **`^FP` lays the characters out one at a time, inside the element's own
 upright frame; `orientation` then turns that frame as it turns any text.** The
@@ -2364,7 +2384,27 @@ the font's filename: uppercased, non-ASCII dropped, every character outside
 
 Truncation makes collisions easy (`DejaVuSans` and `DejaVuSans-Bold` both give
 `DEJAVUSA`), so a name already in use within the same label gets a numeric
-suffix instead of overwriting.
+suffix instead of overwriting. The suffix is only for a *different* file: a
+font file already used in the label gives its own name again, never a second,
+suffixed one.
+
+**A name map overrides deriving.** A `font_names.ini` in the extra font folder
+lists `NAME = file` lines (a file relative to that folder, or absolute), read
+whether or not fontconfig works:
+
+- A mapped file's name is its mapped name, whatever else the label uses.
+- A mapped name is reserved: no other file derives to it; such a file takes the
+  numeric suffix instead.
+- Mapping a name back to a file uses the map alone for a mapped name. If the
+  mapped file is missing the name resolves to nothing — it never falls back to
+  deriving, which would pick whichever face happens to truncate to it.
+- A line with a name outside 1–8 of `[A-Z0-9_-]` (uppercased first), a file
+  that is missing or not `.ttf`, a name already mapped, or a file already given
+  a name is skipped; the first entry wins. Local Fonts lists the map, and every
+  skipped line with its line number.
+- When a map is loaded, the text editors offer **Printer names…** and the
+  printer's font manager **Upload by name…**, choosing a face from the map by
+  name. (The family chooser can't tell faces of one family apart.)
 
 **A path a file named is written back as that file gave it.** `^A@`'s fourth
 parameter is `d:f.x` — drive (`R:`, `E:`, `B:` or `A:`, defaulting to `R:`, not
@@ -2387,8 +2427,8 @@ writes that path on it. It does not make FOO the default for fields with no
 `^A` at all - that is `^CF`'s job, and the manual gives `^A@` no such role.
 
 A saved `.zpl` records only the object name and its path, never the font file.
-On load, the name is mapped back to an installed `.ttf` by deriving each
-candidate's object name and comparing. Because truncation is lossy, several faces can match;
+On load, a mapped name is its mapped file; any other name is mapped back to
+an installed `.ttf` by deriving each candidate's object name and comparing. Because truncation is lossy, several faces can match;
 prefer the family's canonical face, then the shortest filename, so the base
 face wins over Bold/Italic. A label saved with a bold face may therefore reopen
 in the regular face of the same family — what prints is unaffected, since the
@@ -3080,7 +3120,7 @@ rulers = no
 | Section | Written | Used by |
 |---|---|---|
 | `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion. `connection` is `network` or `usb`; `address` and `port` are the network printer, `usb_serial` and `usb_name` the USB one (§9), and both are kept whichever is chosen. A file without `connection` reads as the network printer it names, and `usb` with no serial or name falls back to network. `font_device` is the font memory (§10.4.1), ignored unless it names a drive the program knows |
-| `[fonts]` | with `[printer]`, and when the extra font folder changes | `extra_dir`, a folder searched for fonts beside the installed ones; empty for none |
+| `[fonts]` | with `[printer]`, and when the extra font folder changes | `extra_dir`, a folder searched for fonts beside the installed ones, and where `font_names.ini` is read from; empty for none |
 | `[label]` | when Label Size is accepted | the label at startup and on File > New |
 | `[window]` | on quit | where the window opens (§2) |
 | `[docks]` | with the rest of the file | where the Properties panel is (§7.1). The GTK frontend writes `floating`, `shown` (docked), `width` (docked, in pixels) and `floating_geometry` (`x,y,width,height`); the Qt frontend keeps its own toolkit's saved window state in `state`, which also holds the panel's side. Each reads only its own keys. |

@@ -8,6 +8,8 @@ comes out of the printer, and two copies of these rules would eventually
 disagree about it without ever raising an error.
 """
 
+import math
+
 from . import symbology
 
 # Handles are squares this many dots across, and a click within this distance
@@ -575,6 +577,10 @@ def resize_origin(element) -> dict:
         # Every member as it was, for the same reason: each event scales
         # the members from here, not from where the last event left them.
         origin['members'] = [(el, scale_state(el)) for el in element.members]
+    elif getattr(element, 'block', None) is not None:
+        # A wrapped text is scaled rather than re-wrapped, from its font and
+        # block as they were, for the same reason.
+        origin['state'] = scale_state(element)
     return origin
 
 
@@ -587,7 +593,7 @@ def resize_origin(element) -> dict:
 # The attributes a scale touches, on whichever element types have them.
 SCALED_ATTRIBUTES = ('x', 'y', 'width', 'height', 'typeset', 'font_height',
                      'font_width', 'thickness', 'diameter', 'module_width',
-                     'bar_height', 'font', 'origins')
+                     'bar_height', 'font', 'origins', 'char_gap', 'ends')
 
 
 def scale_state(element) -> dict:
@@ -817,6 +823,12 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
         return
     x, y = box['x'], box['y']
     width, height = box['width'], box['height']
+    state = box.get('state')
+    if state is None and getattr(element, 'block', None) is not None:
+        # An origin taken by hand, without the font: the element is still
+        # as it was, apart from the box the origin names.
+        state = dict(scale_state(element), x=x, y=y, width=width,
+                     height=height)
 
     if handle in ('tl', 'tm', 'tr'):    # Top handles - adjust y and height
         y += dy
@@ -851,22 +863,26 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
         element.fit(element.width, element.height)
 
     if element.element_type == 'text':
-        block = getattr(element, 'block', None)
-        if block is not None:
-            # A wrapped element's box is its block. The side handles ask for a
-            # wrap width, and the top and bottom ones for a number of lines -
-            # or, for a ^TB, a height in dots; the box is then whatever the
-            # block makes of that, never a rectangle the text is stretched to
-            # fill. Font size stays the dialog's business - a ^FB's height is
-            # a consequence of its wrap, so scaling the font from the dragged
-            # height could not track it. Along the lines and across them,
-            # which a quarter turn swaps: reading the box's width as the wrap
-            # width set a turned block's width to its stack of lines.
-            run, stack = ((element.height, element.width) if element.rotated()
-                          else (element.width, element.height))
-            block.fit(max(MIN_SIZE, run), stack,
-                      block.pitch(element.font_height))
-            document.sync_text_width(element)
+        if getattr(element, 'block', None) is not None:
+            # A wrapped element is scaled, not re-wrapped: the dragged box
+            # asks for bigger or smaller text, as it does of a single line,
+            # and the block scales with it so the lines break where they did.
+            # Re-wrapping took a narrower or shorter box as fewer lines, which
+            # the printer then dropped - text vanished under the handle. Only
+            # the axes the handle moves are read, and the wrap width, line
+            # count and block height stay the editor's business. Scaled from
+            # the press, like a group, so the rounding of one event is not the
+            # starting point of the next.
+            across, down = handle[1] in 'lr', handle[0] in 'tb'
+            sx = element.width / max(1, box['width']) if across else 1.0
+            sy = element.height / max(1, box['height']) if down else 1.0
+            restore_state(element, state)
+            lines = _block_lines(document, element)
+            scale_element(document, element, box['x'], box['y'], sx, sy)
+            _keep_breaks(document, element, lines)
+            # Rounding can still leave a line a dot too wide for the block,
+            # and a ^FB would drop the one it pushed past the bottom.
+            document.shrink_to_block(element)
         else:
             # The run is along the text and the stack across it, so a quarter
             # turn swaps which side of the box is the font height - the same
@@ -924,6 +940,40 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
         element.x = box['x'] + box['width'] - element.width
     element.x = max(0, min(element.x, document.label_width - element.width))
     element.y = max(0, min(element.y, document.label_height - element.height))
+
+
+def _block_lines(document, element) -> list:
+    """The lines a wrapped text breaks into now that fit its block - not a
+    word a ^FB keeps whole however far past its edge it runs."""
+    from . import textraster
+    cell = element.cell(document.font_path, document.dpi)
+    face = element.face(document.font_path)
+    measure, _font = textraster.measurer(face, cell.height, cell.width,
+                                         cell.row_gap)
+    return [line for line in textraster.wrap(
+                document.display_text(element), face, cell.height,
+                cell.width, element.block, cell.row_gap, measure)
+            if measure(line) <= element.block.width]
+
+
+def _keep_breaks(document, element, lines) -> None:
+    """Widen a scaled block to the widest of the lines it broke into before,
+    so they break in the same places.
+
+    The font width and the wrap width are scaled by the same factor but
+    rounded each on its own, and a line that filled the block can come out a
+    dot wider than it: it would break a word early and every line after it
+    move along, which reads as the drag having re-wrapped the text.
+    """
+    from . import textraster
+    cell = element.cell(document.font_path, document.dpi)
+    measure, _font = textraster.measurer(element.face(document.font_path),
+                                         cell.height, cell.width,
+                                         cell.row_gap)
+    widest = max((measure(line) for line in lines), default=0)
+    if widest > element.block.width:
+        element.block.width = int(math.ceil(widest))
+        document.sync_text_width(element)
 
 
 def _resize_circle(document, element, handle: str) -> None:

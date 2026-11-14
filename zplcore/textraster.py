@@ -351,6 +351,17 @@ def wrap_marked(text, font_path, font_height, font_width, block, gap=0,
     """
     if measure is None:
         measure, _font = measurer(font_path, font_height, font_width, gap)
+    marked = _wrap_unlimited(text, measure, block)
+    kept = marked[:block.line_limit(pitch(font_height, block))]
+    if kept:
+        # Whatever survives the truncation ends the text as printed, so it is
+        # not stretched either.
+        kept[-1] = (kept[-1][0], True)
+    return kept
+
+
+def _wrap_unlimited(text, measure, block):
+    """wrap_marked's lines before the block's limit drops any of them."""
     marked = []
     printed = block.printed(text or "")
     paragraphs = (printed.split(FORCED_BREAK) if block.forced_breaks
@@ -378,13 +389,24 @@ def wrap_marked(text, font_path, font_height, font_width, block, gap=0,
                     marked.append((piece, False))
                     current = current[len(piece):]
         marked.append(((current or "").rstrip(' '), True))
+    return marked
 
-    kept = marked[:block.line_limit(pitch(font_height, block))]
-    if kept:
-        # Whatever survives the truncation ends the text as printed, so it is
-        # not stretched either.
-        kept[-1] = (kept[-1][0], True)
-    return kept
+
+def fits_block(text, font_path, font_height, font_width, block, depth,
+               gap=0) -> bool:
+    """Whether every line of `text` prints inside `block`, nothing dropped
+    and nothing past its sides, `depth` dots down it.
+
+    How much depth the lines need is the block's to say (model.FieldBlock
+    .needs). A ^FB keeps a word too long for it whole, so a line can run
+    past its width as well as past its foot.
+    """
+    measure, _font = measurer(font_path, font_height, font_width, gap)
+    lines = _wrap_unlimited(text, measure, block)
+    if any(measure(line) > block.width for line, _last in lines):
+        return False
+    return block.needs(len(lines), pitch(font_height, block),
+                       font_height) <= depth
 
 
 def _longest_fit(word, measure, width):

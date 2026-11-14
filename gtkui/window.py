@@ -2325,11 +2325,19 @@ class ZPLViewerWindow(Gtk.Window):
 
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         upload_btn = Gtk.Button(label="Upload\u2026")
+        # Only when font_names.ini has something to offer
+        upload_mapped_btn = None
+        if zpl_fonts.mapped_fonts():
+            upload_mapped_btn = Gtk.Button(label="Upload by name\u2026")
+            upload_mapped_btn.set_name("font_names")
+            gtk_editors.set_tip(upload_mapped_btn, 'font_names')
         delete_btn = Gtk.Button(label="Delete")
         refresh_btn = Gtk.Button(label="Refresh")
-        for b in (upload_btn, delete_btn, refresh_btn):
+        action_btns = [b for b in (upload_btn, upload_mapped_btn,
+                                   delete_btn, refresh_btn) if b is not None]
+        for b in action_btns:
             buttons.pack_start(b, False, False, 0)
-        busy = BusyBar((upload_btn, delete_btn, refresh_btn), status.set_text)
+        busy = BusyBar(tuple(action_btns), status.set_text)
         buttons.pack_end(busy, False, False, 0)
         content.pack_start(buttons, False, False, 0)
 
@@ -2461,8 +2469,16 @@ class ZPLViewerWindow(Gtk.Window):
             chooser.destroy()
             family = desc.get_family() if desc else None
             path = zpl_fonts.file_for_family(family) if family else None
-            if not path:
-                return
+            if path:
+                upload_path(path)
+
+        def on_upload_mapped(_b):
+            entry = gtk_editors.choose_mapped_font(dialog,
+                                                   title="Upload Font by Name")
+            if entry is not None:
+                upload_path(entry.path)
+
+        def upload_path(path):
             device = self._ask_font_device(dialog)
             if device is None:
                 return
@@ -2507,6 +2523,8 @@ class ZPLViewerWindow(Gtk.Window):
                 cancel=cancel), done)
 
         upload_btn.connect("clicked", on_upload)
+        if upload_mapped_btn is not None:
+            upload_mapped_btn.connect("clicked", on_upload_mapped)
         delete_btn.connect("clicked", on_delete)
         refresh_btn.connect("clicked", refresh)
 
@@ -3779,9 +3797,10 @@ class ZPLViewerWindow(Gtk.Window):
         """Dots -> physical size at the current printer resolution."""
         return (w_dots / self.printer_dpi, h_dots / self.printer_dpi)
 
-    def _printer_font_names(self, exclude=None):
+    def _printer_font_names(self, exclude=None, same_file=None):
         """Printer font names already used by the label's text elements."""
-        return self.design_canvas.document.printer_font_names(exclude=exclude)
+        return self.design_canvas.document.printer_font_names(
+            exclude=exclude, same_file=same_file)
 
     def _load_settings(self):
         """Load persisted settings from the config file."""
@@ -4034,6 +4053,7 @@ class ZPLViewerWindow(Gtk.Window):
                 lines.append("")
             lines.append(f"Total: {len(report.files)} font file(s), "
                          f"{len(report.families)} usable family(ies)")
+            lines += [""] + zpl_fonts.name_map_report(refresh=rescan)
             report_view.get_buffer().set_text("\n".join(lines))
 
         rescan_btn.connect("clicked", lambda _b: refresh(True))
