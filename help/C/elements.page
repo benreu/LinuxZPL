@@ -80,8 +80,10 @@
         <td><p>The font height (top and bottom handles) and the font width
         (side handles).</p></td></tr>
         <tr><td><p>Wrapped text</p></td>
-        <td><p>The wrap width (sides), and the number of lines or the block's
-        height (top and bottom). The text re-flows; the font stays.</p></td></tr>
+        <td><p>The font, as for text, and the block grows or shrinks with it:
+        the side handles also widen or narrow the wrap width, so the lines
+        break where they did. To re-flow the text, set the wrap width, lines
+        or height in the Properties panel.</p></td></tr>
         <tr><td><p>Barcode</p></td>
         <td><p>The module width (sides) and the bar height (top and bottom).
         A two-dimensional code has one size, the largest that fits the box
