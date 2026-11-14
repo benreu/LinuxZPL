@@ -162,6 +162,10 @@
     text does not make the font bigger again; set <gui>Font Height</gui> and
     <gui>Font Width</gui> for that. Clearing <gui>Wrap</gui> joins the lines
     back into one.</p>
+    <p>Choosing another font keeps the font size, as it does for a single
+    line, and the <gui>Wrap Width</gui> grows or shrinks with the new font
+    instead. The lines break in the same places, and text that filled the
+    block still fills it.</p>
   </section>
 
   <section id="time">

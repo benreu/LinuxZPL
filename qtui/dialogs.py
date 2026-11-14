@@ -972,9 +972,16 @@ def _text_format_rows(editor, form, element: TextElement,
                 document.set_element_font(element, chosen['path'],
                                           chosen['family'], name)
             else:
-                element.font_path = None
-                element.font_family = None
-                element.printer_font_name = None
+                document.set_element_font(element, None, None, None)
+            if element.block is not None:
+                # The new face kept the font size and moved the wrap width
+                # instead; left showing the old one, the next change would
+                # build the block from it again.
+                block_width.blockSignals(True)
+                try:
+                    block_width.setValue(element.block.width)
+                finally:
+                    block_width.blockSignals(False)
 
     def shrink_typed(old_text, height_spin, width_spin):
         """Typing that runs past the block shrinks the font, rather than the

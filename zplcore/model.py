@@ -11,6 +11,7 @@ import base64 as _b64
 import copy
 import io as _io
 import itertools
+import math
 import re
 from typing import Dict, List, NamedTuple, Optional
 
@@ -3693,9 +3694,17 @@ class Document:
         for el in self.elements:
             self.sync_text_width(el)
 
-    def set_element_font(self, element: TextElement, font_path: str,
-                         font_family: str, printer_font_name: str):
-        """Set one text element's own font."""
+    def set_element_font(self, element: TextElement,
+                         font_path: Optional[str], font_family: Optional[str],
+                         printer_font_name: Optional[str]):
+        """Set one text element's own font, or with None go back to the
+        document's.
+
+        The font size stays as it was, as it does for a single line, so a
+        wrapped block's width follows the new face instead (_refit_block).
+        """
+        lines = self.block_lines(element)
+        widest = self._widest_line(element, lines)
         element.font_path = font_path
         element.font_family = font_family
         element.printer_font_name = printer_font_name
@@ -3704,8 +3713,85 @@ class Document:
         # be written against the new name. This font is one this app will
         # upload, so it goes to E: like any other.
         element.printer_font_spec = None
-        zpl_fonts.register_app_font(font_path)
+        if font_path:
+            zpl_fonts.register_app_font(font_path)
+        self._refit_block(element, lines, widest)
         self.sync_text_width(element)
+
+    # --- a wrapped block's lines --------------------------------------------
+
+    def _block_measure(self, element):
+        """How wide a line of a wrapped text prints, in dots, in the face
+        and cell it has now."""
+        from . import textraster
+        cell = element.cell(self.font_path, self.dpi)
+        measure, _font = textraster.measurer(element.face(self.font_path),
+                                             cell.height, cell.width,
+                                             cell.row_gap)
+        return measure
+
+    def block_lines(self, element) -> list:
+        """The lines a wrapped text breaks into now that fit its block - not
+        a word a ^FB keeps whole however far past its edge it runs. Nothing
+        for text that is not wrapped."""
+        block = getattr(element, 'block', None)
+        if getattr(element, 'element_type', None) != 'text' or block is None:
+            return []
+        from . import textraster
+        cell = element.cell(self.font_path, self.dpi)
+        measure = self._block_measure(element)
+        return [line for line in textraster.wrap(
+                    self.display_text(element), element.face(self.font_path),
+                    cell.height, cell.width, block, cell.row_gap, measure)
+                if measure(line) <= block.width]
+
+    def _widest_line(self, element, lines) -> float:
+        """How wide the widest of `lines` prints in the element's face now."""
+        if not lines:
+            return 0
+        measure = self._block_measure(element)
+        return max(measure(line) for line in lines)
+
+    def keep_breaks(self, element, lines) -> None:
+        """Widen a block to the widest of the lines it broke into before, so
+        they break in the same places.
+
+        A block scaled with its font rounds the font width and the wrap width
+        each on its own, and a line that filled the block can come out a dot
+        wider than it: it would break a word early and every line after it
+        move along, which reads as the drag having re-wrapped the text.
+        """
+        widest = self._widest_line(element, lines)
+        if widest > element.block.width:
+            element.block.width = int(math.ceil(widest))
+            self.sync_text_width(element)
+
+    def _refit_block(self, element, lines, widest) -> None:
+        """Scale a wrapped block's width by how much wider or narrower
+        `lines` - those it broke into before its face changed, `widest` dots
+        across at their widest then - print in the face it has now.
+
+        A new face keeps the font size, as a single line's does, so the
+        block follows the text rather than the text the block: text that
+        filled it still fills it, one with room to spare keeps the same
+        share of it, and the lines break where they did. Left as it was, a
+        narrower face left the box empty on the right, and a wider one
+        re-wrapped the text into more lines than a ^FB's maximum, which the
+        printer then dropped. Only the width: the font size, a ^FB's lines,
+        spacing and indent and a ^TB's height are the user's.
+        """
+        block = getattr(element, 'block', None)
+        if block is None or widest <= 0:
+            return
+        now = self._widest_line(element, lines)
+        if now <= 0:
+            return
+        # Assigned rather than mutated: an undo snapshot may hold it
+        element.block = block.copy()
+        # The Wrap Width row's range, which a ^TB's width shares
+        element.block.width = max(FieldBlock.MIN_WIDTH, min(
+            FieldBlock.MAX_WIDTH, int(round(block.width * now / widest))))
+        self.keep_breaks(element, lines)
 
     def printer_font_names(self, exclude=None, same_file=None) -> set:
         """Printer font names already used by the label's text elements.

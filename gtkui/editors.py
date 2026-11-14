@@ -576,10 +576,14 @@ def _text_format_rows(window, editor, content, element, show_text=None):
                 window.design_canvas.set_element_font(element, new_path, new_family, printer_name)
                 window.renderer.register_font(printer_name, new_path)
             else:
-                element.font_path = None
-                element.font_family = None
-                element.printer_font_name = None
-                window.design_canvas.queue_draw()
+                window.design_canvas.set_element_font(element, None, None,
+                                                      None)
+            if element.block is not None:
+                # The new face kept the font size and moved the wrap width
+                # instead; left showing the old one, the next change would
+                # build the block from it again.
+                with editor.muted():
+                    block_width_spin.set_value(element.block.width)
 
     def shrink_typed(old_text, height_spin, width_spin):
         """Typing that runs past the block shrinks the font, rather than the

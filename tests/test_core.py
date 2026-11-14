@@ -4656,6 +4656,29 @@ check("Qt: a font height typed into its row is the user's, overflow or not",
       _sh_text.font_height == 40, _sh_text.font_height)
 _ff_doc.elements.remove(_sh_text)
 
+# Clearing a wrapped text's font moves its wrap width, and the row shows it;
+# showing the old one, the next change built the block from it again
+_cf_text = _ff_doc.add_text_element("New Text\\&dsgdsfgsfd")
+_cf_text.font_height, _cf_text.font_width = 60, 40
+_ff_doc.set_element_font(_cf_text, FONT, 'DejaVu Sans', 'DEJAVUSA')
+_cf_text.block = FieldBlock(400, 2)
+_ff_doc.sync_text_width(_cf_text)
+_cf_form = qt_dialogs.text_form(_cf_text, _ff_doc)
+_cf_wrap = _cf_form.body.findChild(_QSpinBox, "block_width")
+next(b for b in _cf_form.body.findChildren(_QPushButton)
+     if b.text() == "Clear").click()
+_cf_form.apply()
+_cf_width = _cf_text.block.width
+check("Qt: clearing a block's font moves its wrap width, and the row shows it",
+      _cf_text.font_path is None and _cf_width != 400
+      and _cf_wrap.value() == _cf_width,
+      (_cf_text.font_path, _cf_width, _cf_wrap.value()))
+_cf_form.body.findChild(_FText, 'text').setPlainText("New Text\ndsgdsfg")
+_cf_form.apply()
+check("Qt: and the next change keeps it",
+      _cf_text.block.width == _cf_width, (_cf_text.block.width, _cf_width))
+_ff_doc.elements.remove(_cf_text)
+
 # Printer names...: only with a font_names.ini, and its pick is the
 # element's printer name on apply.
 import shutil as _pn_shutil
@@ -10280,6 +10303,83 @@ _bm_min = _bm_min_doc.elements[0]
 check("and one already at its smallest cell is left alone",
       not _bm_min_doc.shrink_to_block(_bm_min)
       and (_bm_min.font_height, _bm_min.font_width) == (26, 13))
+
+# A font switch keeps the font size, as a single line's does, so a wrapped
+# block's width follows the new face: a narrower one left the box empty on
+# the right, and a wider one re-wrapped the text past a ^FB's last line
+_COND = '/usr/share/fonts/truetype/dejavu/DejaVuSerifCondensed.ttf'
+_MONO = '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'
+
+def _widest(document, element):
+    cell = element.cell(document.font_path, document.dpi)
+    measure, _f = textraster.measurer(element.face(document.font_path),
+                                      cell.height, cell.width, cell.row_gap)
+    return max(measure(line) for line in _printed_lines(document, element))
+
+_fsw_doc = _tb("^FO14,307^A0N,187,134^FB2000,2^FDNew Text\\&dsgdsfgsfd^FS")
+_fsw = _fsw_doc.elements[0]
+_fsw_doc.set_element_font(_fsw, FONT, 'DejaVu Sans', 'DEJAVUSA')
+_fsw.block = FieldBlock(int(math.ceil(_widest(_fsw_doc, _fsw))), 2)
+_fsw_doc.sync_text_width(_fsw)
+_fsw_full, _fsw_lines = _fsw.block.width, _printed_lines(_fsw_doc, _fsw)
+_fsw_block = _fsw.block
+_fsw_doc.set_element_font(_fsw, _COND, 'DejaVu Serif Condensed', 'DEJAVUSC')
+check("a narrower face narrows a block its text filled, which it still fills",
+      _fsw.block.width < _fsw_full
+      and 0 <= _fsw.block.width - _widest(_fsw_doc, _fsw) <= 1
+      and _fsw.width == _fsw.block.width,
+      (_fsw_full, _fsw.block.width, _widest(_fsw_doc, _fsw), _fsw.width))
+check("keeping the font size, the lines and the block it replaced",
+      (_fsw.font_height, _fsw.font_width) == (187, 134)
+      and _printed_lines(_fsw_doc, _fsw) == _fsw_lines
+      and _fsw.block.max_lines == 2 and _fsw_block.width == _fsw_full,
+      (_fsw.font_height, _fsw.font_width, _printed_lines(_fsw_doc, _fsw),
+       _fsw.block, _fsw_block))
+_fsw_doc.set_element_font(_fsw, _MONO, 'DejaVu Sans Mono', 'DEJAVUSM')
+check("a wider face widens it, and no line is dropped",
+      _fsw.block.width > _fsw_full
+      and _printed_lines(_fsw_doc, _fsw) == _fsw_lines,
+      (_fsw.block.width, _printed_lines(_fsw_doc, _fsw)))
+_fsw_doc.set_element_font(_fsw, FONT, 'DejaVu Sans', 'DEJAVUSA')
+check("and back in the first face it is the width it was",
+      abs(_fsw.block.width - _fsw_full) <= 1, (_fsw.block.width, _fsw_full))
+_fsw_doc.set_element_font(_fsw, None, None, None)
+# Filled to the dot it was rounded up to, which a face twice as wide makes two
+check("clearing the font fits it to the default face the same way",
+      _fsw.font_path is None
+      and 0 <= _fsw.block.width - _widest(_fsw_doc, _fsw) <= 2
+      and _printed_lines(_fsw_doc, _fsw) == _fsw_lines,
+      (_fsw.font_path, _fsw.block.width, _widest(_fsw_doc, _fsw)))
+
+_fsr_doc = _tb("^FO50,60^A0N,60,40^FB900,3^FDaaa bbb^FS")
+_fsr = _fsr_doc.elements[0]
+_fsr_doc.set_element_font(_fsr, FONT, 'DejaVu Sans', 'DEJAVUSA')
+_fsr_share = _fsr.block.width / _widest(_fsr_doc, _fsr)
+_fsr_doc.set_element_font(_fsr, _COND, 'DejaVu Serif Condensed', 'DEJAVUSC')
+check("a block with room to spare keeps the same share of it",
+      abs(_fsr.block.width / _widest(_fsr_doc, _fsr) - _fsr_share) < 0.01,
+      (_fsr_share, _fsr.block.width / _widest(_fsr_doc, _fsr)))
+
+_fst_doc = _tb("^FO50,60^A0N,30,20^TBN,400,75^FDaaa bbb ccc^FS")
+_fst = _fst_doc.elements[0]
+_fst_doc.set_element_font(_fst, FONT, 'DejaVu Sans', 'DEJAVUSA')
+_fst_width = _fst.block.width
+_fst_doc.set_element_font(_fst, _COND, 'DejaVu Serif Condensed', 'DEJAVUSC')
+check("a ^TB's width follows the face too, and its height stays",
+      _fst.block.width < _fst_width and _fst.block.height == 75
+      and isinstance(_fst.block, TextBlock),
+      (_fst_width, _fst.block))
+
+_fse_doc = _tb("^FO50,60^A0N,30,20^FB300,2^FD^FS"
+               "^FO50,400^A0N,30,20^FDone line^FS")
+_fse, _fsl = _fse_doc.elements
+_fse_doc.set_element_font(_fse, _COND, 'DejaVu Serif Condensed', 'DEJAVUSC')
+_fse_doc.set_element_font(_fsl, _COND, 'DejaVu Serif Condensed', 'DEJAVUSC')
+check("an empty block keeps its width, and a single line its block of none",
+      _fse.block.width == 300 and _fsl.block is None
+      and _fsl.width == _fsl.printed_width(_fse_doc.font_path, 'one line',
+                                           _fse_doc.dpi),
+      (_fse.block, _fsl.block, _fsl.width))
 
 # Label Settings sets the label size, which clamps every element to it: a
 # turned block's box width is its stack of lines, and was once made its wrap

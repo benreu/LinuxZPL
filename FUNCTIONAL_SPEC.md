@@ -244,6 +244,22 @@ It never goes below the editor's own minimum font size. It only shrinks:
 deleting text leaves the font where it went, and a font size typed into the
 editor is the user's even when the text then overflows.
 
+**A font switch keeps the font size; a block's wrap width follows the face.**
+Choosing a font for a wrapped element, or clearing it back to the document's,
+leaves the font height and width as they were, as a single line's are, and
+scales the block's width by how much wider or narrower the lines it broke into
+before print in the new face (`Document._refit_block`): the widest of those
+lines now over the widest then, counting only lines that fitted the block - a
+`^FB`'s overlong word is not a line it was filled to. Text that filled the
+block still fills it, one with room to spare keeps the same share of it, and
+the lines break where they did; the block is widened by the dot rounding can
+cost, as the handles widen it. Only the width moves - a `^FB`'s lines, spacing
+and indent and a `^TB`'s height stay - and the block is assigned, not
+mutated, for the undo snapshot that holds the old one. The editor's Wrap Width
+row is set to it, which would otherwise rebuild the old block on the next
+change. Left as it was, a narrower face left the box empty on the right and a
+wider one re-wrapped the text past a `^FB`'s last line.
+
 **`^FP` lays the characters out one at a time, inside the element's own
 upright frame; `orientation` then turns that frame as it turns any text.** The
 manual's Field Interactions charts (Tables 45-48) come out of exactly those two

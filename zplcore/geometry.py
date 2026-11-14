@@ -8,8 +8,6 @@ comes out of the printer, and two copies of these rules would eventually
 disagree about it without ever raising an error.
 """
 
-import math
-
 from . import symbology
 
 # Handles are squares this many dots across, and a click within this distance
@@ -877,9 +875,9 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
             sx = element.width / max(1, box['width']) if across else 1.0
             sy = element.height / max(1, box['height']) if down else 1.0
             restore_state(element, state)
-            lines = _block_lines(document, element)
+            lines = document.block_lines(element)
             scale_element(document, element, box['x'], box['y'], sx, sy)
-            _keep_breaks(document, element, lines)
+            document.keep_breaks(element, lines)
             # Rounding can still leave a line a dot too wide for the block,
             # and a ^FB would drop the one it pushed past the bottom.
             document.shrink_to_block(element)
@@ -940,40 +938,6 @@ def resize_by_handle(document, element, handle: str, dx: int, dy: int,
         element.x = box['x'] + box['width'] - element.width
     element.x = max(0, min(element.x, document.label_width - element.width))
     element.y = max(0, min(element.y, document.label_height - element.height))
-
-
-def _block_lines(document, element) -> list:
-    """The lines a wrapped text breaks into now that fit its block - not a
-    word a ^FB keeps whole however far past its edge it runs."""
-    from . import textraster
-    cell = element.cell(document.font_path, document.dpi)
-    face = element.face(document.font_path)
-    measure, _font = textraster.measurer(face, cell.height, cell.width,
-                                         cell.row_gap)
-    return [line for line in textraster.wrap(
-                document.display_text(element), face, cell.height,
-                cell.width, element.block, cell.row_gap, measure)
-            if measure(line) <= element.block.width]
-
-
-def _keep_breaks(document, element, lines) -> None:
-    """Widen a scaled block to the widest of the lines it broke into before,
-    so they break in the same places.
-
-    The font width and the wrap width are scaled by the same factor but
-    rounded each on its own, and a line that filled the block can come out a
-    dot wider than it: it would break a word early and every line after it
-    move along, which reads as the drag having re-wrapped the text.
-    """
-    from . import textraster
-    cell = element.cell(document.font_path, document.dpi)
-    measure, _font = textraster.measurer(element.face(document.font_path),
-                                         cell.height, cell.width,
-                                         cell.row_gap)
-    widest = max((measure(line) for line in lines), default=0)
-    if widest > element.block.width:
-        element.block.width = int(math.ceil(widest))
-        document.sync_text_width(element)
 
 
 def _resize_circle(document, element, handle: str) -> None:

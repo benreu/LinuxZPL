@@ -2445,6 +2445,33 @@ check("GTK: a font height typed into its row is the user's, overflow or not",
       sh_text.font_height == 40, sh_text.font_height)
 document.elements.remove(sh_text)
 
+# Clearing a wrapped text's font moves its wrap width, and the row shows it;
+# showing the old one, the next change built the block from it again
+cf_text = document.add_text_element("New Text\\&dsgdsfgsfd")
+cf_text.font_height, cf_text.font_width = 60, 40
+document.set_element_font(cf_text,
+                          '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+                          'DejaVu Sans', 'DEJAVUSA')
+cf_text.block = _ShBlock(400, 2)
+document.sync_text_width(cf_text)
+cf_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+cf_form = gtk_editors.text_form(window, cf_box, cf_text)
+cf_wrap = next(s for s in _find_all(cf_box, Gtk.SpinButton)
+               if s.get_name() == 'block_width')
+next(b for b in _find_all(cf_box, Gtk.Button)
+     if b.get_label() == "Clear").clicked()
+cf_form.apply()
+cf_width = cf_text.block.width
+check("GTK: clearing a block's font moves its wrap width, and the row shows it",
+      cf_text.font_path is None and cf_width != 400
+      and int(cf_wrap.get_value()) == cf_width,
+      (cf_text.font_path, cf_width, cf_wrap.get_value()))
+_find_all(cf_box, Gtk.TextView)[0].get_buffer().set_text("New Text\ndsgdsfg")
+cf_form.apply()
+check("GTK: and the next change keeps it",
+      cf_text.block.width == cf_width, (cf_text.block.width, cf_width))
+document.elements.remove(cf_text)
+
 ff_pdf = BarcodeElement(0, 0, 10, 'AB', symbology='pdf417')
 ff_bbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 ff_bf = gtk_editors.barcode_form(window, ff_bbox, ff_pdf)
