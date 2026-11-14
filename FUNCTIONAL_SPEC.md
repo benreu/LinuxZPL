@@ -255,10 +255,37 @@ block still fills it, one with room to spare keeps the same share of it, and
 the lines break where they did; the block is widened by the dot rounding can
 cost, as the handles widen it. Only the width moves - a `^FB`'s lines, spacing
 and indent and a `^TB`'s height stay - and the block is assigned, not
-mutated, for the undo snapshot that holds the old one. The editor's Wrap Width
-row is set to it, which would otherwise rebuild the old block on the next
-change. Left as it was, a narrower face left the box empty on the right and a
-wider one re-wrapped the text past a `^FB`'s last line.
+mutated, for the undo snapshot that holds the old one. A narrowed `^FB`'s
+Wrap Width (below) scales by the same ratio. The editor's Wrap Width row is
+set to it, which would otherwise rebuild the old block on the next change.
+Left as it was, a narrower face left the box empty on the right and a wider
+one re-wrapped the text past a `^FB`'s last line.
+
+**A `^FB` is as wide as its widest line, up to its Wrap Width.** The Wrap
+Width the editor shows is the most the block may be (`FieldBlock.wrap_width`),
+and the lines break at it; the `^FB` width written is the widest of those
+lines (`Document.hug_block`), plus the indent for `L` and `J`, never narrower
+than the font's cell - a printer prints nothing of a `^FB` narrower than its
+font - and kept as `FieldBlock.limit` while it is below the Wrap Width. Every
+editor's apply rebuilds the block at the Wrap Width and then narrows it, so
+deleting text closes the box in and typing widens it back, while a typed
+overflow is still measured against the Wrap Width (above). Narrowing cannot
+move a line break: every line still fits, and none can take the next word,
+which did not fit the wider Wrap Width - so the printer, given the narrower
+`^FB`, breaks where the canvas did. The point the lines are justified to stays
+where it was before the edit - their start for `L` and `J`, their end for
+`R`, their middle for `C` - along the lines, which run down the label at `R`
+and `B` and right to left at `I` and `B`; a centred block keeps the parity
+of its width, so it moves by whole dots and a run of edits does not creep.
+Justified lines stretch to the narrower block, which is what prints. Text
+filled in when printing is not narrowed, since what prints may be longer than
+the canvas shows: an element with an ID (`Label.fill`), a `^FN` field, a
+`^SN` serial and a `^FC` clock keep the whole Wrap Width, and one given an ID
+goes back to it. Nor is a `^TB`, a box of fixed size. ZPL has room for one
+width, and nothing else is written: a saved label reopens with the narrowed
+width as its Wrap Width, and opening a label never narrows a block - a file
+prints as it did until the element is edited. A handle drag scales the limit
+with the block.
 
 **`^FP` lays the characters out one at a time, inside the element's own
 upright frame; `orientation` then turns that frame as it turns any text.** The

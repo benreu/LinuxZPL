@@ -409,6 +409,17 @@ def fits_block(text, font_path, font_height, font_width, block, depth,
                        font_height) <= depth
 
 
+def widest_line(text, font_path, font_height, font_width, block,
+                gap=0) -> float:
+    """How wide the widest line `text` breaks into inside `block` prints, in
+    dots, 0 for no text: every line, those past the block's limit and a word
+    a ^FB keeps whole past its edge included, so a block narrowed to it
+    breaks every line where this one does (model.Document.hug_block)."""
+    measure, _font = measurer(font_path, font_height, font_width, gap)
+    return max((measure(line) for line, _last
+                in _wrap_unlimited(text, measure, block)), default=0)
+
+
 def _longest_fit(word, measure, width):
     """The longest start of `word` that fits `width` - a character at the
     least, so a block narrower than one still moves on."""

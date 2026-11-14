@@ -4219,14 +4219,19 @@ def _fill_wrap(dialog):
 
 check("the text dialog reports the change", _drive_text_dialog(de, ddoc, _fill_wrap))
 check("the wrap set in the dialog reaches the element",
-      de.block == FieldBlock(220, 5, 3, 'C', 4), de.block)
+      de.block.wrap_width == 220
+      and (de.block.max_lines, de.block.line_spacing, de.block.justification,
+           de.block.indent) == (5, 3, 'C', 4), (de.block, de.block.limit))
 check("a break typed in the dialog reaches the field data",
       de.text == r"ACME Widget\&Model 4400", de.text)
 # Font F's 26-dot cells are 32 dots apart, so "ACME Widget" (346) no longer
-# fits 220 and breaks at its space: four lines, not two
-check("the dialog leaves the box equal to the wrap",
-      (de.width, de.height) == (220, 4 * (de.font_height + 3)),
-      (de.width, de.height))
+# fits 220 and breaks at its space: four lines, not two - and the block,
+# which prints them, narrows to the widest of them
+check("the dialog leaves the box equal to the block, narrowed to its text",
+      (de.width, de.height) == (de.block.width, 4 * (de.font_height + 3))
+      and de.block.width < 220
+      and _printed_lines(ddoc, de) == ['ACME', 'Widget', 'Model', '4400'],
+      (de.width, de.height, de.block, _printed_lines(ddoc, de)))
 
 _drive_text_dialog(de, ddoc,
                    lambda dialog: dialog.findChild(QCheckBox, 'wrap').setChecked(False))
@@ -4668,7 +4673,7 @@ _cf_wrap = _cf_form.body.findChild(_QSpinBox, "block_width")
 next(b for b in _cf_form.body.findChildren(_QPushButton)
      if b.text() == "Clear").click()
 _cf_form.apply()
-_cf_width = _cf_text.block.width
+_cf_width = _cf_text.block.wrap_width
 check("Qt: clearing a block's font moves its wrap width, and the row shows it",
       _cf_text.font_path is None and _cf_width != 400
       and _cf_wrap.value() == _cf_width,
@@ -4676,8 +4681,39 @@ check("Qt: clearing a block's font moves its wrap width, and the row shows it",
 _cf_form.body.findChild(_FText, 'text').setPlainText("New Text\ndsgdsfg")
 _cf_form.apply()
 check("Qt: and the next change keeps it",
-      _cf_text.block.width == _cf_width, (_cf_text.block.width, _cf_width))
+      _cf_text.block.wrap_width == _cf_width,
+      (_cf_text.block.wrap_width, _cf_width))
 _ff_doc.elements.remove(_cf_text)
+
+# Deleting text narrows a field block to its widest line, by itself, and the
+# Wrap Width row keeps the width it may grow back to
+_hg_text = _ff_doc.add_text_element("New Text\\&dsgdsfgsfd")
+_hg_text.font_height, _hg_text.font_width = 60, 40
+_ff_doc.set_element_font(_hg_text, FONT, 'DejaVu Sans', 'DEJAVUSA')
+_hg_text.block = FieldBlock(733, 4)
+_ff_doc.sync_text_width(_hg_text)
+_hg_form = qt_dialogs.text_form(_hg_text, _ff_doc)
+_hg_wrap = _hg_form.body.findChild(_QSpinBox, "block_width")
+_hg_typed = _hg_form.body.findChild(_FText, 'text')
+_hg_typed.setPlainText("New Text\ndsgdsfg")
+_hg_form.apply()
+_hg_narrow = _hg_text.block.width
+check("Qt: deleting text narrows a field block, and Wrap Width stays",
+      _hg_narrow < 300 and _hg_text.width == _hg_narrow
+      and _hg_text.block.wrap_width == 733 and _hg_wrap.value() == 733,
+      (_hg_text.block, _hg_text.block.limit, _hg_wrap.value()))
+_hg_typed.setPlainText("New Text\ndsgdsfgsfd")
+_hg_form.apply()
+check("Qt: and typing widens it again",
+      _hg_narrow < _hg_text.block.width < 733
+      and _hg_text.block.wrap_width == 733 and _hg_text.font_height == 60,
+      (_hg_text.block, _hg_text.font_height))
+_hg_form.body.findChild(_QLineEdit, 'element_id').setText('name')
+_hg_form.apply()
+check("Qt: given an ID, it prints its whole Wrap Width",
+      _hg_text.block.width == 733 and _hg_wrap.value() == 733,
+      (_hg_text.block, _hg_wrap.value()))
+_ff_doc.elements.remove(_hg_text)
 
 # Printer names...: only with a font_names.ini, and its pick is the
 # element's printer name on apply.
@@ -10381,6 +10417,146 @@ check("an empty block keeps its width, and a single line its block of none",
                                            _fse_doc.dpi),
       (_fse.block, _fsl.block, _fsl.width))
 
+# A field block hugs its text: deleting text narrows it, and typing widens
+# it again up to its Wrap Width, where the lines break. As the editors do
+# it: the block rebuilt at the Wrap Width the row shows, then hugged.
+def _hug_edit(document, element, text=None):
+    before = document.block_place(element)
+    if text is not None:
+        element.text = text
+    block = element.block.copy()
+    block.width, block.limit = block.wrap_width, None
+    element.block = block
+    document.sync_text_width(element)
+    document.hug_block(element, before)
+
+def _hug_label(text, justification='L', orientation='N', width=733):
+    document = _tb("^FO300,300^A0N,60,40^FDx^FS")
+    element = document.elements[0]
+    document.set_element_font(element, FONT, 'DejaVu Sans', 'DEJAVUSA')
+    element.orientation, element.text = orientation, text
+    element.block = FieldBlock(width, 4, 0, justification, 0)
+    document.sync_text_width(element)
+    return document, element
+
+def _at(block, width):
+    """`block`, `width` wide: what wrapping it at its Wrap Width gives."""
+    wide = block.copy()
+    wide.width, wide.limit = width, None
+    return wide
+
+_hg_doc, _hg = _hug_label("New Text\\&dsgdsfgsfd")
+_hg_lines = _printed_lines(_hg_doc, _hg)
+_hug_edit(_hg_doc, _hg)
+_hg_full = _hg.block.width
+check("a field block narrows to its widest line, keeping its Wrap Width",
+      _hg_full == int(math.ceil(_widest(_hg_doc, _hg)))
+      and _hg.block.wrap_width == 733 and _hg.width == _hg_full
+      and _printed_lines(_hg_doc, _hg) == _hg_lines,
+      (_hg.block, _hg.block.limit, _widest(_hg_doc, _hg)))
+_hug_edit(_hg_doc, _hg, "New Text\\&dsgdsfg")
+check("deleting text narrows it further",
+      _hg.block.width < _hg_full and _hg.block.wrap_width == 733
+      and _hg.block.width == int(math.ceil(_widest(_hg_doc, _hg))),
+      (_hg.block, _hg.block.limit))
+_hg_zpl = _hg_doc.to_zpl()
+_hg_back = zpl_parser.parse_zpl(_hg_zpl)[0].elements[0]
+check("the label saves the width it prints, and nothing else about it",
+      f"^FB{_hg.block.width},4," in _hg_zpl and 'WRAP' not in _hg_zpl
+      and _hg_back.block == FieldBlock(_hg.block.width, 4),
+      (_hg_back.block, _hg_back.block.limit))
+_hg_long = ("New Text\\&dsgdsfgsfd and some more words, enough to run past "
+            "the Wrap Width")
+_hug_edit(_hg_doc, _hg, _hg_long)
+check("typing widens it again, up to the Wrap Width, and wraps there",
+      _hg_full < _hg.block.width <= 733 and _hg.block.wrap_width == 733
+      and _printed_lines(_hg_doc, _hg) == textraster.wrap(
+          _hg.text, FONT, 60, 40, _at(_hg.block, 733)),
+      (_hg.block, _printed_lines(_hg_doc, _hg)))
+_hg_snapshot = _hg.block
+_hug_edit(_hg_doc, _hg, "dsg")
+check("a snapshot of the block keeps its Wrap Width, for undo",
+      _hg_snapshot.wrap_width == 733 and _hg_snapshot.copy() == _hg_snapshot
+      and _hg_snapshot != _at(_hg_snapshot, _hg_snapshot.width),
+      (_hg_snapshot, _hg_snapshot.limit))
+_hg_wide = zpl_parser.parse_zpl(
+    "^XA^FO50,60^A0N,30,20^FB700,2^FDaaa bbb^FS^XZ")[0].elements[0]
+check("a label opened with a wide ^FB is not narrowed until it is edited",
+      _hg_wide.block == FieldBlock(700, 2), _hg_wide.block)
+
+# Text filled in when printing may be longer than the canvas shows, and a
+# ^TB is a box of fixed size: neither narrows
+for _why, _setup in (
+        ("an ID", lambda e: setattr(e, 'element_id', 'name')),
+        ("a ^FN", lambda e: setattr(e, 'field_number', 3)),
+        ("a ^SN", lambda e: setattr(e, 'serial_increment', 1)),
+        ("a ^FC", lambda e: setattr(e, 'clock_format', '%H:%M'))):
+    _hn_doc, _hn = _hug_label("aaa bbb")
+    _setup(_hn)
+    _hug_edit(_hn_doc, _hn)
+    check(f"a field block with {_why} keeps its whole Wrap Width",
+          not _hn_doc.hugs(_hn) and _hn.block == FieldBlock(733, 4),
+          (_hn.block, _hn.block.limit))
+_hn_doc, _hn = _hug_label("aaa bbb")
+_hug_edit(_hn_doc, _hn)
+_hn.element_id = 'name'
+_hug_edit(_hn_doc, _hn)
+check("and a narrowed one given an ID goes back to it",
+      _hn.block == FieldBlock(733, 4), (_hn.block, _hn.block.limit))
+_hn_doc = _tb("^FO50,60^A0N,30,20^TBN,400,75^FDaaa^FS")
+_hn_doc.hug_block(_hn_doc.elements[0])
+check("a ^TB keeps its width",
+      _hn_doc.elements[0].block == TextBlock(400, 75),
+      _hn_doc.elements[0].block)
+check("and never narrower than the font, which a printer prints nothing below",
+      (lambda d, e: (_hug_edit(d, e, "i"), e.block.width)[1])(
+          *_hug_label("aaa"))
+      == 40)
+
+# Narrowed, a block prints the same label, whichever way it is turned and
+# justified: the point its lines are justified to stays put
+def _hug_ink(document):
+    renderer = ZPLRenderer(1218, 1218)
+    renderer.register_font('DEJAVUSA', FONT)
+    image = renderer.render(document.to_zpl()).convert('L')
+    return ImageOps.invert(image).point(lambda v: 255 if v > 128 else 0).getbbox()
+
+_hk_moved = []
+for _turn in 'NRIB':
+    for _just in 'LCR':
+        _hk_doc, _hk = _hug_label("AAAA BBB\\&CCCCCC DD EEE", _just, _turn, 500)
+        _hk_full = _hug_ink(_hk_doc)
+        _hug_edit(_hk_doc, _hk)
+        if _hk.block.width >= 500 or _hug_ink(_hk_doc) != _hk_full:
+            _hk_moved.append((_turn, _just, _hk.block.width, _hk_full,
+                              _hug_ink(_hk_doc)))
+check("a narrowed block prints where it did, turned and justified every way",
+      not _hk_moved, _hk_moved)
+_hk_doc, _hk = _hug_label("AAAA BBB\\&CCCCCC DD EEE", 'C', 'N', 500)
+_hug_edit(_hk_doc, _hk)
+_hk_start = (_hk.x, _hk.block.width)
+for _text in ("AAAA BBB\\&CCCC", "AAAA BBB\\&CCCCC DD", "AA\\&C",
+              "AAAA BBB\\&CCCCCC D", "AAAA BBB\\&CCCCCC DD EEE"):
+    _hug_edit(_hk_doc, _hk, _text)
+check("and edits to a centred one, undone, leave it where it started",
+      (_hk.x, _hk.block.width) == _hk_start, ((_hk.x, _hk.block.width),
+                                              _hk_start))
+
+_hs_doc, _hs = _hug_label("New Text\\&dsgdsfg")
+_hug_edit(_hs_doc, _hs)
+_hs_doc.set_element_font(_hs, _COND, 'DejaVu Serif Condensed', 'DEJAVUSC')
+check("a font switch scales the Wrap Width with the width",
+      _hs.block.wrap_width < 733 and _hs.block.width < _hs.block.wrap_width,
+      (_hs.block, _hs.block.limit))
+_hs_doc, _hs = _hug_label("New Text\\&dsgdsfg")
+_hug_edit(_hs_doc, _hs)
+_hs_limit = _hs.block.wrap_width
+geometry.resize_by_handle(_hs_doc, _hs, 'br', _hs.width // 2, _hs.height // 2)
+check("and so does a handle",
+      _hs.block.wrap_width > _hs_limit * 1.3
+      and _hs.block.width < _hs.block.wrap_width,
+      (_hs.block, _hs.block.limit, _hs_limit))
+
 # Label Settings sets the label size, which clamps every element to it: a
 # turned block's box width is its stack of lines, and was once made its wrap
 # width - squashing every turned ^FB on OK
@@ -10541,9 +10717,9 @@ check("and a line break typed into a ^TB is a space",
       _tbq.text)
 _drive_text_dialog(_tbq, _tbq_doc, lambda dialog: dialog.findChild(
     QComboBox, 'block_kind').setCurrentIndex(0))
-check("and choosing it makes the block a ^FB of the same width",
-      isinstance(_tbq.block, FieldBlock) and _tbq.block.width == 150,
-      _tbq.block)
+check("and choosing it makes the block a ^FB of the same Wrap Width",
+      isinstance(_tbq.block, FieldBlock) and _tbq.block.wrap_width == 150,
+      (_tbq.block, _tbq.block.limit))
 check("both frontends are offered the same blocks",
       [c for _l, c in zpl_model.TEXT_BLOCKS] == ['FB', 'TB']
       and [c for _l, c in zpl_model.TEXT_BLOCK_JUSTIFICATIONS] == ['L', 'R'])

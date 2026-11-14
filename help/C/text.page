@@ -143,6 +143,17 @@
     <p>Choose a field block for most wrapped text: it can centre or justify,
     and grows with the text. Choose a text block when the text must stay
     inside a fixed box whatever its length.</p>
+    <p>A field block is only as wide as its widest line. Delete text and the
+    box closes in; type more and it widens again, up to <gui>Wrap
+    Width</gui>, where the lines break. Either way the lines break in the same
+    places and the text stays where it is on the label, though justified
+    lines stretch to the narrower block. The label saves the width the block
+    prints at, so when you open it again that is its <gui>Wrap Width</gui>:
+    raise it to let the text run wider.</p>
+    <p>Text filled in when printing keeps the whole <gui>Wrap Width</gui>,
+    because what prints may be longer than what the canvas shows: text with
+    an <gui>ID</gui>, a numbered field, a serial number and the printer's
+    clock. So does a text block, whose size is fixed.</p>
     <note>
       <p>LinuxZPL leaves out lines past <gui>Max Lines</gui>. Zebra's manual
       says a printer prints the extra text over the last line instead, so

@@ -831,7 +831,7 @@ def _text_format_rows(editor, form, element: TextElement,
     block_width = QSpinBox()
     block_width.setRange(FieldBlock.MIN_WIDTH, FieldBlock.MAX_WIDTH)
     block_width.setObjectName("block_width")
-    block_width.setValue((element.block or block).width)
+    block_width.setValue((element.block or block).wrap_width)
     form.addRow("Wrap Width:", block_width)
     set_tip(block_width, 'block_width', form)
 
@@ -918,7 +918,7 @@ def _text_format_rows(editor, form, element: TextElement,
         try:
             wrap_check.setChecked(True)
             kind_combo.setCurrentIndex(0)
-            block_width.setValue(new_block.width)
+            block_width.setValue(new_block.wrap_width)
             max_lines.setValue(new_block.max_lines)
             spacing_spin.setValue(new_block.line_spacing)
             justify_combo.setCurrentIndex(
@@ -979,7 +979,7 @@ def _text_format_rows(editor, form, element: TextElement,
                 # build the block from it again.
                 block_width.blockSignals(True)
                 try:
-                    block_width.setValue(element.block.width)
+                    block_width.setValue(element.block.wrap_width)
                 finally:
                     block_width.blockSignals(False)
 
@@ -1053,6 +1053,8 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
     apply_name = _name_row(form, element)
 
     def _apply():
+        # Where the block was, which narrowing it keeps the text at
+        before = document.block_place(element)
         apply_name(element)
         # A ^TB has no line break to write a typed one as, so it is a space
         old_text = element.text
@@ -1066,6 +1068,8 @@ def text_form(element: TextElement, document: Document) -> EditorForm:
         fmt.apply()
         fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
+        # Narrowed to the text, or widened back up to the Wrap Width
+        document.hug_block(element, before)
 
     return editor.finish(_apply)
 
@@ -1132,6 +1136,8 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
     apply_name = _name_row(form, element)
 
     def _apply():
+        # Where the block was, which narrowing it keeps the text at
+        before = document.block_place(element)
         apply_name(element)
         old_text = element.text
         element.text = text_edit.text()
@@ -1152,6 +1158,8 @@ def time_form(element: TextElement, document: Document) -> EditorForm:
         # field.
         fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
+        # Narrowed to the text, or widened back up to the Wrap Width
+        document.hug_block(element, before)
 
     return editor.finish(_apply)
 
@@ -1232,6 +1240,8 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
     apply_name = _name_row(form, element)
 
     def _apply():
+        # Where the block was, which narrowing it keeps the text at
+        before = document.block_place(element)
         apply_name(element)
         old_text = element.text
         element.text = text_edit.text()
@@ -1255,6 +1265,8 @@ def serial_form(element: TextElement, document: Document) -> EditorForm:
         # field.
         fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
+        # Narrowed to the text, or widened back up to the Wrap Width
+        document.hug_block(element, before)
 
     return editor.finish(_apply)
 
@@ -1338,6 +1350,8 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
     apply_name = _name_row(form, element)
 
     def _apply():
+        # Where the block was, which narrowing it keeps the text at
+        before = document.block_place(element)
         apply_name(element)
         old_text = element.text
         element.text = text_edit.text()
@@ -1357,6 +1371,8 @@ def numbered_form(element: TextElement, document: Document) -> EditorForm:
         # field with no literal of its own.
         fmt.shrink_typed(old_text, height_spin, width_spin)
         document.sync_text_width(element)
+        # Narrowed to the text, or widened back up to the Wrap Width
+        document.hug_block(element, before)
 
     return editor.finish(_apply)
 

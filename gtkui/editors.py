@@ -449,7 +449,7 @@ def _text_format_rows(window, editor, content, element, show_text=None):
     kind_combo.set_name("block_kind")
     make_row("Block:", kind_combo, tip='block_kind')
 
-    block_width_spin = _make_spin((element.block or block).width,
+    block_width_spin = _make_spin((element.block or block).wrap_width,
                                   FieldBlock.MIN_WIDTH, FieldBlock.MAX_WIDTH)
     block_width_spin.set_name("block_width")
     make_row("Wrap Width:", block_width_spin, tip='block_width')
@@ -518,7 +518,7 @@ def _text_format_rows(window, editor, content, element, show_text=None):
         with editor.muted():
             wrap_check.set_active(True)
             kind_combo.set_active(kind_codes.index('FB'))
-            block_width_spin.set_value(new_block.width)
+            block_width_spin.set_value(new_block.wrap_width)
             max_lines_spin.set_value(new_block.max_lines)
             spacing_spin.set_value(new_block.line_spacing)
             justify_combo.set_active(
@@ -583,7 +583,7 @@ def _text_format_rows(window, editor, content, element, show_text=None):
                 # instead; left showing the old one, the next change would
                 # build the block from it again.
                 with editor.muted():
-                    block_width_spin.set_value(element.block.width)
+                    block_width_spin.set_value(element.block.wrap_width)
 
     def shrink_typed(old_text, height_spin, width_spin):
         """Typing that runs past the block shrinks the font, rather than the
@@ -663,6 +663,8 @@ def time_form(window, content, element) -> EditorForm:
     apply_name = _make_name_row(content, element)
 
     def apply():
+        # Where the block was, which narrowing it keeps the text at
+        before = window.design_canvas.document.block_place(element)
         apply_name(element)
         old_text = element.text
         element.text = text_entry.get_text()
@@ -684,6 +686,8 @@ def time_form(window, content, element) -> EditorForm:
         # as this stays a clock field.
         fmt.shrink_typed(old_text, height_spin, width_spin)
         window.design_canvas.document.sync_text_width(element)
+        # Narrowed to the text, or widened back up to the Wrap Width
+        window.design_canvas.document.hug_block(element, before)
 
     return editor.finish(apply, after_show=fmt.sync)
 
@@ -754,6 +758,8 @@ def serial_form(window, content, element) -> EditorForm:
     apply_name = _make_name_row(content, element)
 
     def apply():
+        # Where the block was, which narrowing it keeps the text at
+        before = window.design_canvas.document.block_place(element)
         apply_name(element)
         old_text = element.text
         element.text = text_entry.get_text()
@@ -778,6 +784,8 @@ def serial_form(window, content, element) -> EditorForm:
         # as this stays a serial field.
         fmt.shrink_typed(old_text, height_spin, width_spin)
         window.design_canvas.document.sync_text_width(element)
+        # Narrowed to the text, or widened back up to the Wrap Width
+        window.design_canvas.document.hug_block(element, before)
 
     return editor.finish(apply, after_show=fmt.sync)
 
@@ -853,6 +861,8 @@ def numbered_form(window, content, element) -> EditorForm:
     apply_name = _make_name_row(content, element)
 
     def apply():
+        # Where the block was, which narrowing it keeps the text at
+        before = window.design_canvas.document.block_place(element)
         apply_name(element)
         old_text = element.text
         element.text = text_entry.get_text()
@@ -873,6 +883,8 @@ def numbered_form(window, content, element) -> EditorForm:
         # this stays a numbered field with no literal of its own.
         fmt.shrink_typed(old_text, height_spin, width_spin)
         window.design_canvas.document.sync_text_width(element)
+        # Narrowed to the text, or widened back up to the Wrap Width
+        window.design_canvas.document.hug_block(element, before)
 
     return editor.finish(apply, after_show=fmt.sync)
 
@@ -926,6 +938,8 @@ def text_form(window, content, element) -> EditorForm:
     apply_name = _make_name_row(content, element)
 
     def apply():
+        # Where the block was, which narrowing it keeps the text at
+        before = window.design_canvas.document.block_place(element)
         apply_name(element)
         old_text = element.text
         buffer = text_view.get_buffer()
@@ -944,6 +958,8 @@ def text_form(window, content, element) -> EditorForm:
 
         fmt.shrink_typed(old_text, height_spin, width_spin)
         window.design_canvas.document.sync_text_width(element)
+        # Narrowed to the text, or widened back up to the Wrap Width
+        window.design_canvas.document.hug_block(element, before)
 
     # _open_editor's own show_all() would otherwise re-show every row
     # this just hid - so the wrap-dependent ones only get their first

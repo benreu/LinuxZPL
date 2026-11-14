@@ -1281,9 +1281,9 @@ check("reopened, the dialog shows the ^TB it made",
       and _tb_named(Gtk.ComboBoxText, 'text_justification').get_active() == 1)
 _tb_named(Gtk.ComboBoxText, 'block_kind').set_active(0)
 tb_dialog.response(Gtk.ResponseType.OK)
-check("and choosing a ^FB there makes it a ^FB of the same width",
-      isinstance(tb_el.block, FieldBlock) and tb_el.block.width == 150,
-      tb_el.block)
+check("and choosing a ^FB there makes it a ^FB of the same Wrap Width",
+      isinstance(tb_el.block, FieldBlock) and tb_el.block.wrap_width == 150,
+      (tb_el.block, tb_el.block.limit))
 zpl_fonts._resident_cache['0'] = STANDIN
 document.elements.remove(tb_el)
 
@@ -2461,7 +2461,7 @@ cf_wrap = next(s for s in _find_all(cf_box, Gtk.SpinButton)
 next(b for b in _find_all(cf_box, Gtk.Button)
      if b.get_label() == "Clear").clicked()
 cf_form.apply()
-cf_width = cf_text.block.width
+cf_width = cf_text.block.wrap_width
 check("GTK: clearing a block's font moves its wrap width, and the row shows it",
       cf_text.font_path is None and cf_width != 400
       and int(cf_wrap.get_value()) == cf_width,
@@ -2469,8 +2469,44 @@ check("GTK: clearing a block's font moves its wrap width, and the row shows it",
 _find_all(cf_box, Gtk.TextView)[0].get_buffer().set_text("New Text\ndsgdsfg")
 cf_form.apply()
 check("GTK: and the next change keeps it",
-      cf_text.block.width == cf_width, (cf_text.block.width, cf_width))
+      cf_text.block.wrap_width == cf_width,
+      (cf_text.block.wrap_width, cf_width))
 document.elements.remove(cf_text)
+
+# Deleting text narrows a field block to its widest line, by itself, and the
+# Wrap Width row keeps the width it may grow back to
+hg_text = document.add_text_element("New Text\\&dsgdsfgsfd")
+hg_text.font_height, hg_text.font_width = 60, 40
+document.set_element_font(hg_text,
+                          '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+                          'DejaVu Sans', 'DEJAVUSA')
+hg_text.block = _ShBlock(733, 4)
+document.sync_text_width(hg_text)
+hg_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+hg_form = gtk_editors.text_form(window, hg_box, hg_text)
+hg_wrap = next(s for s in _find_all(hg_box, Gtk.SpinButton)
+               if s.get_name() == 'block_width')
+hg_typed = _find_all(hg_box, Gtk.TextView)[0].get_buffer()
+hg_typed.set_text("New Text\ndsgdsfg")
+hg_form.apply()
+hg_narrow = hg_text.block.width
+check("GTK: deleting text narrows a field block, and Wrap Width stays",
+      hg_narrow < 300 and hg_text.width == hg_narrow
+      and hg_text.block.wrap_width == 733 and int(hg_wrap.get_value()) == 733,
+      (hg_text.block, hg_text.block.limit, hg_wrap.get_value()))
+hg_typed.set_text("New Text\ndsgdsfgsfd")
+hg_form.apply()
+check("GTK: and typing widens it again",
+      hg_narrow < hg_text.block.width < 733
+      and hg_text.block.wrap_width == 733 and hg_text.font_height == 60,
+      (hg_text.block, hg_text.font_height))
+next(e for e in _find_all(hg_box, Gtk.Entry)
+     if e.get_name() == 'element_id').set_text('name')
+hg_form.apply()
+check("GTK: given an ID, it prints its whole Wrap Width",
+      hg_text.block.width == 733 and int(hg_wrap.get_value()) == 733,
+      (hg_text.block, hg_wrap.get_value()))
+document.elements.remove(hg_text)
 
 ff_pdf = BarcodeElement(0, 0, 10, 'AB', symbology='pdf417')
 ff_bbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)

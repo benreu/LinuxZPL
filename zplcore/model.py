@@ -335,6 +335,16 @@ class FieldBlock:
         if self.justification not in self.JUSTIFICATIONS:
             self.justification = 'L'
         self.indent = int(indent)
+        # The Wrap Width the user set, while `width` - what ^FB prints - has
+        # narrowed to the text below it (Document.hug_block). None when the
+        # two are the same. The editors' only: ZPL has room for one width,
+        # so a saved label reopens with the narrowed one as its Wrap Width.
+        self.limit: Optional[int] = None
+
+    @property
+    def wrap_width(self) -> int:
+        """The widest the block may be: the Wrap Width the lines break at."""
+        return self.limit if self.limit is not None else self.width
 
     @classmethod
     def from_zpl(cls, params: str) -> 'FieldBlock':
@@ -358,8 +368,10 @@ class FieldBlock:
 
     def copy(self) -> 'FieldBlock':
         """An independent copy, for a snapshot that a later edit must not reach."""
-        return FieldBlock(self.width, self.max_lines, self.line_spacing,
-                          self.justification, self.indent)
+        block = FieldBlock(self.width, self.max_lines, self.line_spacing,
+                           self.justification, self.indent)
+        block.limit = self.limit
+        return block
 
     # What wrapping asks of a block (textraster.wrap_marked), which a ^TB
     # answers differently - see TextBlock.
@@ -390,6 +402,8 @@ class FieldBlock:
         """Scale by `run` along the lines and `stack` across them. A block
         keeps its line count: a scale is a scale, not a re-wrap."""
         self.width = max(1, int(round(self.width * run)))
+        if self.limit is not None:
+            self.limit = max(self.width, int(round(self.limit * run)))
         self.line_spacing = int(round(self.line_spacing * stack))
         self.indent = int(round(self.indent * run))
 
@@ -481,6 +495,11 @@ class TextBlock:
     def copy(self) -> 'TextBlock':
         """An independent copy, for a snapshot that a later edit must not reach."""
         return TextBlock(self.width, self.height, self.justification)
+
+    @property
+    def wrap_width(self) -> int:
+        """Its width: a ^TB never narrows to its text (FieldBlock.wrap_width)."""
+        return self.width
 
     def pitch(self, font_height: int) -> int:
         """Dots from one line to the next, as a printer spaced them."""
@@ -3764,6 +3783,9 @@ class Document:
         widest = self._widest_line(element, lines)
         if widest > element.block.width:
             element.block.width = int(math.ceil(widest))
+            limit = getattr(element.block, 'limit', None)
+            if limit is not None and limit < element.block.width:
+                element.block.limit = element.block.width
             self.sync_text_width(element)
 
     def _refit_block(self, element, lines, widest) -> None:
@@ -3791,7 +3813,110 @@ class Document:
         # The Wrap Width row's range, which a ^TB's width shares
         element.block.width = max(FieldBlock.MIN_WIDTH, min(
             FieldBlock.MAX_WIDTH, int(round(block.width * now / widest))))
+        if getattr(block, 'limit', None) is not None:
+            # The Wrap Width a hugging block may grow back to, in proportion
+            element.block.limit = max(element.block.width, min(
+                FieldBlock.MAX_WIDTH, int(round(block.limit * now / widest))))
         self.keep_breaks(element, lines)
+
+    # --- a field block that hugs its text -----------------------------------
+
+    def hugs(self, element) -> bool:
+        """Whether a wrapped text's block narrows to its text (hug_block):
+        a ^FB holding the text it prints.
+
+        Not text filled in when printing - an element Label.fill finds by
+        its ID, a ^FN field, a serial number or the printer's clock - since
+        what prints may be longer than what the canvas shows, and a block
+        narrowed to the placeholder would squeeze the real data. Nor a ^TB,
+        a box of fixed size by definition.
+        """
+        return (getattr(element, 'element_type', None) == 'text'
+                and isinstance(getattr(element, 'block', None), FieldBlock)
+                and not element.element_id
+                and element.field_number is None
+                and element.serial_increment is None
+                and not element.clock_format)
+
+    @staticmethod
+    def block_place(element):
+        """What hug_block keeps an edit from moving, taken before it:
+        (block width, x, y, orientation), or None for text that is not in a
+        field block."""
+        block = getattr(element, 'block', None)
+        if not isinstance(block, FieldBlock):
+            return None
+        return (block.width, element.x, element.y, element.orientation)
+
+    def hug_block(self, element, before=None) -> None:
+        """Narrow a field block to its widest line, or widen it back up to
+        its Wrap Width, so the box holds the text with no blank strip at the
+        side; `before` is block_place from ahead of the edit.
+
+        The lines break at the Wrap Width (FieldBlock.wrap_width), which
+        becomes the block's limit, and the block is the widest of them -
+        plus the indent its lines start at, for left and justified - so
+        every line still fits and none can take the next word, which did
+        not fit the wider Wrap Width: ^FB breaks them where the canvas did.
+        Never narrower than the font, below which a printer prints nothing
+        of a ^FB. The point the lines are justified to stays where it was -
+        their start, their end for right, their middle for centred - so the
+        text does not move; a centred block keeps the parity of its width,
+        so the move is a whole number of dots and edits do not creep.
+
+        A block that does not hug (hugs) is left as the editor built it.
+        """
+        block = getattr(element, 'block', None)
+        if not self.hugs(element):
+            return
+        from . import textraster
+        limit = block.wrap_width
+        cell = element.cell(self.font_path, self.dpi)
+        wrapped = block.copy()
+        wrapped.width, wrapped.limit = limit, None
+        widest = textraster.widest_line(
+            self.display_text(element), element.face(self.font_path),
+            cell.height, cell.width, wrapped, cell.row_gap)
+        width = int(math.ceil(widest))
+        if block.justification in ('L', 'J'):
+            width += max(0, block.indent)
+        width = min(limit, max(FieldBlock.MIN_WIDTH, cell.width, width))
+        if (block.justification == 'C' and before is not None
+                and (before[0] - width) % 2 and width < limit):
+            width += 1
+        hugged = block.copy()
+        hugged.width = width
+        hugged.limit = limit if limit != width else None
+        if hugged != block:
+            # Assigned rather than mutated: an undo snapshot may hold it
+            element.block = hugged
+            self.sync_text_width(element)
+        if before is not None and before[3] == element.orientation:
+            self._keep_block_place(element, before)
+
+    @staticmethod
+    def _keep_block_place(element, before) -> None:
+        """Move a field block whose width just changed so the point its
+        lines are justified to is where it was before (block_place).
+
+        Along the lines, which a quarter turn runs down the label and a half
+        turn runs right to left: the start of an inverted block's lines is
+        its right edge."""
+        old_width, old_x, old_y, _turn = before
+        share = {'C': 0.5, 'R': 1.0}.get(element.block.justification, 0.0)
+        if element.orientation in ('I', 'B'):
+            share = 1.0 - share
+        down = element.rotated()
+
+        def point(x, y, width):
+            return (y if down else x) + share * width
+
+        shift = int(round(point(old_x, old_y, old_width)
+                          - point(element.x, element.y, element.block.width)))
+        if down:
+            element.y = max(0, element.y + shift)
+        else:
+            element.x = max(0, element.x + shift)
 
     def printer_font_names(self, exclude=None, same_file=None) -> set:
         """Printer font names already used by the label's text elements.

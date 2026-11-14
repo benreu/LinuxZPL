@@ -66,7 +66,10 @@ TIPS = {
         "justification, spacing and indent. Text block (^TB): a width and a "
         "height; whatever doesn't fit is cut off. ^TB needs printer firmware "
         "x.14 or later.",
-    'block_width': "The block's width in dots. Lines break between words to fit it.",
+    'block_width':
+        "The widest the block may be, in dots. Lines break between words to "
+        "fit it, and the block narrows to its widest line unless the text is "
+        "filled in when printing (^FB).",
     'block_height':
         "The block's height in dots. Lines that don't fit aren't printed (^TB).",
     'max_lines':
