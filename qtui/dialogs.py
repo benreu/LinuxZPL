@@ -213,7 +213,7 @@ def _font_device_combo(device: str) -> QComboBox:
 def _dpi_combo(dpi: int) -> QComboBox:
     """The resolution choice, offered the same way wherever it is edited.
 
-    Label Settings and the printer rows (Printer Settings) both set the
+    Label Settings and the printer rows (Choose Printer) both set the
     printer's resolution, so they have to offer the same list -
     including the fallback: a resolution the designer does not support can
     still be the one in force, and must be shown rather than silently
@@ -2510,7 +2510,7 @@ class _PrinterRows:
     list, DPI, Font memory and Test Connection, plus Use Default when there
     is a default to go back to.
 
-    Printer Settings builds its printer from these rows. `box` is the widget
+    Choose Printer builds its printer from these rows. `box` is the widget
     holding them.
     `withhold(buttons)` adds the busy row, and the buttons it names are
     withheld while a probe is out, so a half-finished one can't be accepted as
@@ -2745,9 +2745,9 @@ class _PrinterRows:
         busy.run(probe, done)
 
 
-def printer_settings_dialog(parent, printer: Connection, dpi: int,
-                            font_device: str = None, default=None):
-    """Printer Settings: the printer to use, and whether to keep it as the
+def choose_printer_dialog(parent, printer: Connection, dpi: int,
+                          font_device: str = None, default=None):
+    """Choose Printer: the printer to use, and whether to keep it as the
     default. Returns ((Connection, dpi, font_device), save_default), or None
     if cancelled.
 
@@ -2758,7 +2758,7 @@ def printer_settings_dialog(parent, printer: Connection, dpi: int,
     the default unless asked to.
     """
     dialog = QDialog(parent)
-    dialog.setWindowTitle("Printer Settings")
+    dialog.setWindowTitle("Choose Printer")
     layout = QVBoxLayout(dialog)
     rows = _PrinterRows(printer, dpi, font_device, default=default)
     layout.addWidget(rows.box)
@@ -2768,7 +2768,7 @@ def printer_settings_dialog(parent, printer: Connection, dpi: int,
     layout.addWidget(save_default)
     buttons = _buttons(dialog)
     rows.withhold((buttons.button(QDialogButtonBox.Ok),))
-    add_help(dialog, "printer_settings", buttons)
+    add_help(dialog, "choose_printer", buttons)
     layout.addWidget(buttons)
 
     accepted = dialog.exec_() == QDialog.Accepted
@@ -2858,8 +2858,8 @@ def print_dialog(parent, document: Document, printer, change_printer):
     `action` is 'print' or 'ok'. OK keeps the settings without printing.
     `printer` is the (Connection, dpi, font_device) in effect, which the
     window names; Change… calls `change_printer(dialog)`, which opens
-    Printer Settings over this window and returns the printer chosen there,
-    already in effect, or None. Choosing the printer is Printer Settings'
+    Choose Printer over this window and returns the printer chosen there,
+    already in effect, or None. Choosing the printer is that window's
     own business, so a change made through it stays even if Print is then
     cancelled. `settings` is a print_settings.PrintSettings: everything here
     that is saved with the label, for the caller to apply as one undo entry.

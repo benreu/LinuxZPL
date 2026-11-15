@@ -124,7 +124,7 @@ class ZPLDesignerWindow(QMainWindow):
         # The grid over the canvas and the switches that use it. Kept in its
         # own section, written the moment it changes, like Open Recent.
         self.grid = zpl_grid.load_grid(self._settings_files())
-        # The persisted printer, snapshotted so Printer Settings, whose choice
+        # The persisted printer, snapshotted so Choose Printer, whose choice
         # lasts this session unless it is saved as the default, can offer
         # "Use Default" without re-reading the settings file.
         self._default_printer = (self.printer_connection, self.printer_dpi,
@@ -475,8 +475,8 @@ class ZPLDesignerWindow(QMainWindow):
         # The printer has its own window, apart from Print's settings for the
         # label in hand: it is what every printer window talks to, and the
         # one to keep as the default.
-        self.printer_settings_action = self._action("Printer &Settings…",
-                                                    self.on_printer_settings)
+        self.choose_printer_action = self._action("&Choose Printer…",
+                                                  self.on_choose_printer)
         self.upload_template_actions = [
             self._action(f"To {memory} ({device}:)\u2026",
                          lambda _checked=False, d=device, m=memory:
@@ -611,7 +611,7 @@ class ZPLDesignerWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.print_action)
         file_menu.addAction(self.quick_print_action)
-        file_menu.addAction(self.printer_settings_action)
+        file_menu.addAction(self.choose_printer_action)
         upload_menu = file_menu.addMenu("&Upload Template to Printer")
         for action in self.upload_template_actions:
             upload_menu.addAction(action)
@@ -1141,7 +1141,7 @@ class ZPLDesignerWindow(QMainWindow):
         self.printer_dpi = dpi
         # Only the DPI slot of the default moves - the connection stays
         # whatever the persisted default already was, so a session override
-        # on it (Printer Settings) survives a Label Settings visit untouched.
+        # on it (Choose Printer) survives a Label Settings visit untouched.
         self._default_printer = (self._default_printer[0], dpi,
                                  self._default_printer[2])
         self.label_inches = (w_in, h_in)
@@ -1163,8 +1163,8 @@ class ZPLDesignerWindow(QMainWindow):
         message = f"Label size set to {width}x{height}"
         self.update_status(f"{message} - {note}" if note else message)
 
-    def on_printer_settings(self, parent=None):
-        """File > Printer Settings...: the printer every print and every
+    def on_choose_printer(self, parent=None):
+        """File > Choose Printer...: the printer every print and every
         printer window uses, and, when its box is ticked, the default kept
         for the next session. Returns the (Connection, dpi, font_device) now
         in effect, or None if cancelled. `parent` is the window to open over:
@@ -1174,7 +1174,7 @@ class ZPLDesignerWindow(QMainWindow):
         a printer chosen without the box ticked lasts until LinuxZPL closes:
         the default moves only when asked to.
         """
-        result = qt_dialogs.printer_settings_dialog(
+        result = qt_dialogs.choose_printer_dialog(
             parent or self, self.printer_connection, self.printer_dpi,
             self.printer_font_device, default=self._default_printer)
         if result is None:
@@ -1241,7 +1241,7 @@ class ZPLDesignerWindow(QMainWindow):
     def on_print_dialog(self):
         """Print...: the label's print settings, then the label itself, from
         the window's Print button. The window names the printer, and its
-        Change... opens Printer Settings, which applies its own choice.
+        Change... opens Choose Printer, which applies its own choice.
 
         Everything the window edits is saved with the label, so a visit that
         changes any of it is one undo entry. A visit that changes none of it
@@ -1251,7 +1251,7 @@ class ZPLDesignerWindow(QMainWindow):
             self, self.document,
             (self.printer_connection, self.printer_dpi,
              self.printer_font_device),
-            lambda dialog: self.on_printer_settings(dialog))
+            lambda dialog: self.on_choose_printer(dialog))
         if result is None:
             return
         action, settings = result
@@ -1754,7 +1754,7 @@ class ZPLDesignerWindow(QMainWindow):
                     parser.add_section('printer')
                 # The persisted default, not self.printer_connection/_dpi:
                 # those are whatever is active for printing right now, which a
-                # session override (Printer Settings, its box unticked)
+                # session override (Choose Printer, its box unticked)
                 # deliberately changes without this ever running. Only Printer
                 # Settings with the box ticked and Label Settings are allowed
                 # to move self._default_printer, and they do so before calling

@@ -69,7 +69,7 @@ ALIGN_ITEMS = (
 def _dpi_combo(dpi: int) -> Gtk.ComboBoxText:
     """The resolution choice, offered the same way wherever it is edited.
 
-    Label Settings and the printer rows (Printer Settings) both set the
+    Label Settings and the printer rows (Choose Printer) both set the
     printer's resolution, so they have to offer the same list -
     including the fallback: a resolution the designer does not support can
     still be the one in force, and must be shown rather than silently
@@ -123,7 +123,7 @@ class _PrinterRows:
     list, DPI, Font memory and Test Connection, plus Use Default when there
     is a default to go back to. The GTK twin of qtui.dialogs._PrinterRows.
 
-    Printer Settings builds its printer from these rows. `box` is the widget
+    Choose Printer builds its printer from these rows. `box` is the widget
     holding them.
     `withhold(widgets)` adds the busy row, and the widgets it names are
     withheld while a probe is out, so a half-finished one can't be accepted
@@ -361,15 +361,15 @@ class _PrinterRows:
         busy.run(probe, done)
 
 
-def _build_printer_settings_dialog(parent, printer, dpi, font_device=None,
-                                   default=None, window=None):
-    """Printer Settings, built but not run: (dialog, finish).
+def _build_choose_printer_dialog(parent, printer, dpi, font_device=None,
+                                 default=None, window=None):
+    """Choose Printer, built but not run: (dialog, finish).
 
     `finish(response)` reads the rows, destroys the window and returns what
-    _printer_picker_dialog does. Apart so the rows can be filled in and read
+    _choose_printer_dialog does. Apart so the rows can be filled in and read
     without a nested main loop, as the Print window is.
     """
-    dialog = Gtk.Dialog(title="Printer Settings", parent=window or parent,
+    dialog = Gtk.Dialog(title="Choose Printer", parent=window or parent,
                         flags=0)
     dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                        Gtk.STOCK_OK, Gtk.ResponseType.OK)
@@ -384,7 +384,7 @@ def _build_printer_settings_dialog(parent, printer, dpi, font_device=None,
     set_tip(save_default, 'save_default')
     content.pack_start(save_default, False, False, 0)
     rows.withhold((dialog.get_widget_for_response(Gtk.ResponseType.OK),))
-    add_help(parent, dialog, "printer_settings")
+    add_help(parent, dialog, "choose_printer")
     content.show_all()
 
     def finish(response):
@@ -401,11 +401,11 @@ def _build_printer_settings_dialog(parent, printer, dpi, font_device=None,
     return dialog, finish
 
 
-def _printer_picker_dialog(parent, printer, dpi, font_device=None,
+def _choose_printer_dialog(parent, printer, dpi, font_device=None,
                            default=None, window=None):
-    """Printer Settings: the printer to use, and whether to keep it as the
+    """Choose Printer: the printer to use, and whether to keep it as the
     default. Returns ((Connection, dpi, font_device), save_default), or None
-    if cancelled. The GTK twin of qtui.dialogs.printer_settings_dialog.
+    if cancelled. The GTK twin of qtui.dialogs.choose_printer_dialog.
 
     It opens on `printer`, the one in effect this session. `default` is the
     persisted (Connection, dpi, font_device) Use Default goes back to.
@@ -415,7 +415,7 @@ def _printer_picker_dialog(parent, printer, dpi, font_device=None,
     error box this uses; `window`, when given, is the one to open over - the
     Print window's Change... passes it.
     """
-    dialog, finish = _build_printer_settings_dialog(
+    dialog, finish = _build_choose_printer_dialog(
         parent, printer, dpi, font_device, default=default, window=window)
     return finish(dialog.run())
 
@@ -705,8 +705,8 @@ def _print_dialog(parent, document, printer, change_printer):
     `action` is 'print' or 'ok'. OK keeps the settings without printing.
     `printer` is the (Connection, dpi, font_device) in effect, which the
     window names; Change... calls `change_printer(dialog)`, which opens
-    Printer Settings over this window and returns the printer chosen there,
-    already in effect, or None. Choosing the printer is Printer Settings'
+    Choose Printer over this window and returns the printer chosen there,
+    already in effect, or None. Choosing the printer is that window's
     own business, so a change made through it stays even if Print is then
     cancelled. `settings` is a print_settings.PrintSettings: everything here
     that is saved with the label, for the caller to apply as one undo entry.
@@ -927,7 +927,7 @@ class ZPLViewerWindow(Gtk.Window):
         # The grid over the canvas and the switches that use it. Kept in its
         # own section, written the moment it changes, like Open Recent.
         self.grid = zpl_grid.load_grid(self._settings_files())
-        # The persisted printer, snapshotted so Printer Settings, whose choice
+        # The persisted printer, snapshotted so Choose Printer, whose choice
         # lasts this session unless it is saved as the default, can offer
         # "Use Default" without re-reading the settings file.
         self._default_printer = (self.printer_connection, self.printer_dpi,
@@ -993,7 +993,7 @@ class ZPLViewerWindow(Gtk.Window):
                 # The printer has its own window, apart from Print's settings
                 # for the label in hand: it is what every printer window
                 # talks to, and the one to keep as the default.
-                ("Printer _Settings\u2026", self.on_printer_settings_clicked,
+                ("_Choose Printer\u2026", self.on_choose_printer_clicked,
                  None)):
             if label is None:
                 file_menu.append(Gtk.SeparatorMenuItem())
@@ -3921,7 +3921,7 @@ class ZPLViewerWindow(Gtk.Window):
                     parser.add_section('printer')
                 # The persisted default, not self.printer_connection/_dpi:
                 # those are whatever is active for printing right now, which a
-                # session override (Printer Settings, its box unticked)
+                # session override (Choose Printer, its box unticked)
                 # deliberately changes without this ever running. Only Printer
                 # Settings with the box ticked and Label Settings are allowed
                 # to move self._default_printer, and they do so before calling
@@ -3973,8 +3973,8 @@ class ZPLViewerWindow(Gtk.Window):
             parser.set('docks', 'floating_geometry',
                        ','.join(str(int(v)) for v in panel.floating_geometry))
 
-    def on_printer_settings_clicked(self, widget, window=None):
-        """File > Printer Settings...: the printer every print and every
+    def on_choose_printer_clicked(self, widget, window=None):
+        """File > Choose Printer...: the printer every print and every
         printer window uses, and, when its box is ticked, the default kept
         for the next session. Returns the (Connection, dpi, font_device) now
         in effect, or None if cancelled. `window` is the one to open over:
@@ -3984,7 +3984,7 @@ class ZPLViewerWindow(Gtk.Window):
         a printer chosen without the box ticked lasts until LinuxZPL closes:
         the default moves only when asked to.
         """
-        result = _printer_picker_dialog(
+        result = _choose_printer_dialog(
             self, self.printer_connection, self.printer_dpi,
             self.printer_font_device, default=self._default_printer,
             window=window)
@@ -4134,7 +4134,7 @@ class ZPLViewerWindow(Gtk.Window):
     def on_print_dialog_clicked(self, widget):
         """Print...: the label's print settings, then the label itself, from
         the window's Print button. The window names the printer, and its
-        Change... opens Printer Settings, which applies its own choice.
+        Change... opens Choose Printer, which applies its own choice.
 
         Everything the window edits is saved with the label, so a visit that
         changes any of it is one undo entry. A visit that changes none of it
@@ -4144,7 +4144,7 @@ class ZPLViewerWindow(Gtk.Window):
             self, self.design_canvas.document,
             (self.printer_connection, self.printer_dpi,
              self.printer_font_device),
-            lambda dialog: self.on_printer_settings_clicked(None, dialog))
+            lambda dialog: self.on_choose_printer_clicked(None, dialog))
         if result is None:
             return
         action, settings = result
@@ -4319,7 +4319,7 @@ class ZPLViewerWindow(Gtk.Window):
         self.printer_dpi = dpi
         # Only the DPI slot of the default moves - the connection stays
         # whatever the persisted default already was, so a session override
-        # on it (Printer Settings) survives a Label Settings visit untouched.
+        # on it (Choose Printer) survives a Label Settings visit untouched.
         self._default_printer = (self._default_printer[0], dpi,
                                  self._default_printer[2])
         self.label_inches = (w_in, h_in)
