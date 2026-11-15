@@ -2182,9 +2182,36 @@ try:
     _ur_message = f"{_UR_NAME} (serial number 18J181107685) is not connected by USB."
     check("GTK: the printer's managers say a USB printer is not connected, "
           "rather than that it could not be reached",
-          sorted(_ur_said) == ['Printer Fonts', 'Printer Graphics',
-                               'Printer Objects']
-          and all(said == [_ur_message] for said in _ur_said.values()), _ur_said)
+          _ur_said == {'Printer Fonts': [_ur_message],
+                       'Printer Graphics': [_ur_message],
+                       'Printer Objects': [_wf.with_other_printer(_ur_message)]},
+          _ur_said)
+
+    # Objects, having listed a printer, says where to choose another.
+    _ur_listed = []
+    def _ur_read_listed(dialog):
+        _ur_pump_until(_ur_busy_done(dialog))
+        _ur_listed.extend(w.get_text() for w in _pw_widgets(dialog)
+                          if isinstance(w, Gtk.Label)
+                          and w.get_text().startswith('1 object'))
+        return Gtk.ResponseType.CLOSE
+    _ur_real_query = gtk_main.printer_objects.query_printer_objects
+    gtk_main.printer_objects.query_printer_objects = \
+        lambda *a, **k: (['E:A.ZPL'], [])
+    Gtk.Dialog.run = _ur_read_listed
+    _ur_usb_session = pw.printer_connection
+    pw.printer_connection = Connection.network('127.0.0.1', 9)
+    try:
+        pw.on_printer_objects_clicked(None)
+    finally:
+        Gtk.Dialog.run = _ur_run
+        gtk_main.printer_objects.query_printer_objects = _ur_real_query
+        pw.printer_connection = _ur_usb_session
+    check("GTK: Objects names the printer it listed, then where to choose "
+          "another",
+          _ur_listed == [_wf.with_other_printer(
+              "1 object(s) on 127.0.0.1 \u2014 nothing on R:, B:, A:, Z:")],
+          _ur_listed)
 
     # Firmware Update: the network printer first, then each USB printer by
     # path, opening on the session's USB printer wherever it is now.

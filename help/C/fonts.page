@@ -85,9 +85,9 @@ LIBSANNB = LiberationSansNarrow-Bold.ttf</code>
 
   <section id="memory">
     <title>Where on the printer fonts go</title>
-    <p><gui>Font memory</gui>, under
-    <guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq> and in the
-    Print window, chooses which of the printer's memories the fonts you pick
+    <p><gui>Font memory</gui>, in
+    <guiseq><gui>File</gui><gui>Choose Printer…</gui></guiseq>, chooses
+    which of the printer's memories the fonts you pick
     are sent to, such as Flash (<sys>E:</sys>), which keeps them when the
     printer is switched off, or RAM (<sys>R:</sys>), which does not. Fonts in
     a label you opened stay where that label says they are.</p>

@@ -256,6 +256,20 @@ def listing_status(where, noun, devices, specs, unreadable) -> str:
     return sentence + (" \u2014 " + "; ".join(clauses) if clauses else "")
 
 
+# Under the Objects list, once it has said what came back: the list is of
+# the printer chosen in Choose Printer, and that is where to change it - a
+# USB printer's files are reached by choosing it there.
+OTHER_PRINTER = ("To use another printer, choose it in "
+                 "File \u203a Choose Printer\u2026")
+
+
+def with_other_printer(text: str) -> str:
+    """`text`, then OTHER_PRINTER on a line of its own: on its own line so
+    it never runs on from a sentence that ends in something to copy, as the
+    no-usblp advice ends in a command."""
+    return f"{text}\n{OTHER_PRINTER}"
+
+
 def font_problem_prompt(missing, unreadable=()):
     """(text, detail) for the frontend's ask(); `missing` is
     missing_printer_fonts' dict, or None when the printer could not be asked.

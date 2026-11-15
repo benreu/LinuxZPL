@@ -216,7 +216,7 @@ steps = next(b for b in start.blocks if isinstance(b, ListBlock))
 runs = list(all_runs((steps,)))
 check("<steps> is a list of kind steps", steps.kind == "steps" and len(steps.items) == 6)
 check("a <guiseq> is its <gui>s joined by ▸, all in the gui style",
-      Run("Settings ▸ Default Printer…", frozenset({"gui"})) in runs,
+      Run("File ▸ Choose Printer…", frozenset({"gui"})) in runs,
       [r for r in runs if "gui" in r.styles][:2])
 check("a <keyseq> is its keys as keycaps, joined by a + of its own",
       [r.text for r in runs if r.styles & {"key", "join"}][:3] == ["Ctrl", "+", "S"]
@@ -251,7 +251,7 @@ check("a table keeps its <thead> rows as its heading",
       and helpview.plain(table.rows[0][0][0].runs) == "Keys", table.rows[:1])
 terms = next(b for b in printing.blocks if isinstance(b, Terms))
 check("<terms> keeps each item's term over its own blocks",
-      helpview.plain(terms.items[0][0][0]) == "Printer"
+      helpview.plain(terms.items[0][0][0]) == "Save as the default printer"
       and isinstance(terms.items[0][1][0], Para))
 
 edited = Path(tempfile.mkdtemp(prefix="linuxzpl-viewer-pages-")) / "C"

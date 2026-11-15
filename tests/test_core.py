@@ -147,6 +147,13 @@ check("listing_status(): drives are named in the order they were asked",
                               ['A', 'R']).endswith('R:, A: could not be read'),
       workflow.listing_status('10.0.0.1', 'object', _LS_DEVICES, ['E:B.GRF'],
                               ['A', 'R']))
+# Objects then says where another printer is chosen, on a line of its own so
+# it never runs on from advice that ends in a command to copy.
+check("with_other_printer(): the line, then where to choose another printer",
+      workflow.with_other_printer('4 object(s) on 10.0.0.1')
+      == '4 object(s) on 10.0.0.1\nTo use another printer, choose it in '
+         'File \u203a Choose Printer\u2026',
+      workflow.with_other_printer('4 object(s) on 10.0.0.1'))
 
 # --- which memory a font is written to ---------------------------------------
 # ~DYd:f,... and ^A@o,h,w,d:f.x both take a drive, and this app used to spell
@@ -5847,10 +5854,30 @@ try:
         _ur_wait(_ur_dlg._busy)
         _ur_said[_ur_kind] = _ur_dlg._status.text()
         _ur_dlg.reject()
+    _ur_message = (f"{_UR_NAME} (serial number 18J181107685) is not "
+                   "connected by USB.")
     check("the printer's managers say a USB printer is not connected, rather "
           "than that it could not be reached",
-          set(_ur_said.values()) == {f"{_UR_NAME} (serial number 18J181107685) "
-                                     "is not connected by USB."}, _ur_said)
+          _ur_said == {'Fonts': _ur_message, 'Graphics': _ur_message,
+                       'Objects': workflow.with_other_printer(_ur_message)},
+          _ur_said)
+
+    # Objects, having listed a printer, says where to choose another.
+    _ur_real_query = qt_dialogs.printer_objects.query_printer_objects
+    qt_dialogs.printer_objects.query_printer_objects = \
+        lambda *a, **k: (['E:A.ZPL'], [])
+    try:
+        _ur_dlg = qt_dialogs.PrinterObjectsDialog(
+            None, Connection.network('127.0.0.1', 9))
+        _ur_wait(_ur_dlg._busy)
+        _ur_listed_status = _ur_dlg._status.text()
+        _ur_dlg.reject()
+    finally:
+        qt_dialogs.printer_objects.query_printer_objects = _ur_real_query
+    check("Objects names the printer it listed, then where to choose another",
+          _ur_listed_status == workflow.with_other_printer(
+              "1 object(s) on 127.0.0.1 \u2014 nothing on R:, B:, A:, Z:"),
+          _ur_listed_status)
 
     # Firmware Update opens on the session's USB printer, wherever it is now.
     _ur_present[:] = [_ur_local.UsbPrinter('/dev/usb/lp1', 'Brother HL', ''),

@@ -31,9 +31,9 @@
 
   <section id="dpi">
     <title>Set the resolution</title>
-    <p>The resolution is in <gui>Label Size</gui>, in
-    <guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq> and in
-    the Print window; all three change the same setting.
+    <p>The resolution is in <gui>Label Size</gui> and in
+    <guiseq><gui>File</gui><gui>Choose Printer…</gui></guiseq>; both change
+    the same setting.
     <gui>Test Connection</gui> asks the printer what it is.</p>
   </section>
 

@@ -16,18 +16,32 @@
   plugged into this computer by USB, with no printing system or printer
   driver in between. If the printer cannot be reached, the error says why.</p>
 
-  <section id="default-printer">
-    <title>The printer you normally use</title>
-    <p><guiseq><gui>Settings</gui><gui>Default Printer…</gui></guiseq> holds
-    the printer and its <gui>DPI</gui>, its resolution. Under
+  <section id="choose-printer">
+    <title>Choose the printer</title>
+    <p><guiseq><gui>File</gui><gui>Choose Printer…</gui></guiseq> chooses the
+    printer labels are sent to, which is also the one the windows in the
+    <gui>Printer</gui> menu, such as <gui>Objects…</gui>, work on. Under
     <gui>Connection</gui>, choose <gui>Network</gui> and give the printer's
     <gui>Address</gui> and <gui>Port</gui> (usually 9100), or <gui>USB</gui>
     and choose it from the <gui>Printer</gui> list: see
-    <link xref="#usb"/>. <gui>Test Connection</gui> checks the printer can be
-    reached and asks it its resolution. <gui>Font
-    memory</gui> says where on the printer fonts are kept: see
-    <link xref="fonts"/>. These are remembered from one session to the
-    next.</p>
+    <link xref="#usb"/>. <gui>DPI</gui> is the printer's resolution.
+    <gui>Test Connection</gui> checks the printer can be reached and asks it
+    its resolution. <gui>Font memory</gui> says where on the printer fonts
+    are kept: see <link xref="fonts"/>.</p>
+    <terms>
+      <item>
+        <title><gui>Save as the default printer</gui></title>
+        <p>Also remembers the printer, so LinuxZPL uses it each time it
+        starts. The box is clear each time the window opens, and left clear,
+        the printer chosen lasts until LinuxZPL is closed. That is how to
+        use another printer for a while, such as one plugged in by USB to
+        see what it holds.</p>
+      </item>
+      <item>
+        <title><gui>Use Default</gui></title>
+        <p>Fills in the default printer again.</p>
+      </item>
+    </terms>
   </section>
 
   <section id="print-window">
@@ -39,11 +53,10 @@
     <terms>
       <item>
         <title><gui>Printer</gui></title>
-        <p>The printer to print to, on the network or by USB, as in
-        <gui>Default Printer</gui>. A change here lasts until LinuxZPL is
-        closed and is not remembered; <gui>Use Default</gui> fills in the
-        default printer again. This is how to print to another printer for
-        a while.</p>
+        <p>The printer the label goes to, and its resolution.
+        <gui>Change…</gui> opens <link xref="#choose-printer">Choose
+        Printer</link> over the Print window. A printer chosen there stays
+        chosen even if you then cancel the Print window.</p>
       </item>
       <item>
         <title><gui>Copies (^PQ)</gui></title>
@@ -77,8 +90,9 @@
 
   <section id="usb">
     <title>A printer plugged in by USB</title>
-    <p>Choose <gui>USB</gui> under <gui>Connection</gui>, then the printer in
-    the <gui>Printer</gui> list, which names each one with its device, such
+    <p>In <guiseq><gui>File</gui><gui>Choose Printer…</gui></guiseq>, choose
+    <gui>USB</gui> under <gui>Connection</gui>, then the printer in the
+    <gui>Printer</gui> list, which names each one with its device, such
     as <sys>lp2</sys>. Press <gui>Refresh</gui> after plugging a printer in
     or switching it on. LinuxZPL remembers the printer by its serial number,
     so it finds it again when it comes back as another device after a

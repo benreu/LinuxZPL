@@ -190,19 +190,21 @@ a save would not keep.
 2. Drag elements to position them, or drag the handles to resize
 3. Double-click an element to edit it - text, font, barcode value, image file
 4. Right-click an element for **Print This Element**, **Delete** and the z-order actions
-5. Set the printer - a network address, or a USB printer - and its resolution
-   under **Settings -> Default Printer** (**Test Connection** also asks the
-   printer what dpi it is, and fills it in)
-6. **File -> Print...** to pick the printer for this session, the copies, how
-   the label is laid down and the printer's darkness, speed and media, then
-   send it - or **File -> Quick Print** to send it as it is
+5. Choose the printer - a network address, or a USB printer - and its
+   resolution under **File -> Choose Printer...** (**Test Connection** also
+   asks the printer what dpi it is, and fills it in). Tick **Save as the
+   default printer** to keep it for next time; left unticked, the choice
+   lasts until LinuxZPL closes
+6. **File -> Print...** to set the copies, how the label is laid down and the
+   printer's darkness, speed and media, then send it - or **File -> Quick
+   Print** to send it as it is
 
 Use **Settings -> Label Size** for the label dimensions - presets of 4x6, 5x7,
 6x4, 3x5 and 2x3 inches, or a custom size - **Printer -> Fonts...** to manage
 the fonts stored on the printer, **Printer -> Graphics...** to manage the
 images `^XG`/`^IM`/`^IL` recall, and **Printer -> Objects...** to see and
-delete everything else stored there, all against whichever printer is
-actually in effect for this session.
+delete everything else stored there, all against the printer chosen in
+**File -> Choose Printer...**, on the network or by USB.
 
 `sample.zpl` is included to try the designer out.
 
@@ -225,8 +227,9 @@ Identical in both frontends.
 
 ## Settings
 
-The printer - its address and port, or the USB printer's serial number - and
-its resolution are kept in
+The default printer - its address and port, or the USB printer's serial
+number - and its resolution, as **Save as the default printer** last kept
+them, are kept in
 `~/.config/linuxzpl/settings.ini`, shared by both frontends, along with the
 window's size and position from the last time it was closed, the files
 listed under File > Open Recent, and the grid. A missing or

@@ -90,5 +90,10 @@
     the printer's Flash memory as it is, <gui>Retrieve…</gui> saves a copy of
     one, and <gui>Delete</gui> removes one, after asking. Zebra's read-only
     files cannot be deleted.</p>
+    <p>Like the other windows in the <gui>Printer</gui> menu, it works on the
+    printer chosen in <link xref="printing#choose-printer">Choose
+    Printer</link>, on the network or by USB, and the line under the list
+    names that printer. To see the files on another printer, such as one
+    plugged in by USB, choose it there first.</p>
   </section>
 </page>

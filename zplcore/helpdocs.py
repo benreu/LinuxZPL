@@ -65,7 +65,7 @@ WATCHING = "watching"
 WINDOW_HELP = {
     "label_settings": "resolution#label-size",
     "grid_settings": "view#grid",
-    "choose_printer": "printing#default-printer",
+    "choose_printer": "printing#choose-printer",
     "print": "printing#print-window",
     "local_fonts": "fonts#which",
     "printer_fonts": "fonts#manager",

@@ -3289,21 +3289,25 @@ class ZPLViewerWindow(Gtk.Window):
                 if isinstance(error, printer_io.Cancelled):
                     status.set_text("Listing cancelled.")
                     return
+                # Each answer names the printer asked, then says how to ask
+                # another: Choose Printer, on the network or by USB.
                 if isinstance(error, PortProblem):
-                    status.set_text(str(error))
+                    status.set_text(workflow.with_other_printer(str(error)))
                     return
                 if specs is None or error is not None:
-                    status.set_text(f"Could not reach the printer at "
-                                    f"{self.printer_connection.where()}.")
+                    status.set_text(workflow.with_other_printer(
+                        f"Could not reach the printer at "
+                        f"{self.printer_connection.where()}."))
                     return
                 entries, unreadable = specs
                 for spec in entries:
                     list_store.append(
                         [spec, graphic_store.device_name(spec)])
-                status.set_text(workflow.listing_status(
-                    self.printer_connection.where(with_port=False),
-                    "object", printer_objects.DEVICES,
-                    entries, unreadable))
+                status.set_text(workflow.with_other_printer(
+                    workflow.listing_status(
+                        self.printer_connection.where(with_port=False),
+                        "object", printer_objects.DEVICES,
+                        entries, unreadable)))
 
             busy.run(lambda cancel: printer_objects.query_printer_objects(
                 self.printer_connection, cancel=cancel), done)

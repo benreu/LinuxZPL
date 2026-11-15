@@ -1108,8 +1108,9 @@ their marks from the core, so they number the same ones.
 | **Open Recent ▸** | The last 10 files opened or saved, newest first, numbered `1`–`9` then `0` as mnemonics. An entry reads as the file's name, plus its folder (home shown as `~`) when another entry has the same name; its tooltip is the full path. Opening or saving a file already listed moves it to the top. Choosing an entry whose file is gone takes it off the list and says so, *before* any prompt about unsaved changes; otherwise it prompts (§6.7) and opens like Open…. **Clear List**, under a separator, empties it. Greyed out while the list is empty. The list is kept in settings.ini (§13), not the desktop's recent files: those age out (after a week on some desktops) and include every `.zpl` any file chooser picked, firmware images among them. |
 | **Save** | Writes to the current path, or behaves as Save As if there is none. |
 | **Save as…** | File chooser, default name `untitled.zpl`. A name typed with no extension gets `.zpl`; one that already has an extension is left alone. Confirms before overwriting an existing file, and declining returns to the chooser. Adopts the chosen path as the current file. |
-| **Print…** | Opens the Print window (§7.3): the printer this session prints to and the label's print settings. Its Print button prints (§9). |
+| **Print…** | Opens the Print window (§7.3): the label's print settings, under a line naming the printer. Its Print button prints (§9). |
 | **Quick Print** | Prints at once with the settings already in force, without the window (§9). |
+| **Choose Printer…** | Opens Choose Printer (§7.3): the printer every print and every printer window uses, network or USB, kept as the default only when asked (§9, §13). |
 | **Upload Template to Printer ▸ To Flash (E:)… / To RAM (R:)…** | Asks for a name (1–16 letters and digits, shown upper-case; offered from the document's `^DF`, else the file's name, else `TEMPLATE`), then sends the design to the printer with `^DF<device>:<NAME>.ZPL` in place of any `^DF` it had. The printer stores the format and prints nothing; recall it with `^XF`. Flash survives power-off, RAM does not. Refused for an empty document. Runs behind the busy row, and is withheld while another request is out, like Print. |
 | **Quit** | Prompts about unsaved changes (§6.7). |
 
@@ -1278,7 +1279,10 @@ ticked to match it however it was shown or closed.
 | Command | Behaviour |
 |---|---|
 | **Label Size** | §7 |
-| **Default Printer** | §7 |
+
+The printer is chosen under File (§6.1), not here: Choose Printer is one
+window for the printer in use and the default, so there is no separate
+Default Printer.
 
 ### 6.5 Tool palette
 
@@ -1378,7 +1382,7 @@ its question unanswered. Which page each window opens is one table,
 |---|---|
 | Label Settings | `resolution#label-size` |
 | Grid Settings | `view#grid` |
-| Default Printer | `printing#default-printer` |
+| Choose Printer | `printing#choose-printer` |
 | Print | `printing#print-window` |
 | Local Fonts | `fonts#which` |
 | Printer Fonts | `fonts#manager` |
@@ -1627,7 +1631,7 @@ each element's own, and only the panel for one element offers them.
   and stored graphics carry no data to fill, so they have none. An empty box
   removes the ID.
 
-The remaining dialogs — Label Size, Default Printer, Print, Grid Settings, the
+The remaining dialogs — Label Size, Choose Printer, Print, Grid Settings, the
 file choosers and the prompts — are modal.
 
 | Dialog | Fields | Range / notes |
@@ -1640,10 +1644,10 @@ file choosers and the prompts — are modal.
 | **Edit Symbol** | Symbol; Height; Width; Orientation; Reverse; ID | Symbol is the five of §3.3, each named as `+ Symbol ▾` names it, after the character it prints or the initials of the mark ("®  Registered trademark", "UL  Underwriters Laboratories approval"). Data that is not one of the five - `^GS^FDAB` is two symbols - is offered first, as "As written: AB", and selected, so accepting the editor unchanged does not rewrite it. Height and width 1–32000, `^GS`'s own range, for the same reason. Orientation is the four of Edit Text. Reverse as Edit Text's. |
 | **Edit Barcode** | Symbology; Value; Insert; Bar Height; Module Width; Ratio; Orientation; Value Text; Text Height; Check Digit; Mode; Reverse; ID; and the chosen symbology's own rows | Bar height 1–32000 dots, `^BC`'s and its kin's own range (1–9999 dots for PDF417 and MicroPDF417, whose row height it is), module width 1–20, text height 6–200, ratio 2.0–3.0 in tenths. A height below its symbology's range is clamped only once that range is known, so opening a PDF417 with rows 3 dots tall and pressing OK leaves it 3. Symbology is the choices of §3.3; the rest are that symbology's own parameters, and every row is shown only for the symbologies that have one — Check Digit's own label changes with it, and Module Width is called Magnification for a matrix symbology. A parameter two symbologies share takes each one's own label and choices: a Data Matrix's columns and rows are Least Columns and Least Rows from 10 up, and a PDF417's are Columns, 1–30, and Rows, 3–90, so a row never offers, or writes back, a value from the other's list. Their tooltips are each symbology's too, as is Check Digit's, whose label names three different checksums and three choices of showing one (§7.1). A matrix symbology hides Bar Height (its size is its grid) and both interpretation-line rows (it has no line). PDF417 and MicroPDF417 show **Positions**, `^FM`'s origins, as an X, a Y and a Print tick per symbol, with Add and Remove (§3.3). TLC39 shows Ratio for its Code 39, and its MicroPDF417's module and row height as number boxes, 1–10 and 1–255 dots — a parameter with too many values to list is a number box rather than a choice. MaxiCode hides Module Width and Orientation as well, since `^BD` has neither, and shows Mode, Symbol Number and Total Symbols, and **Insert**: GS, RS and EOT buttons that put the character in at the cursor as a `^FH` escape (`_1D`, `_1E`, `_04`), because no keyboard types them. A field with no `^FH` yet has it switched on, and any `_` already typed is escaped as `_5F` first so it goes on meaning itself. Like every other row, an insert applies at once. The extra rows come from the catalogue rather than from either toolkit, so a parameter cannot arrive with no way to set it, and which rows to *write* is read from the catalogue too rather than from whether a row is on screen — a dialog driven rather than clicked has no visible widgets at all. Width is derived from the symbol, never entered. |
 | **Edit Image** | file chooser | Replaces the source file, keeping position and size |
-| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI; Home X and Y | Home is `^LH`, 0–32000 dots. 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Default Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
+| **Label Size** | Presets 4×6, 5×7, 6×4, 3×5, 2×3; custom Width and Height **in inches**; DPI; Home X and Y | Home is `^LH`, 0–32000 dots. 0.5–25 inches, two decimals, stepping by a tenth. DPI is the same 203 / 300 / 600 choice as Choose Printer and writes the same one setting; changing it here runs §11's prompt. A live hint shows the resulting dots at the **chosen** resolution and the `^PW` / `^LL` values — changing the resolution holds the inches fixed and recomputes the dots. Shrinking clamps elements to the new bounds. The accepted size is remembered (§13). |
 | **Grid Settings** | Unit; Spacing; Major line every | Unit is Inches, Millimetres or Dots. Spacing is 0.005–2 in to three decimals, 0.1–50 mm to two, or 1–400 dots; one that comes out under a dot at the label's resolution is held at one. Changing the unit converts the spacing, so the grid stays its size as far as the new unit's precision and range allow: 0.1 in becomes 2.54 mm, not 0.1 mm. Major line every is 1–100 spaces. A live hint gives a physical spacing in dots at the label's resolution, where a fraction means the lines are not evenly spaced, and a dot spacing in inches. Only the spacing is here; showing the grid is the View menu's (§6.3). Accepting redraws the grid and remembers it (§13). It changes nothing in the label and records no undo entry (§12). |
-| **Default Printer** | Connection; Address and Port, or Printer and Refresh; DPI; Font memory; Test Connection | Connection is **Network** or **USB**, and only the rows for the one chosen are shown: Address and Port (1–65535) for a network printer, or for a USB one the Printer list and Refresh (§9, "A printer on USB"). Both are kept while the other is chosen, so switching back offers what was there. DPI is a choice of 203 / 300 / 600. Font memory is §10.4.1's. Test Connection opens the connection - the socket, or the USB printer's node - and then asks the printer its resolution, filling the DPI field in (§11); a USB problem the user can put right is reported in its own words. Accepting persists the printer, the DPI and the font memory (§13). |
-| **Print** | **Printer**: Connection; Address and Port, or Printer and Refresh; DPI; Font memory; Test Connection; Use Default. **Copies (`^PQ`)**: Copies; Pause every; Replicates; Don't pause between groups; Cut after a voided RFID label. **Label**: Print upside down (`^PO`); Mirror left to right (`^PM`); Reverse fields, white on black (`^LR`); Check barcode data as printed (`^CV`). **Printer setup sent with the label**: Darkness (`^MD`); Print, Slew and Backfeed speed (`^PR`); Print mode (`^MM`) and Prepeel; Media tracking (`^MN`) and Black mark offset; Media type (`^MT`). Buttons Print, OK, Cancel | The printer rows are Default Printer's, built by the same helper, pre-filled with whichever printer is in effect, and for this session only: they never write settings.ini (§13), and Use Default re-fills them from the persisted default, for comparing against or going back to it. A DPI change runs §11's prompt. Everything else is saved with the label, and its rows come from one table both frontends share. `^PQ`'s own ranges: Copies 1–99,999,999, Pause every 0 to 99,999,999 labels, 0 never pausing (Qt shows it as Never; GTK, whose numeric spin button takes no letters, says "0 = never" beside the box), Replicates 0–99,999,999. Darkness is −30 to 30 in tenths, relative to the printer's configured darkness, with a tick beside the box, since a number box has no "unset". Print speed is 1–14 in/s and slew and backfeed 2–14, each labelled with the letter A–E that also names it where there is one. Every set-up row's first choice is **Printer's setting**, which writes nothing (§9). Slew is greyed out until Print speed is set and Backfeed until Slew is, so no `^PR` goes out with a blank in the middle; Prepeel is greyed out without a print mode, and the offset, −240 to 566 dots, without mark sensing. A value the label carries that no row offers — a reserved print mode, a speed past the list, a darkness with two decimals — is offered first as "As written: …" and selected, or shown beside a number box, as Edit Symbol does with data it has no symbol for; and a command left alone keeps its spelling, so `^PRC` stays `^PRC`. Accepting the window unchanged never rewrites the label. **Print** applies and prints (§9), **OK** applies without printing and **Cancel** changes nothing. Print is the default button. A visit that changes the label is one undo entry, and one that changes nothing records none (§12). |
+| **Choose Printer** | Connection; Address and Port, or Printer and Refresh; DPI; Font memory; Test Connection; Use Default; Save as the default printer | It opens on the printer in effect, whose choice every print and printer window follows (§9). Connection is **Network** or **USB**, and only the rows for the one chosen are shown: Address and Port (1–65535) for a network printer, or for a USB one the Printer list and Refresh (§9, "A printer on USB"). Both are kept while the other is chosen, so switching back offers what was there. DPI is a choice of 203 / 300 / 600. Font memory is §10.4.1's. Test Connection opens the connection - the socket, or the USB printer's node - and then asks the printer its resolution, filling the DPI field in (§11); a USB problem the user can put right is reported in its own words. Use Default re-fills the rows from the persisted default. Accepting makes the printer the one in effect for this session; **Save as the default printer**, unticked each time the window opens, also persists the printer, the DPI and the font memory (§13), so a printer chosen for a while - a USB one, to see what it holds - never becomes the default unless asked to. A DPI change runs §11's prompt. |
+| **Print** | **Printer**: a line naming the printer in effect and its DPI; Change…. **Copies (`^PQ`)**: Copies; Pause every; Replicates; Don't pause between groups; Cut after a voided RFID label. **Label**: Print upside down (`^PO`); Mirror left to right (`^PM`); Reverse fields, white on black (`^LR`); Check barcode data as printed (`^CV`). **Printer setup sent with the label**: Darkness (`^MD`); Print, Slew and Backfeed speed (`^PR`); Print mode (`^MM`) and Prepeel; Media tracking (`^MN`) and Black mark offset; Media type (`^MT`). Buttons Print, OK, Cancel | Change… opens Choose Printer over the window; a printer chosen there takes effect on its own OK and the line follows it, so it stays chosen even if Print is then cancelled. Everything but the printer is saved with the label, and its rows come from one table both frontends share. `^PQ`'s own ranges: Copies 1–99,999,999, Pause every 0 to 99,999,999 labels, 0 never pausing (Qt shows it as Never; GTK, whose numeric spin button takes no letters, says "0 = never" beside the box), Replicates 0–99,999,999. Darkness is −30 to 30 in tenths, relative to the printer's configured darkness, with a tick beside the box, since a number box has no "unset". Print speed is 1–14 in/s and slew and backfeed 2–14, each labelled with the letter A–E that also names it where there is one. Every set-up row's first choice is **Printer's setting**, which writes nothing (§9). Slew is greyed out until Print speed is set and Backfeed until Slew is, so no `^PR` goes out with a blank in the middle; Prepeel is greyed out without a print mode, and the offset, −240 to 566 dots, without mark sensing. A value the label carries that no row offers — a reserved print mode, a speed past the list, a darkness with two decimals — is offered first as "As written: …" and selected, or shown beside a number box, as Edit Symbol does with data it has no symbol for; and a command left alone keeps its spelling, so `^PRC` stays `^PRC`. Accepting the window unchanged never rewrites the label. **Print** applies and prints (§9), **OK** applies without printing and **Cancel** changes nothing. Print is the default button. A visit that changes the label is one undo entry, and one that changes nothing records none (§12). |
 
 ---
 
@@ -2287,8 +2291,8 @@ is re-drawn for this label's head (§3.3) whatever the text records.
 
 ## 9. Printing
 
-**File → Print…** opens the Print window (§7.3) on the printer in effect and
-the label's print settings; its **Print** button applies them and then prints
+**File → Print…** opens the Print window (§7.3) on the label's print
+settings, naming the printer in effect; its **Print** button applies them and then prints
 as below. **File → Quick Print** prints as below at once, with the settings
 already in force.
 
@@ -2336,17 +2340,19 @@ loop the send.
 Elements with `print_enabled` false are sent as `^FXDESIGNER_NOPRINT` comments
 rather than as fields, so the printer ignores them.
 
-**The Print window's printer is for this session only.** It changes the
-connection and DPI that step 2 above uses, for every print from then on,
-without writing them to settings.ini (§13) — the next launch starts back on
-the persisted default. If the DPI changes, it runs the same rescale prompt as
-Default Printer (§11), since a label's dot geometry has to stay consistent
+**File → Choose Printer… chooses the printer for this session, and for later
+ones only when asked.** It changes the connection and DPI that step 2 above
+uses, for every print from then on; its **Save as the default printer** box,
+unticked each time it opens, also writes them to settings.ini (§13), and
+otherwise the next launch starts back on the persisted default. The Print
+window's Change… opens the same window. If the DPI changes, it runs the
+rescale prompt (§11), since a label's dot geometry has to stay consistent
 with whichever printer will render it.
 
 ### A printer on USB
 
-The printer is a network one or a USB one, chosen in the printer rows of
-Default Printer and the Print window (§7.3), and every request follows it:
+The printer is a network one or a USB one, chosen in Choose Printer
+(§7.3), and every request follows it:
 printing, the pre-print check (§10.3), Upload Template, Test Connection and the
 printer's windows (§10.4-10.7). Firmware Update has its own choice (§10.8).
 
@@ -2546,7 +2552,7 @@ drive, not ones this designer writes itself.
 
 #### 10.4.1 Font memory
 
-**The Print window's printer rows** (and Default Printer) carry a **Font memory** choice
+**Choose Printer's rows** carry a **Font memory** choice
 alongside address, port and DPI: which memory a font *this app assigns* is
 written to and uploaded to. It is a printer setting rather than a per-element
 one because which memory a printer keeps its fonts in is a property of the
@@ -2574,6 +2580,13 @@ housekeeping, a printer's own WML front-panel menu, anything another tool
 put there. `Z:` is queried here but not by Graphics: it is read-only
 factory content (a default WML menu, an RFID recipe file), not somewhere a
 user's own graphic would ever be stored.
+
+Like every printer window it works on the printer in effect (§9), network
+or USB, so the way to a USB printer's objects is File → Choose Printer….
+Its status line therefore ends, after a listing, an unreachable printer or a
+USB port problem alike, with `workflow.OTHER_PRINTER` on a line of its own:
+"To use another printer, choose it in File › Choose Printer…". On its own
+line so it never runs on from advice that ends in a command to copy.
 
 Each object is listed with its full `d:NAME.EXT` spec and, in a second
 column, the memory type that device letter names in words — DRAM, Flash,
@@ -2789,7 +2802,7 @@ wanted while an upload is going wrong.
 
 The printer's resolution is a persisted setting (203, 300 or 600 dpi, default
 203). It is editable from Label Size as well as from the printer rows of
-Default Printer and the Print window, which offer the same choice: label size is entered in inches
+Choose Printer, which offer the same choice: label size is entered in inches
 but stored in dots, so the resolution is half of what the size means, and
 having to leave for another dialog to change that half is how a label ends up
 the wrong physical size. It can also be detected: the Test Connection button
@@ -3179,7 +3192,7 @@ rulers = no
 
 | Section | Written | Used by |
 |---|---|---|
-| `[printer]` | when Default Printer or Label Size is accepted | printing, font queries, every inch↔dot conversion. `connection` is `network` or `usb`; `address` and `port` are the network printer, `usb_serial` and `usb_name` the USB one (§9), and both are kept whichever is chosen. A file without `connection` reads as the network printer it names, and `usb` with no serial or name falls back to network. `font_device` is the font memory (§10.4.1), ignored unless it names a drive the program knows |
+| `[printer]` | when Choose Printer is accepted with Save as the default printer ticked, or Label Size is accepted | printing, font queries, every inch↔dot conversion. `connection` is `network` or `usb`; `address` and `port` are the network printer, `usb_serial` and `usb_name` the USB one (§9), and both are kept whichever is chosen. A file without `connection` reads as the network printer it names, and `usb` with no serial or name falls back to network. `font_device` is the font memory (§10.4.1), ignored unless it names a drive the program knows |
 | `[fonts]` | with `[printer]`, and when the extra font folder changes | `extra_dir`, a folder searched for fonts beside the installed ones, and where `font_names.ini` is read from; empty for none |
 | `[label]` | when Label Size is accepted | the label at startup and on File > New |
 | `[window]` | on quit | where the window opens (§2) |
@@ -3187,8 +3200,9 @@ rulers = no
 | `[recent]` | whenever a file is opened or saved, an entry is dropped, or the list is cleared | File > Open Recent (§6.1) |
 | `[grid]` | the moment Rulers, Show Grid, Snap to Grid, Snap to Elements or Grid Settings changes it | the grid (§5): `unit` (`in`, `mm` or `dots`), `spacing` in that unit, `major_every`, `shown`, `snap` (Snap to Grid), `snap_elements` (Snap to Elements) and `rulers` (Rulers). |
 
-**The Print window's printer** (§9) deliberately never writes `[printer]` —
-only Default Printer and Label Size do.
+**A printer chosen for this session** (§9) deliberately never writes
+`[printer]` — only Choose Printer with Save as the default printer ticked,
+and Label Size, do.
 
 Writing re-reads the file first, so a section another version wrote survives.
 

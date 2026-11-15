@@ -3628,20 +3628,24 @@ class PrinterObjectsDialog(QDialog):
             if isinstance(error, printer_io.Cancelled):
                 self._status.setText("Listing cancelled.")
                 return
+            # Each answer names the printer asked, then says how to ask
+            # another: Choose Printer, on the network or by USB.
             if isinstance(error, PortProblem):
-                self._status.setText(str(error))
+                self._status.setText(workflow.with_other_printer(str(error)))
                 return
             if specs is None or error is not None:
-                self._status.setText(f"Could not reach the printer at "
-                                     f"{self._printer.where()}.")
+                self._status.setText(workflow.with_other_printer(
+                    f"Could not reach the printer at "
+                    f"{self._printer.where()}."))
                 return
             entries, unreadable = specs
             for spec in entries:
                 QTreeWidgetItem(self._list,
                                 [spec, graphic_store.device_name(spec)])
-            self._status.setText(workflow.listing_status(
-                where, "object", printer_objects.DEVICES,
-                entries, unreadable))
+            self._status.setText(workflow.with_other_printer(
+                workflow.listing_status(where, "object",
+                                        printer_objects.DEVICES,
+                                        entries, unreadable)))
 
         self._busy.run(lambda cancel: printer_objects.query_printer_objects(
             self._printer, cancel=cancel), done)
