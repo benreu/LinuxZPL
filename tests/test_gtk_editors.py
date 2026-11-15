@@ -1688,19 +1688,25 @@ finally:
     _shutil.rmtree(pn_dir, ignore_errors=True)
 document.elements.remove(pn_el)
 
-# --- the Print window's printer never touches the persisted default --------
+# --- Printer Settings: the session's printer, the default only when ticked -
 # The DPI is held fixed across the dialogs below so none of them takes the
 # rescale-prompt path, which would otherwise open a real (blocking) dialog.
 from zplcore.print_settings import PrintSettings as _PS
 
-def _print_window_returns(printer, action='ok', settings=None):
-    """Stand in for the Print window: accepted with this printer, and the
-    document's own print settings unless others are given."""
-    def fake(parent, document, current, default):
-        return action, printer, settings or _PS.read(document)
+def _print_window_returns(action='ok', settings=None):
+    """Stand in for the Print window: accepted, with the document's own print
+    settings unless others are given."""
+    def fake(parent, document, current, change_printer):
+        return action, settings or _PS.read(document)
     return fake
 
+def _printer_settings_returns(printer, save_default=False):
+    """Stand in for Printer Settings: accepted with this printer, and its
+    "Save as the default printer" box as given."""
+    return lambda *a, **k: (printer, save_default)
+
 real_print_dialog = gtk_main._print_dialog
+real_printer_settings = gtk_main._printer_picker_dialog
 session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 gtk_main._config_path = lambda: session_path
 gtk_main._fallback_config_path = lambda: session_path
@@ -1710,51 +1716,64 @@ try:
                                window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
-    real_dialog = gtk_main._printer_picker_dialog
-    gtk_main._print_dialog = _print_window_returns((Connection.network('10.0.0.5', 9200), 203, 'E'))
+    gtk_main._printer_picker_dialog = _printer_settings_returns(
+        (Connection.network('10.0.0.5', 9200), 203, 'E'))
     try:
-        window.on_print_dialog_clicked(None)
+        returned = window.on_printer_settings_clicked(None)
     finally:
-        gtk_main._print_dialog = real_print_dialog
+        gtk_main._printer_picker_dialog = real_printer_settings
 
-    check("the Print window changes the printer in effect",
+    check("GTK: Printer Settings changes the printer in effect",
           window.printer_connection == Connection.network('10.0.0.5', 9200),
           window.printer_connection)
+    check("GTK: and answers the printer now in effect",
+          returned == (Connection.network('10.0.0.5', 9200), 203, 'E'), returned)
 
     written = configparser.ConfigParser(); written.read(session_path)
-    check("but never writes it to the settings file",
+    check("GTK: but, its box unticked, never writes it to the settings file",
           written.get('printer', 'address', fallback=None) == '192.168.1.50',
           dict(written['printer']) if written.has_section('printer') else None)
+    check("GTK: or makes it the default",
+          window._default_printer[0] == Connection.network('192.168.1.50', 9100),
+          window._default_printer)
 
-    # Default Printer must open on the persisted default, not the session
-    # override just applied above - otherwise clicking OK on an unedited
-    # dialog would silently promote the override into the new default.
+    # It opens on the printer in effect - the one every print and printer
+    # window is using now - with the persisted one for Use Default.
     seen = {}
-    def capture_dialog(parent, title, printer, dpi, font_device=None):
-        seen['address'], seen['port'], seen['dpi'] = (printer.address,
-                                                      printer.port, dpi)
-        seen['font_device'] = font_device
+    def capture_dialog(parent, printer, dpi, font_device=None, default=None,
+                       window=None):
+        seen['printer'], seen['dpi'] = printer, dpi
+        seen['default'], seen['over'] = default, window
         return None  # cancel, so nothing else about window state changes
     gtk_main._printer_picker_dialog = capture_dialog
     try:
-        window.on_default_printer_clicked(None)
+        cancelled = window.on_printer_settings_clicked(None)
     finally:
-        gtk_main._printer_picker_dialog = real_dialog
-    check("Default Printer opens pre-filled with the persisted default, not the session override",
-          (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
+        gtk_main._printer_picker_dialog = real_printer_settings
+    check("GTK: Printer Settings opens on the printer in effect, not the default",
+          seen['printer'] == Connection.network('10.0.0.5', 9200), seen)
+    check("GTK: and is given the default for Use Default",
+          seen['default'][0] == Connection.network('192.168.1.50', 9100), seen)
+    check("GTK: a cancelled Printer Settings answers None and changes nothing",
+          cancelled is None
+          and window.printer_connection == Connection.network('10.0.0.5', 9200),
+          (cancelled, window.printer_connection))
 
-    # Contrast: Default Printer, given the same dialog result, does persist.
-    gtk_main._printer_picker_dialog = lambda *a, **k: (
-        Connection.network('10.0.0.5', 9200), 203, 'E')
+    # Ticked, the same result is kept as the default too.
+    gtk_main._printer_picker_dialog = _printer_settings_returns(
+        (Connection.network('10.0.0.6', 9300), 203, 'E'), save_default=True)
     try:
-        window.on_default_printer_clicked(None)
+        window.on_printer_settings_clicked(None)
     finally:
-        gtk_main._printer_picker_dialog = real_dialog
+        gtk_main._printer_picker_dialog = real_printer_settings
 
     written = configparser.ConfigParser(); written.read(session_path)
-    check("while Default Printer does persist the new address",
-          written.get('printer', 'address', fallback=None) == '10.0.0.5',
+    check("GTK: while Save as the default printer does persist the new address",
+          written.get('printer', 'address', fallback=None) == '10.0.0.6',
           dict(written['printer']) if written.has_section('printer') else None)
+    check("GTK: and makes it the default Use Default goes back to",
+          window._default_printer[0] == Connection.network('10.0.0.6', 9300),
+          window._default_printer)
 finally:
     gtk_main._config_path = real_config_path
     gtk_main._fallback_config_path = real_fallback_path
@@ -1772,11 +1791,12 @@ try:
                                window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
-    gtk_main._print_dialog = _print_window_returns((Connection.network('10.0.0.8', 9400), 203, 'E'))
+    gtk_main._printer_picker_dialog = _printer_settings_returns(
+        (Connection.network('10.0.0.8', 9400), 203, 'E'))
     try:
-        window.on_print_dialog_clicked(None)
+        window.on_printer_settings_clicked(None)
     finally:
-        gtk_main._print_dialog = real_print_dialog
+        gtk_main._printer_picker_dialog = real_printer_settings
 
     # Stand in for what close_app does: it never touches _default_printer,
     # it just calls _save_settings() again on the way out.
@@ -1799,11 +1819,12 @@ try:
                                window.printer_dpi, window.printer_font_device)
     window._save_settings()
 
-    gtk_main._print_dialog = _print_window_returns((Connection.network('10.0.0.9', 9500), 203, 'E'))
+    gtk_main._printer_picker_dialog = _printer_settings_returns(
+        (Connection.network('10.0.0.9', 9500), 203, 'E'))
     try:
-        window.on_print_dialog_clicked(None)
+        window.on_printer_settings_clicked(None)
     finally:
-        gtk_main._print_dialog = real_print_dialog
+        gtk_main._printer_picker_dialog = real_printer_settings
 
     # Take the Keep Dots branch without a real dialog, the same trick
     # conformance_driver.py uses.
@@ -1831,6 +1852,8 @@ finally:
 # --- the Print window -------------------------------------------------------
 # Its rows filled in and read back through finish(), the half of the window
 # that runs once dialog.run() has returned, so no nested main loop is needed.
+# It names the printer; Change... opens Printer Settings, which holds the
+# printer rows.
 import time as _pw_time
 from zplcore.print_settings import AsWritten as _AW
 
@@ -1847,8 +1870,20 @@ def _pw_widgets(container):
 def _pw_named(dialog, name):
     return next(w for w in _pw_widgets(dialog) if w.get_name() == name)
 
+# What Change... answers, as Printer Settings would: the printer now in
+# effect, or None when it was cancelled. Each call is recorded with the
+# window it was asked to open over.
+_pw_changes, _pw_change_to = [], [None]
+
+def _pw_change(dialog):
+    _pw_changes.append(dialog)
+    return _pw_change_to[0]
+
 def _pw_build(document):
-    return gtk_main._build_print_dialog(pw, document, _PW_PRINTER, _PW_DEFAULT)
+    return gtk_main._build_print_dialog(pw, document, _PW_PRINTER, _pw_change)
+
+def _pw_find(dialog, name):
+    return next((w for w in _pw_widgets(dialog) if w.get_name() == name), None)
 
 def _pw_select(dialog, name, text):
     combo = _pw_named(dialog, name)
@@ -1873,15 +1908,18 @@ _pw_notes = [w.get_text() for w in _pw_widgets(_pw_dialog)
              and w.get_visible()]
 check("a darkness no box can show is noted beside it, as written",
       _pw_notes == ['As written: 8.25'], _pw_notes)
-check("it opens on the printer in effect, with Print as the default button",
-      _pw_named(_pw_dialog, 'address').get_text() == '192.168.1.50'
+check("it names the printer in effect, with Print as the default button",
+      _pw_named(_pw_dialog, 'printer_line').get_text()
+      == '192.168.1.50:9100, 203 dpi'
       and _pw_named(_pw_dialog, 'print').has_default())
+check("and has no printer rows of its own: Printer Settings holds them",
+      _pw_find(_pw_dialog, 'address') is None)
 _pw_plain = _pw_finish(gtk_main.PRINT_RESPONSE)
-check("Print pressed unchanged gives 'print', the same printer and the same "
-      "settings", _pw_plain[0] == 'print' and _pw_plain[1] == _PW_PRINTER
-      and _pw_plain[2] == _PS.read(_pw_doc), _pw_plain)
+check("Print pressed unchanged gives 'print' and the same settings, no printer",
+      len(_pw_plain) == 2 and _pw_plain[0] == 'print'
+      and _pw_plain[1] == _PS.read(_pw_doc), _pw_plain)
 check("and those settings, applied, change nothing",
-      not _pw_plain[2].apply(_pw_doc))
+      not _pw_plain[1].apply(_pw_doc))
 
 for _pw_response in (Gtk.ResponseType.CANCEL, Gtk.ResponseType.DELETE_EVENT):
     _pw_dialog, _pw_finish = _pw_build(_pw_doc)
@@ -1903,7 +1941,7 @@ _pw_named(_pw_dialog, 'prepeel').set_active(True)
 _pw_select(_pw_dialog, 'media_tracking', 'Non-continuous, web sensing (W)')
 _pw_select(_pw_dialog, 'media_type', "Printer's setting")
 _pw_edited = _pw_finish(Gtk.ResponseType.OK)
-_pw_set = _pw_edited[2]
+_pw_set = _pw_edited[1]
 check("OK gives 'ok' and every row as edited",
       _pw_edited[0] == 'ok'
       and (_pw_set.quantity, _pw_set.pause_count, _pw_set.mirror,
@@ -1928,7 +1966,7 @@ _pw_chain = {name: _pw_named(_pw_dialog, name).get_sensitive()
 check("with no print speed, slew and backfeed are greyed out; so is the "
       "darkness box with its tick clear, and the offset off mark sensing",
       _pw_chain == dict.fromkeys(_pw_chain, False), _pw_chain)
-_pw_cleared = _pw_finish(Gtk.ResponseType.OK)[2]
+_pw_cleared = _pw_finish(Gtk.ResponseType.OK)[1]
 _pw_target = zpl_parser.parse_zpl(_pw_doc.to_zpl())[0]
 _pw_cleared.apply(_pw_target)
 check("and the printer's setting, applied, takes ^PR and ^MD out",
@@ -1936,9 +1974,25 @@ check("and the printer's setting, applied, takes ^PR and ^MD out",
       == [('^MM', 'U'), ('^MN', 'N'), ('^MT', 'D')], _pw_target.media_settings)
 
 _pw_dialog, _pw_finish = _pw_build(_pw_doc)
-_pw_named(_pw_dialog, 'use_default').clicked()
-check("Use Default refills the printer from the persisted default",
-      _pw_finish(Gtk.ResponseType.OK)[1] == _PW_DEFAULT)
+_pw_before = _pw_named(_pw_dialog, 'printer_line').get_text()
+_pw_change_to[0] = None
+_pw_named(_pw_dialog, 'change_printer').clicked()
+_pw_cancelled = _pw_named(_pw_dialog, 'printer_line').get_text()
+_pw_change_to[0] = (Connection.usb('18J181107685',
+                                   'Zebra Technologies ZTC ZT410-203dpi ZPL'),
+                    203, 'E')
+_pw_named(_pw_dialog, 'change_printer').clicked()
+_pw_changed = _pw_named(_pw_dialog, 'printer_line').get_text()
+check("GTK: Change... opens Printer Settings over the Print window",
+      _pw_changes[-2:] == [_pw_dialog, _pw_dialog], _pw_changes)
+check("GTK: a cancelled Printer Settings leaves the line as it was",
+      _pw_cancelled == _pw_before, (_pw_before, _pw_cancelled))
+check("GTK: and a printer chosen there is named on the line at once",
+      _pw_changed == 'Zebra Technologies ZTC ZT410-203dpi ZPL (USB), 203 dpi',
+      _pw_changed)
+check("GTK: Print cancelled afterwards still gives None: the printer was "
+      "Printer Settings' own to change",
+      _pw_finish(Gtk.ResponseType.CANCEL) is None)
 
 # --- the printer rows: a network printer or a USB one ----------------------
 # The USB printers present are stood in for, and the window's error dialog
@@ -1984,7 +2038,8 @@ def _ur_shown(dialog):
                  for name in ('address', 'port', 'usb_printer', 'usb_refresh'))
 
 def _ur_build(printer, default=_PW_DEFAULT):
-    return gtk_main._build_print_dialog(pw, _pw_doc, (printer, 203, 'E'), default)
+    return gtk_main._build_printer_settings_dialog(pw, printer, 203, 'E',
+                                                   default=default)
 
 try:
     _ur_present[:] = _UR_HERE
@@ -2002,8 +2057,10 @@ try:
     check("GTK: the USB Printer list names each printer with its node",
           _ur_listed == [f'{_UR_NAME} (lp2)'], _ur_listed)
     check("GTK: choosing USB gives that printer, the network address carried",
-          _ur_chosen[1] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME),
-                            203, 'E'), _ur_chosen[1])
+          _ur_chosen[0] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME),
+                            203, 'E'), _ur_chosen)
+    check("GTK: and, its box left alone, not as the default",
+          _ur_chosen[1] is False, _ur_chosen)
 
     _ur_dialog, _ur_finish = _ur_build(
         _PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME))
@@ -2013,7 +2070,7 @@ try:
     check("GTK: a USB printer opens on the USB rows, and Network gives back "
           "the address it carried",
           _ur_usb_first == (False, False, True, True)
-          and _ur_net[1] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME)
+          and _ur_net[0] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME)
                              .as_network('192.168.1.50', 9100), 203, 'E'),
           (_ur_usb_first, _ur_net))
 
@@ -2024,7 +2081,7 @@ try:
     _ur_kept = _ur_finish(Gtk.ResponseType.OK)
     check("GTK: a USB printer that is not plugged in stays chosen, said to be "
           "not connected", _ur_text == 'Zebra old (not connected)'
-          and _ur_kept[1] == (_ur_away, 203, 'E'), (_ur_text, _ur_kept))
+          and _ur_kept[0] == (_ur_away, 203, 'E'), (_ur_text, _ur_kept))
 
     _ur_dialog, _ur_finish = _ur_build(_PW_PRINTER[0])
     _pw_named(_ur_dialog, 'connection_usb').set_active(True)
@@ -2046,8 +2103,25 @@ try:
     _pw_named(_ur_dialog, 'use_default').clicked()
     _ur_default_rows = _ur_shown(_ur_dialog)
     check("GTK: Use Default brings back a USB default printer, on the USB rows",
-          _ur_finish(Gtk.ResponseType.OK)[1] == _UR_DEFAULT
+          _ur_finish(Gtk.ResponseType.OK)[0] == _UR_DEFAULT
           and _ur_default_rows == (False, False, True, True), _ur_default_rows)
+
+    # Printer Settings itself: its title, and the box that keeps the printer
+    # as the default, unticked whenever it opens.
+    _ps_dialog, _ps_finish = _ur_build(_PW_PRINTER[0])
+    _ps_box = _pw_named(_ps_dialog, 'save_default')
+    _ps_seen = (_ps_dialog.get_title(), _ps_box.get_active(),
+                _ps_box.get_label())
+    _ps_box.set_active(True)
+    check("GTK: Printer Settings is titled so, with Save as the default "
+          "printer unticked when it opens",
+          _ps_seen == ('Printer Settings', False, 'Save as the default printer'),
+          _ps_seen)
+    check("GTK: and ticked, OK says to keep the printer as the default",
+          _ps_finish(Gtk.ResponseType.OK) == (_PW_PRINTER, True))
+    _ps_dialog, _ps_finish = _ur_build(_PW_PRINTER[0])
+    check("GTK: cancelled, it gives None",
+          _ps_finish(Gtk.ResponseType.CANCEL) is None)
 
     # Test Connection by USB: a pty plays the printer, answering ~HI.
     _ur_master, _ur_slave = _ur_pty.openpty()
@@ -2060,8 +2134,8 @@ try:
         os.write(_ur_master, b'\x02ZT410-200dpi,V75.20.21,8,4096KB\x03\r\n')
     _ur_th = _ur_threading.Thread(target=_ur_answer, daemon=True)
     _ur_th.start()
-    _ur_dialog, _ur_finish = gtk_main._build_print_dialog(
-        pw, _pw_doc, (_UR_ZEBRA, 300, 'E'), _PW_DEFAULT)
+    _ur_dialog, _ur_finish = gtk_main._build_printer_settings_dialog(
+        pw, _UR_ZEBRA, 300, 'E', default=_PW_DEFAULT)
     _pw_named(_ur_dialog, 'test_connection').clicked()
     _ur_pump_until(_ur_busy_done(_ur_dialog))
     _ur_th.join(3)
@@ -2208,7 +2282,7 @@ _pw_printed = []
 pw.on_print_clicked = lambda _w: _pw_printed.append(
     pw.design_canvas.document.print_quantity)
 
-gtk_main._print_dialog = _print_window_returns(_PW_PRINTER, 'print')
+gtk_main._print_dialog = _print_window_returns('print')
 try:
     pw.on_print_dialog_clicked(None)
 finally:
@@ -2220,7 +2294,7 @@ check("and prints", _pw_printed == [1], _pw_printed)
 
 _pw_more = _PS.read(pw.design_canvas.document)
 _pw_more.quantity, _pw_more.darkness, _pw_more.invert = 3, 4.0, True
-gtk_main._print_dialog = _print_window_returns(_PW_PRINTER, 'print', _pw_more)
+gtk_main._print_dialog = _print_window_returns('print', _pw_more)
 try:
     pw.on_print_dialog_clicked(None)
 finally:
@@ -2247,10 +2321,18 @@ check("Cancel changes nothing and prints nothing",
 
 _pw_file = [i.get_label() for i in pw.print_item.get_parent().get_children()
             if isinstance(i, Gtk.MenuItem) and i.get_label()]
-check("File has Print… and Quick Print, and no Printer Settings submenu",
-      '_Print\u2026' in _pw_file and '_Quick Print' in _pw_file
-      and not any('Printer Settings' in t.replace('_', '') for t in _pw_file),
-      _pw_file)
+check("GTK: File has Print…, Quick Print and Printer Settings…, in that order",
+      [t for t in _pw_file if t in ('_Print\u2026', '_Quick Print',
+                                    'Printer _Settings\u2026')]
+      == ['_Print\u2026', '_Quick Print', 'Printer _Settings\u2026'], _pw_file)
+_pw_menus = pw.print_item.get_parent().get_attach_widget().get_parent()
+_pw_settings = next(i for i in _pw_menus.get_children()
+                    if i.get_label() == '_Settings').get_submenu()
+_pw_settings_labels = [i.get_label() for i in _pw_settings.get_children()
+                       if isinstance(i, Gtk.MenuItem) and i.get_label()]
+check("GTK: and Settings no longer has Default Printer…: Printer Settings "
+      "holds it", not any('Default Printer' in t for t in _pw_settings_labels),
+      _pw_settings_labels)
 check("Print… is Ctrl+P, Quick Print Ctrl+Shift+P",
       pw.accelerators.get(pw.print_item) == '<Control>p'
       and pw.accelerators.get(pw.quick_print_item) == '<Control><Shift>p')
@@ -3016,12 +3098,12 @@ wh_win = ZPLViewerWindow()
 wh_win.show_help = lambda parent, topic: wh_asked.append(topic)
 wh_doc = zpl_parser.parse_zpl("^XA^FO10,10^A0N,30,30^FDhi^FS^XZ")[0]
 wh_run("label_settings", lambda: wh_win.on_label_settings_clicked(None))
-wh_run("default_printer", lambda: wh_win.on_default_printer_clicked(None))
+wh_run("printer_settings", lambda: wh_win.on_printer_settings_clicked(None))
 wh_run("local_fonts", lambda: wh_win.on_local_fonts_clicked(None))
 for wh_key, wh_dialog in (
         ("grid_settings", gtk_main._build_grid_dialog(wh_win, wh_win.grid, 203)[0]),
         ("print", gtk_main._build_print_dialog(wh_win, wh_doc, _PW_PRINTER,
-                                               _PW_DEFAULT)[0])):
+                                               lambda dialog: None)[0])):
     wh_press(wh_key, wh_dialog)
     wh_dialog.destroy()
 
@@ -3433,14 +3515,13 @@ check("GTK: the palette's + Time, + Serial, + Numbered, + Image and + Graphic, "
 _tip_seen |= set(_t_buttons)
 
 _t_dialog, _t_finish = gtk_main._build_print_dialog(
-    tw, _pw_doc, _PW_PRINTER, _PW_DEFAULT)
+    tw, _pw_doc, _PW_PRINTER, lambda dialog: None)
 _t_found, _t_wrong = _gtk_tips(_t_dialog)
 _t_print_rows = {'pause_count', 'replicates', 'override_pause', 'cut_on_error',
                  'mirror', 'reverse', 'code_validation', 'darkness_set',
                  'darkness', 'print_speed', 'slew_speed', 'backfeed_speed',
                  'print_mode', 'prepeel', 'media_tracking', 'mark_offset',
-                 'media_type', 'port', 'dpi', 'font_device', 'test_connection',
-                 'use_default', 'usb_printer', 'usb_refresh'}
+                 'media_type', 'change_printer'}
 check("GTK: the Print window explains its rows from the table, each label too",
       set(_t_found) == _t_print_rows and not _t_wrong,
       (sorted(set(_t_found) ^ _t_print_rows), _t_wrong))
@@ -3477,10 +3558,11 @@ try:
     for _title, _open, _wanted in (
             ("Label Settings", lambda: tw.on_label_settings_clicked(None),
              {'dpi', 'home_x', 'home_y'}),
-            ("Default Printer", lambda: gtk_main._printer_picker_dialog(
-                tw, "Default Printer", Connection.network('10.0.0.1', 9100), 203),
-             {'port', 'dpi', 'font_device', 'test_connection', 'usb_printer',
-              'usb_refresh'}),
+            ("Printer Settings", lambda: gtk_main._printer_picker_dialog(
+                tw, Connection.network('10.0.0.1', 9100), 203,
+                default=_PW_DEFAULT),
+             {'port', 'dpi', 'font_device', 'test_connection', 'use_default',
+              'usb_printer', 'usb_refresh', 'save_default'}),
             ("Store Graphic As", lambda: tw._ask_device_spec(tw), {'device'}),
             ("Upload Font To", lambda: tw._ask_font_device(tw), {'font_device'}),
             ("Store Object As", lambda: tw._ask_object_name(tw, 'X', 'DAT'),
@@ -3502,7 +3584,7 @@ try:
 finally:
     Gtk.Dialog.run, zpl_local.list_ports = _t_real_run, _t_real_ports
     tw.printer_connection = _t_real_printer
-check("GTK: Label Settings, Grid Settings, Default Printer, the store windows "
+check("GTK: Label Settings, Grid Settings, Printer Settings, the store windows "
       "and the printer's managers explain their rows from the table",
       not _t_window_tips, _t_window_tips)
 tw.unsaved_changes = False

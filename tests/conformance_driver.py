@@ -492,12 +492,10 @@ class GtkDriver:
 
     def print_window(self, settings):
         """One Print window visit accepted with OK, through the frontend's
-        handler: these settings, and the printer already in effect."""
+        handler: these settings, the printer left as it is."""
         from gtkui import window as gtk_window
-        current = (self.window.printer_connection, self.window.printer_dpi,
-                   self.window.printer_font_device)
         real = gtk_window._print_dialog
-        gtk_window._print_dialog = lambda *a, **k: ('ok', current, settings)
+        gtk_window._print_dialog = lambda *a, **k: ('ok', settings)
         try:
             self.window.on_print_dialog_clicked(None)
         finally:
