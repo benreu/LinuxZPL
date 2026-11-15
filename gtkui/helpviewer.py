@@ -863,9 +863,15 @@ class HelpWindow(Gtk.Window):
             y = 0
             if offset is not None:
                 it = self.page.get_buffer().get_iter_at_offset(offset)
-                y = self.page.get_line_yrange(it)[0]
                 if heading:
+                    y = self.page.get_line_yrange(it)[0]
                     y = max(y, self.page.get_iter_location(it).y - round(PAGE_MARGIN / 2))
+                else:
+                    # The wrapped line holding it, not the start of its
+                    # paragraph - get_line_yrange's "line" is the whole
+                    # paragraph - so a place kept inside a long paragraph,
+                    # as _scroll() keeps it, comes back where it was.
+                    y = self.page.get_iter_location(it).y
             adjustment.set_value(min(y, adjustment.get_upper() - adjustment.get_page_size()))
             return False
 
