@@ -921,12 +921,10 @@ class QtDriver:
 
     def print_window(self, settings):
         """One Print window visit accepted with OK, through the frontend's
-        handler: these settings, and the printer already in effect."""
+        handler: these settings, the printer left as it is."""
         from qtui import dialogs
-        current = (self.window.printer_connection, self.window.printer_dpi,
-                   self.window.printer_font_device)
         real = dialogs.print_dialog
-        dialogs.print_dialog = lambda *a, **k: ('ok', current, settings)
+        dialogs.print_dialog = lambda *a, **k: ('ok', settings)
         try:
             self.window.on_print_dialog()
         finally:

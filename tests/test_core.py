@@ -5285,19 +5285,25 @@ finally:
     qt_main._config_path = real_config_path
     qt_main._fallback_config_path = real_fallback_path
 
-# --- the Print window's printer never touches the persisted default --------
+# --- Printer Settings: the session's printer, the default only when ticked -
 # The DPI is held fixed across the dialogs below so none of them takes the
 # rescale-prompt path, which would otherwise open a real (blocking) dialog.
 from zplcore.print_settings import PrintSettings as _PS
 
-def _print_window_returns(printer, action='ok', settings=None):
-    """Stand in for the Print window: accepted with this printer, and the
-    document's own print settings unless others are given."""
-    def fake(parent, document, current, default):
-        return action, printer, settings or _PS.read(document)
+def _print_window_returns(action='ok', settings=None):
+    """Stand in for the Print window: accepted, with the document's own print
+    settings unless others are given."""
+    def fake(parent, document, current, change_printer):
+        return action, settings or _PS.read(document)
     return fake
 
+def _printer_settings_returns(printer, save_default=False):
+    """Stand in for Printer Settings: accepted with this printer, and its
+    "Save as the default printer" box as given."""
+    return lambda *a, **k: (printer, save_default)
+
 real_print_dialog = qt_dialogs.print_dialog
+real_printer_settings = qt_dialogs.printer_settings_dialog
 session_path = Path(tempfile.mkdtemp()) / 'settings.ini'
 qt_main._config_path = lambda: session_path
 qt_main._fallback_config_path = lambda: session_path
@@ -5307,51 +5313,63 @@ try:
                            zw.printer_font_device)
     zw._save_settings()
 
-    real_dialog = qt_dialogs.printer_settings_dialog
-    qt_dialogs.print_dialog = _print_window_returns((Connection.network('10.0.0.5', 9200), 203, 'E'))
+    qt_dialogs.printer_settings_dialog = _printer_settings_returns(
+        (Connection.network('10.0.0.5', 9200), 203, 'E'))
     try:
-        zw.on_print_dialog()
+        returned = zw.on_printer_settings()
     finally:
-        qt_dialogs.print_dialog = real_print_dialog
+        qt_dialogs.printer_settings_dialog = real_printer_settings
 
-    check("the Print window changes the printer in effect",
+    check("Printer Settings changes the printer in effect",
           zw.printer_connection == Connection.network('10.0.0.5', 9200),
           zw.printer_connection)
+    check("and answers the printer now in effect",
+          returned == (Connection.network('10.0.0.5', 9200), 203, 'E'), returned)
 
     written = _cfg.ConfigParser(); written.read(session_path)
-    check("but never writes it to the settings file",
+    check("but, its box unticked, never writes it to the settings file",
           written.get('printer', 'address', fallback=None) == '192.168.1.50',
           dict(written['printer']) if written.has_section('printer') else None)
+    check("or makes it the default",
+          zw._default_printer[0] == Connection.network('192.168.1.50', 9100),
+          zw._default_printer)
 
-    # Default Printer must open on the persisted default, not the session
-    # override just applied above - otherwise clicking OK on an unedited
-    # dialog would silently promote the override into the new default.
+    # It opens on the printer in effect - the one every print and printer
+    # window is using now - with the persisted one for Use Default.
     seen = {}
-    def capture_dialog(parent, printer, dpi, font_device=None, **kwargs):
-        seen['address'], seen['port'], seen['dpi'] = (printer.address,
-                                                      printer.port, dpi)
-        seen['font_device'] = font_device
+    def capture_dialog(parent, printer, dpi, font_device=None, default=None):
+        seen['printer'], seen['dpi'] = printer, dpi
+        seen['default'] = default
         return None  # cancel, so nothing else about window state changes
     qt_dialogs.printer_settings_dialog = capture_dialog
     try:
-        zw.on_default_printer()
+        cancelled = zw.on_printer_settings()
     finally:
-        qt_dialogs.printer_settings_dialog = real_dialog
-    check("Default Printer opens pre-filled with the persisted default, not the session override",
-          (seen['address'], seen['port']) == ('192.168.1.50', 9100), seen)
+        qt_dialogs.printer_settings_dialog = real_printer_settings
+    check("Printer Settings opens on the printer in effect, not the default",
+          seen['printer'] == Connection.network('10.0.0.5', 9200), seen)
+    check("and is given the default for Use Default",
+          seen['default'][0] == Connection.network('192.168.1.50', 9100), seen)
+    check("a cancelled Printer Settings answers None and changes nothing",
+          cancelled is None
+          and zw.printer_connection == Connection.network('10.0.0.5', 9200),
+          (cancelled, zw.printer_connection))
 
-    # Contrast: Default Printer, given the same dialog result, does persist.
-    qt_dialogs.printer_settings_dialog = lambda *a, **k: (
-        Connection.network('10.0.0.5', 9200), 203, 'E')
+    # Ticked, the same result is kept as the default too.
+    qt_dialogs.printer_settings_dialog = _printer_settings_returns(
+        (Connection.network('10.0.0.6', 9300), 203, 'E'), save_default=True)
     try:
-        zw.on_default_printer()
+        zw.on_printer_settings()
     finally:
-        qt_dialogs.printer_settings_dialog = real_dialog
+        qt_dialogs.printer_settings_dialog = real_printer_settings
 
     written = _cfg.ConfigParser(); written.read(session_path)
-    check("while Default Printer does persist the new address",
-          written.get('printer', 'address', fallback=None) == '10.0.0.5',
+    check("while Save as the default printer does persist the new address",
+          written.get('printer', 'address', fallback=None) == '10.0.0.6',
           dict(written['printer']) if written.has_section('printer') else None)
+    check("and makes it the default Use Default goes back to",
+          zw._default_printer[0] == Connection.network('10.0.0.6', 9300),
+          zw._default_printer)
 finally:
     qt_main._config_path = real_config_path
     qt_main._fallback_config_path = real_fallback_path
@@ -5369,11 +5387,12 @@ try:
                            zw.printer_font_device)
     zw._save_settings()
 
-    qt_dialogs.print_dialog = _print_window_returns((Connection.network('10.0.0.8', 9400), 203, 'E'))
+    qt_dialogs.printer_settings_dialog = _printer_settings_returns(
+        (Connection.network('10.0.0.8', 9400), 203, 'E'))
     try:
-        zw.on_print_dialog()
+        zw.on_printer_settings()
     finally:
-        qt_dialogs.print_dialog = real_print_dialog
+        qt_dialogs.printer_settings_dialog = real_printer_settings
 
     # Stand in for what closeEvent does: it never touches _default_printer,
     # it just calls _save_settings() again on the way out.
@@ -5396,11 +5415,12 @@ try:
                            zw.printer_font_device)
     zw._save_settings()
 
-    qt_dialogs.print_dialog = _print_window_returns((Connection.network('10.0.0.9', 9500), 203, 'E'))
+    qt_dialogs.printer_settings_dialog = _printer_settings_returns(
+        (Connection.network('10.0.0.9', 9500), 203, 'E'))
     try:
-        zw.on_print_dialog()
+        zw.on_printer_settings()
     finally:
-        qt_dialogs.print_dialog = real_print_dialog
+        qt_dialogs.printer_settings_dialog = real_printer_settings
 
     qt_dialogs.ask_dpi_rescale = lambda *a, **k: 'keep'
     zw.apply_label_settings(900, 600, 300, 3.0, 2.0)
@@ -5484,15 +5504,23 @@ check("and a visit to it passes the flips through with the new home",
       and len(_ls_back) == 6, _ls_back)
 
 # --- the Print window ------------------------------------------------------
-# One window for the printer this session prints to and every print-time
-# setting saved with the label. Driven for real: rows filled in, a button
-# pressed.
+# Every print-time setting saved with the label, and a line naming the
+# printer, whose Change... opens Printer Settings. Driven for real: rows
+# filled in, a button pressed.
 import time
 from PySide2.QtWidgets import (QPushButton as _QPB, QLabel as _QLabel,
                                QLineEdit)
 
 _PW_PRINTER = (Connection.network('192.168.1.50', 9100), 203, 'E')
 _PW_DEFAULT = (Connection.network('10.0.0.1', 9300), 203, 'R')
+# What Change... answers, as Printer Settings would: the printer now in
+# effect, or None when it was cancelled. Each call is recorded with the
+# window it was asked to open over.
+_pw_changes, _pw_change_to = [], [None]
+
+def _pw_change(dialog):
+    _pw_changes.append(dialog)
+    return _pw_change_to[0]
 
 def _drive_print(document, fill=lambda d: None, button='print'):
     def act():
@@ -5511,7 +5539,7 @@ def _drive_print(document, fill=lambda d: None, button='print'):
             box.button(QDialogButtonBox.Cancel).click()
 
     QTimer.singleShot(100, act)
-    return qt_dialogs.print_dialog(None, document, _PW_PRINTER, _PW_DEFAULT)
+    return qt_dialogs.print_dialog(None, document, _PW_PRINTER, _pw_change)
 
 def _pw_select(dialog, name, text):
     combo = dialog.findChild(QComboBox, name)
@@ -5535,7 +5563,8 @@ def _pw_look(d):
         offset_on=d.findChild(QSpinBox, 'mark_offset').isEnabled(),
         notes=[l.text() for l in d.findChildren(_QLabel)
                if l.text().startswith('As written') and l.isVisibleTo(d)],
-        address=d.findChild(QLineEdit, 'address').text(),
+        line=d.findChild(_QLabel, 'printer_line').text(),
+        rows=d.findChild(QLineEdit, 'address'),
         default=d.findChild(_QPB, 'print').isDefault())
 
 _pw_plain = _drive_print(_pw_doc, _pw_look)
@@ -5547,13 +5576,16 @@ check("the Print window shows the label's settings as it carries them",
           'As written: U', 30, True), _pw_seen)
 check("a darkness no box can show is noted beside it, as written",
       _pw_seen['notes'] == ['As written: 8.25'], _pw_seen['notes'])
-check("it opens on the printer in effect, with Print as the default button",
-      _pw_seen['address'] == '192.168.1.50' and _pw_seen['default'], _pw_seen)
-check("Print pressed unchanged gives 'print', the same printer and the same "
-      "settings", _pw_plain[0] == 'print' and _pw_plain[1] == _PW_PRINTER
-      and _pw_plain[2] == _PS.read(_pw_doc), _pw_plain)
+check("it names the printer in effect, with Print as the default button",
+      _pw_seen['line'] == '192.168.1.50:9100, 203 dpi' and _pw_seen['default'],
+      _pw_seen)
+check("and has no printer rows of its own: Printer Settings holds them",
+      _pw_seen['rows'] is None, _pw_seen)
+check("Print pressed unchanged gives 'print' and the same settings, no printer",
+      len(_pw_plain) == 2 and _pw_plain[0] == 'print'
+      and _pw_plain[1] == _PS.read(_pw_doc), _pw_plain)
 check("and those settings, applied, change nothing",
-      not _pw_plain[2].apply(_pw_doc))
+      not _pw_plain[1].apply(_pw_doc))
 
 check("Cancel gives None", _drive_print(_pw_doc, button='cancel') is None)
 
@@ -5570,7 +5602,7 @@ def _pw_edit(d):
     _pw_select(d, 'media_type', "Printer's setting")
 
 _pw_edited = _drive_print(_pw_doc, _pw_edit, button='ok')
-_pw_set = _pw_edited[2]
+_pw_set = _pw_edited[1]
 check("OK gives 'ok' and every row as edited",
       _pw_edited[0] == 'ok'
       and (_pw_set.quantity, _pw_set.pause_count, _pw_set.mirror,
@@ -5596,7 +5628,7 @@ def _pw_clear_speed(d):
         darkness=d.findChild(QDoubleSpinBox, 'darkness').isEnabled(),
         offset=d.findChild(QSpinBox, 'mark_offset').isEnabled())
 
-_pw_cleared = _drive_print(_pw_doc, _pw_clear_speed, button='ok')[2]
+_pw_cleared = _drive_print(_pw_doc, _pw_clear_speed, button='ok')[1]
 check("with no print speed, slew and backfeed are greyed out",
       not _pw_chain['slew'] and not _pw_chain['backfeed'], _pw_chain)
 check("with the darkness tick clear, so is its box; and the offset off mark "
@@ -5608,10 +5640,29 @@ check("and the printer's setting, applied, takes ^PR and ^MD out",
       list(_pw_target.media_settings.items())
       == [('^MM', 'U'), ('^MN', 'N'), ('^MT', 'D')], _pw_target.media_settings)
 
-_pw_default = _drive_print(_pw_doc, lambda d: d.findChild(_QPB, 'use_default').click(),
-                           button='ok')
-check("Use Default refills the printer from the persisted default",
-      _pw_default[1] == _PW_DEFAULT, _pw_default[1])
+_pw_lines = {}
+def _pw_change_printer(d):
+    _pw_lines['before'] = d.findChild(_QLabel, 'printer_line').text()
+    _pw_change_to[0] = None
+    d.findChild(_QPB, 'change_printer').click()
+    _pw_lines['cancelled'] = d.findChild(_QLabel, 'printer_line').text()
+    _pw_change_to[0] = (_UR_USB_PRINTER, 203, 'E')
+    d.findChild(_QPB, 'change_printer').click()
+    _pw_lines['changed'] = d.findChild(_QLabel, 'printer_line').text()
+    _pw_lines['over'] = _pw_changes[-2:] == [d, d]
+
+_UR_USB_PRINTER = Connection.usb('18J181107685',
+                                 'Zebra Technologies ZTC ZT410-203dpi ZPL')
+_pw_after_change = _drive_print(_pw_doc, _pw_change_printer, button='cancel')
+check("Change... opens Printer Settings over the Print window",
+      _pw_lines['over'], _pw_changes)
+check("a cancelled Printer Settings leaves the line as it was",
+      _pw_lines['cancelled'] == _pw_lines['before'], _pw_lines)
+check("and a printer chosen there is named on the line at once",
+      _pw_lines['changed']
+      == 'Zebra Technologies ZTC ZT410-203dpi ZPL (USB), 203 dpi', _pw_lines)
+check("Print cancelled afterwards still gives None: the printer was Printer "
+      "Settings' own to change", _pw_after_change is None, _pw_after_change)
 
 # --- the printer rows: a network printer or a USB one ----------------------
 # The USB printers present are stood in for, and show_error only records, so
@@ -5670,8 +5721,8 @@ try:
         _ur_seen['usb'] = _ur_shown(d)
         combo = d.findChild(QComboBox, 'usb_printer')
         _ur_seen['listed'] = [combo.itemText(i) for i in range(combo.count())]
-    _ur_chosen = _ur_drive(lambda: qt_dialogs.print_dialog(
-        None, _pw_doc, _PW_PRINTER, _PW_DEFAULT), _ur_switch)
+    _ur_chosen = _ur_drive(lambda: qt_dialogs.printer_settings_dialog(
+        None, *_PW_PRINTER, default=_PW_DEFAULT), _ur_switch)
     check("the printer rows show Address and Port for a network printer, and "
           "only the USB Printer list and Refresh once USB is chosen",
           _ur_seen['network'] == (True, True, False, False)
@@ -5679,8 +5730,10 @@ try:
     check("the USB Printer list names each printer with its node",
           _ur_seen['listed'] == [f'{_UR_NAME} (lp2)'], _ur_seen['listed'])
     check("choosing USB gives that printer, the network address carried",
-          _ur_chosen[1] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME),
-                            203, 'E'), _ur_chosen[1])
+          _ur_chosen[0] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME),
+                            203, 'E'), _ur_chosen)
+    check("and, its box left alone, not as the default",
+          _ur_chosen[1] is False, _ur_chosen)
 
     _ur_back = {}
     def _ur_switch_back(d):
@@ -5692,8 +5745,8 @@ try:
     check("a USB printer opens on the USB rows, and Network gives back the "
           "address it carried",
           _ur_back['usb'] == (False, False, True, True)
-          and _ur_net == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME)
-                          .as_network('192.168.1.50', 9100), 203, 'E'), _ur_net)
+          and _ur_net[0] == (_PW_PRINTER[0].as_usb(_UR_ZEBRA.usb_serial, _UR_NAME)
+                             .as_network('192.168.1.50', 9100), 203, 'E'), _ur_net)
 
     _ur_present[:] = []
     _ur_away = Connection.usb('OLD1', 'Zebra old')
@@ -5704,7 +5757,7 @@ try:
             text=d.findChild(QComboBox, 'usb_printer').currentText()))
     check("a USB printer that is not plugged in stays chosen, said to be not "
           "connected", _ur_text['text'] == 'Zebra old (not connected)'
-          and _ur_kept == (_ur_away, 203, 'E'), (_ur_text, _ur_kept))
+          and _ur_kept[0] == (_ur_away, 203, 'E'), (_ur_text, _ur_kept))
 
     del _ur_errors[:]
     _ur_none = _ur_drive(
@@ -5718,10 +5771,34 @@ try:
     _UR_DEFAULT = (Connection.network('10.0.0.1', 9300)
                    .as_usb(_UR_ZEBRA.usb_serial, _UR_NAME), 203, 'R')
     _ur_restored = _ur_drive(
-        lambda: qt_dialogs.print_dialog(None, _pw_doc, _PW_PRINTER, _UR_DEFAULT),
+        lambda: qt_dialogs.printer_settings_dialog(None, *_PW_PRINTER,
+                                                   default=_UR_DEFAULT),
         lambda d: d.findChild(_QPB, 'use_default').click())
     check("Use Default brings back a USB default printer",
-          _ur_restored[1] == _UR_DEFAULT, _ur_restored[1])
+          _ur_restored[0] == _UR_DEFAULT, _ur_restored)
+
+    # Printer Settings itself: its title, and the box that keeps the printer
+    # as the default, unticked whenever it opens.
+    _ps_seen = {}
+    def _ps_tick(d):
+        box = d.findChild(QCheckBox, 'save_default')
+        _ps_seen.update(title=d.windowTitle(), ticked=box.isChecked(),
+                        text=box.text())
+        box.setChecked(True)
+    _ps_saved = _ur_drive(
+        lambda: qt_dialogs.printer_settings_dialog(None, *_PW_PRINTER,
+                                                   default=_PW_DEFAULT),
+        _ps_tick)
+    check("Printer Settings is titled so, with Save as the default printer "
+          "unticked when it opens",
+          _ps_seen == {'title': 'Printer Settings', 'ticked': False,
+                       'text': 'Save as the default printer'}, _ps_seen)
+    check("and ticked, OK says to keep the printer as the default",
+          _ps_saved == (_PW_PRINTER, True), _ps_saved)
+    check("cancelled, it gives None",
+          _ur_drive(lambda: qt_dialogs.printer_settings_dialog(
+              None, *_PW_PRINTER, default=_PW_DEFAULT), _ps_tick,
+              button='cancel') is None)
 
     # Test Connection by USB: a pty plays the printer, answering ~HI.
     _ur_master, _ur_slave = _ur_pty.openpty()
@@ -5839,7 +5916,7 @@ _pw_undo = len(pw._undo_stack)
 _pw_printed = []
 pw.on_print = lambda: _pw_printed.append(pw.document.print_quantity)
 
-qt_dialogs.print_dialog = _print_window_returns(_PW_PRINTER, 'print')
+qt_dialogs.print_dialog = _print_window_returns('print')
 try:
     pw.on_print_dialog()
 finally:
@@ -5851,7 +5928,7 @@ check("and prints", _pw_printed == [1], _pw_printed)
 
 _pw_more = _PS.read(pw.document)
 _pw_more.quantity, _pw_more.darkness, _pw_more.invert = 3, 4.0, True
-qt_dialogs.print_dialog = _print_window_returns(_PW_PRINTER, 'print', _pw_more)
+qt_dialogs.print_dialog = _print_window_returns('print', _pw_more)
 try:
     pw.on_print_dialog()
 finally:
@@ -5879,10 +5956,16 @@ check("Cancel changes nothing and prints nothing",
 # wrapper along with a temporary one.
 _pw_file_action = pw.menuBar().actions()[0]
 _pw_texts = [a.text() for a in _pw_file_action.menu().actions()]
-check("File has Print… and Quick Print, and no Printer Settings submenu",
-      '&Print…' in _pw_texts and '&Quick Print' in _pw_texts
-      and not any('Printer Settings' in t.replace('&', '') for t in _pw_texts),
-      _pw_texts)
+check("File has Print…, Quick Print and Printer Settings…, in that order",
+      [t for t in _pw_texts if t in ('&Print…', '&Quick Print',
+                                     'Printer &Settings…')]
+      == ['&Print…', '&Quick Print', 'Printer &Settings…'], _pw_texts)
+_pw_settings_action = next(a for a in pw.menuBar().actions()
+                           if a.text() == '&Settings')
+_pw_settings_texts = [a.text() for a in _pw_settings_action.menu().actions()]
+check("and Settings no longer has Default Printer…: Printer Settings holds it",
+      not any('Default Printer' in t for t in _pw_settings_texts),
+      _pw_settings_texts)
 check("Print… is Ctrl+P, Quick Print Ctrl+Shift+P",
       pw.print_action.shortcut().toString() == 'Ctrl+P'
       and pw.quick_print_action.shortcut().toString() == 'Ctrl+Shift+P')
@@ -12605,10 +12688,11 @@ try:
               lambda: qt_dialogs.label_size_dialog(None, _wh_doc, 203))
     _wh_modal("grid_settings",
               lambda: qt_dialogs.grid_settings_dialog(None, _wh_grid.Grid(), 203))
-    _wh_modal("default_printer", lambda: qt_dialogs.printer_settings_dialog(
-        None, Connection.network("10.0.0.1", 9100), 203, "E"))
+    _wh_modal("printer_settings", lambda: qt_dialogs.printer_settings_dialog(
+        None, Connection.network("10.0.0.1", 9100), 203, "E",
+        default=_PW_DEFAULT))
     _wh_modal("print", lambda: qt_dialogs.print_dialog(
-        None, _wh_doc, _PW_PRINTER, _PW_DEFAULT))
+        None, _wh_doc, _PW_PRINTER, lambda dialog: None))
     _wh_modal("local_fonts", lambda: qt_dialogs.LocalFontsDialog(None).exec_())
 
     # The printer windows, opened from a window whose printer is a port on
@@ -14041,8 +14125,7 @@ _t_print_rows = {'pause_count', 'replicates', 'override_pause', 'cut_on_error',
                  'mirror', 'reverse', 'code_validation', 'darkness_set',
                  'darkness', 'print_speed', 'slew_speed', 'backfeed_speed',
                  'print_mode', 'prepeel', 'media_tracking', 'mark_offset',
-                 'media_type', 'port', 'dpi', 'font_device', 'test_connection',
-                 'use_default', 'usb_printer', 'usb_refresh'}
+                 'media_type', 'change_printer'}
 check("the Print window explains its rows from the table, each label too",
       _t_print['found'] == _t_print_rows and not _t_print['wrong'],
       (sorted(_t_print['found'] ^ _t_print_rows), _t_print['wrong']))
@@ -14073,10 +14156,11 @@ _t_windows = {
                        {'dpi', 'home_x', 'home_y'}),
     'Grid Settings': (lambda: qt_dialogs.grid_settings_dialog(
         None, zpl_grid.Grid(), 203), {'grid_major'}),
-    'Default Printer': (lambda: qt_dialogs.printer_settings_dialog(
-        None, Connection.network('10.0.0.1', 9100), 203, 'E'),
-        {'port', 'dpi', 'font_device', 'test_connection', 'usb_printer',
-         'usb_refresh'}),
+    'Printer Settings': (lambda: qt_dialogs.printer_settings_dialog(
+        None, Connection.network('10.0.0.1', 9100), 203, 'E',
+        default=_PW_DEFAULT),
+        {'port', 'dpi', 'font_device', 'test_connection', 'use_default',
+         'usb_printer', 'usb_refresh', 'save_default'}),
     'Store Graphic As': (lambda: qt_dialogs.store_graphic_dialog(None), {'device'}),
     'Upload Font To': (lambda: qt_dialogs.font_device_dialog(None, 'E'),
                        {'font_device'}),
@@ -14089,7 +14173,7 @@ for _title, (_open, _wanted) in _t_windows.items():
     _tip_seen |= _seen['found']
     if _seen['found'] != _wanted or _seen['wrong']:
         _t_window_tips[_title] = (sorted(_seen['found'] ^ _wanted), _seen['wrong'])
-check("Label Settings, Grid Settings, Default Printer and the store windows "
+check("Label Settings, Grid Settings, Printer Settings and the store windows "
       "explain their rows from the table",
       not _t_window_tips, _t_window_tips)
 

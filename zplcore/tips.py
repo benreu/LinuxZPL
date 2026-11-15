@@ -250,7 +250,7 @@ TIPS = {
         "Thermal transfer prints through a ribbon; direct thermal prints "
         "straight onto heat-sensitive stock with none. Match what's loaded.",
 
-    # --- the printer, in the Print window and Default Printer
+    # --- the printer, in Printer Settings and the Print window
     'port': "The printer's raw printing port. Zebra printers use 9100.",
     'dpi':
         "The printer's resolution. The label is laid out in dots, so a wrong "
@@ -260,7 +260,13 @@ TIPS = {
         "printer is switched off; E: (Flash) keeps them.",
     'test_connection':
         "Connect to the printer and ask its resolution, which fills in DPI.",
-    'use_default': "Fill these in from Settings ▸ Default Printer.",
+    'use_default': "Fill these in from the default printer.",
+    'save_default':
+        "Also remember this printer, and use it each time LinuxZPL starts. "
+        "Left unticked, the printer chosen lasts until LinuxZPL closes.",
+    'change_printer':
+        "Choose another printer, on the network or by USB, in Printer "
+        "Settings.",
     'usb_printer':
         "The USB printers plugged in now. The one chosen is remembered by its "
         "serial number, so it's found again when it comes back under another "
