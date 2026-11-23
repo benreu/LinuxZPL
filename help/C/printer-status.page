@@ -60,8 +60,10 @@
   <section id="console">
     <title>The printer console</title>
     <p><guiseq><gui>Printer</gui><gui>Console…</gui></guiseq> sends whatever
-    you type to the printer, exactly as typed, and shows what it answers,
-    or <gui>(no reply)</gui>. It is for commands nothing else here sends,
+    you type to the printer, as typed, and shows what it answers, or
+    <gui>(no reply)</gui>. If what you typed does not end with a new line,
+    one is added: a <code>getvar</code> or <code>setvar</code> is not
+    finished without it, and ZPL ignores it. It is for commands nothing else here sends,
     such as a one-off setting or a question for the printer. It can be left
     open while you work on the label.</p>
   </section>

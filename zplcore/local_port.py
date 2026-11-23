@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional, Tuple
 
-from .printer_io import Cancelled, CancelToken
+from .printer_io import Cancelled, CancelToken, terminated
 
 # How long a wait goes before looking up to see whether it was cancelled.
 TICK = 0.2
@@ -183,9 +183,10 @@ def send(port: LocalPort, payload: bytes, timeout: float,
 
 def send_command(port: LocalPort, command: str, timeout: float = 5,
                  cancel: Optional[CancelToken] = None) -> str:
-    """printer_io.send_command() on a local port: raw text out, whatever the
-    printer writes back decoded with replacement characters."""
-    reply = send(port, command.encode('utf-8'), timeout,
+    """printer_io.send_command() on a local port: raw text out, ended with a
+    line ending if it has none, whatever the printer writes back decoded
+    with replacement characters."""
+    reply = send(port, terminated(command).encode('utf-8'), timeout,
                  read_reply=True, cancel=cancel)
     return reply.decode('utf-8', errors='replace')
 

@@ -9796,10 +9796,11 @@ check("^PR, ^MD, ^MM, ^MN and ^MT draw nothing in the preview",
       == _preview_ink("^XA^PW300^LL200^FO20,20^A0N,30,30^FDHg^FS", 300, 200))
 
 # --- printer_io.send_command(): the console's text-in/text-out wrapper -----
-# It should encode the command as UTF-8, pass it straight through to send()
-# unmodified (read_reply always on, since a console has no other way to know
-# whether anything came back), and decode whatever comes back the same way -
-# including a reply that isn't valid UTF-8, which must not raise.
+# It should encode the command as UTF-8, pass it through to send() with
+# nothing added but a line ending when it has none (read_reply always on,
+# since a console has no other way to know whether anything came back), and
+# decode whatever comes back the same way - including a reply that isn't
+# valid UTF-8, which must not raise.
 from zplcore import printer_io
 
 _sc_calls = []
@@ -9814,10 +9815,24 @@ try:
 finally:
     printer_io.send = _real_send
 
-check("send_command(): encodes the command as UTF-8 and asks for a reply",
-      _sc_calls == [('10.0.0.1', 9100, b'~HS', 5, True)], _sc_calls)
+check("send_command(): encodes the command as UTF-8, ends it, and asks for a reply",
+      _sc_calls == [('10.0.0.1', 9100, b'~HS\r\n', 5, True)], _sc_calls)
 check("send_command(): a non-UTF-8 reply decodes with replacement chars, not a raise",
       _sc_reply == 'ok: ��', _sc_reply)
+
+# An SGD command is unfinished until a space or line ending follows it. A
+# ZT410 holds an unfinished getvar, answers it under the next send and
+# throws that send away - so a setvar typed after a getvar, both without
+# Enter, showed the getvar's answer and never took. A CR alone did not
+# finish one; an LF did, so text already ending in one is left alone.
+check("terminated(): a command typed without Enter gets CR LF",
+      printer_io.terminated('! U1 getvar "display.backlight_on_time"')
+      == '! U1 getvar "display.backlight_on_time"\r\n')
+check("terminated(): a lone CR still gets CR LF after it",
+      printer_io.terminated('~HS\r') == '~HS\r\r\n')
+check("terminated(): text already ending in a line feed is sent as typed",
+      printer_io.terminated('~HS\n') == '~HS\n'
+      and printer_io.terminated('^XA^XZ\r\n') == '^XA^XZ\r\n')
 
 
 # --- ^FO/^FT's third parameter: which edge the origin names -----------------
@@ -12059,7 +12074,7 @@ from zplcore import firmware as zpl_firmware, printer_io as _fw_pio
 _fw_real_send = _fw_pio.send
 try:
     _fw_pio.send = lambda a, p, payload, t, read_reply=False, cancel=None: (
-        b'\x02ZD420-203dpi,V84.20.18Z,8,8176KB\x03' if payload == b'~HI' else b'')
+        b'\x02ZD420-203dpi,V84.20.18Z,8,8176KB\x03' if payload == b'~HI\r\n' else b'')
     check("current_firmware reads the version from ~HI",
           zpl_firmware.current_firmware(Connection.network('x', 9100)) == 'V84.20.18Z')
     _fw_pio.send = lambda *a, **k: b'garbage'
@@ -12250,7 +12265,7 @@ _lp_version = zpl_firmware.current_firmware(
 _lp_th.join(3)
 os.close(_lp_master); os.close(_lp_slave)
 check("current_firmware asks ~HI down a local port and reads the version back",
-      _lp_heard == [b'~HI'] and _lp_version == 'V75.20.21Z', (_lp_heard, _lp_version))
+      _lp_heard == [b'~HI\r\n'] and _lp_version == 'V75.20.21Z', (_lp_heard, _lp_version))
 
 # --- zplcore.connection: a network printer or a USB one, chosen by the user
 import errno as _cn_errno, configparser as _cn_cp
@@ -12552,7 +12567,7 @@ finally:
 _cn_th.join(3)
 os.close(_cn_master); os.close(_cn_slave)
 check("a reply left over from an earlier request is not read as this one's",
-      _cn_heard == [b'~HI']
+      _cn_heard == [b'~HI\r\n']
       and _cn_reply == '\x02ZT410-200dpi,V75.20.21Z,8,4096KB\x03\r\n',
       (_cn_heard, _cn_reply))
 zpl_local.list_detached = _cn_real_detached

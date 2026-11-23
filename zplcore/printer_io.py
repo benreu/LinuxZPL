@@ -171,19 +171,35 @@ def _exchange(sock, address, port, payload, timeout, read_reply) -> bytes:
     return b''.join(chunks)
 
 
+def terminated(command: str) -> str:
+    """`command` ending in a line feed: CR LF added unless it has one.
+
+    An SGD command is not finished until a space or a line ending follows it
+    (Set/Get/Do Command Structure). Without one a ZT410 holds the command
+    and answers it only when the next send arrives - under that send, which
+    it then throws away together with the one after it. So a console getvar
+    typed without Enter shows "(no reply)", and the setvar sent next shows
+    the getvar's answer and never takes. A CR alone did not finish one on
+    the ZT410; an LF did. ZPL and ~ commands ignore the line ending, so it
+    costs a format nothing.
+    """
+    return command if command.endswith('\n') else command + '\r\n'
+
+
 def send_command(address: str, port: int, command: str, timeout: float = 5,
                  cancel: Optional[CancelToken] = None) -> str:
     """Send raw text to the printer and return whatever it writes back.
 
-    No wrapping, no interpretation - the command is sent exactly as given
-    (encoded UTF-8, matching how the Print action already encodes label
-    text), so both immediate commands like ~HS and full ^XA...^XZ formats
-    work unchanged. The reply, if any, is decoded the same way; a reply
-    that is not valid UTF-8 (e.g. a binary object) is decoded with
-    replacement characters rather than raising, since this is a diagnostic
-    view, not a retrieval path - Objects -> Retrieve already exists for
-    getting bytes back losslessly.
+    No wrapping, no interpretation - the command is sent as given (encoded
+    UTF-8, matching how the Print action already encodes label text), so
+    both immediate commands like ~HS and full ^XA...^XZ formats work
+    unchanged. The one thing added is a line ending when the text has none,
+    which an SGD command needs (see terminated()). The reply, if any, is
+    decoded the same way; a reply that is not valid UTF-8 (e.g. a binary
+    object) is decoded with replacement characters rather than raising,
+    since this is a diagnostic view, not a retrieval path - Objects ->
+    Retrieve already exists for getting bytes back losslessly.
     """
-    reply = send(address, port, command.encode('utf-8'), timeout,
+    reply = send(address, port, terminated(command).encode('utf-8'), timeout,
                  read_reply=True, cancel=cancel)
     return reply.decode('utf-8', errors='replace')

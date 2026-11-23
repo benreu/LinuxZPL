@@ -246,9 +246,10 @@ def send(printer: Printer, payload: bytes, timeout: float,
 def send_command(printer: Printer, command: str, timeout: float = 5,
                  cancel: Optional[printer_io.CancelToken] = None) -> str:
     """printer_io.send_command() to whichever printer this is: raw text
-    out, the reply decoded with replacement characters."""
-    reply = send(printer, command.encode('utf-8'), timeout,
-                 read_reply=True, cancel=cancel)
+    out, ended with a line ending if it has none (printer_io.terminated),
+    the reply decoded with replacement characters."""
+    reply = send(printer, printer_io.terminated(command).encode('utf-8'),
+                 timeout, read_reply=True, cancel=cancel)
     return reply.decode('utf-8', errors='replace')
 
 
